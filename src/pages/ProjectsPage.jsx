@@ -28,10 +28,10 @@ export default function ProjectsPage() {
     preset: PRESETS[0],
   })
 
-  const handleCreate = (e) => {
+  const handleCreate = async (e) => {
     e.preventDefault()
     if (!formData.name.trim()) return
-    const created = createProject(formData)
+    const created = await createProject(formData)
     setFormData({ name: '', description: '', preset: PRESETS[0] })
     setShowCreate(false)
     navigate(`/projects/${created.id}`)

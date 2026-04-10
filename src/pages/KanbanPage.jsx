@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
+import Viewer from '../components/Viewer'
 import './KanbanPage.css'
 
 const SIDEBAR_ITEMS = [
@@ -12,29 +13,15 @@ const SIDEBAR_ITEMS = [
   { id: 'texturing', icon: 'texture', label: 'Texturing' },
 ]
 
-const SAMPLE_IMAGES = [
-  {
-    id: 'img_1',
-    name: 'Neon Fractal_01',
-    resolution: '2048 x 2048',
-    format: 'PNG',
-    source: 'AI GEN',
-    color: 'var(--primary)',
-  },
-  {
-    id: 'img_2',
-    name: 'Reference_Plate_A',
-    resolution: '1024 x 1024',
-    format: 'JPG',
-    source: 'IMPORT',
-    color: 'var(--on-surface-variant)',
-  },
-]
-
 export default function KanbanPage() {
   const { projectId } = useParams()
-  const { getProject } = useProjects()
-  const project = getProject(projectId)
+  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, createTask } = useProjects()
+  
+  const [project, setProject] = useState(null)
+  const [assets, setAssets] = useState([])
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+
   const [activeTab, setActiveTab] = useState('meshgen')
   const [genSeed, setGenSeed] = useState('8841295201')
   const [faceCount, setFaceCount] = useState('15000')
@@ -44,6 +31,73 @@ export default function KanbanPage() {
   const [texEngine, setTexEngine] = useState('stable')
   const [pbrEnabled, setPbrEnabled] = useState(true)
   const [aoEnabled, setAoEnabled] = useState(false)
+
+  // Fetch all data for this project
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true)
+      try {
+        const [projData, assetsData, tasksData] = await Promise.all([
+          getProject(projectId),
+          getProjectAssets(projectId),
+          getProjectTasks(projectId)
+        ])
+        setProject(projData)
+        setAssets(assetsData)
+        setTasks(tasksData)
+      } catch (err) {
+        console.error('Failed to load project data:', err)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadData()
+  }, [projectId, getProject, getProjectAssets, getProjectTasks])
+
+  const handleAddImage = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    try {
+      setLoading(true);
+      await uploadAsset(projectId, file, 'image', {
+        resolution: 'Unknown',
+        format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+        source: 'IMPORT'
+      });
+      // Refresh assets
+      const assetsData = await getProjectAssets(projectId);
+      setAssets(assetsData);
+    } catch (err) {
+      console.error('Upload failed:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateMesh = async () => {
+    try {
+      await createTask({
+        projectId,
+        name: `Mesh_Synth_${tasks.length + 1}`,
+        metadata: { genSeed, faceCount, meshBatch, processEngine }
+      });
+      const tasksData = await getProjectTasks(projectId);
+      setTasks(tasksData);
+    } catch (err) {
+      console.error('Failed to create task:', err);
+    }
+  };
+
+  const images = assets.filter(a => a.type === 'image')
+
+  if (loading) {
+    return (
+      <div className="kanban-layout" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p className="font-headline">Synchronizing Workspace...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="kanban-layout">
@@ -107,16 +161,24 @@ export default function KanbanPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>image</span>
                   <h2 className="kanban-col__title font-headline">IMAGES</h2>
                 </div>
-                <span className="kanban-col__badge font-label">04 ITEMS</span>
+                <span className="kanban-col__badge font-label">{images.length.toString().padStart(2, '0')} ITEMS</span>
               </div>
 
               <div className="kanban-col__content">
-                {SAMPLE_IMAGES.map(img => (
+                {images.map(img => (
                   <div key={img.id} className="image-card" id={`image-card-${img.id}`}>
                     <div className="image-card__thumb">
-                      <div className="image-card__thumb-placeholder">
-                        <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
-                      </div>
+                      {img.filename ? (
+                        <img 
+                          src={`http://localhost:3001/assets/${img.filename}`} 
+                          alt={img.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <div className="image-card__thumb-placeholder">
+                          <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
+                        </div>
+                      )}
                     </div>
                     <div className="image-card__info">
                       <div className="image-card__row">
@@ -124,22 +186,29 @@ export default function KanbanPage() {
                         <span
                           className="image-card__source"
                           style={{
-                            color: img.source === 'AI GEN' ? 'var(--primary)' : 'var(--on-surface-variant)',
-                            background: img.source === 'AI GEN' ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
+                            color: img.metadata?.source === 'AI GEN' ? 'var(--primary)' : 'var(--on-surface-variant)',
+                            background: img.metadata?.source === 'AI GEN' ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
                           }}
                         >
-                          {img.source}
+                          {img.metadata?.source || 'IMPORT'}
                         </span>
                       </div>
-                      <p className="image-card__meta font-label">{img.resolution} • {img.format}</p>
+                      <p className="image-card__meta font-label">{img.metadata?.resolution || 'N/A'} • {img.metadata?.format || 'N/A'}</p>
                     </div>
                   </div>
                 ))}
 
-                <button className="kanban-col__add-btn" id="add-image-btn">
+                <label className="kanban-col__add-btn" id="add-image-label">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleAddImage}
+                    id="add-image-input"
+                  />
                   <span className="material-symbols-outlined">upload_file</span>
                   <span className="font-label">ADD NEW IMAGE</span>
-                </button>
+                </label>
               </div>
             </div>
 
@@ -150,7 +219,9 @@ export default function KanbanPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--secondary)' }}>deployed_code</span>
                   <h2 className="kanban-col__title font-headline">MESH GEN</h2>
                 </div>
-                <span className="kanban-col__badge kanban-col__badge--secondary font-label">PROCESSING</span>
+                <span className="kanban-col__badge kanban-col__badge--secondary font-label">
+                  {tasks.some(t => t.status === 'processing') ? 'PROCESSING' : 'READY'}
+                </span>
               </div>
 
               <div className="kanban-col__content">
@@ -213,26 +284,30 @@ export default function KanbanPage() {
                     </div>
                   </div>
 
-                  <button className="params-card__action params-card__action--secondary" id="generate-mesh-btn">
+                  <button className="params-card__action params-card__action--secondary" id="generate-mesh-btn" onClick={handleGenerateMesh}>
                     <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>bolt</span>
                     GENERATE MESH
                   </button>
                 </div>
 
-                {/* Active Task */}
-                <div className="task-card" id="active-task">
-                  <div className="task-card__progress-bar">
-                    <div className="task-card__progress-fill" style={{ width: '64%' }} />
+                {/* Active Tasks */}
+                {tasks.map(task => (
+                  <div key={task.id} className="task-card" id={`task-card-${task.id}`}>
+                    <div className="task-card__progress-bar">
+                      <div className="task-card__progress-fill" style={{ width: `${task.progress}%` }} />
+                    </div>
+                    <div className="task-card__header">
+                      <span className="task-card__name">Task: {task.name}</span>
+                      <span className="task-card__pct">{task.progress}%</span>
+                    </div>
+                    <p className="task-card__status">{task.status === 'processing' ? 'Processing...' : 'Complete'}</p>
+                    <div className="task-card__preview">
+                      <span className="material-symbols-outlined task-card__preview-icon">
+                        {task.status === 'processing' ? 'hourglass_top' : 'check_circle'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="task-card__header">
-                    <span className="task-card__name">Task: Mesh_Synth_4</span>
-                    <span className="task-card__pct">64%</span>
-                  </div>
-                  <p className="task-card__status">Initializing vertex buffers...</p>
-                  <div className="task-card__preview">
-                    <span className="material-symbols-outlined task-card__preview-icon">hourglass_top</span>
-                  </div>
-                </div>
+                ))}
               </div>
             </div>
 
@@ -258,10 +333,10 @@ export default function KanbanPage() {
                       <p className="tool-card__desc">Native vertex manipulator</p>
                     </div>
                   </div>
-                  <div className="tool-card__viewport">
-                    <span className="material-symbols-outlined" style={{ fontSize: '40px', color: 'rgba(253,251,254,0.06)' }}>grid_view</span>
+                  <div className="tool-card__viewport" style={{ height: '200px', padding: '0', overflow: 'hidden' }}>
+                    <Viewer height="200px" />
                     <div className="tool-card__viewport-label">
-                      OPEN VIEWPORT
+                      LIVE VIEWPORT
                     </div>
                   </div>
                 </div>

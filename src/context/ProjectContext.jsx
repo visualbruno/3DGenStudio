@@ -1,74 +1,100 @@
-import { createContext, useContext, useState, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 
 const ProjectContext = createContext(null)
-
-const SAMPLE_PROJECTS = [
-  {
-    id: 'proj_001',
-    name: 'Cyberpunk_District_V1',
-    description: 'High-fidelity urban environment with neon-lit architecture and volumetric fog.',
-    preset: 'Photorealistic ArchViz',
-    createdAt: '2026-04-01T10:30:00Z',
-    imageCount: 4,
-    meshCount: 2,
-    status: 'active',
-  },
-  {
-    id: 'proj_002',
-    name: 'Organic_Creature_Alpha',
-    description: 'Stylized creature design for real-time game engine integration.',
-    preset: 'Stylized Game Asset',
-    createdAt: '2026-03-28T14:15:00Z',
-    imageCount: 8,
-    meshCount: 5,
-    status: 'complete',
-  },
-  {
-    id: 'proj_003',
-    name: 'Mech_Prototype_03',
-    description: 'Hard-surface mechanical design — rapid concept iteration.',
-    preset: 'Rapid Concept Sculpt',
-    createdAt: '2026-04-05T09:00:00Z',
-    imageCount: 2,
-    meshCount: 0,
-    status: 'processing',
-  },
-]
+const API_BASE = 'http://localhost:3001/api'
 
 export function ProjectProvider({ children }) {
-  const [projects, setProjects] = useState(() => {
-    const saved = localStorage.getItem('3dgs_projects')
-    return saved ? JSON.parse(saved) : SAMPLE_PROJECTS
-  })
+  const [projects, setProjects] = useState([])
+  const [loading, setLoading] = useState(true)
 
-  const persist = useCallback((updated) => {
-    setProjects(updated)
-    localStorage.setItem('3dgs_projects', JSON.stringify(updated))
+  const fetchProjects = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/projects`)
+      const data = await res.json()
+      setProjects(data)
+    } catch (err) {
+      console.error('Failed to fetch projects:', err)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  const createProject = useCallback((project) => {
-    const newProject = {
-      ...project,
-      id: 'proj_' + Date.now(),
-      createdAt: new Date().toISOString(),
-      imageCount: 0,
-      meshCount: 0,
-      status: 'active',
+  useEffect(() => {
+    fetchProjects()
+  }, [fetchProjects])
+
+  const createProject = async (projectData) => {
+    try {
+      const res = await fetch(`${API_BASE}/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+      })
+      const newProject = await res.json()
+      await fetchProjects() // Refresh list
+      return newProject
+    } catch (err) {
+      console.error('Failed to create project:', err)
+      throw err
     }
-    persist([newProject, ...projects])
-    return newProject
-  }, [projects, persist])
+  }
 
-  const getProject = useCallback((id) => {
-    return projects.find(p => p.id === id) || null
-  }, [projects])
+  const getProject = async (id) => {
+    const res = await fetch(`${API_BASE}/projects/${id}`)
+    if (!res.ok) return null
+    return await res.json()
+  }
 
-  const deleteProject = useCallback((id) => {
-    persist(projects.filter(p => p.id !== id))
-  }, [projects, persist])
+  const deleteProject = async (id) => {
+    await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' })
+    await fetchProjects()
+  }
+
+  const getProjectAssets = async (projectId) => {
+    const res = await fetch(`${API_BASE}/assets?projectId=${projectId}`)
+    return await res.json()
+  }
+
+  const getProjectTasks = async (projectId) => {
+    const res = await fetch(`${API_BASE}/tasks?projectId=${projectId}`)
+    return await res.json()
+  }
+
+  const createTask = async (taskData) => {
+    const res = await fetch(`${API_BASE}/tasks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(taskData)
+    });
+    return await res.json();
+  }
+
+  const uploadAsset = async (projectId, file, type = 'image', metadata = {}) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('projectId', projectId);
+    formData.append('type', type);
+    formData.append('metadata', JSON.stringify(metadata));
+
+    const res = await fetch(`${API_BASE}/assets/upload`, {
+      method: 'POST',
+      body: formData
+    });
+    return await res.json();
+  }
 
   return (
-    <ProjectContext.Provider value={{ projects, createProject, getProject, deleteProject }}>
+    <ProjectContext.Provider value={{ 
+      projects, 
+      loading,
+      createProject, 
+      getProject, 
+      deleteProject,
+      getProjectAssets,
+      getProjectTasks,
+      uploadAsset,
+      refreshProjects: fetchProjects
+    }}>
       {children}
     </ProjectContext.Provider>
   )
