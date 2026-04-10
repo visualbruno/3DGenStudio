@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext'
 import './SettingsModal.css'
 
@@ -54,11 +54,11 @@ export default function SettingsModal({ onClose }) {
               <label className="settings-label">Display Name</label>
               <input 
                 className="settings-input" 
-                value={localSettings.profile.name}
-                onChange={e => setLocalSettings({
-                  ...localSettings, 
-                  profile: { ...localSettings.profile, name: e.target.value }
-                })}
+                value={localSettings?.profile?.name || ''}
+                onChange={e => setLocalSettings(prev => ({
+                  ...prev, 
+                  profile: { ...prev?.profile, name: e.target.value }
+                }))}
               />
             </div>
           </section>
@@ -80,11 +80,11 @@ export default function SettingsModal({ onClose }) {
                     type="password"
                     className="settings-input" 
                     placeholder="Enter Google API Key"
-                    value={localSettings.apis.google.apiKey}
-                    onChange={e => setLocalSettings({
-                      ...localSettings,
-                      apis: { ...localSettings.apis, google: { apiKey: e.target.value } }
-                    })}
+                    value={localSettings?.apis?.google?.apiKey || ''}
+                    onChange={e => setLocalSettings(prev => ({
+                      ...prev,
+                      apis: { ...prev?.apis, google: { apiKey: e.target.value } }
+                    }))}
                   />
                 </div>
               </div>
@@ -102,11 +102,11 @@ export default function SettingsModal({ onClose }) {
                     type="password"
                     className="settings-input" 
                     placeholder="sk-..."
-                    value={localSettings.apis.openai.apiKey}
-                    onChange={e => setLocalSettings({
-                      ...localSettings,
-                      apis: { ...localSettings.apis, openai: { apiKey: e.target.value } }
-                    })}
+                    value={localSettings?.apis?.openai?.apiKey || ''}
+                    onChange={e => setLocalSettings(prev => ({
+                      ...prev,
+                      apis: { ...prev?.apis, openai: { apiKey: e.target.value } }
+                    }))}
                   />
                 </div>
               </div>
@@ -175,7 +175,7 @@ export default function SettingsModal({ onClose }) {
             )}
 
             <div className="custom-apis-list">
-              {(localSettings.apis.custom || []).map(api => (
+              {(localSettings?.apis?.custom || []).map(api => (
                 <div key={api.id} className="custom-api-item">
                   <div className="custom-api-info">
                     <span style={{ fontWeight: 600 }}>{api.name}</span>
@@ -186,7 +186,7 @@ export default function SettingsModal({ onClose }) {
                   </span>
                 </div>
               ))}
-              {(localSettings.apis.custom || []).length === 0 && !showAddCustom && (
+              {(localSettings?.apis?.custom || []).length === 0 && !showAddCustom && (
                 <p style={{ textAlign: 'center', opacity: 0.5, fontSize: '0.8rem' }}>No custom endpoints configured.</p>
               )}
             </div>

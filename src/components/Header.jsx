@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import './Header.css'
 
-export default function Header({ showSearch = false, showCreateNew = false }) {
+export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick }) {
   const { user, logout } = useAuth()
   const location = useLocation()
   const navigate = useNavigate()
@@ -44,7 +44,7 @@ export default function Header({ showSearch = false, showCreateNew = false }) {
           <button className="header__icon-btn" id="notifications-btn" title="Notifications">
             <span className="material-symbols-outlined">notifications</span>
           </button>
-          <button className="header__icon-btn" id="settings-btn" title="Settings">
+          <button className="header__icon-btn" id="settings-btn" title="Settings" onClick={onSettingsClick}>
             <span className="material-symbols-outlined">settings</span>
           </button>
         </div>

@@ -22,3 +22,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.local
+.vs/

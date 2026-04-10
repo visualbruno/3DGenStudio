@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
+import SettingsModal from '../components/SettingsModal'
 import './ProjectsPage.css'
 
 const PRESETS = [
@@ -22,6 +23,7 @@ export default function ProjectsPage() {
   const { projects, createProject, deleteProject } = useProjects()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -44,7 +46,9 @@ export default function ProjectsPage() {
 
   return (
     <div className="projects-layout">
-      <Header showSearch showCreateNew />
+      <Header showSearch showCreateNew onSettingsClick={() => setShowSettings(true)} />
+
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       <main className="projects-page">
         {/* Hero / Create Modal */}

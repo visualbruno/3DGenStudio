@@ -130,7 +130,7 @@ export default function KanbanPage() {
 
   return (
     <div className="kanban-layout">
-      <Header showSearch showCreateNew />
+      <Header showSearch showCreateNew onSettingsClick={() => setShowSettings(true)} />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
