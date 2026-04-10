@@ -27,7 +27,7 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
           >
             Projects
           </Link>
-          <a href="#" className="header__nav-link">Assets</a>
+          <Link to="/assets" className={`header__nav-link ${isActive('/assets') ? 'header__nav-link--active' : ''}`}>Assets</Link>
           <a href="#" className="header__nav-link">Library</a>
         </nav>
       </div>

@@ -25,7 +25,7 @@ const IMAGE_API_LIST = [
 
 export default function KanbanPage() {
   const { projectId } = useParams()
-  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, createTask, generateImage } = useProjects()
+  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, attachExistingAsset, deleteAsset, getLibraryAssets, createTask, generateImage } = useProjects()
   const { settings } = useSettings()
   
   const [project, setProject] = useState(null)
@@ -47,6 +47,8 @@ export default function KanbanPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [imageDraft, setImageDraft] = useState(null) // null | { mode: 'select'|'local'|'comfy'|'api' }
   const [pendingImageGeneration, setPendingImageGeneration] = useState(null)
+  const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [] })
+  const [libraryLoading, setLibraryLoading] = useState(false)
   const fileInputRef = useRef(null)
 
   // Fetch all data for this project
@@ -93,6 +95,58 @@ export default function KanbanPage() {
     }
   };
 
+  const refreshProjectAssets = async () => {
+    const assetsData = await getProjectAssets(projectId)
+    setAssets(assetsData)
+  }
+
+  const openAssetLibrary = async () => {
+    try {
+      setLibraryLoading(true)
+      const library = await getLibraryAssets()
+      setLibraryAssets(library)
+      setImageDraft({ mode: 'assets' })
+    } catch (err) {
+      console.error('Failed to load asset library:', err)
+      alert(err.message || 'Failed to load assets library')
+    } finally {
+      setLibraryLoading(false)
+    }
+  }
+
+  const handleAttachLibraryImage = async (libraryImage) => {
+    try {
+      setLoading(true)
+      await attachExistingAsset(projectId, {
+        filename: libraryImage.filename,
+        type: 'image',
+        name: libraryImage.name,
+        metadata: {
+          resolution: 'Unknown',
+          format: libraryImage.extension,
+          source: 'ASSET LIB'
+        }
+      })
+      await refreshProjectAssets()
+      setImageDraft(null)
+    } catch (err) {
+      console.error('Failed to attach image from assets:', err)
+      alert(err.message || 'Failed to attach image from assets')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleRemoveImageCard = async (assetId) => {
+    try {
+      await deleteAsset(assetId)
+      await refreshProjectAssets()
+    } catch (err) {
+      console.error('Failed to remove image card:', err)
+      alert(err.message || 'Failed to remove image card')
+    }
+  }
+
   const handleGenerateImage = async (draft) => {
     if (!draft?.prompt?.trim()) return
 
@@ -112,8 +166,7 @@ export default function KanbanPage() {
         selectedApi: draft.selectedApi,
         prompt: draft.prompt
       })
-      const assetsData = await getProjectAssets(projectId)
-      setAssets(assetsData)
+      await refreshProjectAssets()
       setImageDraft(null)
     } catch (err) {
       console.error('Image generation failed:', err)
@@ -226,10 +279,20 @@ export default function KanbanPage() {
               <div className="kanban-col__content">
                 {images.map(img => (
                   <div key={img.id} className="image-card" id={`image-card-${img.id}`}>
+                    <button
+                      className="image-card__delete"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleRemoveImageCard(img.id)
+                      }}
+                      title="Remove card"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+                    </button>
                     <div className="image-card__thumb">
                       {img.filename ? (
                         <img 
-                          src={`http://localhost:3001/assets/${img.filename}`} 
+                          src={`http://localhost:3001/assets/${encodeURI(img.filename)}`} 
                           alt={img.name}
                           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
@@ -267,6 +330,10 @@ export default function KanbanPage() {
                           <span className="material-symbols-outlined">computer</span>
                           Local Computer
                         </button>
+                        <button className="option-btn" onClick={openAssetLibrary}>
+                          <span className="material-symbols-outlined">folder_open</span>
+                          From Assets
+                        </button>
                         <button className="option-btn" onClick={() => setImageDraft({ mode: 'comfy', workflow: 'default_v1.json' })}>
                           <span className="material-symbols-outlined">account_tree</span>
                           ComfyUI Workflow
@@ -276,6 +343,41 @@ export default function KanbanPage() {
                           Remote API
                         </button>
                         <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft(null)} style={{ marginTop: '0.5rem', justifyContent: 'center' }}>CANCEL</button>
+                      </div>
+                    )}
+
+                    {imageDraft.mode === 'assets' && (
+                      <div className="image-card__options">
+                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>FROM ASSETS</span>
+                        {libraryLoading ? (
+                          <div className="image-card__asset-picker-empty">
+                            <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                            <span>Loading images...</span>
+                          </div>
+                        ) : libraryAssets.images.length > 0 ? (
+                          <div className="image-card__asset-picker">
+                            {libraryAssets.images.map(asset => (
+                              <button
+                                key={asset.id}
+                                className="image-card__asset-option"
+                                onClick={() => handleAttachLibraryImage(asset)}
+                              >
+                                <img
+                                  src={asset.url}
+                                  alt={asset.name}
+                                  className="image-card__asset-thumb"
+                                />
+                                <span className="image-card__asset-name">{asset.name}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="image-card__asset-picker-empty">
+                            <span className="material-symbols-outlined">perm_media</span>
+                            <span>No images available in `assets/images`.</span>
+                          </div>
+                        )}
+                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
                       </div>
                     )}
 

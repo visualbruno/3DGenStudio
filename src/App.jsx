@@ -6,6 +6,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import ProjectsPage from './pages/ProjectsPage'
 import KanbanPage from './pages/KanbanPage'
+import AssetsPage from './pages/AssetsPage'
 
 function AppRoutes() {
   const { isAuthenticated } = useAuth()
@@ -29,6 +30,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <ProjectsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/assets"
+        element={
+          <ProtectedRoute>
+            <AssetsPage />
           </ProtectedRoute>
         }
       />

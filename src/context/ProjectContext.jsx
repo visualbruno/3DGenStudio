@@ -83,6 +83,41 @@ export function ProjectProvider({ children }) {
     return await res.json();
   }
 
+  const attachExistingAsset = async (projectId, assetData) => {
+    const res = await fetch(`${API_BASE}/assets/link`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...assetData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to attach asset')
+    }
+
+    return data
+  }
+
+  const deleteAsset = async (assetId) => {
+    const res = await fetch(`${API_BASE}/assets/${assetId}`, { method: 'DELETE' })
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to remove asset card')
+    }
+  }
+
+  const getLibraryAssets = async () => {
+    const res = await fetch(`${API_BASE}/assets/library`)
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to load asset library')
+    }
+
+    return await res.json()
+  }
+
   const generateImage = async (projectId, generationData) => {
     const res = await fetch(`${API_BASE}/images/generate`, {
       method: 'POST',
@@ -108,7 +143,11 @@ export function ProjectProvider({ children }) {
       deleteProject,
       getProjectAssets,
       getProjectTasks,
+      createTask,
       uploadAsset,
+      attachExistingAsset,
+      deleteAsset,
+      getLibraryAssets,
       generateImage,
       refreshProjects: fetchProjects
     }}>

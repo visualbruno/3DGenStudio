@@ -16,6 +16,10 @@ const PORT = 3001;
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const ASSETS_DIR = path.join(DATA_DIR, 'assets');
+const IMAGE_ASSETS_DIR = path.join(ASSETS_DIR, 'images');
+const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
+const MESH_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.fbx', '.stl', '.ply']);
 
 console.log('DEBUG: DATA_DIR is', DATA_DIR);
 console.log('DEBUG: DB_FILE is', DB_FILE);
@@ -27,7 +31,12 @@ app.use('/assets', express.static(ASSETS_DIR));
 
 // Multer Config for Asset Uploads
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, ASSETS_DIR),
+  destination: (req, file, cb) => {
+    const destinationDir = getAssetDirectory(req.body.type || inferAssetTypeFromFilename(file.originalname));
+    fs.mkdir(destinationDir, { recursive: true })
+      .then(() => cb(null, destinationDir))
+      .catch(err => cb(err));
+  },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
@@ -156,6 +165,101 @@ function createGeneratedImageName(prompt, extension) {
   return `${baseName || 'generated_image'}.${extension}`;
 }
 
+function getAssetSubdirectory(type = 'image') {
+  return type === 'mesh' ? 'meshes' : 'images';
+}
+
+function getAssetDirectory(type = 'image') {
+  return type === 'mesh' ? MESH_ASSETS_DIR : IMAGE_ASSETS_DIR;
+}
+
+function normalizeAssetFilename(type, filename) {
+  if (!filename) return filename;
+
+  const normalizedFilename = filename.replace(/\\/g, '/');
+  if (normalizedFilename.startsWith('images/') || normalizedFilename.startsWith('meshes/')) {
+    return normalizedFilename;
+  }
+
+  return `${getAssetSubdirectory(type)}/${path.basename(normalizedFilename)}`;
+}
+
+function inferAssetTypeFromFilename(filename = '') {
+  const extension = path.extname(filename).toLowerCase();
+
+  if (MESH_EXTENSIONS.has(extension)) return 'mesh';
+  if (IMAGE_EXTENSIONS.has(extension)) return 'image';
+
+  return 'image';
+}
+
+async function listLibraryAssetsByType(type) {
+  const subdirectory = getAssetSubdirectory(type);
+  const assetDirectory = getAssetDirectory(type);
+  const entries = await fs.readdir(assetDirectory, { withFileTypes: true });
+
+  return entries
+    .filter(entry => entry.isFile())
+    .sort((left, right) => right.name.localeCompare(left.name))
+    .map(entry => {
+      const filename = `${subdirectory}/${entry.name}`;
+      return {
+        id: `${type}:${entry.name}`,
+        name: entry.name,
+        filename,
+        type,
+        extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
+        url: `http://localhost:${PORT}/assets/${encodeURI(filename)}`
+      };
+    });
+}
+
+async function migrateLooseAssetsIntoSubfolders() {
+  const entries = await fs.readdir(ASSETS_DIR, { withFileTypes: true });
+  let changed = false;
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+
+    const sourcePath = path.join(ASSETS_DIR, entry.name);
+    const type = inferAssetTypeFromFilename(entry.name);
+    const targetPath = path.join(getAssetDirectory(type), entry.name);
+
+    if (!existsSync(targetPath)) {
+      await fs.rename(sourcePath, targetPath);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+async function migrateAssetStorage(db) {
+  let changed = await migrateLooseAssetsIntoSubfolders();
+
+  for (const asset of db.assets || []) {
+    if (!asset.filename) continue;
+
+    const assetType = asset.type || inferAssetTypeFromFilename(asset.filename);
+    const normalizedFilename = asset.filename.replace(/\\/g, '/');
+    const targetFilename = normalizeAssetFilename(assetType, normalizedFilename);
+
+    if (normalizedFilename !== targetFilename) {
+      const sourcePath = path.join(ASSETS_DIR, normalizedFilename);
+      const targetPath = path.join(ASSETS_DIR, targetFilename);
+
+      if (existsSync(sourcePath) && !existsSync(targetPath)) {
+        await fs.rename(sourcePath, targetPath);
+      }
+
+      asset.filename = targetFilename;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 /**
  * Robust DB Sync / Initialization
  * This ensures the data/ folder and db.json exist before any read/write.
@@ -165,6 +269,8 @@ async function ensureDb() {
     // 1. Ensure Directories
     if (!existsSync(DATA_DIR)) await fs.mkdir(DATA_DIR, { recursive: true });
     if (!existsSync(ASSETS_DIR)) await fs.mkdir(ASSETS_DIR, { recursive: true });
+    if (!existsSync(IMAGE_ASSETS_DIR)) await fs.mkdir(IMAGE_ASSETS_DIR, { recursive: true });
+    if (!existsSync(MESH_ASSETS_DIR)) await fs.mkdir(MESH_ASSETS_DIR, { recursive: true });
 
     // 2. Ensure DB File
     if (!existsSync(DB_FILE)) {
@@ -182,8 +288,9 @@ async function readDb() {
     const data = await fs.readFile(DB_FILE, 'utf-8');
     const db = JSON.parse(data);
     const mergedDb = mergeDeep(INITIAL_SCHEMA, db);
+    const migratedAssets = await migrateAssetStorage(mergedDb);
 
-    if (JSON.stringify(mergedDb) !== JSON.stringify(db)) {
+    if (migratedAssets || JSON.stringify(mergedDb) !== JSON.stringify(db)) {
       await fs.writeFile(DB_FILE, JSON.stringify(mergedDb, null, 2), 'utf-8');
     }
 
@@ -264,16 +371,31 @@ app.get('/api/assets', async (req, res) => {
   res.json(projectId ? list.filter(a => a.projectId == projectId) : list);
 });
 
+app.get('/api/assets/library', async (req, res) => {
+  try {
+    await ensureDb();
+    const [images, meshes] = await Promise.all([
+      listLibraryAssetsByType('image'),
+      listLibraryAssetsByType('mesh')
+    ]);
+    res.json({ images, meshes });
+  } catch (err) {
+    console.error('Failed to list asset library:', err);
+    res.status(500).json({ error: 'Failed to list asset library' });
+  }
+});
+
 app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
     const db = await readDb();
+    const assetType = req.body.type || inferAssetTypeFromFilename(req.file.originalname);
     const newAsset = {
       id: Date.now(),
       projectId: parseInt(req.body.projectId),
-      type: req.body.type || 'image',
+      type: assetType,
       name: req.body.name || req.file.originalname,
-      filename: req.file.filename,
+      filename: normalizeAssetFilename(assetType, req.file.filename),
       metadata: req.body.metadata ? JSON.parse(req.body.metadata) : {},
       createdAt: Date.now()
     };
@@ -283,6 +405,69 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
     res.status(201).json(newAsset);
   } catch {
     res.status(500).json({ error: 'Upload recording failed' });
+  }
+});
+
+app.post('/api/assets/link', async (req, res) => {
+  try {
+    const { projectId, filename, type = 'image', name, metadata } = req.body;
+
+    if (!projectId || !filename) {
+      return res.status(400).json({ error: 'projectId and filename are required' });
+    }
+
+    const assetType = type || inferAssetTypeFromFilename(filename);
+    const normalizedFilename = normalizeAssetFilename(assetType, filename);
+    const assetPath = path.join(ASSETS_DIR, normalizedFilename);
+
+    if (!existsSync(assetPath)) {
+      return res.status(404).json({ error: 'Selected asset file was not found' });
+    }
+
+    const db = await readDb();
+    const newAsset = {
+      id: Date.now(),
+      projectId: parseInt(projectId),
+      type: assetType,
+      name: name || path.basename(normalizedFilename),
+      filename: normalizedFilename,
+      metadata: {
+        resolution: 'Unknown',
+        format: path.extname(normalizedFilename).replace('.', '').toUpperCase() || assetType.toUpperCase(),
+        source: 'ASSET LIB',
+        ...(metadata || {})
+      },
+      createdAt: Date.now()
+    };
+
+    db.assets = db.assets || [];
+    db.assets.push(newAsset);
+    await writeDb(db);
+
+    res.status(201).json(newAsset);
+  } catch (err) {
+    console.error('Failed to link existing asset:', err);
+    res.status(500).json({ error: 'Failed to attach asset from library' });
+  }
+});
+
+app.delete('/api/assets/:id', async (req, res) => {
+  try {
+    const db = await readDb();
+    const assetId = Number(req.params.id);
+    const assetExists = (db.assets || []).some(asset => asset.id === assetId);
+
+    if (!assetExists) {
+      return res.status(404).json({ error: 'Asset card not found' });
+    }
+
+    db.assets = (db.assets || []).filter(asset => asset.id !== assetId);
+    await writeDb(db);
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to remove asset card:', err);
+    res.status(500).json({ error: 'Failed to remove asset card' });
   }
 });
 
@@ -340,7 +525,8 @@ app.post('/api/images/generate', async (req, res) => {
 
     const extension = getExtensionFromMimeType(inlineData.mimeType);
     const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-    const filePath = path.join(ASSETS_DIR, filename);
+    const relativeFilename = normalizeAssetFilename('image', filename);
+    const filePath = path.join(ASSETS_DIR, relativeFilename);
 
     await fs.writeFile(filePath, Buffer.from(inlineData.data, 'base64'));
 
@@ -349,7 +535,7 @@ app.post('/api/images/generate', async (req, res) => {
       projectId: parseInt(projectId),
       type: 'image',
       name: createGeneratedImageName(prompt, extension),
-      filename,
+      filename: relativeFilename,
       metadata: {
         resolution: 'Unknown',
         format: extension.toUpperCase(),
