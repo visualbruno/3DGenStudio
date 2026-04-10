@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
+import { useSettings } from '../context/SettingsContext'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import Viewer from '../components/Viewer'
+import SettingsModal from '../components/SettingsModal'
 import './KanbanPage.css'
 
 const SIDEBAR_ITEMS = [
@@ -13,9 +15,17 @@ const SIDEBAR_ITEMS = [
   { id: 'texturing', icon: 'texture', label: 'Texturing' },
 ]
 
+const IMAGE_API_LIST = [
+  { id: 'nanobana', name: 'Nanobana' },
+  { id: 'nanobana_pro', name: 'Nanobana Pro' },
+  { id: 'nanobana_2', name: 'Nanobana 2' },
+  { id: 'openai', name: 'OpenAI (DALL-E 3)' },
+]
+
 export default function KanbanPage() {
   const { projectId } = useParams()
   const { getProject, getProjectAssets, getProjectTasks, uploadAsset, createTask } = useProjects()
+  const { settings } = useSettings()
   
   const [project, setProject] = useState(null)
   const [assets, setAssets] = useState([])
@@ -31,6 +41,11 @@ export default function KanbanPage() {
   const [texEngine, setTexEngine] = useState('stable')
   const [pbrEnabled, setPbrEnabled] = useState(true)
   const [aoEnabled, setAoEnabled] = useState(false)
+
+  // NEW: Settings and Image Creation State
+  const [showSettings, setShowSettings] = useState(false)
+  const [imageDraft, setImageDraft] = useState(null) // null | { mode: 'select'|'local'|'comfy'|'api' }
+  const fileInputRef = useRef(null)
 
   // Fetch all data for this project
   useEffect(() => {
@@ -54,7 +69,7 @@ export default function KanbanPage() {
     loadData()
   }, [projectId, getProject, getProjectAssets, getProjectTasks])
 
-  const handleAddImage = async (e) => {
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -68,11 +83,19 @@ export default function KanbanPage() {
       // Refresh assets
       const assetsData = await getProjectAssets(projectId);
       setAssets(assetsData);
+      setImageDraft(null); // Close draft
     } catch (err) {
       console.error('Upload failed:', err);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGenerateImage = async (draft) => {
+    // Placeholder for actual generation logic
+    console.log('Generating image with:', draft);
+    alert(`Generating image using ${draft.selectedApi || draft.workflow}...`);
+    setImageDraft(null);
   };
 
   const handleGenerateMesh = async () => {
@@ -91,7 +114,7 @@ export default function KanbanPage() {
 
   const images = assets.filter(a => a.type === 'image')
 
-  if (loading) {
+  if (loading && !project) {
     return (
       <div className="kanban-layout" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p className="font-headline">Synchronizing Workspace...</p>
@@ -99,9 +122,17 @@ export default function KanbanPage() {
     )
   }
 
+  // Combined API list: Static + Custom from settings
+  const combinedApis = [
+    ...IMAGE_API_LIST,
+    ...(settings?.apis?.custom || []).map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ]
+
   return (
     <div className="kanban-layout">
       <Header showSearch showCreateNew />
+
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       <div className="kanban-body">
         {/* ── Sidebar ── */}
@@ -133,17 +164,17 @@ export default function KanbanPage() {
 
             <div className="kanban-sidebar__divider" />
 
-            <button className="kanban-sidebar__new-asset" id="new-asset-btn">
-              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>add</span>
-              <span className="font-label">NEW ASSET</span>
+            <button className="kanban-sidebar__new-asset" id="new-asset-btn" onClick={() => setShowSettings(true)}>
+              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>settings</span>
+              <span className="font-label">PROJECT SETTINGS</span>
             </button>
           </nav>
 
           <div className="kanban-sidebar__bottom">
-            <a href="#" className="kanban-sidebar__link">
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>menu_book</span>
-              Docs
-            </a>
+            <button className="kanban-sidebar__link" onClick={() => setShowSettings(true)} style={{ background: 'transparent', border: 'none', width: '100%', cursor: 'pointer', textAlign: 'left' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>account_circle</span>
+              Profile
+            </button>
             <a href="#" className="kanban-sidebar__link">
               <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>help</span>
               Support
@@ -198,17 +229,101 @@ export default function KanbanPage() {
                   </div>
                 ))}
 
-                <label className="kanban-col__add-btn" id="add-image-label">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    style={{ display: 'none' }}
-                    onChange={handleAddImage}
-                    id="add-image-input"
-                  />
-                  <span className="material-symbols-outlined">upload_file</span>
-                  <span className="font-label">ADD NEW IMAGE</span>
-                </label>
+                {/* DRAFT IMAGE CARD */}
+                {imageDraft && (
+                  <div className="image-card image-card--draft">
+                    {imageDraft.mode === 'select' && (
+                      <div className="image-card__options">
+                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>IMAGE SOURCE</span>
+                        <button className="option-btn" onClick={() => fileInputRef.current.click()}>
+                          <span className="material-symbols-outlined">computer</span>
+                          Local Computer
+                        </button>
+                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'comfy', workflow: 'default_v1.json' })}>
+                          <span className="material-symbols-outlined">account_tree</span>
+                          ComfyUI Workflow
+                        </button>
+                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '' })}>
+                          <span className="material-symbols-outlined">api</span>
+                          Remote API
+                        </button>
+                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft(null)} style={{ marginTop: '0.5rem', justifyContent: 'center' }}>CANCEL</button>
+                      </div>
+                    )}
+
+                    {imageDraft.mode === 'comfy' && (
+                      <div className="image-card__options">
+                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI SELECTION</span>
+                        <select 
+                          className="params-card__select"
+                          value={imageDraft.workflow}
+                          onChange={e => setImageDraft({...imageDraft, workflow: e.target.value})}
+                        >
+                          <option>default_v1.json</option>
+                          <option>portrait_studio.json</option>
+                          <option>concept_art_v2.json</option>
+                        </select>
+                        <div className="gen-section">
+                          <textarea 
+                            className="gen-prompt-input" 
+                            placeholder="Positive prompt..."
+                            value={imageDraft.prompt || ''}
+                            onChange={e => setImageDraft({...imageDraft, prompt: e.target.value})}
+                          />
+                          <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
+                            <span className="material-symbols-outlined">bolt</span>
+                            START WORKFLOW
+                          </button>
+                        </div>
+                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
+                      </div>
+                    )}
+
+                    {imageDraft.mode === 'api' && (
+                      <div className="image-card__options">
+                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>REMOTE API</span>
+                        <select 
+                          className="api-select"
+                          value={imageDraft.selectedApi}
+                          onChange={e => setImageDraft({...imageDraft, selectedApi: e.target.value})}
+                        >
+                          {combinedApis.map(api => (
+                            <option key={api.id} value={api.id}>{api.name}</option>
+                          ))}
+                        </select>
+                        
+                        <div className="gen-section">
+                          <textarea 
+                            className="gen-prompt-input" 
+                            placeholder="What should we generate?"
+                            value={imageDraft.prompt}
+                            onChange={e => setImageDraft({...imageDraft, prompt: e.target.value})}
+                          />
+                          <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
+                            <span className="material-symbols-outlined">auto_awesome</span>
+                            GENERATE
+                          </button>
+                        </div>
+                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleFileUpload}
+                  ref={fileInputRef}
+                />
+
+                {!imageDraft && (
+                  <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => setImageDraft({ mode: 'select' })}>
+                    <span className="material-symbols-outlined">add_photo_alternate</span>
+                    <span className="font-label">ADD NEW IMAGE</span>
+                  </button>
+                )}
               </div>
             </div>
 

@@ -1,0 +1,212 @@
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(13, 14, 16, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 2000; /* Increased z-index */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.3s ease;
+}
+
+.settings-modal {
+  width: 700px;
+  max-width: 90vw;
+  max-height: 85vh;
+  background: var(--surface-container-low);
+  border-radius: var(--radius-2xl);
+  border: 1px solid rgba(143, 245, 255, 0.08);
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalScaleUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes modalScaleUp {
+  from { opacity: 0; transform: scale(0.9) translateY(20px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.settings-header {
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid rgba(71, 72, 74, 0.15);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.settings-title-group {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.settings-close {
+  background: transparent;
+  border: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.settings-close:hover {
+  color: var(--primary);
+}
+
+.settings-body {
+  padding: 2rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.settings-section-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--primary);
+  text-transform: uppercase;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.settings-api-card {
+  background: var(--surface-container-high);
+  padding: 1.25rem;
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(71, 72, 74, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-api-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.settings-api-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-container-lowest);
+  border-radius: var(--radius-md);
+  color: var(--on-surface-variant);
+}
+
+.settings-api-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.settings-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.settings-label {
+  font-size: 0.65rem;
+  color: var(--on-surface-variant);
+  font-weight: 600;
+}
+
+.settings-input {
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-md);
+  padding: 0.625rem 0.875rem;
+  color: var(--on-surface);
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.settings-input:focus {
+  border-color: var(--primary);
+}
+
+.custom-apis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.custom-api-item {
+  background: var(--surface-container-highest);
+  padding: 1rem;
+  border-radius: var(--radius-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.custom-api-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.custom-api-url {
+  font-size: 0.7rem;
+  color: var(--on-surface-variant);
+  font-family: monospace;
+}
+
+.add-custom-api-form {
+  background: rgba(143, 245, 255, 0.03);
+  padding: 1.5rem;
+  border-radius: var(--radius-xl);
+  border: 1px dashed rgba(143, 245, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-footer {
+  padding: 1.5rem 2rem;
+  border-top: 1px solid rgba(71, 72, 74, 0.15);
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+.btn-save {
+  background: var(--primary);
+  color: var(--on-primary);
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.btn-save:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+}
+

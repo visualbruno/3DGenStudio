@@ -45,7 +45,18 @@ const INITIAL_SCHEMA = {
     }
   ],
   assets: [],
-  tasks: []
+  tasks: [],
+  settings: {
+    profile: {
+      name: 'User',
+      avatar: null
+    },
+    apis: {
+      google: { apiKey: '' },
+      openai: { apiKey: '' },
+      custom: []
+    }
+  }
 };
 
 /**
@@ -72,7 +83,9 @@ async function readDb() {
   await ensureDb();
   try {
     const data = await fs.readFile(DB_FILE, 'utf-8');
-    return JSON.parse(data);
+    const db = JSON.parse(data);
+    // Merge with initial schema to ensure all keys exist
+    return { ...INITIAL_SCHEMA, ...db };
   } catch (err) {
     console.error('⚠️ Failed to read database, falling back to initial schema:', err);
     return INITIAL_SCHEMA;
@@ -195,6 +208,26 @@ app.post('/api/tasks', async (req, res) => {
     res.status(201).json(newTask);
   } catch (err) {
     res.status(500).json({ error: 'Task creation failed' });
+  }
+});
+
+app.get('/api/settings', async (req, res) => {
+  try {
+    const db = await readDb();
+    res.json(db.settings || INITIAL_SCHEMA.settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to read settings' });
+  }
+});
+
+app.post('/api/settings', async (req, res) => {
+  try {
+    const db = await readDb();
+    db.settings = { ...db.settings, ...req.body };
+    await writeDb(db);
+    res.json(db.settings);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update settings' });
   }
 });
 

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ProjectProvider } from './context/ProjectContext'
+import { SettingsProvider } from './context/SettingsContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import LoginPage from './pages/LoginPage'
 import ProjectsPage from './pages/ProjectsPage'
@@ -47,9 +48,11 @@ function AppRoutes() {
 export default function App() {
   return (
     <AuthProvider>
-      <ProjectProvider>
-        <AppRoutes />
-      </ProjectProvider>
+      <SettingsProvider>
+        <ProjectProvider>
+          <AppRoutes />
+        </ProjectProvider>
+      </SettingsProvider>
     </AuthProvider>
   )
 }
