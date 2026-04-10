@@ -145,6 +145,27 @@ function replacePromptPlaceholder(value, prompt) {
   return value;
 }
 
+function replaceTemplatePlaceholders(value, replacements) {
+  if (Array.isArray(value)) {
+    return value.map(item => replaceTemplatePlaceholders(item, replacements));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, nestedValue]) => [key, replaceTemplatePlaceholders(nestedValue, replacements)])
+    );
+  }
+
+  if (typeof value === 'string') {
+    return Object.entries(replacements).reduce(
+      (result, [placeholder, replacement]) => result.replaceAll(`{${placeholder}}`, replacement),
+      value
+    );
+  }
+
+  return value;
+}
+
 function getExtensionFromMimeType(mimeType = 'image/png') {
   const mimeMap = {
     'image/png': 'png',
@@ -480,47 +501,111 @@ app.post('/api/images/generate', async (req, res) => {
     }
 
     const db = await readDb();
+    const trimmedPrompt = prompt.trim();
     const googleSettings = db.settings?.apis?.google;
-    const generationSettings = googleSettings?.imageGeneration;
-    const modelConfig = generationSettings?.models?.[selectedApi];
+    const googleGenerationSettings = googleSettings?.imageGeneration;
+    const openAiSettings = db.settings?.apis?.openai;
+    const openAiGenerationSettings = openAiSettings?.imageGeneration;
 
-    if (!modelConfig?.url) {
-      return res.status(400).json({ error: `Unsupported image API: ${selectedApi}` });
-    }
+    let response;
+    let responseBody;
+    let inlineData;
+    let providerName;
+    let modelVersion;
+    let responseId;
+    let outputFormat;
 
-    if (!googleSettings?.apiKey) {
-      return res.status(400).json({ error: 'Google API key is not configured in settings' });
-    }
+    if (selectedApi === 'openai') {
+      if (!openAiSettings?.apiKey) {
+        return res.status(400).json({ error: 'OpenAI API key is not configured in settings' });
+      }
 
-    const payloadTemplate = generationSettings?.payloadTemplate;
-    const requestPayload = replacePromptPlaceholder(payloadTemplate, prompt.trim());
-    const headerName = generationSettings?.headerName || 'x-goog-api-key';
-
-    const response = await fetch(modelConfig.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [headerName]: googleSettings.apiKey
-      },
-      body: JSON.stringify(requestPayload)
-    });
-
-    const responseBody = await response.json();
-
-    if (!response.ok) {
-      console.error('Google image generation failed:', responseBody);
-      return res.status(response.status).json({
-        error: responseBody?.error?.message || 'Image generation request failed'
+      const requestHeaders = replaceTemplatePlaceholders(openAiGenerationSettings?.headers || {}, {
+        apiKey: openAiSettings.apiKey,
+        prompt: trimmedPrompt
       });
-    }
+      const requestPayload = replaceTemplatePlaceholders(openAiGenerationSettings?.payloadTemplate, {
+        apiKey: openAiSettings.apiKey,
+        prompt: trimmedPrompt
+      });
 
-    const inlineData = responseBody?.candidates
-      ?.flatMap(candidate => candidate?.content?.parts || [])
-      ?.find(part => part?.inlineData?.data)
-      ?.inlineData;
+      response = await fetch(openAiGenerationSettings?.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...requestHeaders
+        },
+        body: JSON.stringify(requestPayload)
+      });
 
-    if (!inlineData?.data) {
-      return res.status(502).json({ error: 'Image generation succeeded but no image data was returned' });
+      responseBody = await response.json();
+
+      if (!response.ok) {
+        console.error('OpenAI image generation failed:', responseBody);
+        return res.status(response.status).json({
+          error: responseBody?.error?.message || 'Image generation request failed'
+        });
+      }
+
+      const imageBase64 = responseBody?.data?.[0]?.b64_json;
+      if (!imageBase64) {
+        return res.status(502).json({ error: 'Image generation succeeded but no image data was returned' });
+      }
+
+      inlineData = {
+        mimeType: 'image/png',
+        data: imageBase64
+      };
+      providerName = 'OpenAI';
+      modelVersion = openAiGenerationSettings?.payloadTemplate?.model || 'gpt-image-1.5';
+      responseId = responseBody?.created ? String(responseBody.created) : null;
+      outputFormat = 'PNG';
+    } else {
+      const modelConfig = googleGenerationSettings?.models?.[selectedApi];
+
+      if (!modelConfig?.url) {
+        return res.status(400).json({ error: `Unsupported image API: ${selectedApi}` });
+      }
+
+      if (!googleSettings?.apiKey) {
+        return res.status(400).json({ error: 'Google API key is not configured in settings' });
+      }
+
+      const payloadTemplate = googleGenerationSettings?.payloadTemplate;
+      const requestPayload = replacePromptPlaceholder(payloadTemplate, trimmedPrompt);
+      const headerName = googleGenerationSettings?.headerName || 'x-goog-api-key';
+
+      response = await fetch(modelConfig.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [headerName]: googleSettings.apiKey
+        },
+        body: JSON.stringify(requestPayload)
+      });
+
+      responseBody = await response.json();
+
+      if (!response.ok) {
+        console.error('Google image generation failed:', responseBody);
+        return res.status(response.status).json({
+          error: responseBody?.error?.message || 'Image generation request failed'
+        });
+      }
+
+      inlineData = responseBody?.candidates
+        ?.flatMap(candidate => candidate?.content?.parts || [])
+        ?.find(part => part?.inlineData?.data)
+        ?.inlineData;
+
+      if (!inlineData?.data) {
+        return res.status(502).json({ error: 'Image generation succeeded but no image data was returned' });
+      }
+
+      providerName = modelConfig.name;
+      modelVersion = responseBody?.modelVersion || null;
+      responseId = responseBody?.responseId || null;
+      outputFormat = getExtensionFromMimeType(inlineData.mimeType).toUpperCase();
     }
 
     const extension = getExtensionFromMimeType(inlineData.mimeType);
@@ -534,16 +619,17 @@ app.post('/api/images/generate', async (req, res) => {
       id: Date.now(),
       projectId: parseInt(projectId),
       type: 'image',
-      name: createGeneratedImageName(prompt, extension),
+      name: createGeneratedImageName(trimmedPrompt, extension),
       filename: relativeFilename,
       metadata: {
         resolution: 'Unknown',
-        format: extension.toUpperCase(),
+        format: outputFormat || extension.toUpperCase(),
         source: 'AI GEN',
-        provider: modelConfig.name,
-        modelVersion: responseBody?.modelVersion || null,
+        provider: providerName,
+        modelVersion,
         mimeType: inlineData.mimeType,
-        responseId: responseBody?.responseId || null
+        responseId,
+        usage: responseBody?.usage || responseBody?.usageMetadata || null
       },
       createdAt: Date.now()
     };

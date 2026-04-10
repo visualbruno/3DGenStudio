@@ -36,7 +36,21 @@ export function SettingsProvider({ children }) {
           }
         }
       },
-      openai: { apiKey: '' },
+      openai: {
+        apiKey: '',
+        imageGeneration: {
+          url: 'https://api.openai.com/v1/images/generations',
+          headers: {
+            Authorization: 'Bearer {apiKey}'
+          },
+          payloadTemplate: {
+            model: 'gpt-image-1.5',
+            prompt: '{prompt}',
+            n: 1,
+            size: '1024x1024'
+          }
+        }
+      },
       custom: []
     }
   })
