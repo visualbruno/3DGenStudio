@@ -6,7 +6,39 @@ const API_BASE = 'http://localhost:3001/api'
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({
     profile: { name: 'User', avatar: null },
-    apis: { google: { apiKey: '' }, openai: { apiKey: '' }, custom: [] }
+    apis: {
+      google: {
+        apiKey: '',
+        imageGeneration: {
+          headerName: 'x-goog-api-key',
+          payloadTemplate: {
+            contents: [
+              {
+                parts: [
+                  { text: '{prompt}' }
+                ]
+              }
+            ]
+          },
+          models: {
+            nanobana: {
+              name: 'Nanobanana',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent'
+            },
+            nanobana_pro: {
+              name: 'Nanobanana Pro',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent'
+            },
+            nanobana_2: {
+              name: 'Nanobanana 2',
+              url: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent'
+            }
+          }
+        }
+      },
+      openai: { apiKey: '' },
+      custom: []
+    }
   })
   const [loading, setLoading] = useState(true)
 

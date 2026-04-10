@@ -24,7 +24,7 @@ const IMAGE_API_LIST = [
 
 export default function KanbanPage() {
   const { projectId } = useParams()
-  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, createTask } = useProjects()
+  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, createTask, generateImage } = useProjects()
   const { settings } = useSettings()
   
   const [project, setProject] = useState(null)
@@ -92,11 +92,29 @@ export default function KanbanPage() {
   };
 
   const handleGenerateImage = async (draft) => {
-    // Placeholder for actual generation logic
-    console.log('Generating image with:', draft);
-    alert(`Generating image using ${draft.selectedApi || draft.workflow}...`);
-    setImageDraft(null);
-  };
+    if (!draft?.prompt?.trim()) return
+
+    if (draft.mode !== 'api') {
+      alert('ComfyUI workflow execution is not connected yet.')
+      return
+    }
+
+    try {
+      setLoading(true)
+      await generateImage(projectId, {
+        selectedApi: draft.selectedApi,
+        prompt: draft.prompt
+      })
+      const assetsData = await getProjectAssets(projectId)
+      setAssets(assetsData)
+      setImageDraft(null)
+    } catch (err) {
+      console.error('Image generation failed:', err)
+      alert(err.message || 'Image generation failed')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleGenerateMesh = async () => {
     try {

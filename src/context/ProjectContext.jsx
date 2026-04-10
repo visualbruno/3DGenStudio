@@ -83,6 +83,22 @@ export function ProjectProvider({ children }) {
     return await res.json();
   }
 
+  const generateImage = async (projectId, generationData) => {
+    const res = await fetch(`${API_BASE}/images/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...generationData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to generate image')
+    }
+
+    return data
+  }
+
   return (
     <ProjectContext.Provider value={{ 
       projects, 
@@ -93,6 +109,7 @@ export function ProjectProvider({ children }) {
       getProjectAssets,
       getProjectTasks,
       uploadAsset,
+      generateImage,
       refreshProjects: fetchProjects
     }}>
       {children}
