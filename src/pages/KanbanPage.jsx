@@ -10,6 +10,7 @@ import './KanbanPage.css'
 
 const SIDEBAR_ITEMS = [
   { id: 'images', icon: 'image', label: 'Images' },
+  { id: 'imageedit', icon: 'photo_filter', label: 'Image Edit' },
   { id: 'meshgen', icon: 'deployed_code', label: 'Mesh Gen', filled: true },
   { id: 'meshedit', icon: 'edit_square', label: 'Mesh Edit' },
   { id: 'texturing', icon: 'texture', label: 'Texturing' },
@@ -372,7 +373,49 @@ export default function KanbanPage() {
               </div>
             </div>
 
-            {/* ═══ Column 2: Mesh Generation ═══ */}
+            {/* ═══ Column 2: Image Edit ═══ */}
+            <div className="kanban-col" id="col-imageedit">
+              <div className="kanban-col__header">
+                <div className="kanban-col__title-group">
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>photo_filter</span>
+                  <h2 className="kanban-col__title font-headline">IMAGE EDIT</h2>
+                </div>
+                <span className="kanban-col__badge font-label">READY</span>
+              </div>
+
+              <div className="kanban-col__content">
+                <div className="tool-card tool-card--hoverable-primary" id="tool-upscale">
+                  <div className="tool-card__header">
+                    <div className="tool-card__inline-header">
+                      <div className="tool-card__inline-left">
+                        <span className="material-symbols-outlined" style={{ color: 'var(--primary)' }}>high_quality</span>
+                        <h3 className="tool-card__name">Upscale</h3>
+                      </div>
+                      <span className="tool-card__api-badge">API</span>
+                    </div>
+                  </div>
+                  <p className="tool-card__body-text">Enhance source image resolution before mesh generation.</p>
+                </div>
+
+                <div className="tool-card tool-card--hoverable-primary" id="tool-background-removal">
+                  <div className="tool-card__header">
+                    <span className="material-symbols-outlined">layers_clear</span>
+                    <h3 className="tool-card__name">Background Removal</h3>
+                  </div>
+                  <p className="tool-card__body-text">Prepare clean silhouettes and transparent cutouts for generation workflows.</p>
+                </div>
+
+                <div className="tool-card tool-card--hoverable-primary" id="tool-image-variations">
+                  <div className="tool-card__header">
+                    <span className="material-symbols-outlined">auto_fix_high</span>
+                    <h3 className="tool-card__name">Variations</h3>
+                  </div>
+                  <p className="tool-card__body-text">Create alternate renders, lighting passes, or style iterations from an existing image.</p>
+                </div>
+              </div>
+            </div>
+
+            {/* ═══ Column 3: Mesh Generation ═══ */}
             <div className="kanban-col" id="col-meshgen">
               <div className="kanban-col__header">
                 <div className="kanban-col__title-group">
@@ -471,7 +514,7 @@ export default function KanbanPage() {
               </div>
             </div>
 
-            {/* ═══ Column 3: Mesh Edit ═══ */}
+            {/* ═══ Column 4: Mesh Edit ═══ */}
             <div className="kanban-col" id="col-meshedit">
               <div className="kanban-col__header">
                 <div className="kanban-col__title-group">
@@ -526,7 +569,7 @@ export default function KanbanPage() {
               </div>
             </div>
 
-            {/* ═══ Column 4: Texturing ═══ */}
+            {/* ═══ Column 5: Texturing ═══ */}
             <div className="kanban-col" id="col-texturing">
               <div className="kanban-col__header">
                 <div className="kanban-col__title-group">
