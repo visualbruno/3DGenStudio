@@ -1,54 +1,18 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, useAuth } from './context/AuthContext'
 import { ProjectProvider } from './context/ProjectContext'
 import { SettingsProvider } from './context/SettingsContext'
-import ProtectedRoute from './components/ProtectedRoute'
-import LoginPage from './pages/LoginPage'
 import ProjectsPage from './pages/ProjectsPage'
 import KanbanPage from './pages/KanbanPage'
 import AssetsPage from './pages/AssetsPage'
 
 function AppRoutes() {
-  const { isAuthenticated } = useAuth()
-
   return (
     <Routes>
-      <Route
-        path="/"
-        element={isAuthenticated ? <Navigate to="/projects" replace /> : <LoginPage />}
-      />
-      <Route
-        path="/projects"
-        element={
-          <ProtectedRoute>
-            <ProjectsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/new"
-        element={
-          <ProtectedRoute>
-            <ProjectsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/assets"
-        element={
-          <ProtectedRoute>
-            <AssetsPage />
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/projects/:projectId"
-        element={
-          <ProtectedRoute>
-            <KanbanPage />
-          </ProtectedRoute>
-        }
-      />
+      <Route path="/" element={<Navigate to="/projects" replace />} />
+      <Route path="/projects" element={<ProjectsPage />} />
+      <Route path="/projects/new" element={<ProjectsPage />} />
+      <Route path="/assets" element={<AssetsPage />} />
+      <Route path="/projects/:projectId" element={<KanbanPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
@@ -56,12 +20,10 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <ProjectProvider>
-          <AppRoutes />
-        </ProjectProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <SettingsProvider>
+      <ProjectProvider>
+        <AppRoutes />
+      </ProjectProvider>
+    </SettingsProvider>
   )
 }

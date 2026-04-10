@@ -1,18 +1,10 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useAuth } from '../context/AuthContext'
+import { Link, useLocation } from 'react-router-dom'
 import './Header.css'
 
 export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick }) {
-  const { user, logout } = useAuth()
   const location = useLocation()
-  const navigate = useNavigate()
 
   const isActive = (path) => location.pathname.startsWith(path)
-
-  const handleLogout = () => {
-    logout()
-    navigate('/')
-  }
 
   return (
     <header className="header" id="main-header">
@@ -48,12 +40,6 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
             <span className="material-symbols-outlined">settings</span>
           </button>
         </div>
-
-        <button className="header__avatar" onClick={handleLogout} title="Logout">
-          <span className="header__avatar-letter">
-            {user?.name?.charAt(0)?.toUpperCase() || 'U'}
-          </span>
-        </button>
 
         {showCreateNew && (
           <Link to="/projects/new" className="header__create-btn" id="create-new-btn">

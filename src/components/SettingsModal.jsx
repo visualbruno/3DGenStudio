@@ -47,22 +47,6 @@ export default function SettingsModal({ onClose }) {
         </div>
 
         <div className="settings-body">
-          {/* Profile Section */}
-          <section className="settings-section">
-            <h3 className="settings-section-title font-label">User Profile</h3>
-            <div className="settings-input-group">
-              <label className="settings-label">Display Name</label>
-              <input 
-                className="settings-input" 
-                value={localSettings?.profile?.name || ''}
-                onChange={e => setLocalSettings(prev => ({
-                  ...prev, 
-                  profile: { ...prev?.profile, name: e.target.value }
-                }))}
-              />
-            </div>
-          </section>
-
           {/* API Keys Section */}
           <section className="settings-section">
             <h3 className="settings-section-title font-label">Integrated APIs</h3>
