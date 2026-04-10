@@ -45,6 +45,7 @@ export default function KanbanPage() {
   // NEW: Settings and Image Creation State
   const [showSettings, setShowSettings] = useState(false)
   const [imageDraft, setImageDraft] = useState(null) // null | { mode: 'select'|'local'|'comfy'|'api' }
+  const [pendingImageGeneration, setPendingImageGeneration] = useState(null)
   const fileInputRef = useRef(null)
 
   // Fetch all data for this project
@@ -100,6 +101,11 @@ export default function KanbanPage() {
     }
 
     try {
+      setPendingImageGeneration({
+        selectedApi: draft.selectedApi,
+        prompt: draft.prompt.trim()
+      })
+      setImageDraft(null)
       setLoading(true)
       await generateImage(projectId, {
         selectedApi: draft.selectedApi,
@@ -110,8 +116,10 @@ export default function KanbanPage() {
       setImageDraft(null)
     } catch (err) {
       console.error('Image generation failed:', err)
+      setImageDraft(draft)
       alert(err.message || 'Image generation failed')
     } finally {
+      setPendingImageGeneration(null)
       setLoading(false)
     }
   }
@@ -145,6 +153,7 @@ export default function KanbanPage() {
     ...IMAGE_API_LIST,
     ...(settings?.apis?.custom || []).map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ]
+  const pendingApiName = combinedApis.find(api => api.id === pendingImageGeneration?.selectedApi)?.name || 'Remote API'
 
   return (
     <div className="kanban-layout">
@@ -328,6 +337,24 @@ export default function KanbanPage() {
                   </div>
                 )}
 
+                {pendingImageGeneration && (
+                  <div className="image-card image-card--loading" id="image-card-loading">
+                    <div className="image-card__thumb image-card__thumb--loading">
+                      <div className="image-card__loading-state">
+                        <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                        <span className="font-label image-card__loading-label">Generating preview...</span>
+                      </div>
+                    </div>
+                    <div className="image-card__info">
+                      <div className="image-card__row">
+                        <h3 className="image-card__name">{pendingImageGeneration.prompt}</h3>
+                        <span className="image-card__source image-card__source--loading">PENDING</span>
+                      </div>
+                      <p className="image-card__meta font-label">{pendingApiName} • Waiting for image response</p>
+                    </div>
+                  </div>
+                )}
+
                 <input
                   type="file"
                   accept="image/*"
@@ -336,7 +363,7 @@ export default function KanbanPage() {
                   ref={fileInputRef}
                 />
 
-                {!imageDraft && (
+                {!imageDraft && !pendingImageGeneration && (
                   <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => setImageDraft({ mode: 'select' })}>
                     <span className="material-symbols-outlined">add_photo_alternate</span>
                     <span className="font-label">ADD NEW IMAGE</span>

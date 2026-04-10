@@ -311,6 +311,55 @@
   min-height: 200px;
 }
 
+.image-card--loading {
+  border: 1px solid rgba(143, 245, 255, 0.2);
+  background: linear-gradient(180deg, rgba(143, 245, 255, 0.05) 0%, rgba(36, 38, 41, 0.9) 100%);
+  cursor: progress;
+}
+
+.image-card--loading:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: rgba(143, 245, 255, 0.3);
+}
+
+.image-card__thumb--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(143, 245, 255, 0.12), transparent 45%),
+    linear-gradient(180deg, rgba(143, 245, 255, 0.04), rgba(13, 14, 16, 0.4));
+}
+
+.image-card__loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--primary);
+}
+
+.image-card__loading-spinner {
+  font-size: 2rem;
+  animation: image-card-spin 1s linear infinite;
+}
+
+.image-card__loading-label {
+  letter-spacing: 0.08em;
+  color: var(--on-surface);
+}
+
+.image-card__source--loading {
+  color: var(--primary);
+  background: rgba(143, 245, 255, 0.12);
+}
+
+@keyframes image-card-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .image-card__options {
   display: flex;
   flex-direction: column;
