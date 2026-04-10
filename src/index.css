@@ -1,0 +1,259 @@
+/* ═══════════════════════════════════════════════════════════
+   3D Gen Studio — Design System
+   "The Synthetic Architect" — Cinematic Precision Tool
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Reset ── */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* ── Design Tokens ── */
+:root {
+  /* Surface Hierarchy */
+  --background: #0d0e10;
+  --surface: #0d0e10;
+  --surface-dim: #0d0e10;
+  --surface-bright: #2b2c2f;
+  --surface-container-lowest: #000000;
+  --surface-container-low: #121316;
+  --surface-container: #181a1c;
+  --surface-container-high: #1e2022;
+  --surface-container-highest: #242629;
+  --surface-variant: #242629;
+  --surface-tint: #8ff5ff;
+
+  /* Primary — Cyan */
+  --primary: #8ff5ff;
+  --primary-dim: #00deec;
+  --primary-container: #00eefc;
+  --primary-fixed: #00eefc;
+  --primary-fixed-dim: #00deec;
+  --on-primary: #005d63;
+  --on-primary-container: #005359;
+  --on-primary-fixed: #003f43;
+  --on-primary-fixed-variant: #005e64;
+  --inverse-primary: #006a71;
+
+  /* Secondary — Purple */
+  --secondary: #ac89ff;
+  --secondary-dim: #874cff;
+  --secondary-container: #7000ff;
+  --secondary-fixed: #dac9ff;
+  --secondary-fixed-dim: #ceb9ff;
+  --on-secondary: #290067;
+  --on-secondary-container: #f8f1ff;
+  --on-secondary-fixed: #41009a;
+  --on-secondary-fixed-variant: #6300e2;
+
+  /* Tertiary — Lime */
+  --tertiary: #dcffb2;
+  --tertiary-dim: #93ef00;
+  --tertiary-container: #9dff00;
+  --tertiary-fixed: #9dff00;
+  --tertiary-fixed-dim: #93ef00;
+  --on-tertiary: #3c6700;
+  --on-tertiary-container: #375d00;
+  --on-tertiary-fixed: #2a4900;
+  --on-tertiary-fixed-variant: #3e6800;
+
+  /* Error */
+  --error: #ff716c;
+  --error-dim: #d7383b;
+  --error-container: #9f0519;
+  --on-error: #490006;
+  --on-error-container: #ffa8a3;
+
+  /* Neutral / Text */
+  --on-surface: #fdfbfe;
+  --on-surface-variant: #ababad;
+  --on-background: #fdfbfe;
+  --outline: #757578;
+  --outline-variant: #47484a;
+  --inverse-surface: #faf9fb;
+  --inverse-on-surface: #555557;
+
+  /* Shape Scale */
+  --radius-xs: 0.125rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+  --radius-full: 9999px;
+
+  /* Typography */
+  --font-headline: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-label: 'Manrope', sans-serif;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 300ms ease;
+}
+
+/* ── Base ── */
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--on-surface);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Typography Classes ── */
+.font-headline { font-family: var(--font-headline); }
+.font-body { font-family: var(--font-body); }
+.font-label { font-family: var(--font-label); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: var(--background); }
+::-webkit-scrollbar-thumb { background: var(--outline-variant); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: var(--primary); }
+
+/* ── Material Symbols ── */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  text-transform: none;
+  letter-spacing: normal;
+  word-wrap: normal;
+  white-space: nowrap;
+  direction: ltr;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.material-symbols-outlined.filled {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* ── Utility ── */
+.ghost-border {
+  border: 1px solid rgba(71, 72, 74, 0.15);
+}
+
+.glass {
+  background: rgba(36, 38, 41, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.gradient-primary {
+  background: linear-gradient(45deg, var(--primary), var(--primary-container));
+}
+
+.gradient-secondary {
+  background: linear-gradient(45deg, var(--secondary), var(--secondary-container));
+}
+
+/* ── Ambient Glow Shadows ── */
+.glow-primary {
+  box-shadow: 0 0 32px rgba(143, 245, 255, 0.06);
+}
+
+.glow-secondary {
+  box-shadow: 0 0 32px rgba(172, 137, 255, 0.06);
+}
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
+}
+
+@keyframes orb-drift {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.95); }
+  100% { transform: translate(0, 0) scale(1); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.5s ease forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.4s ease forwards;
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(143, 245, 255, 0.25);
+  color: var(--on-surface);
+}
+
+/* ── Focus Visible ── */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ── Links ── */
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* Input reset for dark theme */
+input, textarea, select {
+  font-family: var(--font-body);
+  color: var(--on-surface);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--outline);
+}
+
+/* Remove input number spinners */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
