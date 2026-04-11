@@ -134,6 +134,98 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const getComfyWorkflows = async () => {
+    const res = await fetch(`${API_BASE}/library/comfy-workflows`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load ComfyUI workflows')
+    }
+
+    return data
+  }
+
+  const inspectComfyWorkflow = async (workflowJson) => {
+    const res = await fetch(`${API_BASE}/library/comfy-workflows/inspect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workflowJson })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to inspect ComfyUI workflow')
+    }
+
+    return data
+  }
+
+  const importComfyWorkflow = async (workflowData) => {
+    const res = await fetch(`${API_BASE}/library/comfy-workflows`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflowData)
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to import ComfyUI workflow')
+    }
+
+    return data
+  }
+
+  const updateComfyWorkflow = async (workflowId, workflowData) => {
+    const res = await fetch(`${API_BASE}/library/comfy-workflows/${workflowId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflowData)
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update ComfyUI workflow')
+    }
+
+    return data
+  }
+
+  const runComfyWorkflow = async (projectId, workflowData) => {
+    const formData = new FormData()
+    const inputValues = {}
+
+    formData.append('projectId', projectId)
+    formData.append('workflowId', workflowData.workflowId)
+
+    Object.entries(workflowData.inputs || {}).forEach(([key, value]) => {
+      if (typeof File !== 'undefined' && value instanceof File) {
+        const fieldName = `comfyFile:${key}`
+        formData.append(fieldName, value)
+        inputValues[key] = { __fileField: fieldName }
+      } else {
+        inputValues[key] = value
+      }
+    })
+
+    formData.append('inputValues', JSON.stringify(inputValues))
+
+    const res = await fetch(`${API_BASE}/comfyui/workflows/run`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to execute ComfyUI workflow')
+    }
+
+    return data
+  }
+
   return (
     <ProjectContext.Provider value={{ 
       projects, 
@@ -149,6 +241,11 @@ export function ProjectProvider({ children }) {
       deleteAsset,
       getLibraryAssets,
       generateImage,
+      getComfyWorkflows,
+      inspectComfyWorkflow,
+      importComfyWorkflow,
+      updateComfyWorkflow,
+      runComfyWorkflow,
       refreshProjects: fetchProjects
     }}>
       {children}

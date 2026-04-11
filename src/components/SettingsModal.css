@@ -71,6 +71,35 @@
   gap: 2.5rem;
 }
 
+.settings-tabs {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.settings-tab {
+  padding: 0.625rem 1rem;
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-tab:hover {
+  color: var(--on-surface);
+  border-color: rgba(143, 245, 255, 0.24);
+}
+
+.settings-tab--active {
+  color: var(--primary);
+  border-color: rgba(143, 245, 255, 0.36);
+  box-shadow: inset 0 0 0 1px rgba(143, 245, 255, 0.18);
+}
+
 .settings-section {
   display: flex;
   flex-direction: column;
@@ -89,6 +118,10 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.5rem;
+}
+
+.settings-grid--triple {
+  grid-template-columns: 2fr 1fr;
 }
 
 .settings-api-card {
@@ -148,6 +181,12 @@
 
 .settings-input:focus {
   border-color: var(--primary);
+}
+
+.settings-helper-text {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
 }
 
 .custom-apis-list {

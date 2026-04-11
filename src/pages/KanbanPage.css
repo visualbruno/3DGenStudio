@@ -452,6 +452,10 @@
   text-align: center;
 }
 
+.image-card__asset-picker-empty--compact {
+  min-height: 120px;
+}
+
 .option-btn {
   display: flex;
   align-items: center;
@@ -478,6 +482,53 @@
   flex-direction: column;
   gap: 0.75rem;
   border-top: 1px solid rgba(71, 72, 74, 0.1);
+}
+
+.image-card__workflow-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.7rem;
+  color: var(--on-surface-variant);
+}
+
+.image-card__workflow-params {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.image-card__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--on-surface);
+  font-size: 0.8rem;
+}
+
+.image-card__file-input {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.75rem;
+  background: var(--surface-container-lowest);
+  border: 1px dashed rgba(143, 245, 255, 0.2);
+  border-radius: var(--radius-md);
+  color: var(--on-surface);
+  cursor: pointer;
+}
+
+.image-card__file-input input {
+  display: none;
+}
+
+.image-card__param-textarea {
+  min-height: 120px;
+}
+
+.image-card__param-hint {
+  font-size: 0.65rem;
+  color: var(--on-surface-variant);
 }
 
 .gen-prompt-input {

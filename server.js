@@ -5,6 +5,7 @@ import process from 'process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Buffer } from 'buffer';
+import { randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
 
@@ -26,7 +27,7 @@ console.log('DEBUG: DB_FILE is', DB_FILE);
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use('/assets', express.static(ASSETS_DIR));
 
 // Multer Config for Asset Uploads
@@ -42,7 +43,159 @@ const storage = multer.diskStorage({
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
+
+app.get('/api/library/comfy-workflows', async (req, res) => {
+  try {
+    const db = await readDb();
+    res.json(db.library?.comfyWorkflows || []);
+  } catch (err) {
+    console.error('Failed to list ComfyUI workflows:', err);
+    res.status(500).json({ error: 'Failed to list ComfyUI workflows' });
+  }
+});
+
+app.post('/api/library/comfy-workflows/inspect', async (req, res) => {
+  try {
+    const { workflowJson } = req.body;
+    const parsed = parseComfyWorkflow(workflowJson);
+    res.json(parsed);
+  } catch (err) {
+    console.error('Failed to inspect ComfyUI workflow:', err);
+    res.status(400).json({ error: err.message || 'Failed to inspect workflow JSON' });
+  }
+});
+
+app.post('/api/library/comfy-workflows', async (req, res) => {
+  try {
+    const { name, workflowJson, parameters = [], outputs = [] } = req.body;
+
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'A workflow name is required' });
+    }
+
+    const parsed = parseComfyWorkflow(workflowJson);
+    const availableParameters = new Map(parsed.inputs.map(input => [input.id, input]));
+    const availableOutputs = new Map(parsed.outputs.map(output => [output.nodeId, output]));
+
+    const selectedParameters = parameters.map(parameter => {
+      const sourceParameter = availableParameters.get(parameter.id);
+      if (!sourceParameter) {
+        throw new Error(`Unknown workflow parameter: ${parameter.id}`);
+      }
+
+      return {
+        ...sourceParameter,
+        name: sanitizeDisplayName(parameter.name || sourceParameter.name, sourceParameter.name),
+        valueType: normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(sourceParameter))
+      };
+    });
+
+    const selectedOutputs = outputs.map(output => {
+      const outputId = String(output.nodeId || output.id);
+      const sourceOutput = availableOutputs.get(outputId);
+      if (!sourceOutput) {
+        throw new Error(`Unknown workflow output: ${outputId}`);
+      }
+
+      return {
+        ...sourceOutput,
+        name: sanitizeDisplayName(output.name || sourceOutput.nodeTitle, sourceOutput.nodeTitle),
+        valueType: normalizeComfyValueType(output.valueType, getDefaultComfyValueType(sourceOutput, true))
+      };
+    });
+
+    if (selectedOutputs.length === 0) {
+      return res.status(400).json({ error: 'Select at least one output node to save images from' });
+    }
+
+    const db = await readDb();
+    const workflowRecord = {
+      id: Date.now(),
+      name: sanitizeDisplayName(name, 'Workflow'),
+      workflowJson: cloneSerializable(workflowJson),
+      availableInputs: parsed.inputs,
+      availableOutputs: parsed.outputs,
+      parameters: selectedParameters,
+      outputs: selectedOutputs,
+      createdAt: Date.now()
+    };
+
+    db.library = db.library || { comfyWorkflows: [] };
+    db.library.comfyWorkflows = db.library.comfyWorkflows || [];
+    db.library.comfyWorkflows.push(workflowRecord);
+    await writeDb(db);
+
+    res.status(201).json(workflowRecord);
+  } catch (err) {
+    console.error('Failed to save ComfyUI workflow:', err);
+    res.status(400).json({ error: err.message || 'Failed to save ComfyUI workflow' });
+  }
+});
+
+app.put('/api/library/comfy-workflows/:id', async (req, res) => {
+  try {
+    const { name, parameters = [], outputs = [] } = req.body;
+    const db = await readDb();
+    const workflowIndex = (db.library?.comfyWorkflows || []).findIndex(item => item.id == req.params.id);
+
+    if (workflowIndex === -1) {
+      return res.status(404).json({ error: 'ComfyUI workflow not found' });
+    }
+
+    const existingWorkflow = db.library.comfyWorkflows[workflowIndex];
+    const availableParameters = new Map((existingWorkflow.availableInputs || []).map(input => [input.id, input]));
+    const availableOutputs = new Map((existingWorkflow.availableOutputs || []).map(output => [output.nodeId, output]));
+
+    const nextParameters = parameters.map(parameter => {
+      const sourceParameter = availableParameters.get(parameter.id);
+      if (!sourceParameter) {
+        throw new Error(`Unknown workflow parameter: ${parameter.id}`);
+      }
+
+      return {
+        ...sourceParameter,
+        name: sanitizeDisplayName(parameter.name || sourceParameter.name, sourceParameter.name),
+        valueType: normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(sourceParameter))
+      };
+    });
+
+    const nextOutputs = outputs.map(output => {
+      const outputId = String(output.nodeId || output.id);
+      const sourceOutput = availableOutputs.get(outputId);
+      if (!sourceOutput) {
+        throw new Error(`Unknown workflow output: ${outputId}`);
+      }
+
+      return {
+        ...sourceOutput,
+        name: sanitizeDisplayName(output.name || sourceOutput.nodeTitle, sourceOutput.nodeTitle),
+        valueType: normalizeComfyValueType(output.valueType, getDefaultComfyValueType(sourceOutput, true))
+      };
+    });
+
+    if (nextOutputs.length === 0) {
+      return res.status(400).json({ error: 'Select at least one output node to save images from' });
+    }
+
+    const nextWorkflow = {
+      ...existingWorkflow,
+      name: sanitizeDisplayName(name || existingWorkflow.name, existingWorkflow.name),
+      parameters: nextParameters,
+      outputs: nextOutputs,
+      updatedAt: Date.now()
+    };
+
+    db.library.comfyWorkflows[workflowIndex] = nextWorkflow;
+    await writeDb(db);
+
+    res.json(nextWorkflow);
+  } catch (err) {
+    console.error('Failed to update ComfyUI workflow:', err);
+    res.status(400).json({ error: err.message || 'Failed to update ComfyUI workflow' });
+  }
+});
 const upload = multer({ storage });
+const workflowExecutionUpload = multer({ storage: multer.memoryStorage() });
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -96,13 +249,281 @@ const INITIAL_SCHEMA = {
         }
       },
       openai: { apiKey: '' },
+      comfyui: {
+        path: '',
+        url: 'http://127.0.0.1',
+        port: '8188'
+      },
       custom: []
     }
+  },
+  library: {
+    comfyWorkflows: []
   }
 };
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function cloneSerializable(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function sanitizeDisplayName(value = '', fallback = 'Workflow') {
+  const normalized = String(value)
+    .trim()
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  return normalized || fallback;
+}
+
+function inferComfyParameterType(value) {
+  if (typeof value === 'number') return 'number';
+  if (typeof value === 'boolean') return 'boolean';
+  if (typeof value === 'string') return 'string';
+  if (Array.isArray(value) || isPlainObject(value)) return 'json';
+  return 'string';
+}
+
+function getDefaultComfyValueType(item, isOutput = false) {
+  if (isOutput) return 'image';
+  return item?.type === 'number' ? 'number' : 'string';
+}
+
+function normalizeComfyValueType(value, fallback = 'string') {
+  return ['string', 'number', 'image', 'video'].includes(value) ? value : fallback;
+}
+
+function getComfyNodeLabel(nodeId, node = {}) {
+  return sanitizeDisplayName(node._meta?.title || node.title || node.class_type || `Node ${nodeId}`, `Node ${nodeId}`);
+}
+
+function parseComfyWorkflow(workflowJson) {
+  if (!isPlainObject(workflowJson) || Object.keys(workflowJson).length === 0) {
+    throw new Error('The workflow JSON is empty or invalid');
+  }
+
+  const nodes = Object.entries(workflowJson)
+    .filter(([, node]) => isPlainObject(node))
+    .map(([nodeId, node]) => [String(nodeId), node]);
+
+  if (nodes.length === 0) {
+    throw new Error('The workflow JSON does not contain any nodes');
+  }
+
+  const referencedNodeIds = new Set();
+
+  for (const [, node] of nodes) {
+    for (const value of Object.values(node.inputs || {})) {
+      if (Array.isArray(value) && value.length >= 2 && (typeof value[0] === 'string' || typeof value[0] === 'number')) {
+        referencedNodeIds.add(String(value[0]));
+      }
+    }
+  }
+
+  const inputs = [];
+
+  for (const [nodeId, node] of nodes) {
+    const nodeLabel = getComfyNodeLabel(nodeId, node);
+
+    for (const [inputKey, value] of Object.entries(node.inputs || {})) {
+      const isNodeReference = Array.isArray(value) && value.length >= 2 && (typeof value[0] === 'string' || typeof value[0] === 'number');
+      if (isNodeReference || value === null || value === undefined) continue;
+
+      const type = inferComfyParameterType(value);
+      if (!['string', 'number', 'boolean', 'json'].includes(type)) continue;
+
+      inputs.push({
+        id: `${nodeId}.${inputKey}`,
+        nodeId,
+        inputKey,
+        nodeTitle: nodeLabel,
+        classType: node.class_type || 'Unknown',
+        name: sanitizeDisplayName(`${nodeLabel} ${inputKey}`, inputKey),
+        label: `${nodeLabel} • ${inputKey}`,
+        type,
+        defaultValue: cloneSerializable(value)
+      });
+    }
+  }
+
+  const outputs = nodes
+    .filter(([nodeId]) => !referencedNodeIds.has(nodeId))
+    .map(([nodeId, node]) => ({
+      id: nodeId,
+      nodeId,
+      nodeTitle: getComfyNodeLabel(nodeId, node),
+      classType: node.class_type || 'Unknown',
+      label: `${getComfyNodeLabel(nodeId, node)} • ${node.class_type || 'Output'}`
+    }));
+
+  return { inputs, outputs };
+}
+
+function buildComfyUiBaseUrl(settings = {}) {
+  const comfySettings = settings?.apis?.comfyui || {};
+  const rawUrl = String(comfySettings.url || 'http://127.0.0.1').trim();
+  const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
+  const parsedUrl = new URL(normalizedUrl);
+  const port = String(comfySettings.port || parsedUrl.port || '8188').trim();
+
+  parsedUrl.port = port;
+  parsedUrl.pathname = '';
+  parsedUrl.search = '';
+  parsedUrl.hash = '';
+
+  return parsedUrl.toString().replace(/\/$/, '');
+}
+
+function coerceComfyParameterValue(parameter, providedValue) {
+  if (providedValue === undefined) return cloneSerializable(parameter.defaultValue);
+
+  switch (parameter.type) {
+    case 'number': {
+      const numericValue = Number(providedValue);
+      return Number.isFinite(numericValue) ? numericValue : Number(parameter.defaultValue || 0);
+    }
+    case 'boolean':
+      if (typeof providedValue === 'boolean') return providedValue;
+      if (typeof providedValue === 'string') return providedValue.toLowerCase() === 'true';
+      return Boolean(providedValue);
+    case 'json':
+      if (typeof providedValue === 'string') {
+        return JSON.parse(providedValue);
+      }
+      return cloneSerializable(providedValue);
+    case 'string':
+    default:
+      return String(providedValue);
+  }
+}
+
+function applyComfyParametersToWorkflow(workflowJson, parameters = [], values = {}) {
+  const nextWorkflow = cloneSerializable(workflowJson);
+
+  for (const parameter of parameters) {
+    const node = nextWorkflow?.[parameter.nodeId];
+
+    if (!node?.inputs || !(parameter.inputKey in node.inputs)) {
+      throw new Error(`Workflow parameter ${parameter.label || parameter.id} is no longer valid`);
+    }
+
+    node.inputs[parameter.inputKey] = coerceComfyParameterValue(parameter, values[parameter.id]);
+  }
+
+  return nextWorkflow;
+}
+
+async function sleep(ms) {
+  return await new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function queueComfyPrompt(baseUrl, workflowJson) {
+  const clientId = randomUUID();
+  const promptId = randomUUID();
+  const response = await fetch(`${baseUrl}/prompt`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      prompt: workflowJson,
+      client_id: clientId,
+      prompt_id: promptId
+    })
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(responseBody?.error?.message || responseBody?.error || 'Failed to queue ComfyUI workflow');
+  }
+
+  return {
+    clientId,
+    promptId: responseBody?.prompt_id || promptId
+  };
+}
+
+async function waitForComfyHistory(baseUrl, promptId, maxAttempts = 180) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const response = await fetch(`${baseUrl}/history/${promptId}`);
+    const history = await response.json().catch(() => ({}));
+    const promptHistory = history?.[promptId];
+
+    if (response.ok && promptHistory?.outputs && Object.keys(promptHistory.outputs).length > 0) {
+      return promptHistory;
+    }
+
+    await sleep(1000);
+  }
+
+  throw new Error('ComfyUI workflow timed out before producing outputs');
+}
+
+function getComfyHistoryImages(historyRecord, selectedOutputs = []) {
+  const preferredNodeIds = selectedOutputs.map(output => String(output.nodeId || output.id));
+  const orderedNodeIds = [
+    ...preferredNodeIds,
+    ...Object.keys(historyRecord?.outputs || {}).filter(nodeId => !preferredNodeIds.includes(String(nodeId)))
+  ];
+
+  const images = [];
+
+  for (const nodeId of orderedNodeIds) {
+    const nodeOutput = historyRecord?.outputs?.[nodeId];
+    if (!nodeOutput?.images?.length) continue;
+
+    for (const image of nodeOutput.images) {
+      images.push({ nodeId, ...image });
+    }
+  }
+
+  return images;
+}
+
+async function downloadComfyImage(baseUrl, image) {
+  const viewUrl = new URL(`${baseUrl}/view`);
+  viewUrl.searchParams.set('filename', image.filename);
+  viewUrl.searchParams.set('subfolder', image.subfolder || '');
+  viewUrl.searchParams.set('type', image.type || 'output');
+
+  const response = await fetch(viewUrl);
+  if (!response.ok) {
+    throw new Error('Failed to download ComfyUI output image');
+  }
+
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const contentType = response.headers.get('content-type') || 'image/png';
+
+  return {
+    buffer,
+    contentType
+  };
+}
+
+async function uploadComfyInputFile(baseUrl, file) {
+  const formData = new FormData();
+  const blob = new Blob([file.buffer], { type: file.mimetype || 'application/octet-stream' });
+
+  formData.append('image', blob, file.originalname);
+  formData.append('overwrite', 'true');
+
+  const response = await fetch(`${baseUrl}/upload/image`, {
+    method: 'POST',
+    body: formData
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(responseBody?.error || 'Failed to upload reference file to ComfyUI');
+  }
+
+  return responseBody?.name || file.originalname;
 }
 
 function mergeDeep(defaultValue, currentValue) {
@@ -340,6 +761,91 @@ app.get('/api/projects', async (req, res) => {
     res.json(db.projects || []);
   } catch {
     res.status(500).json({ error: 'Server read error' });
+  }
+});
+
+app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req, res) => {
+  try {
+    const { projectId, workflowId } = req.body;
+    const inputValues = JSON.parse(req.body.inputValues || '{}');
+
+    if (!projectId || !workflowId) {
+      return res.status(400).json({ error: 'projectId and workflowId are required' });
+    }
+
+    const db = await readDb();
+    const workflow = (db.library?.comfyWorkflows || []).find(item => item.id == workflowId);
+
+    if (!workflow) {
+      return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
+    }
+
+    const baseUrl = buildComfyUiBaseUrl(db.settings || {});
+    const uploadedFiles = new Map((req.files || []).map(file => [file.fieldname, file]));
+    const resolvedInputs = { ...inputValues };
+
+    for (const parameter of workflow.parameters || []) {
+      const parameterValueType = normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter));
+      if (!['image', 'video'].includes(parameterValueType)) continue;
+
+      const fileMarker = inputValues?.[parameter.id];
+      const fieldName = fileMarker?.__fileField;
+      const uploadedFile = uploadedFiles.get(fieldName);
+
+      if (!uploadedFile) {
+        throw new Error(`A reference file is required for ${parameter.name}`);
+      }
+
+      resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, uploadedFile);
+    }
+
+    const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
+    const { promptId } = await queueComfyPrompt(baseUrl, promptWorkflow);
+    const historyRecord = await waitForComfyHistory(baseUrl, promptId);
+    const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
+
+    if (workflowImages.length === 0) {
+      return res.status(502).json({ error: 'The ComfyUI workflow finished but no images were returned' });
+    }
+
+    const primaryImage = workflowImages[0];
+    const downloadedImage = await downloadComfyImage(baseUrl, primaryImage);
+    const extension = path.extname(primaryImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType);
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+    const relativeFilename = normalizeAssetFilename('image', filename);
+    const filePath = path.join(ASSETS_DIR, relativeFilename);
+
+    await fs.writeFile(filePath, downloadedImage.buffer);
+
+    const newAsset = {
+      id: Date.now(),
+      projectId: parseInt(projectId),
+      type: 'image',
+      name: createGeneratedImageName(workflow.name, extension),
+      filename: relativeFilename,
+      metadata: {
+        resolution: 'Unknown',
+        format: extension.toUpperCase(),
+        source: 'COMFYUI',
+        provider: 'ComfyUI',
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        promptId,
+        outputNodeId: primaryImage.nodeId,
+        outputFilename: primaryImage.filename,
+        savedOutputs: workflowImages.length
+      },
+      createdAt: Date.now()
+    };
+
+    db.assets = db.assets || [];
+    db.assets.push(newAsset);
+    await writeDb(db);
+
+    res.status(201).json(newAsset);
+  } catch (err) {
+    console.error('ComfyUI workflow execution failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
   }
 });
 

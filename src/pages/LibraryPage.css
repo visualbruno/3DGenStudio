@@ -1,0 +1,257 @@
+.library-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.library-page {
+  flex: 1;
+  min-height: 0;
+  padding: 2rem;
+  overflow-y: auto;
+}
+
+.library-page__container {
+  max-width: 1440px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.library-page__header,
+.library-section__header,
+.library-panel__header,
+.library-config-card__header,
+.library-workflow-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.library-page__title {
+  font-size: 2rem;
+}
+
+.library-page__desc,
+.library-section__subtitle,
+.library-workflow-card__header p,
+.library-checkbox-row span,
+.library-empty-inline {
+  color: var(--on-surface-variant);
+}
+
+.library-page__stats,
+.library-chip-list,
+.library-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.library-page__stat,
+.library-panel__badge,
+.library-workflow-card__badge,
+.library-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-full);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 0.75rem;
+}
+
+.library-section,
+.library-panel,
+.library-config-card,
+.library-workflow-card,
+.library-feedback {
+  background: var(--surface-container-low);
+  border: 1px solid rgba(143, 245, 255, 0.08);
+  border-radius: var(--radius-xl);
+}
+
+.library-section {
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.library-grid,
+.library-config-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 1rem;
+}
+
+.library-panel,
+.library-config-card {
+  padding: 1.25rem;
+}
+
+.library-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.library-panel--import {
+  min-height: 520px;
+}
+
+.library-panel__title,
+.library-config-card h4,
+.library-workflow-card h4 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.library-upload-btn,
+.library-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.library-upload-btn,
+.library-btn--primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  padding: 0.75rem 1rem;
+}
+
+.library-btn--secondary {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+  padding: 0.75rem 1rem;
+}
+
+.library-input {
+  width: 100%;
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.875rem;
+  color: var(--on-surface);
+}
+
+.library-import-form,
+.library-field,
+.library-config-list,
+.library-config-item,
+.library-workflow-list,
+.library-workflow-card,
+.library-workflow-card__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.library-config-fields,
+.library-config-actions,
+.library-workflow-card__actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.library-label,
+.library-workflow-card__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.library-checkbox-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.library-checkbox-row div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.library-link-btn,
+.library-icon-btn {
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+  cursor: pointer;
+}
+
+.library-link-btn {
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+}
+
+.library-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+}
+
+.library-empty-state {
+  flex: 1;
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: var(--on-surface-variant);
+  border: 1px dashed rgba(143, 245, 255, 0.12);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.library-feedback {
+  padding: 0.875rem 1rem;
+  color: var(--on-surface);
+}
+
+.library-chip--muted {
+  opacity: 0.6;
+}
+
+.library-chip--secondary,
+.library-workflow-card__badge {
+  background: rgba(172, 137, 255, 0.16);
+  color: var(--secondary);
+}
+
+.library-spinner {
+  animation: library-spin 1s linear infinite;
+}
+
+@keyframes library-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1100px) {
+  .library-grid,
+  .library-config-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext'
 import Header from '../components/Header'
@@ -23,9 +23,44 @@ const IMAGE_API_LIST = [
   { id: 'openai', name: 'OpenAI (DALL-E 3)' },
 ]
 
+function getComfyDraftFromWorkflow(workflow) {
+  return {
+    mode: 'comfy',
+    workflowId: workflow?.id || '',
+    inputs: Object.fromEntries(
+      (workflow?.parameters || []).map(parameter => {
+        const valueType = parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
+        return [parameter.id, ['image', 'video'].includes(valueType) ? null : (parameter.defaultValue ?? '')]
+      })
+    )
+  }
+}
+
+function formatWorkflowDefaultValue(value) {
+  if (value === null || value === undefined || value === '') return 'empty'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+function getWorkflowParameterValueType(parameter) {
+  return parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
+}
+
 export default function KanbanPage() {
   const { projectId } = useParams()
-  const { getProject, getProjectAssets, getProjectTasks, uploadAsset, attachExistingAsset, deleteAsset, getLibraryAssets, createTask, generateImage } = useProjects()
+  const {
+    getProject,
+    getProjectAssets,
+    getProjectTasks,
+    uploadAsset,
+    attachExistingAsset,
+    deleteAsset,
+    getLibraryAssets,
+    createTask,
+    generateImage,
+    getComfyWorkflows,
+    runComfyWorkflow
+  } = useProjects()
   const { settings } = useSettings()
   
   const [project, setProject] = useState(null)
@@ -49,6 +84,8 @@ export default function KanbanPage() {
   const [pendingImageGeneration, setPendingImageGeneration] = useState(null)
   const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [] })
   const [libraryLoading, setLibraryLoading] = useState(false)
+  const [comfyWorkflows, setComfyWorkflows] = useState([])
+  const [comfyLoading, setComfyLoading] = useState(false)
   const fileInputRef = useRef(null)
 
   // Fetch all data for this project
@@ -72,6 +109,22 @@ export default function KanbanPage() {
     }
     loadData()
   }, [projectId, getProject, getProjectAssets, getProjectTasks])
+
+  useEffect(() => {
+    async function loadComfyWorkflows() {
+      try {
+        setComfyLoading(true)
+        const workflows = await getComfyWorkflows()
+        setComfyWorkflows(workflows)
+      } catch (err) {
+        console.error('Failed to load ComfyUI workflows:', err)
+      } finally {
+        setComfyLoading(false)
+      }
+    }
+
+    loadComfyWorkflows()
+  }, [getComfyWorkflows])
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -98,6 +151,43 @@ export default function KanbanPage() {
   const refreshProjectAssets = async () => {
     const assetsData = await getProjectAssets(projectId)
     setAssets(assetsData)
+  }
+
+  const selectedComfyWorkflow = comfyWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
+
+  const openComfyWorkflowDraft = () => {
+    if (comfyWorkflows.length === 0) {
+      alert('Import a ComfyUI workflow in the Library page first.')
+      return
+    }
+
+    setImageDraft(getComfyDraftFromWorkflow(comfyWorkflows[0]))
+  }
+
+  const handleComfyWorkflowChange = (workflowId) => {
+    const workflow = comfyWorkflows.find(item => item.id == workflowId)
+    setImageDraft(getComfyDraftFromWorkflow(workflow))
+  }
+
+  const handleComfyInputChange = (parameter, rawValue) => {
+    const valueType = getWorkflowParameterValueType(parameter)
+    let nextValue = rawValue
+
+    if (['image', 'video'].includes(valueType)) {
+      nextValue = rawValue
+    } else if (parameter.type === 'number' || valueType === 'number') {
+      nextValue = rawValue
+    } else if (parameter.type === 'json' && typeof rawValue === 'string') {
+      nextValue = rawValue
+    }
+
+    setImageDraft(prev => ({
+      ...prev,
+      inputs: {
+        ...(prev?.inputs || {}),
+        [parameter.id]: nextValue
+      }
+    }))
   }
 
   const openAssetLibrary = async () => {
@@ -148,17 +238,63 @@ export default function KanbanPage() {
   }
 
   const handleGenerateImage = async (draft) => {
-    if (!draft?.prompt?.trim()) return
+    if (draft.mode === 'comfy') {
+      if (!draft?.workflowId) return
 
-    if (draft.mode !== 'api') {
-      alert('ComfyUI workflow execution is not connected yet.')
+      const workflow = comfyWorkflows.find(item => item.id == draft.workflowId)
+      if (!workflow) {
+        alert('Select a valid ComfyUI workflow.')
+        return
+      }
+
+      for (const parameter of workflow.parameters || []) {
+        const valueType = getWorkflowParameterValueType(parameter)
+        const currentValue = draft.inputs?.[parameter.id]
+
+        if (['image', 'video'].includes(valueType) && !currentValue) {
+          alert(`Select a ${valueType} file for ${parameter.name}.`)
+          return
+        }
+
+        if (valueType === 'string' && !String(currentValue ?? '').trim()) {
+          alert(`Enter a value for ${parameter.name}.`)
+          return
+        }
+      }
+
+      try {
+        setPendingImageGeneration({
+          title: workflow.name,
+          source: 'ComfyUI',
+          detail: `Running ${workflow.parameters?.length || 0} configured input${workflow.parameters?.length === 1 ? '' : 's'}`
+        })
+        setImageDraft(null)
+        setLoading(true)
+        await runComfyWorkflow(projectId, {
+          workflowId: draft.workflowId,
+          inputs: draft.inputs || {}
+        })
+        await refreshProjectAssets()
+      } catch (err) {
+        console.error('ComfyUI workflow failed:', err)
+        setImageDraft(draft)
+        alert(err.message || 'ComfyUI workflow failed')
+      } finally {
+        setPendingImageGeneration(null)
+        setLoading(false)
+      }
+
       return
     }
+
+    if (!draft?.prompt?.trim()) return
 
     try {
       setPendingImageGeneration({
         selectedApi: draft.selectedApi,
-        prompt: draft.prompt.trim()
+        title: draft.prompt.trim(),
+        source: combinedApis.find(api => api.id === draft.selectedApi)?.name || 'Remote API',
+        detail: 'Waiting for image response'
       })
       setImageDraft(null)
       setLoading(true)
@@ -207,7 +343,6 @@ export default function KanbanPage() {
     ...IMAGE_API_LIST,
     ...(settings?.apis?.custom || []).map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ]
-  const pendingApiName = combinedApis.find(api => api.id === pendingImageGeneration?.selectedApi)?.name || 'Remote API'
 
   return (
     <div className="kanban-layout">
@@ -308,8 +443,8 @@ export default function KanbanPage() {
                         <span
                           className="image-card__source"
                           style={{
-                            color: img.metadata?.source === 'AI GEN' ? 'var(--primary)' : 'var(--on-surface-variant)',
-                            background: img.metadata?.source === 'AI GEN' ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
+                            color: ['AI GEN', 'COMFYUI'].includes(img.metadata?.source) ? 'var(--primary)' : 'var(--on-surface-variant)',
+                            background: ['AI GEN', 'COMFYUI'].includes(img.metadata?.source) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
                           }}
                         >
                           {img.metadata?.source || 'IMPORT'}
@@ -334,7 +469,7 @@ export default function KanbanPage() {
                           <span className="material-symbols-outlined">folder_open</span>
                           From Assets
                         </button>
-                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'comfy', workflow: 'default_v1.json' })}>
+                        <button className="option-btn" onClick={openComfyWorkflowDraft}>
                           <span className="material-symbols-outlined">account_tree</span>
                           ComfyUI Workflow
                         </button>
@@ -383,28 +518,94 @@ export default function KanbanPage() {
 
                     {imageDraft.mode === 'comfy' && (
                       <div className="image-card__options">
-                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI SELECTION</span>
-                        <select 
-                          className="params-card__select"
-                          value={imageDraft.workflow}
-                          onChange={e => setImageDraft({...imageDraft, workflow: e.target.value})}
-                        >
-                          <option>default_v1.json</option>
-                          <option>portrait_studio.json</option>
-                          <option>concept_art_v2.json</option>
-                        </select>
-                        <div className="gen-section">
-                          <textarea 
-                            className="gen-prompt-input" 
-                            placeholder="Positive prompt..."
-                            value={imageDraft.prompt || ''}
-                            onChange={e => setImageDraft({...imageDraft, prompt: e.target.value})}
-                          />
-                          <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
-                            <span className="material-symbols-outlined">bolt</span>
-                            START WORKFLOW
-                          </button>
-                        </div>
+                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI WORKFLOW</span>
+                        {comfyLoading ? (
+                          <div className="image-card__asset-picker-empty">
+                            <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                            <span>Loading workflows...</span>
+                          </div>
+                        ) : comfyWorkflows.length > 0 ? (
+                          <>
+                            <select
+                              className="params-card__select"
+                              value={imageDraft.workflowId}
+                              onChange={e => handleComfyWorkflowChange(e.target.value)}
+                            >
+                              {comfyWorkflows.map(workflow => (
+                                <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                              ))}
+                            </select>
+
+                            <div className="image-card__workflow-meta">
+                              <span>{selectedComfyWorkflow?.parameters?.length || 0} input parameters configured</span>
+                              <span>{selectedComfyWorkflow?.outputs?.length || 0} outputs selected</span>
+                            </div>
+
+                            <div className="gen-section">
+                              {(selectedComfyWorkflow?.parameters || []).length > 0 ? (
+                                <div className="image-card__workflow-params">
+                                  {selectedComfyWorkflow.parameters.map(parameter => (
+                                    <div key={parameter.id} className="params-card__field">
+                                      <label className="params-card__label font-label">
+                                        {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
+                                      </label>
+
+                                      {['image', 'video'].includes(getWorkflowParameterValueType(parameter)) ? (
+                                        <label className="image-card__file-input">
+                                          <input
+                                            type="file"
+                                            accept={getWorkflowParameterValueType(parameter) === 'video' ? 'video/*' : 'image/*'}
+                                            onChange={e => handleComfyInputChange(parameter, e.target.files?.[0] || null)}
+                                          />
+                                          <span className="material-symbols-outlined">
+                                            {getWorkflowParameterValueType(parameter) === 'video' ? 'video_file' : 'image'}
+                                          </span>
+                                          <span>
+                                            {imageDraft.inputs?.[parameter.id]?.name || `Select ${getWorkflowParameterValueType(parameter)} file`}
+                                          </span>
+                                        </label>
+                                      ) : parameter.type === 'json' ? (
+                                        <textarea
+                                          className="gen-prompt-input image-card__param-textarea"
+                                          value={typeof imageDraft.inputs?.[parameter.id] === 'string'
+                                            ? imageDraft.inputs?.[parameter.id]
+                                            : JSON.stringify(imageDraft.inputs?.[parameter.id] ?? parameter.defaultValue, null, 2)}
+                                          onChange={e => handleComfyInputChange(parameter, e.target.value)}
+                                        />
+                                      ) : (
+                                        <input
+                                          type={getWorkflowParameterValueType(parameter) === 'number' ? 'number' : 'text'}
+                                          className="params-card__input"
+                                          value={imageDraft.inputs?.[parameter.id] ?? ''}
+                                          onChange={e => handleComfyInputChange(parameter, e.target.value)}
+                                        />
+                                      )}
+
+                                      <span className="image-card__param-hint">
+                                        {parameter.label} • default: {formatWorkflowDefaultValue(parameter.defaultValue)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
+                                  <span className="material-symbols-outlined">tune</span>
+                                  <span>This workflow has no exposed parameters. Start it directly.</span>
+                                </div>
+                              )}
+
+                              <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
+                                <span className="material-symbols-outlined">bolt</span>
+                                START WORKFLOW
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="image-card__asset-picker-empty">
+                            <span className="material-symbols-outlined">account_tree</span>
+                            <span>No imported workflows available. Open the Library page to import one.</span>
+                          </div>
+                        )}
                         <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
                       </div>
                     )}
@@ -445,15 +646,15 @@ export default function KanbanPage() {
                     <div className="image-card__thumb image-card__thumb--loading">
                       <div className="image-card__loading-state">
                         <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                        <span className="font-label image-card__loading-label">Generating preview...</span>
+                        <span className="font-label image-card__loading-label">Processing image...</span>
                       </div>
                     </div>
                     <div className="image-card__info">
                       <div className="image-card__row">
-                        <h3 className="image-card__name">{pendingImageGeneration.prompt}</h3>
+                        <h3 className="image-card__name">{pendingImageGeneration.title}</h3>
                         <span className="image-card__source image-card__source--loading">PENDING</span>
                       </div>
-                      <p className="image-card__meta font-label">{pendingApiName} • Waiting for image response</p>
+                      <p className="image-card__meta font-label">{pendingImageGeneration.source} • {pendingImageGeneration.detail}</p>
                     </div>
                   </div>
                 )}

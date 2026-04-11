@@ -51,6 +51,11 @@ export function SettingsProvider({ children }) {
           }
         }
       },
+      comfyui: {
+        path: '',
+        url: 'http://127.0.0.1',
+        port: '8188'
+      },
       custom: []
     }
   })
