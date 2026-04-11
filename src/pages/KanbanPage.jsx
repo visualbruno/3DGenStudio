@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext'
@@ -46,6 +46,14 @@ function getWorkflowParameterValueType(parameter) {
   return parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
 }
 
+function createImageCardId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `image-card-${Date.now()}-${Math.round(Math.random() * 1E9)}`
+}
+
 export default function KanbanPage() {
   const { projectId } = useParams()
   const {
@@ -86,7 +94,9 @@ export default function KanbanPage() {
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [comfyWorkflows, setComfyWorkflows] = useState([])
   const [comfyLoading, setComfyLoading] = useState(false)
+  const [imageCardPages, setImageCardPages] = useState({})
   const fileInputRef = useRef(null)
+  const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
 
   // Fetch all data for this project
   useEffect(() => {
@@ -126,27 +136,56 @@ export default function KanbanPage() {
     loadComfyWorkflows()
   }, [getComfyWorkflows])
 
+  const openImageSourceMenu = (cardId = null) => {
+    setImageDraft({ mode: 'select', cardId })
+  }
+
+  const openLocalFilePicker = (cardId = null) => {
+    fileUploadContextRef.current = {
+      cardId,
+      closeDraft: !cardId
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }
+
   const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+
+    const { cardId, closeDraft } = fileUploadContextRef.current
+    const nextCardId = cardId || createImageCardId()
 
     try {
-      setLoading(true);
-      await uploadAsset(projectId, file, 'image', {
-        resolution: 'Unknown',
-        format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
-        source: 'IMPORT'
-      });
-      // Refresh assets
-      const assetsData = await getProjectAssets(projectId);
-      setAssets(assetsData);
-      setImageDraft(null); // Close draft
+      setLoading(true)
+
+      for (const file of files) {
+        await uploadAsset(projectId, file, 'image', {
+          resolution: 'Unknown',
+          format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+          source: 'IMPORT',
+          cardId: nextCardId
+        })
+      }
+
+      const assetsData = await getProjectAssets(projectId)
+      setAssets(assetsData)
+
+      if (closeDraft) {
+        setImageDraft(null)
+      }
     } catch (err) {
-      console.error('Upload failed:', err);
+      console.error('Upload failed:', err)
+      alert(err.message || 'Upload failed')
     } finally {
-      setLoading(false);
+      setLoading(false)
+      e.target.value = ''
+      fileUploadContextRef.current = { cardId: null, closeDraft: true }
     }
-  };
+  }
 
   const refreshProjectAssets = async () => {
     const assetsData = await getProjectAssets(projectId)
@@ -155,18 +194,24 @@ export default function KanbanPage() {
 
   const selectedComfyWorkflow = comfyWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
 
-  const openComfyWorkflowDraft = () => {
+  const openComfyWorkflowDraft = (cardId = imageDraft?.cardId || null) => {
     if (comfyWorkflows.length === 0) {
       alert('Import a ComfyUI workflow in the Library page first.')
       return
     }
 
-    setImageDraft(getComfyDraftFromWorkflow(comfyWorkflows[0]))
+    setImageDraft({
+      ...getComfyDraftFromWorkflow(comfyWorkflows[0]),
+      cardId
+    })
   }
 
   const handleComfyWorkflowChange = (workflowId) => {
     const workflow = comfyWorkflows.find(item => item.id == workflowId)
-    setImageDraft(getComfyDraftFromWorkflow(workflow))
+    setImageDraft(prev => ({
+      ...getComfyDraftFromWorkflow(workflow),
+      cardId: prev?.cardId || null
+    }))
   }
 
   const handleComfyInputChange = (parameter, rawValue) => {
@@ -190,12 +235,12 @@ export default function KanbanPage() {
     }))
   }
 
-  const openAssetLibrary = async () => {
+  const openAssetLibrary = async (cardId = imageDraft?.cardId || null) => {
     try {
       setLibraryLoading(true)
       const library = await getLibraryAssets()
       setLibraryAssets(library)
-      setImageDraft({ mode: 'assets' })
+      setImageDraft({ mode: 'assets', cardId })
     } catch (err) {
       console.error('Failed to load asset library:', err)
       alert(err.message || 'Failed to load assets library')
@@ -207,6 +252,7 @@ export default function KanbanPage() {
   const handleAttachLibraryImage = async (libraryImage) => {
     try {
       setLoading(true)
+      const cardId = imageDraft?.cardId || createImageCardId()
       await attachExistingAsset(projectId, {
         filename: libraryImage.filename,
         type: 'image',
@@ -214,7 +260,8 @@ export default function KanbanPage() {
         metadata: {
           resolution: 'Unknown',
           format: libraryImage.extension,
-          source: 'ASSET LIB'
+          source: 'ASSET LIB',
+          cardId
         }
       })
       await refreshProjectAssets()
@@ -227,9 +274,22 @@ export default function KanbanPage() {
     }
   }
 
-  const handleRemoveImageCard = async (assetId) => {
+  const handleRemoveImage = async (assetId) => {
     try {
       await deleteAsset(assetId)
+      await refreshProjectAssets()
+    } catch (err) {
+      console.error('Failed to remove image:', err)
+      alert(err.message || 'Failed to remove image')
+    }
+  }
+
+  const handleRemoveImageCard = async (cardAssets) => {
+    try {
+      for (const asset of cardAssets) {
+        await deleteAsset(asset.id)
+      }
+
       await refreshProjectAssets()
     } catch (err) {
       console.error('Failed to remove image card:', err)
@@ -272,7 +332,8 @@ export default function KanbanPage() {
         setLoading(true)
         await runComfyWorkflow(projectId, {
           workflowId: draft.workflowId,
-          inputs: draft.inputs || {}
+          inputs: draft.inputs || {},
+          cardId: draft.cardId || createImageCardId()
         })
         await refreshProjectAssets()
       } catch (err) {
@@ -300,7 +361,8 @@ export default function KanbanPage() {
       setLoading(true)
       await generateImage(projectId, {
         selectedApi: draft.selectedApi,
-        prompt: draft.prompt
+        prompt: draft.prompt,
+        cardId: draft.cardId || createImageCardId()
       })
       await refreshProjectAssets()
       setImageDraft(null)
@@ -329,6 +391,39 @@ export default function KanbanPage() {
   };
 
   const images = assets.filter(a => a.type === 'image')
+  const imageCards = useMemo(() => {
+    const cards = new Map()
+
+    for (const asset of images) {
+      const cardId = asset.metadata?.cardId || `asset-${asset.id}`
+
+      if (!cards.has(cardId)) {
+        cards.set(cardId, [])
+      }
+
+      cards.get(cardId).push(asset)
+    }
+
+    return Array.from(cards.entries())
+      .map(([id, cardAssets]) => {
+        const sortedAssets = [...cardAssets].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
+        const primaryAsset = sortedAssets[0]
+        const sources = [...new Set(sortedAssets.map(asset => asset.metadata?.source).filter(Boolean))]
+        const formats = [...new Set(sortedAssets.map(asset => asset.metadata?.format).filter(Boolean))]
+
+        return {
+          id,
+          assets: sortedAssets,
+          primaryAsset,
+          sourceLabel: sources.length === 1 ? sources[0] : 'MIXED',
+          metaLabel: sortedAssets.length === 1
+            ? `${primaryAsset.metadata?.resolution || 'N/A'} • ${primaryAsset.metadata?.format || 'N/A'}`
+            : `${sortedAssets.length} images • ${formats.slice(0, 2).join(', ') || 'Mixed formats'}`,
+          createdAt: primaryAsset.createdAt || 0
+        }
+      })
+      .sort((left, right) => right.createdAt - left.createdAt)
+  }, [images])
 
   if (loading && !project) {
     return (
@@ -408,50 +503,138 @@ export default function KanbanPage() {
                   <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>image</span>
                   <h2 className="kanban-col__title font-headline">IMAGES</h2>
                 </div>
-                <span className="kanban-col__badge font-label">{images.length.toString().padStart(2, '0')} ITEMS</span>
+                <span className="kanban-col__badge font-label">{imageCards.length.toString().padStart(2, '0')} ITEMS</span>
               </div>
 
               <div className="kanban-col__content">
-                {images.map(img => (
-                  <div key={img.id} className="image-card" id={`image-card-${img.id}`}>
-                    <button
-                      className="image-card__delete"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleRemoveImageCard(img.id)
-                      }}
-                      title="Remove card"
-                    >
-                      <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
-                    </button>
-                    <div className="image-card__thumb">
-                      {img.filename ? (
-                        <img 
-                          src={`http://localhost:3001/assets/${encodeURI(img.filename)}`} 
-                          alt={img.name}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
+                {imageCards.map(card => (
+                  <div key={card.id} className="image-card" id={`image-card-${card.id}`}>
+                    {(() => {
+                      const totalPages = Math.max(1, Math.ceil(card.assets.length / 4))
+                      const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
+                      const visibleAssets = card.assets.slice(currentPage * 4, currentPage * 4 + 4)
+
+                      return (
+                        <>
+                    <div className="image-card__actions">
+                      <button
+                        className="image-card__action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openImageSourceMenu(card.id)
+                        }}
+                        title="Add more images"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_photo_alternate</span>
+                      </button>
+                      <button
+                        className="image-card__action-btn image-card__delete"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleRemoveImageCard(card.assets)
+                        }}
+                        title="Remove card"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+                      </button>
+                    </div>
+
+                    <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
+                      {visibleAssets.length > 0 ? (
+                        visibleAssets.map(asset => {
+                          return (
+                            <div key={asset.id} className="image-card__thumb-item">
+                              {asset.filename ? (
+                                <img
+                                  src={`http://localhost:3001/assets/${encodeURI(asset.filename)}`}
+                                  alt={asset.name}
+                                  className="image-card__thumb-image"
+                                />
+                              ) : (
+                                <div className="image-card__thumb-placeholder">
+                                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
+                                </div>
+                              )}
+
+                              <button
+                                className="image-card__thumb-remove"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleRemoveImage(asset.id)
+                                }}
+                                title="Remove image"
+                              >
+                                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
+                              </button>
+                            </div>
+                          )
+                        })
                       ) : (
                         <div className="image-card__thumb-placeholder">
                           <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
                         </div>
                       )}
+
+                      {totalPages > 1 && (
+                        <>
+                          <button
+                            className="image-card__thumb-nav image-card__thumb-nav--prev"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setImageCardPages(prev => ({
+                                ...prev,
+                                [card.id]: Math.max(0, currentPage - 1)
+                              }))
+                            }}
+                            disabled={currentPage === 0}
+                            title="Previous images"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
+                          </button>
+                          <button
+                            className="image-card__thumb-nav image-card__thumb-nav--next"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setImageCardPages(prev => ({
+                                ...prev,
+                                [card.id]: Math.min(totalPages - 1, currentPage + 1)
+                              }))
+                            }}
+                            disabled={currentPage >= totalPages - 1}
+                            title="Next images"
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
+                          </button>
+                          <div className="image-card__thumb-page-indicator font-label">
+                            {currentPage + 1}/{totalPages}
+                          </div>
+                        </>
+                      )}
                     </div>
+
                     <div className="image-card__info">
                       <div className="image-card__row">
-                        <h3 className="image-card__name">{img.name}</h3>
-                        <span
-                          className="image-card__source"
-                          style={{
-                            color: ['AI GEN', 'COMFYUI'].includes(img.metadata?.source) ? 'var(--primary)' : 'var(--on-surface-variant)',
-                            background: ['AI GEN', 'COMFYUI'].includes(img.metadata?.source) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
-                          }}
-                        >
-                          {img.metadata?.source || 'IMPORT'}
-                        </span>
+                        <h3 className="image-card__name">{card.primaryAsset?.name || 'Untitled image'}</h3>
+                        <div className="image-card__badges">
+                          {card.assets.length > 1 && (
+                            <span className="image-card__count font-label">{card.assets.length} IMAGES</span>
+                          )}
+                          <span
+                            className="image-card__source"
+                            style={{
+                              color: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'var(--primary)' : 'var(--on-surface-variant)',
+                              background: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
+                            }}
+                          >
+                            {card.sourceLabel}
+                          </span>
+                        </div>
                       </div>
-                      <p className="image-card__meta font-label">{img.metadata?.resolution || 'N/A'} • {img.metadata?.format || 'N/A'}</p>
+                      <p className="image-card__meta font-label">{card.metaLabel}</p>
                     </div>
+                        </>
+                      )
+                    })()}
                   </div>
                 ))}
 
@@ -461,19 +644,19 @@ export default function KanbanPage() {
                     {imageDraft.mode === 'select' && (
                       <div className="image-card__options">
                         <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>IMAGE SOURCE</span>
-                        <button className="option-btn" onClick={() => fileInputRef.current.click()}>
+                        <button className="option-btn" onClick={() => openLocalFilePicker(imageDraft?.cardId || null)}>
                           <span className="material-symbols-outlined">computer</span>
                           Local Computer
                         </button>
-                        <button className="option-btn" onClick={openAssetLibrary}>
+                        <button className="option-btn" onClick={() => openAssetLibrary(imageDraft?.cardId || null)}>
                           <span className="material-symbols-outlined">folder_open</span>
                           From Assets
                         </button>
-                        <button className="option-btn" onClick={openComfyWorkflowDraft}>
+                        <button className="option-btn" onClick={() => openComfyWorkflowDraft(imageDraft?.cardId || null)}>
                           <span className="material-symbols-outlined">account_tree</span>
                           ComfyUI Workflow
                         </button>
-                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '' })}>
+                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '', cardId: imageDraft?.cardId || null })}>
                           <span className="material-symbols-outlined">api</span>
                           Remote API
                         </button>
@@ -512,7 +695,7 @@ export default function KanbanPage() {
                             <span>No images available in `assets/images`.</span>
                           </div>
                         )}
-                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
+                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
                       </div>
                     )}
 
@@ -606,7 +789,7 @@ export default function KanbanPage() {
                             <span>No imported workflows available. Open the Library page to import one.</span>
                           </div>
                         )}
-                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
+                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
                       </div>
                     )}
 
@@ -635,7 +818,7 @@ export default function KanbanPage() {
                             GENERATE
                           </button>
                         </div>
-                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft({ mode: 'select' })} style={{ justifyContent: 'center' }}>BACK</button>
+                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
                       </div>
                     )}
                   </div>
@@ -662,13 +845,14 @@ export default function KanbanPage() {
                 <input
                   type="file"
                   accept="image/*"
+                  multiple
                   style={{ display: 'none' }}
                   onChange={handleFileUpload}
                   ref={fileInputRef}
                 />
 
                 {!imageDraft && !pendingImageGeneration && (
-                  <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => setImageDraft({ mode: 'select' })}>
+                  <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => openImageSourceMenu()}>
                     <span className="material-symbols-outlined">add_photo_alternate</span>
                     <span className="font-label">ADD NEW IMAGE</span>
                   </button>

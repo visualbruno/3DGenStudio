@@ -766,7 +766,7 @@ app.get('/api/projects', async (req, res) => {
 
 app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req, res) => {
   try {
-    const { projectId, workflowId } = req.body;
+    const { projectId, workflowId, cardId } = req.body;
     const inputValues = JSON.parse(req.body.inputValues || '{}');
 
     if (!projectId || !workflowId) {
@@ -808,41 +808,47 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       return res.status(502).json({ error: 'The ComfyUI workflow finished but no images were returned' });
     }
 
-    const primaryImage = workflowImages[0];
-    const downloadedImage = await downloadComfyImage(baseUrl, primaryImage);
-    const extension = path.extname(primaryImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType);
-    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-    const relativeFilename = normalizeAssetFilename('image', filename);
-    const filePath = path.join(ASSETS_DIR, relativeFilename);
+    const imageCardId = cardId || randomUUID();
+    const baseTimestamp = Date.now();
+    const generatedAssets = [];
 
-    await fs.writeFile(filePath, downloadedImage.buffer);
+    for (const [index, workflowImage] of workflowImages.entries()) {
+      const downloadedImage = await downloadComfyImage(baseUrl, workflowImage);
+      const extension = path.extname(workflowImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType);
+      const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+      const relativeFilename = normalizeAssetFilename('image', filename);
+      const filePath = path.join(ASSETS_DIR, relativeFilename);
 
-    const newAsset = {
-      id: Date.now(),
-      projectId: parseInt(projectId),
-      type: 'image',
-      name: createGeneratedImageName(workflow.name, extension),
-      filename: relativeFilename,
-      metadata: {
-        resolution: 'Unknown',
-        format: extension.toUpperCase(),
-        source: 'COMFYUI',
-        provider: 'ComfyUI',
-        workflowId: workflow.id,
-        workflowName: workflow.name,
-        promptId,
-        outputNodeId: primaryImage.nodeId,
-        outputFilename: primaryImage.filename,
-        savedOutputs: workflowImages.length
-      },
-      createdAt: Date.now()
-    };
+      await fs.writeFile(filePath, downloadedImage.buffer);
+
+      generatedAssets.push({
+        id: baseTimestamp + index,
+        projectId: parseInt(projectId),
+        type: 'image',
+        name: createGeneratedImageName(workflow.name, extension),
+        filename: relativeFilename,
+        metadata: {
+          resolution: 'Unknown',
+          format: extension.toUpperCase(),
+          source: 'COMFYUI',
+          provider: 'ComfyUI',
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          promptId,
+          outputNodeId: workflowImage.nodeId,
+          outputFilename: workflowImage.filename,
+          savedOutputs: workflowImages.length,
+          cardId: imageCardId
+        },
+        createdAt: baseTimestamp + index
+      });
+    }
 
     db.assets = db.assets || [];
-    db.assets.push(newAsset);
+    db.assets.push(...generatedAssets);
     await writeDb(db);
 
-    res.status(201).json(newAsset);
+    res.status(201).json(generatedAssets);
   } catch (err) {
     console.error('ComfyUI workflow execution failed:', err);
     res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
@@ -1000,7 +1006,7 @@ app.delete('/api/assets/:id', async (req, res) => {
 
 app.post('/api/images/generate', async (req, res) => {
   try {
-    const { projectId, selectedApi, prompt } = req.body;
+    const { projectId, selectedApi, prompt, cardId } = req.body;
 
     if (!projectId || !selectedApi || !prompt?.trim()) {
       return res.status(400).json({ error: 'projectId, selectedApi and prompt are required' });
@@ -1135,7 +1141,8 @@ app.post('/api/images/generate', async (req, res) => {
         modelVersion,
         mimeType: inlineData.mimeType,
         responseId,
-        usage: responseBody?.usage || responseBody?.usageMetadata || null
+        usage: responseBody?.usage || responseBody?.usageMetadata || null,
+        cardId: cardId || randomUUID()
       },
       createdAt: Date.now()
     };

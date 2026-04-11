@@ -199,6 +199,9 @@ export function ProjectProvider({ children }) {
 
     formData.append('projectId', projectId)
     formData.append('workflowId', workflowData.workflowId)
+    if (workflowData.cardId) {
+      formData.append('cardId', workflowData.cardId)
+    }
 
     Object.entries(workflowData.inputs || {}).forEach(([key, value]) => {
       if (typeof File !== 'undefined' && value instanceof File) {
