@@ -205,6 +205,7 @@ app.put('/api/library/comfy-workflows/:id', async (req, res) => {
 });
 const upload = multer({ storage });
 const workflowExecutionUpload = multer({ storage: multer.memoryStorage() });
+const libraryImportUpload = multer({ storage: multer.memoryStorage() });
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -617,12 +618,30 @@ function createGeneratedImageName(prompt, extension) {
 }
 
 function inferAssetTypeFromFilename(filename = '') {
+  const supportedType = inferSupportedAssetTypeFromFilename(filename);
+
+  if (supportedType) return supportedType;
+
+  return 'image';
+}
+
+function inferSupportedAssetTypeFromFilename(filename = '') {
   const extension = path.extname(filename).toLowerCase();
 
   if (MESH_EXTENSIONS.has(extension)) return 'mesh';
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
 
-  return 'image';
+  return null;
+}
+
+function createLibraryImportFilename(originalName = 'asset') {
+  const extension = path.extname(originalName).toLowerCase();
+  const baseName = path.basename(originalName, extension)
+    .replace(/[^a-z0-9-_]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+
+  return `${baseName || 'asset'}-${randomUUID().slice(0, 8)}${extension}`;
 }
 
 async function loadWorkflowJson(filePath) {
@@ -804,6 +823,56 @@ app.get('/api/assets/library', async (req, res) => {
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });
+  }
+});
+
+app.post('/api/assets/library/import', libraryImportUpload.array('files'), async (req, res) => {
+  try {
+    const files = req.files || [];
+
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No files provided' });
+    }
+
+    const imported = [];
+    const skipped = [];
+
+    await Promise.all(files.map(async file => {
+      const assetType = inferSupportedAssetTypeFromFilename(file.originalname);
+
+      if (!assetType) {
+        skipped.push({
+          name: file.originalname,
+          reason: 'Unsupported asset type'
+        });
+        return;
+      }
+
+      const destinationDir = getAssetDirectory(assetType);
+      const filename = createLibraryImportFilename(file.originalname);
+
+      await fs.mkdir(destinationDir, { recursive: true });
+      await fs.writeFile(path.join(destinationDir, filename), file.buffer);
+
+      imported.push({
+        name: file.originalname,
+        filename,
+        type: assetType
+      });
+    }));
+
+    if (imported.length === 0) {
+      return res.status(400).json({
+        error: 'No supported assets were imported',
+        imported,
+        skipped
+      });
+    }
+
+    res.status(201).json({ imported, skipped });
+  } catch (err) {
+    console.error('Failed to import library assets:', err);
+    res.status(500).json({ error: 'Failed to import library assets' });
   }
 });
 

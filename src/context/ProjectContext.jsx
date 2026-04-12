@@ -118,6 +118,27 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
+  const importLibraryAssets = async (files) => {
+    const formData = new FormData()
+
+    Array.from(files || []).forEach(file => {
+      formData.append('files', file)
+    })
+
+    const res = await fetch(`${API_BASE}/assets/library/import`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to import assets')
+    }
+
+    return data
+  }
+
   const generateImage = async (projectId, generationData) => {
     const res = await fetch(`${API_BASE}/images/generate`, {
       method: 'POST',
@@ -243,6 +264,7 @@ export function ProjectProvider({ children }) {
       attachExistingAsset,
       deleteAsset,
       getLibraryAssets,
+      importLibraryAssets,
       generateImage,
       getComfyWorkflows,
       inspectComfyWorkflow,
