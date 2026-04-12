@@ -1,29 +1,44 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import process from 'process';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
 import fs from 'fs/promises';
-import { existsSync } from 'fs';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import {
+  ASSETS_DIR,
+  DATA_DIR,
+  DEFAULT_SETTINGS,
+  WORKFLOW_ASSETS_DIR,
+  createProject,
+  createProjectAsset,
+  createTask,
+  createWorkflowRecord,
+  deleteAssetById,
+  deleteProjectById,
+  getAssetDirectory,
+  getProjectById,
+  getSettings,
+  getWorkflowRecordById,
+  initializeStorage,
+  listLibraryAssetsByType,
+  listProjectAssets,
+  listProjectTasks,
+  listProjects,
+  listWorkflowRecords,
+  saveSettings,
+  toAbsoluteStoragePath,
+  toStoredAssetPath,
+  updateWorkflowRecord
+} from './storage.js';
 
 const app = express();
 const PORT = 3001;
-const DATA_DIR = path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DATA_DIR, 'db.json');
-const ASSETS_DIR = path.join(DATA_DIR, 'assets');
-const IMAGE_ASSETS_DIR = path.join(ASSETS_DIR, 'images');
-const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const MESH_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.fbx', '.stl', '.ply']);
 
 console.log('DEBUG: DATA_DIR is', DATA_DIR);
-console.log('DEBUG: DB_FILE is', DB_FILE);
+console.log('DEBUG: DB_FILE is', path.join(DATA_DIR, 'app.db'));
 
 // Middleware
 app.use(cors());
@@ -46,8 +61,17 @@ const storage = multer.diskStorage({
 
 app.get('/api/library/comfy-workflows', async (req, res) => {
   try {
-    const db = await readDb();
-    res.json(db.library?.comfyWorkflows || []);
+    const workflowRecords = await listWorkflowRecords();
+    const workflows = (await Promise.all(workflowRecords.map(async record => {
+      try {
+        return await buildWorkflowResponse(record);
+      } catch (err) {
+        console.warn(`Skipping invalid workflow ${record?.id}:`, err.message);
+        return null;
+      }
+    }))).filter(Boolean);
+
+    res.json(workflows);
   } catch (err) {
     console.error('Failed to list ComfyUI workflows:', err);
     res.status(500).json({ error: 'Failed to list ComfyUI workflows' });
@@ -108,24 +132,15 @@ app.post('/api/library/comfy-workflows', async (req, res) => {
       return res.status(400).json({ error: 'Select at least one output node to save images from' });
     }
 
-    const db = await readDb();
-    const workflowRecord = {
-      id: Date.now(),
+    const filePath = await saveWorkflowFile(name, workflowJson);
+    const workflowRecord = await createWorkflowRecord({
       name: sanitizeDisplayName(name, 'Workflow'),
-      workflowJson: cloneSerializable(workflowJson),
-      availableInputs: parsed.inputs,
-      availableOutputs: parsed.outputs,
+      filePath,
       parameters: selectedParameters,
-      outputs: selectedOutputs,
-      createdAt: Date.now()
-    };
+      outputs: selectedOutputs
+    });
 
-    db.library = db.library || { comfyWorkflows: [] };
-    db.library.comfyWorkflows = db.library.comfyWorkflows || [];
-    db.library.comfyWorkflows.push(workflowRecord);
-    await writeDb(db);
-
-    res.status(201).json(workflowRecord);
+    res.status(201).json(await buildWorkflowResponse(workflowRecord));
   } catch (err) {
     console.error('Failed to save ComfyUI workflow:', err);
     res.status(400).json({ error: err.message || 'Failed to save ComfyUI workflow' });
@@ -135,14 +150,13 @@ app.post('/api/library/comfy-workflows', async (req, res) => {
 app.put('/api/library/comfy-workflows/:id', async (req, res) => {
   try {
     const { name, parameters = [], outputs = [] } = req.body;
-    const db = await readDb();
-    const workflowIndex = (db.library?.comfyWorkflows || []).findIndex(item => item.id == req.params.id);
+    const existingWorkflowRecord = await getWorkflowRecordById(Number(req.params.id));
 
-    if (workflowIndex === -1) {
+    if (!existingWorkflowRecord) {
       return res.status(404).json({ error: 'ComfyUI workflow not found' });
     }
 
-    const existingWorkflow = db.library.comfyWorkflows[workflowIndex];
+    const existingWorkflow = await buildWorkflowResponse(existingWorkflowRecord);
     const availableParameters = new Map((existingWorkflow.availableInputs || []).map(input => [input.id, input]));
     const availableOutputs = new Map((existingWorkflow.availableOutputs || []).map(output => [output.nodeId, output]));
 
@@ -177,18 +191,13 @@ app.put('/api/library/comfy-workflows/:id', async (req, res) => {
       return res.status(400).json({ error: 'Select at least one output node to save images from' });
     }
 
-    const nextWorkflow = {
-      ...existingWorkflow,
+    const nextWorkflow = await updateWorkflowRecord(existingWorkflow.id, {
       name: sanitizeDisplayName(name || existingWorkflow.name, existingWorkflow.name),
       parameters: nextParameters,
-      outputs: nextOutputs,
-      updatedAt: Date.now()
-    };
+      outputs: nextOutputs
+    });
 
-    db.library.comfyWorkflows[workflowIndex] = nextWorkflow;
-    await writeDb(db);
-
-    res.json(nextWorkflow);
+    res.json(await buildWorkflowResponse(nextWorkflow));
   } catch (err) {
     console.error('Failed to update ComfyUI workflow:', err);
     res.status(400).json({ error: err.message || 'Failed to update ComfyUI workflow' });
@@ -607,25 +616,6 @@ function createGeneratedImageName(prompt, extension) {
   return `${baseName || 'generated_image'}.${extension}`;
 }
 
-function getAssetSubdirectory(type = 'image') {
-  return type === 'mesh' ? 'meshes' : 'images';
-}
-
-function getAssetDirectory(type = 'image') {
-  return type === 'mesh' ? MESH_ASSETS_DIR : IMAGE_ASSETS_DIR;
-}
-
-function normalizeAssetFilename(type, filename) {
-  if (!filename) return filename;
-
-  const normalizedFilename = filename.replace(/\\/g, '/');
-  if (normalizedFilename.startsWith('images/') || normalizedFilename.startsWith('meshes/')) {
-    return normalizedFilename;
-  }
-
-  return `${getAssetSubdirectory(type)}/${path.basename(normalizedFilename)}`;
-}
-
 function inferAssetTypeFromFilename(filename = '') {
   const extension = path.extname(filename).toLowerCase();
 
@@ -635,130 +625,51 @@ function inferAssetTypeFromFilename(filename = '') {
   return 'image';
 }
 
-async function listLibraryAssetsByType(type) {
-  const subdirectory = getAssetSubdirectory(type);
-  const assetDirectory = getAssetDirectory(type);
-  const entries = await fs.readdir(assetDirectory, { withFileTypes: true });
-
-  return entries
-    .filter(entry => entry.isFile())
-    .sort((left, right) => right.name.localeCompare(left.name))
-    .map(entry => {
-      const filename = `${subdirectory}/${entry.name}`;
-      return {
-        id: `${type}:${entry.name}`,
-        name: entry.name,
-        filename,
-        type,
-        extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
-        url: `http://localhost:${PORT}/assets/${encodeURI(filename)}`
-      };
-    });
+async function loadWorkflowJson(filePath) {
+  const workflowContent = await fs.readFile(toAbsoluteStoragePath(filePath), 'utf-8');
+  return JSON.parse(workflowContent);
 }
 
-async function migrateLooseAssetsIntoSubfolders() {
-  const entries = await fs.readdir(ASSETS_DIR, { withFileTypes: true });
-  let changed = false;
+async function buildWorkflowResponse(record) {
+  if (!record) return null;
 
-  for (const entry of entries) {
-    if (!entry.isFile()) continue;
+  const workflowJson = await loadWorkflowJson(record.filePath);
+  const parsedWorkflow = parseComfyWorkflow(workflowJson);
 
-    const sourcePath = path.join(ASSETS_DIR, entry.name);
-    const type = inferAssetTypeFromFilename(entry.name);
-    const targetPath = path.join(getAssetDirectory(type), entry.name);
-
-    if (!existsSync(targetPath)) {
-      await fs.rename(sourcePath, targetPath);
-      changed = true;
-    }
-  }
-
-  return changed;
+  return {
+    id: record.id,
+    name: record.name,
+    filePath: record.filePath,
+    workflowJson,
+    availableInputs: parsedWorkflow.inputs,
+    availableOutputs: parsedWorkflow.outputs,
+    parameters: JSON.parse(record.parametersJson || '[]'),
+    outputs: JSON.parse(record.outputsJson || '[]'),
+    createdAt: record.creationDate
+  };
 }
 
-async function migrateAssetStorage(db) {
-  let changed = await migrateLooseAssetsIntoSubfolders();
+async function saveWorkflowFile(name, workflowJson) {
+  await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
 
-  for (const asset of db.assets || []) {
-    if (!asset.filename) continue;
+  const workflowSlug = sanitizeDisplayName(name, 'Workflow')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48) || 'workflow';
+  const workflowFilename = `${workflowSlug}_${Date.now()}_${Math.round(Math.random() * 1E9)}.json`;
+  const workflowFilePath = toStoredAssetPath('workflow', workflowFilename);
 
-    const assetType = asset.type || inferAssetTypeFromFilename(asset.filename);
-    const normalizedFilename = asset.filename.replace(/\\/g, '/');
-    const targetFilename = normalizeAssetFilename(assetType, normalizedFilename);
+  await fs.writeFile(toAbsoluteStoragePath(workflowFilePath), JSON.stringify(workflowJson, null, 2), 'utf-8');
 
-    if (normalizedFilename !== targetFilename) {
-      const sourcePath = path.join(ASSETS_DIR, normalizedFilename);
-      const targetPath = path.join(ASSETS_DIR, targetFilename);
-
-      if (existsSync(sourcePath) && !existsSync(targetPath)) {
-        await fs.rename(sourcePath, targetPath);
-      }
-
-      asset.filename = targetFilename;
-      changed = true;
-    }
-  }
-
-  return changed;
-}
-
-/**
- * Robust DB Sync / Initialization
- * This ensures the data/ folder and db.json exist before any read/write.
- */
-async function ensureDb() {
-  try {
-    // 1. Ensure Directories
-    if (!existsSync(DATA_DIR)) await fs.mkdir(DATA_DIR, { recursive: true });
-    if (!existsSync(ASSETS_DIR)) await fs.mkdir(ASSETS_DIR, { recursive: true });
-    if (!existsSync(IMAGE_ASSETS_DIR)) await fs.mkdir(IMAGE_ASSETS_DIR, { recursive: true });
-    if (!existsSync(MESH_ASSETS_DIR)) await fs.mkdir(MESH_ASSETS_DIR, { recursive: true });
-
-    // 2. Ensure DB File
-    if (!existsSync(DB_FILE)) {
-      console.log('📄 Database file missing. Creating fresh db.json...');
-      await fs.writeFile(DB_FILE, JSON.stringify(INITIAL_SCHEMA, null, 2), 'utf-8');
-    }
-  } catch (err) {
-    console.error('❌ Storage initialization failed:', err);
-  }
-}
-
-async function readDb() {
-  await ensureDb();
-  try {
-    const data = await fs.readFile(DB_FILE, 'utf-8');
-    const db = JSON.parse(data);
-    const mergedDb = mergeDeep(INITIAL_SCHEMA, db);
-    const migratedAssets = await migrateAssetStorage(mergedDb);
-
-    if (migratedAssets || JSON.stringify(mergedDb) !== JSON.stringify(db)) {
-      await fs.writeFile(DB_FILE, JSON.stringify(mergedDb, null, 2), 'utf-8');
-    }
-
-    return mergedDb;
-  } catch (err) {
-    console.error('⚠️ Failed to read database, falling back to initial schema:', err);
-    return INITIAL_SCHEMA;
-  }
-}
-
-async function writeDb(data) {
-  await ensureDb();
-  try {
-    await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('❌ Failed to write to database:', err);
-    throw err;
-  }
+  return workflowFilePath;
 }
 
 // ─── API ROUTES ───
 
 app.get('/api/projects', async (req, res) => {
   try {
-    const db = await readDb();
-    res.json(db.projects || []);
+    res.json(await listProjects());
   } catch {
     res.status(500).json({ error: 'Server read error' });
   }
@@ -773,14 +684,15 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       return res.status(400).json({ error: 'projectId and workflowId are required' });
     }
 
-    const db = await readDb();
-    const workflow = (db.library?.comfyWorkflows || []).find(item => item.id == workflowId);
+    const workflowRecord = await getWorkflowRecordById(Number(workflowId));
+    const workflow = workflowRecord ? await buildWorkflowResponse(workflowRecord) : null;
 
     if (!workflow) {
       return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
     }
 
-    const baseUrl = buildComfyUiBaseUrl(db.settings || {});
+    const settings = await getSettings();
+    const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
     const uploadedFiles = new Map((req.files || []).map(file => [file.fieldname, file]));
     const resolvedInputs = { ...inputValues };
 
@@ -816,17 +728,16 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       const downloadedImage = await downloadComfyImage(baseUrl, workflowImage);
       const extension = path.extname(workflowImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType);
       const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-      const relativeFilename = normalizeAssetFilename('image', filename);
-      const filePath = path.join(ASSETS_DIR, relativeFilename);
+      const storedFilePath = toStoredAssetPath('image', filename);
+      const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
 
-      await fs.writeFile(filePath, downloadedImage.buffer);
+      await fs.writeFile(absoluteFilePath, downloadedImage.buffer);
 
-      generatedAssets.push({
-        id: baseTimestamp + index,
-        projectId: parseInt(projectId),
+      generatedAssets.push(await createProjectAsset({
+        projectId: Number(projectId),
         type: 'image',
         name: createGeneratedImageName(workflow.name, extension),
-        filename: relativeFilename,
+        filePath: storedFilePath,
         metadata: {
           resolution: 'Unknown',
           format: extension.toUpperCase(),
@@ -841,12 +752,8 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           cardId: imageCardId
         },
         createdAt: baseTimestamp + index
-      });
+      }));
     }
-
-    db.assets = db.assets || [];
-    db.assets.push(...generatedAssets);
-    await writeDb(db);
 
     res.status(201).json(generatedAssets);
   } catch (err) {
@@ -857,17 +764,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 
 app.post('/api/projects', async (req, res) => {
   try {
-    const db = await readDb();
-    const newProject = {
-      ...req.body,
-      id: Date.now(),
-      createdAt: Date.now(),
-      status: 'active'
-    };
-    db.projects = db.projects || [];
-    db.projects.push(newProject);
-    await writeDb(db);
-    res.status(201).json(newProject);
+    res.status(201).json(await createProject(req.body));
   } catch {
     res.status(500).json({ error: 'Failed to create project' });
   }
@@ -875,8 +772,7 @@ app.post('/api/projects', async (req, res) => {
 
 app.get('/api/projects/:id', async (req, res) => {
   try {
-    const db = await readDb();
-    const project = db.projects.find(p => p.id == req.params.id);
+    const project = await getProjectById(Number(req.params.id));
     if (!project) return res.status(404).json({ error: 'Project not found' });
     res.json(project);
   } catch {
@@ -886,11 +782,7 @@ app.get('/api/projects/:id', async (req, res) => {
 
 app.delete('/api/projects/:id', async (req, res) => {
   try {
-    const db = await readDb();
-    db.projects = (db.projects || []).filter(p => p.id != req.params.id);
-    db.assets = (db.assets || []).filter(a => a.projectId != req.params.id);
-    db.tasks = (db.tasks || []).filter(t => t.projectId != req.params.id);
-    await writeDb(db);
+    await deleteProjectById(Number(req.params.id));
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Deletion failed' });
@@ -898,18 +790,15 @@ app.delete('/api/projects/:id', async (req, res) => {
 });
 
 app.get('/api/assets', async (req, res) => {
-  const db = await readDb();
   const { projectId } = req.query;
-  const list = db.assets || [];
-  res.json(projectId ? list.filter(a => a.projectId == projectId) : list);
+  res.json(await listProjectAssets(projectId ? Number(projectId) : null));
 });
 
 app.get('/api/assets/library', async (req, res) => {
   try {
-    await ensureDb();
     const [images, meshes] = await Promise.all([
-      listLibraryAssetsByType('image'),
-      listLibraryAssetsByType('mesh')
+      listLibraryAssetsByType('image', PORT),
+      listLibraryAssetsByType('mesh', PORT)
     ]);
     res.json({ images, meshes });
   } catch (err) {
@@ -921,22 +810,19 @@ app.get('/api/assets/library', async (req, res) => {
 app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
-    const db = await readDb();
     const assetType = req.body.type || inferAssetTypeFromFilename(req.file.originalname);
-    const newAsset = {
-      id: Date.now(),
-      projectId: parseInt(req.body.projectId),
+    const newAsset = await createProjectAsset({
+      projectId: Number(req.body.projectId),
       type: assetType,
       name: req.body.name || req.file.originalname,
-      filename: normalizeAssetFilename(assetType, req.file.filename),
+      filePath: toStoredAssetPath(assetType, req.file.filename),
       metadata: req.body.metadata ? JSON.parse(req.body.metadata) : {},
       createdAt: Date.now()
-    };
-    db.assets = db.assets || [];
-    db.assets.push(newAsset);
-    await writeDb(db);
+    });
+
     res.status(201).json(newAsset);
-  } catch {
+  } catch (err) {
+    console.error('Upload recording failed:', err);
     res.status(500).json({ error: 'Upload recording failed' });
   }
 });
@@ -950,32 +836,29 @@ app.post('/api/assets/link', async (req, res) => {
     }
 
     const assetType = type || inferAssetTypeFromFilename(filename);
-    const normalizedFilename = normalizeAssetFilename(assetType, filename);
-    const assetPath = path.join(ASSETS_DIR, normalizedFilename);
+    const storedFilePath = toStoredAssetPath(assetType, filename);
+    const absoluteAssetPath = toAbsoluteStoragePath(storedFilePath);
 
-    if (!existsSync(assetPath)) {
+    await fs.access(absoluteAssetPath).catch(() => null);
+    try {
+      await fs.access(absoluteAssetPath);
+    } catch {
       return res.status(404).json({ error: 'Selected asset file was not found' });
     }
 
-    const db = await readDb();
-    const newAsset = {
-      id: Date.now(),
-      projectId: parseInt(projectId),
+    const newAsset = await createProjectAsset({
+      projectId: Number(projectId),
       type: assetType,
-      name: name || path.basename(normalizedFilename),
-      filename: normalizedFilename,
+      name: name || path.basename(storedFilePath),
+      filePath: storedFilePath,
       metadata: {
         resolution: 'Unknown',
-        format: path.extname(normalizedFilename).replace('.', '').toUpperCase() || assetType.toUpperCase(),
+        format: path.extname(storedFilePath).replace('.', '').toUpperCase() || assetType.toUpperCase(),
         source: 'ASSET LIB',
         ...(metadata || {})
       },
       createdAt: Date.now()
-    };
-
-    db.assets = db.assets || [];
-    db.assets.push(newAsset);
-    await writeDb(db);
+    });
 
     res.status(201).json(newAsset);
   } catch (err) {
@@ -986,16 +869,16 @@ app.post('/api/assets/link', async (req, res) => {
 
 app.delete('/api/assets/:id', async (req, res) => {
   try {
-    const db = await readDb();
     const assetId = Number(req.params.id);
-    const assetExists = (db.assets || []).some(asset => asset.id === assetId);
+    const result = await deleteAssetById(assetId);
 
-    if (!assetExists) {
+    if (result.status === 'not-found') {
       return res.status(404).json({ error: 'Asset card not found' });
     }
 
-    db.assets = (db.assets || []).filter(asset => asset.id !== assetId);
-    await writeDb(db);
+    if (result.status === 'linked') {
+      return res.status(409).json({ error: 'Cannot delete an asset while it is linked to a card' });
+    }
 
     res.status(204).end();
   } catch (err) {
@@ -1012,11 +895,11 @@ app.post('/api/images/generate', async (req, res) => {
       return res.status(400).json({ error: 'projectId, selectedApi and prompt are required' });
     }
 
-    const db = await readDb();
+    const settings = await getSettings();
     const trimmedPrompt = prompt.trim();
-    const googleSettings = db.settings?.apis?.google;
+    const googleSettings = settings?.apis?.google;
     const googleGenerationSettings = googleSettings?.imageGeneration;
-    const openAiSettings = db.settings?.apis?.openai;
+    const openAiSettings = settings?.apis?.openai;
     const openAiGenerationSettings = openAiSettings?.imageGeneration;
 
     let response;
@@ -1122,17 +1005,16 @@ app.post('/api/images/generate', async (req, res) => {
 
     const extension = getExtensionFromMimeType(inlineData.mimeType);
     const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-    const relativeFilename = normalizeAssetFilename('image', filename);
-    const filePath = path.join(ASSETS_DIR, relativeFilename);
+    const storedFilePath = toStoredAssetPath('image', filename);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
 
-    await fs.writeFile(filePath, Buffer.from(inlineData.data, 'base64'));
+    await fs.writeFile(absoluteFilePath, Buffer.from(inlineData.data, 'base64'));
 
-    const newAsset = {
-      id: Date.now(),
-      projectId: parseInt(projectId),
+    const newAsset = await createProjectAsset({
+      projectId: Number(projectId),
       type: 'image',
       name: createGeneratedImageName(trimmedPrompt, extension),
-      filename: relativeFilename,
+      filePath: storedFilePath,
       metadata: {
         resolution: 'Unknown',
         format: outputFormat || extension.toUpperCase(),
@@ -1145,11 +1027,7 @@ app.post('/api/images/generate', async (req, res) => {
         cardId: cardId || randomUUID()
       },
       createdAt: Date.now()
-    };
-
-    db.assets = db.assets || [];
-    db.assets.push(newAsset);
-    await writeDb(db);
+    });
 
     res.status(201).json(newAsset);
   } catch (err) {
@@ -1159,27 +1037,13 @@ app.post('/api/images/generate', async (req, res) => {
 });
 
 app.get('/api/tasks', async (req, res) => {
-  const db = await readDb();
   const { projectId } = req.query;
-  const list = db.tasks || [];
-  res.json(projectId ? list.filter(t => t.projectId == projectId) : list);
+  res.json(projectId ? await listProjectTasks(Number(projectId)) : []);
 });
 
 app.post('/api/tasks', async (req, res) => {
   try {
-    const db = await readDb();
-    const newTask = {
-      ...req.body,
-      id: Date.now(),
-      projectId: parseInt(req.body.projectId),
-      progress: 0,
-      status: 'processing',
-      createdAt: Date.now()
-    };
-    db.tasks = db.tasks || [];
-    db.tasks.push(newTask);
-    await writeDb(db);
-    res.status(201).json(newTask);
+    res.status(201).json(await createTask(Number(req.body.projectId), req.body));
   } catch {
     res.status(500).json({ error: 'Task creation failed' });
   }
@@ -1187,8 +1051,7 @@ app.post('/api/tasks', async (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   try {
-    const db = await readDb();
-    res.json(db.settings || INITIAL_SCHEMA.settings);
+    res.json(await getSettings());
   } catch {
     res.status(500).json({ error: 'Failed to read settings' });
   }
@@ -1196,17 +1059,16 @@ app.get('/api/settings', async (req, res) => {
 
 app.post('/api/settings', async (req, res) => {
   try {
-    const db = await readDb();
-    db.settings = mergeDeep(db.settings, req.body);
-    await writeDb(db);
-    res.json(db.settings);
+    const currentSettings = await getSettings();
+    const nextSettings = mergeDeep(currentSettings || DEFAULT_SETTINGS, req.body);
+    res.json(await saveSettings(nextSettings));
   } catch {
     res.status(500).json({ error: 'Failed to update settings' });
   }
 });
 
 // Start server
-ensureDb().then(() => {
+initializeStorage().then(() => {
   app.listen(PORT, () => {
     console.log(`🚀 3D Gen Studio Backend running at http://localhost:${PORT}`);
     console.log(`📁 Local Workspace: ${DATA_DIR}`);
