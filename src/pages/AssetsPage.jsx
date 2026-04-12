@@ -3,6 +3,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
+import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
 import './AssetsPage.css'
 
 const ASSETS_PER_PAGE = 20
@@ -223,7 +224,23 @@ export default function AssetsPage() {
     setImportFeedback(null)
 
     try {
-      const result = await importLibraryAssets(files)
+      const assetsToImport = []
+
+      for (const file of files) {
+        let thumbnail = null
+
+        if (isMeshFile(file.name)) {
+          try {
+            thumbnail = await createMeshThumbnailFile(file)
+          } catch (err) {
+            console.warn(`Failed to generate mesh thumbnail for ${file.name}:`, err)
+          }
+        }
+
+        assetsToImport.push({ file, thumbnail })
+      }
+
+      const result = await importLibraryAssets(assetsToImport)
       await loadLibrary()
 
       const importedCount = result.imported?.length || 0
@@ -702,9 +719,18 @@ export default function AssetsPage() {
                               <img src={asset.url} alt={asset.name} className="asset-card__image" />
                             </div>
                           ) : (
-                            <div className="asset-card__preview asset-card__preview--mesh">
-                              <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
-                              <span className="asset-card__mesh-label font-label">3D MESH</span>
+                            <div className={`asset-card__preview asset-card__preview--mesh ${asset.thumbnailUrl ? 'asset-card__preview--mesh-thumbnail' : ''}`}>
+                              {asset.thumbnailUrl ? (
+                                <>
+                                  <img src={asset.thumbnailUrl} alt={`${asset.name} thumbnail`} className="asset-card__image" />
+                                  <span className="asset-card__mesh-tag font-label">3D MESH</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
+                                  <span className="asset-card__mesh-label font-label">3D MESH</span>
+                                </>
+                              )}
                             </div>
                           )}
                           <div className="asset-card__body">

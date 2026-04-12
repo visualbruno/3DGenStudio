@@ -7,6 +7,7 @@ export const DB_FILE = path.join(DATA_DIR, 'app.db');
 export const ASSETS_DIR = path.join(DATA_DIR, 'assets');
 export const IMAGE_ASSETS_DIR = path.join(ASSETS_DIR, 'images');
 export const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
+export const THUMBNAIL_ASSETS_DIR = path.join(ASSETS_DIR, 'thumbnails');
 export const WORKFLOW_ASSETS_DIR = path.join(ASSETS_DIR, 'workflows');
 
 const sqlite = sqlite3.verbose();
@@ -175,6 +176,7 @@ function mapTaskRow(row) {
 function mapAssetRow(row) {
   const metadata = parseJson(row.metadata, {});
   const filename = toAssetUrlPath(row.filePath);
+  const thumbnail = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
 
   if (row.cardId) {
     metadata.cardId = row.clientKey || String(row.cardId);
@@ -187,9 +189,15 @@ function mapAssetRow(row) {
     name: row.name,
     filePath: row.filePath,
     filename,
+    thumbnailPath: row.thumbnail || null,
+    thumbnail,
     metadata,
     createdAt: row.creationDate
   };
+}
+
+function normalizeAssetTypeName(name) {
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
 }
 
 async function getDb() {
@@ -233,6 +241,7 @@ export async function initializeStorage() {
   await fs.mkdir(ASSETS_DIR, { recursive: true });
   await fs.mkdir(IMAGE_ASSETS_DIR, { recursive: true });
   await fs.mkdir(MESH_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
   await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
 
   const db = await openDatabase(DB_FILE);
@@ -311,6 +320,11 @@ export async function initializeStorage() {
     `
   );
 
+  const assetColumns = await all(db, 'PRAGMA table_info(Assets)');
+  if (!assetColumns.some(column => column.name === 'thumbnail')) {
+    await run(db, 'ALTER TABLE Assets ADD COLUMN thumbnail TEXT');
+  }
+
   await seedReferenceTables(db);
   return db;
 }
@@ -342,6 +356,18 @@ export function toStoredAssetPath(type, filePath) {
   }
 
   return `${DATA_ASSETS_PREFIX}${subdirectory}/${path.basename(normalizedPath)}`;
+}
+
+export function toStoredThumbnailPath(filePath) {
+  const normalizedPath = String(filePath || '').replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalizedPath) return normalizedPath;
+  if (normalizedPath.startsWith(DATA_ASSETS_PREFIX)) return normalizedPath;
+
+  if (normalizedPath.startsWith('thumbnails/')) {
+    return `${DATA_ASSETS_PREFIX}${normalizedPath}`;
+  }
+
+  return `${DATA_ASSETS_PREFIX}thumbnails/${path.basename(normalizedPath)}`;
 }
 
 export function toAssetUrlPath(filePath) {
@@ -463,13 +489,20 @@ async function ensureCard(projectId, columnName, externalCardId = null, values =
   };
 }
 
-async function insertAsset({ name, type, filePath, metadata = {}, createdAt = Date.now() }) {
+async function insertAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
   const db = await getDb();
   const assetTypeId = await getAssetTypeIdByName(type);
   const result = await run(
     db,
-    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata) VALUES (?, ?, ?, ?, ?)',
-    [name, toStoredAssetPath(type, filePath), assetTypeId, createdAt, JSON.stringify(metadata)]
+    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail) VALUES (?, ?, ?, ?, ?, ?)',
+    [
+      name,
+      toStoredAssetPath(type, filePath),
+      assetTypeId,
+      createdAt,
+      JSON.stringify(metadata),
+      thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null
+    ]
   );
 
   return result.lastID;
@@ -479,7 +512,7 @@ async function getAssetViewById(assetId) {
   const db = await getDb();
   const row = await get(
     db,
-    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata,
+    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
             c.projectId, c.id AS cardId, c.clientKey
      FROM Assets a
@@ -579,7 +612,7 @@ export async function listProjectAssets(projectId = null) {
 
   const rows = await all(
     db,
-    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata,
+    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
             c.projectId, c.id AS cardId, c.clientKey,
             ca.position AS assetPosition
@@ -595,7 +628,7 @@ export async function listProjectAssets(projectId = null) {
   return rows.map(mapAssetRow);
 }
 
-export async function createProjectAsset({ projectId, type, name, filePath, metadata = {}, createdAt = Date.now() }) {
+export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
   const card = await ensureCard(projectId, 'Images', metadata.cardId, {
     creationDate: createdAt
   });
@@ -603,6 +636,7 @@ export async function createProjectAsset({ projectId, type, name, filePath, meta
     name,
     type,
     filePath,
+    thumbnailPath,
     metadata,
     createdAt
   });
@@ -616,6 +650,35 @@ export async function createProjectAsset({ projectId, type, name, filePath, meta
   );
 
   return await getAssetViewById(assetId);
+}
+
+export async function createLibraryAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
+  const assetId = await insertAsset({
+    name,
+    type,
+    filePath,
+    thumbnailPath,
+    metadata,
+    createdAt
+  });
+
+  return await getAssetViewById(assetId);
+}
+
+export async function findLibraryAssetByFilePath(type, filePath) {
+  const db = await getDb();
+  return await get(
+    db,
+    `SELECT a.id, a.thumbnail
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND a.filePath = ?
+       AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
+     ORDER BY a.creationDate DESC
+     LIMIT 1`,
+    [normalizeAssetTypeName(type), toStoredAssetPath(type, filePath)]
+  );
 }
 
 async function deleteCardsIfEmpty(cardIds = []) {
@@ -733,24 +796,59 @@ export async function updateWorkflowRecord(workflowId, { name, parameters = [], 
 }
 
 export async function listLibraryAssetsByType(type, port) {
+  const db = await getDb();
   const assetDirectory = getAssetDirectory(type);
   const subdirectory = getAssetSubdirectory(type);
   await fs.mkdir(assetDirectory, { recursive: true });
   const entries = await fs.readdir(assetDirectory, { withFileTypes: true });
+  const rows = await all(
+    db,
+    `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
+     ORDER BY a.creationDate DESC`,
+    [normalizeAssetTypeName(type)]
+  );
 
-  return entries
+  const dbAssets = rows.map(row => {
+    const filename = toAssetUrlPath(row.filePath);
+    const thumbnailFilename = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
+
+    return {
+      id: `library:${row.id}`,
+      name: row.name,
+      filename,
+      filePath: row.filePath,
+      type,
+      extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
+      url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
+      thumbnailPath: row.thumbnail || null,
+      thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null
+    };
+  });
+
+  const knownFilenames = new Set(dbAssets.map(asset => asset.filename));
+
+  const fileAssets = entries
     .filter(entry => entry.isFile())
+    .filter(entry => !knownFilenames.has(`${subdirectory}/${entry.name}`))
     .sort((left, right) => right.name.localeCompare(left.name))
     .map(entry => {
       const filename = `${subdirectory}/${entry.name}`;
       return {
-        id: `${type}:${entry.name}`,
+        id: `file:${type}:${entry.name}`,
         name: entry.name,
         filename,
         filePath: toStoredAssetPath(type, filename),
         type,
         extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
-        url: `http://localhost:${port}/assets/${encodeURI(filename)}`
+        url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
+        thumbnailPath: null,
+        thumbnailUrl: null
       };
     });
+
+  return [...dbAssets, ...fileAssets];
 }

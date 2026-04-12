@@ -440,6 +440,8 @@
 
 .asset-card__preview--mesh {
   aspect-ratio: 16 / 10;
+  position: relative;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -448,6 +450,10 @@
   background:
     radial-gradient(circle at 50% 30%, rgba(172, 137, 255, 0.14), transparent 40%),
     linear-gradient(180deg, rgba(36, 38, 41, 1), rgba(13, 14, 16, 1));
+}
+
+.asset-card__preview--mesh-thumbnail {
+  padding: 0;
 }
 
 .asset-card__image {
@@ -466,6 +472,18 @@
   color: var(--on-surface-variant);
   letter-spacing: 0.14em;
   font-size: 0.68rem;
+}
+
+.asset-card__mesh-tag {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: rgba(13, 14, 16, 0.72);
+  color: var(--on-surface);
+  letter-spacing: 0.12em;
+  font-size: 0.62rem;
 }
 
 .asset-card__body {

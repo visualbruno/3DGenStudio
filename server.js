@@ -10,12 +10,15 @@ import {
   DATA_DIR,
   DEFAULT_SETTINGS,
   WORKFLOW_ASSETS_DIR,
+  THUMBNAIL_ASSETS_DIR,
   createProject,
+  createLibraryAsset,
   createProjectAsset,
   createTask,
   createWorkflowRecord,
   deleteAssetById,
   deleteProjectById,
+  findLibraryAssetByFilePath,
   getAssetDirectory,
   getProjectById,
   getSettings,
@@ -29,6 +32,7 @@ import {
   saveSettings,
   toAbsoluteStoragePath,
   toStoredAssetPath,
+  toStoredThumbnailPath,
   updateWorkflowRecord
 } from './storage.js';
 
@@ -644,6 +648,15 @@ function createLibraryImportFilename(originalName = 'asset') {
   return `${baseName || 'asset'}-${randomUUID().slice(0, 8)}${extension}`;
 }
 
+function createLibraryThumbnailFilename(originalName = 'asset') {
+  const baseName = path.basename(originalName, path.extname(originalName))
+    .replace(/[^a-z0-9-_]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+
+  return `${baseName || 'asset'}-thumbnail-${randomUUID().slice(0, 8)}.png`;
+}
+
 async function loadWorkflowJson(filePath) {
   const workflowContent = await fs.readFile(toAbsoluteStoragePath(filePath), 'utf-8');
   return JSON.parse(workflowContent);
@@ -826,9 +839,15 @@ app.get('/api/assets/library', async (req, res) => {
   }
 });
 
-app.post('/api/assets/library/import', libraryImportUpload.array('files'), async (req, res) => {
+app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, res) => {
   try {
-    const files = req.files || [];
+    const multipartFiles = req.files || [];
+    const files = multipartFiles.filter(file => file.fieldname === 'files');
+    const thumbnailsByIndex = new Map(
+      multipartFiles
+        .filter(file => file.fieldname.startsWith('thumbnail:'))
+        .map(file => [Number(file.fieldname.split(':')[1]), file])
+    );
 
     if (files.length === 0) {
       return res.status(400).json({ error: 'No files provided' });
@@ -837,7 +856,7 @@ app.post('/api/assets/library/import', libraryImportUpload.array('files'), async
     const imported = [];
     const skipped = [];
 
-    await Promise.all(files.map(async file => {
+    await Promise.all(files.map(async (file, index) => {
       const assetType = inferSupportedAssetTypeFromFilename(file.originalname);
 
       if (!assetType) {
@@ -850,14 +869,36 @@ app.post('/api/assets/library/import', libraryImportUpload.array('files'), async
 
       const destinationDir = getAssetDirectory(assetType);
       const filename = createLibraryImportFilename(file.originalname);
+      const storedFilePath = toStoredAssetPath(assetType, filename);
+      const thumbnailFile = thumbnailsByIndex.get(index);
+      let thumbnailPath = null;
 
       await fs.mkdir(destinationDir, { recursive: true });
       await fs.writeFile(path.join(destinationDir, filename), file.buffer);
 
+      if (thumbnailFile) {
+        const thumbnailFilename = createLibraryThumbnailFilename(file.originalname);
+        thumbnailPath = toStoredThumbnailPath(thumbnailFilename);
+        await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
+        await fs.writeFile(path.join(THUMBNAIL_ASSETS_DIR, thumbnailFilename), thumbnailFile.buffer);
+      }
+
+      await createLibraryAsset({
+        name: file.originalname,
+        type: assetType,
+        filePath: storedFilePath,
+        thumbnailPath,
+        metadata: {
+          source: 'LIBRARY IMPORT'
+        },
+        createdAt: Date.now()
+      });
+
       imported.push({
         name: file.originalname,
         filename,
-        type: assetType
+        type: assetType,
+        thumbnailPath
       });
     }));
 
@@ -915,11 +956,13 @@ app.post('/api/assets/link', async (req, res) => {
       return res.status(404).json({ error: 'Selected asset file was not found' });
     }
 
+    const libraryAsset = await findLibraryAssetByFilePath(assetType, storedFilePath);
     const newAsset = await createProjectAsset({
       projectId: Number(projectId),
       type: assetType,
       name: name || path.basename(storedFilePath),
       filePath: storedFilePath,
+      thumbnailPath: libraryAsset?.thumbnail || null,
       metadata: {
         resolution: 'Unknown',
         format: path.extname(storedFilePath).replace('.', '').toUpperCase() || assetType.toUpperCase(),

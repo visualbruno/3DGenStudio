@@ -118,11 +118,19 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
-  const importLibraryAssets = async (files) => {
+  const importLibraryAssets = async (assets) => {
     const formData = new FormData()
 
-    Array.from(files || []).forEach(file => {
-      formData.append('files', file)
+    Array.from(assets || []).forEach((asset, index) => {
+      if (!asset?.file) {
+        return
+      }
+
+      formData.append('files', asset.file)
+
+      if (asset.thumbnail) {
+        formData.append(`thumbnail:${index}`, asset.thumbnail)
+      }
     })
 
     const res = await fetch(`${API_BASE}/assets/library/import`, {
