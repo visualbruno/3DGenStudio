@@ -191,6 +191,8 @@ function mapAssetRow(row) {
     filename,
     thumbnailPath: row.thumbnail || null,
     thumbnail,
+    cardPosition: row.cardPosition ?? null,
+    assetPosition: row.assetPosition ?? null,
     metadata,
     createdAt: row.creationDate
   };
@@ -514,7 +516,8 @@ async function getAssetViewById(assetId) {
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
-            c.projectId, c.id AS cardId, c.clientKey
+            c.projectId, c.id AS cardId, c.clientKey, c.position AS cardPosition,
+            ca.position AS assetPosition
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      LEFT JOIN Cards_Assets ca ON ca.assetId = a.id
@@ -614,14 +617,14 @@ export async function listProjectAssets(projectId = null) {
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
-            c.projectId, c.id AS cardId, c.clientKey,
+            c.projectId, c.id AS cardId, c.clientKey, c.position AS cardPosition,
             ca.position AS assetPosition
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      JOIN Cards_Assets ca ON ca.assetId = a.id
      JOIN Cards c ON c.id = ca.cardId
      ${whereClause}
-     ORDER BY c.creationDate DESC, ca.position ASC, a.creationDate DESC`,
+     ORDER BY c.position ASC, ca.position ASC, a.creationDate DESC`,
     params
   );
 

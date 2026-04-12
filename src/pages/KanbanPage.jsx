@@ -406,7 +406,16 @@ export default function KanbanPage() {
 
     return Array.from(cards.entries())
       .map(([id, cardAssets]) => {
-        const sortedAssets = [...cardAssets].sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0))
+        const sortedAssets = [...cardAssets].sort((left, right) => {
+          const leftPosition = left.assetPosition ?? Number.MAX_SAFE_INTEGER
+          const rightPosition = right.assetPosition ?? Number.MAX_SAFE_INTEGER
+
+          if (leftPosition !== rightPosition) {
+            return leftPosition - rightPosition
+          }
+
+          return (right.createdAt || 0) - (left.createdAt || 0)
+        })
         const primaryAsset = sortedAssets[0]
         const sources = [...new Set(sortedAssets.map(asset => asset.metadata?.source).filter(Boolean))]
         const formats = [...new Set(sortedAssets.map(asset => asset.metadata?.format).filter(Boolean))]
@@ -419,10 +428,17 @@ export default function KanbanPage() {
           metaLabel: sortedAssets.length === 1
             ? `${primaryAsset.metadata?.resolution || 'N/A'} • ${primaryAsset.metadata?.format || 'N/A'}`
             : `${sortedAssets.length} images • ${formats.slice(0, 2).join(', ') || 'Mixed formats'}`,
+          cardPosition: primaryAsset.cardPosition ?? Number.MAX_SAFE_INTEGER,
           createdAt: primaryAsset.createdAt || 0
         }
       })
-      .sort((left, right) => right.createdAt - left.createdAt)
+      .sort((left, right) => {
+        if (left.cardPosition !== right.cardPosition) {
+          return left.cardPosition - right.cardPosition
+        }
+
+        return right.createdAt - left.createdAt
+      })
   }, [images])
 
   if (loading && !project) {
