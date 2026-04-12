@@ -4,7 +4,6 @@ import { SettingsProvider } from './context/SettingsContext'
 import ProjectsPage from './pages/ProjectsPage'
 import KanbanPage from './pages/KanbanPage'
 import AssetsPage from './pages/AssetsPage'
-import LibraryPage from './pages/LibraryPage'
 
 function AppRoutes() {
   return (
@@ -13,7 +12,7 @@ function AppRoutes() {
       <Route path="/projects" element={<ProjectsPage />} />
       <Route path="/projects/new" element={<ProjectsPage />} />
       <Route path="/assets" element={<AssetsPage />} />
-      <Route path="/library" element={<LibraryPage />} />
+      <Route path="/library" element={<Navigate to="/assets" replace />} />
       <Route path="/projects/:projectId" element={<KanbanPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

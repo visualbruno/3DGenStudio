@@ -196,7 +196,7 @@ export default function KanbanPage() {
 
   const openComfyWorkflowDraft = (cardId = imageDraft?.cardId || null) => {
     if (comfyWorkflows.length === 0) {
-      alert('Import a ComfyUI workflow in the Library page first.')
+      alert('Import a ComfyUI workflow in Assets > Workflows first.')
       return
     }
 
