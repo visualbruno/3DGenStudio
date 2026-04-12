@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
@@ -105,11 +106,14 @@ export default function AssetsPage() {
   const {
     getLibraryAssets,
     importLibraryAssets,
+    deleteLibraryAsset,
+    deleteAsset,
     getComfyWorkflows,
     inspectComfyWorkflow,
     importComfyWorkflow,
     updateComfyWorkflow
   } = useProjects()
+  const navigate = useNavigate()
   const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [] })
   const [loading, setLoading] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
@@ -127,6 +131,9 @@ export default function AssetsPage() {
   const [selectedOutputs, setSelectedOutputs] = useState({})
   const [editingWorkflowId, setEditingWorkflowId] = useState(null)
   const [workflowFeedback, setWorkflowFeedback] = useState('')
+  const [deletingWorkflowId, setDeletingWorkflowId] = useState(null)
+  const [deletingAssetKey, setDeletingAssetKey] = useState(null)
+  const [linkedAssetDialog, setLinkedAssetDialog] = useState(null)
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -263,6 +270,70 @@ export default function AssetsPage() {
     }
   }
 
+  const handleDeleteAsset = async (asset) => {
+    const assetKey = `${asset.type}:${asset.filename}`
+    setDeletingAssetKey(assetKey)
+    setImportFeedback(null)
+
+    try {
+      await deleteLibraryAsset({
+        type: asset.type,
+        filename: asset.filename
+      })
+
+      await loadLibrary()
+      setImportFeedback({
+        type: 'success',
+        message: `${asset.name} deleted.`
+      })
+    } catch (err) {
+      if (err.status === 409) {
+        setLinkedAssetDialog({
+          assetName: asset.name,
+          projectId: err.details?.projectId,
+          projectName: err.details?.projectName || null
+        })
+      } else {
+        setImportFeedback({
+          type: 'error',
+          message: err.message || 'Failed to delete asset.'
+        })
+      }
+    } finally {
+      setDeletingAssetKey(null)
+    }
+  }
+
+  const handleGoToProject = () => {
+    if (!linkedAssetDialog?.projectId) {
+      return
+    }
+
+    navigate(`/projects/${linkedAssetDialog.projectId}`)
+    setLinkedAssetDialog(null)
+  }
+
+  const handleDeleteWorkflow = async (workflow) => {
+    setDeletingWorkflowId(workflow.id)
+    setWorkflowFeedback('')
+
+    try {
+      await deleteAsset(workflow.id)
+
+      if (editingWorkflowId === workflow.id) {
+        resetWorkflowState()
+      }
+
+      await loadWorkflows()
+      setWorkflowFeedback(`${workflow.name} deleted.`)
+    } catch (err) {
+      console.error('Failed to delete workflow:', err)
+      setWorkflowFeedback(err.message || 'Failed to delete workflow')
+    } finally {
+      setDeletingWorkflowId(null)
+    }
+  }
+
   const handleWorkflowFileChange = async (event) => {
     const input = event.target
     const file = input.files?.[0]
@@ -383,6 +454,34 @@ export default function AssetsPage() {
       <Header showSearch onSettingsClick={() => setShowSettings(true)} />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {linkedAssetDialog && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setLinkedAssetDialog(null)}>
+          <div className="assets-dialog" role="dialog" aria-modal="true" aria-labelledby="linked-asset-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="linked-asset-dialog-title" className="assets-dialog__title font-headline">Asset linked to a project</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setLinkedAssetDialog(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body">
+              <p>
+                `{linkedAssetDialog.assetName}` is linked to
+                {linkedAssetDialog.projectName ? ` ${linkedAssetDialog.projectName}` : ' a project'}.
+                Remove it from the project before deleting the library asset.
+              </p>
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setLinkedAssetDialog(null)}>
+                Close
+              </button>
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleGoToProject} disabled={!linkedAssetDialog.projectId}>
+                Go to project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="assets-page">
         <div className="assets-page__container">
@@ -676,6 +775,15 @@ export default function AssetsPage() {
                                     <button type="button" className="library-icon-btn" onClick={() => handleEditWorkflow(workflow)} title="Edit workflow">
                                       <span className="material-symbols-outlined">edit</span>
                                     </button>
+                                    <button
+                                      type="button"
+                                      className="library-icon-btn"
+                                      onClick={() => handleDeleteWorkflow(workflow)}
+                                      title="Delete workflow"
+                                      disabled={deletingWorkflowId === workflow.id}
+                                    >
+                                      <span className="material-symbols-outlined">delete</span>
+                                    </button>
                                   </div>
                                 </div>
 
@@ -737,7 +845,18 @@ export default function AssetsPage() {
                             <h3 className="asset-card__name">{asset.name}</h3>
                             <div className="asset-card__meta">
                               <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
-                              <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                              <div className="asset-card__actions">
+                                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                                <button
+                                  type="button"
+                                  className="asset-card__icon-btn"
+                                  onClick={() => handleDeleteAsset(asset)}
+                                  disabled={deletingAssetKey === `${asset.type}:${asset.filename}`}
+                                  title="Delete asset"
+                                >
+                                  <span className="material-symbols-outlined">delete</span>
+                                </button>
+                              </div>
                             </div>
                           </div>
                         </article>

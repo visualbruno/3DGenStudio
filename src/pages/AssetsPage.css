@@ -509,6 +509,12 @@
   gap: 0.75rem;
 }
 
+.asset-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .asset-card__badge {
   padding: 0.2rem 0.45rem;
   border-radius: var(--radius-sm);
@@ -531,6 +537,111 @@
 
 .asset-card__link:hover {
   color: var(--primary);
+}
+
+.asset-card__icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(71, 72, 74, 0.22);
+  border-radius: var(--radius-full);
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.asset-card__icon-btn:hover:not(:disabled) {
+  color: var(--error);
+  border-color: rgba(255, 113, 108, 0.28);
+}
+
+.asset-card__icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.assets-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(13, 14, 16, 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.assets-dialog {
+  width: 100%;
+  max-width: 520px;
+  background: var(--surface-container-low);
+  border: 1px solid rgba(143, 245, 255, 0.08);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 32px 64px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.assets-dialog__header,
+.assets-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem;
+}
+
+.assets-dialog__header {
+  border-bottom: 1px solid rgba(71, 72, 74, 0.15);
+}
+
+.assets-dialog__title {
+  font-size: 1.1rem;
+}
+
+.assets-dialog__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.assets-dialog__body {
+  padding: 1.5rem;
+  color: var(--on-surface-variant);
+}
+
+.assets-dialog__actions {
+  justify-content: flex-end;
+  border-top: 1px solid rgba(71, 72, 74, 0.15);
+}
+
+.assets-dialog__btn {
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.assets-dialog__btn--secondary {
+  background: var(--surface-container-highest);
+  color: var(--on-surface);
+}
+
+.assets-dialog__btn--primary {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.assets-dialog__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .assets-pagination {

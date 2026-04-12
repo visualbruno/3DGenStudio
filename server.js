@@ -17,6 +17,7 @@ import {
   createTask,
   createWorkflowRecord,
   deleteAssetById,
+  deleteLibraryAssetByFilePath,
   deleteProjectById,
   findLibraryAssetByFilePath,
   getAssetDirectory,
@@ -836,6 +837,35 @@ app.get('/api/assets/library', async (req, res) => {
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });
+  }
+});
+
+app.delete('/api/assets/library', async (req, res) => {
+  try {
+    const { type, filename } = req.query;
+
+    if (!type || !filename) {
+      return res.status(400).json({ error: 'type and filename are required' });
+    }
+
+    const result = await deleteLibraryAssetByFilePath(String(type), String(filename));
+
+    if (result.status === 'linked') {
+      return res.status(409).json({
+        error: 'Asset is linked to a project',
+        projectId: result.projectId,
+        projectName: result.projectName || null
+      });
+    }
+
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete library asset:', err);
+    res.status(500).json({ error: 'Failed to delete library asset' });
   }
 });
 

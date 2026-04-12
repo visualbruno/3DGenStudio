@@ -681,6 +681,64 @@ export async function findLibraryAssetByFilePath(type, filePath) {
   );
 }
 
+export async function deleteLibraryAssetByFilePath(type, filePath) {
+  const db = await getDb();
+  const storedFilePath = toStoredAssetPath(type, filePath);
+  const normalizedType = normalizeAssetTypeName(type);
+  const linkedProject = await get(
+    db,
+    `SELECT c.projectId, p.name AS projectName
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     JOIN Cards_Assets ca ON ca.assetId = a.id
+     JOIN Cards c ON c.id = ca.cardId
+     LEFT JOIN Projects p ON p.id = c.projectId
+     WHERE at.name = ?
+       AND a.filePath = ?
+     ORDER BY c.creationDate DESC
+     LIMIT 1`,
+    [normalizedType, storedFilePath]
+  );
+
+  if (linkedProject) {
+    return {
+      status: 'linked',
+      projectId: linkedProject.projectId,
+      projectName: linkedProject.projectName || null
+    };
+  }
+
+  const assets = await all(
+    db,
+    `SELECT a.id, a.thumbnail
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND a.filePath = ?`,
+    [normalizedType, storedFilePath]
+  );
+
+  if (assets.length === 0) {
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+    await fs.rm(absoluteFilePath, { force: true }).catch(() => null);
+    return { status: 'deleted' };
+  }
+
+  for (const asset of assets) {
+    await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
+  }
+
+  await fs.rm(toAbsoluteStoragePath(storedFilePath), { force: true }).catch(() => null);
+
+  for (const asset of assets) {
+    if (asset.thumbnail) {
+      await fs.rm(toAbsoluteStoragePath(asset.thumbnail), { force: true }).catch(() => null);
+    }
+  }
+
+  return { status: 'deleted' };
+}
+
 async function deleteCardsIfEmpty(cardIds = []) {
   const uniqueCardIds = [...new Set(cardIds.filter(cardId => Number.isInteger(cardId)))];
 

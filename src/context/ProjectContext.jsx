@@ -99,6 +99,28 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const deleteLibraryAsset = async ({ type, filename }) => {
+    const params = new URLSearchParams({ type, filename })
+    const res = await fetch(`${API_BASE}/assets/library?${params.toString()}`, {
+      method: 'DELETE'
+    })
+
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      const error = new Error(data?.error || 'Failed to delete asset')
+      error.status = res.status
+      error.details = data
+      throw error
+    }
+
+    return data
+  }
+
   const deleteAsset = async (assetId) => {
     const res = await fetch(`${API_BASE}/assets/${assetId}`, { method: 'DELETE' })
 
@@ -273,6 +295,7 @@ export function ProjectProvider({ children }) {
       deleteAsset,
       getLibraryAssets,
       importLibraryAssets,
+      deleteLibraryAsset,
       generateImage,
       getComfyWorkflows,
       inspectComfyWorkflow,
