@@ -535,6 +535,12 @@
   letter-spacing: 0.08em;
 }
 
+.asset-card__link-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
 .asset-card__link:hover {
   color: var(--primary);
 }
@@ -584,6 +590,10 @@
   overflow: hidden;
 }
 
+.assets-dialog--viewer {
+  max-width: 980px;
+}
+
 .assets-dialog__header,
 .assets-dialog__actions {
   display: flex;
@@ -614,6 +624,11 @@
 .assets-dialog__body {
   padding: 1.5rem;
   color: var(--on-surface-variant);
+}
+
+.assets-dialog__body--viewer {
+  height: min(70vh, 720px);
+  padding: 0;
 }
 
 .assets-dialog__actions {

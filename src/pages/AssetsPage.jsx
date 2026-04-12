@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
+import Viewer from '../components/Viewer'
 import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
@@ -134,6 +135,7 @@ export default function AssetsPage() {
   const [deletingWorkflowId, setDeletingWorkflowId] = useState(null)
   const [deletingAssetKey, setDeletingAssetKey] = useState(null)
   const [linkedAssetDialog, setLinkedAssetDialog] = useState(null)
+  const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -477,6 +479,27 @@ export default function AssetsPage() {
               </button>
               <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleGoToProject} disabled={!linkedAssetDialog.projectId}>
                 Go to project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {meshPreviewAsset && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setMeshPreviewAsset(null)}>
+          <div className="assets-dialog assets-dialog--viewer" role="dialog" aria-modal="true" aria-labelledby="mesh-preview-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="mesh-preview-dialog-title" className="assets-dialog__title font-headline">{meshPreviewAsset.name}</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setMeshPreviewAsset(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body assets-dialog__body--viewer">
+              <Viewer height="100%" modelUrl={meshPreviewAsset.url} />
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setMeshPreviewAsset(null)}>
+                Close
               </button>
             </div>
           </div>
@@ -846,7 +869,13 @@ export default function AssetsPage() {
                             <div className="asset-card__meta">
                               <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
                               <div className="asset-card__actions">
-                                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                                {activeSection === 'meshes' ? (
+                                  <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
+                                    OPEN
+                                  </button>
+                                ) : (
+                                  <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                                )}
                                 <button
                                   type="button"
                                   className="asset-card__icon-btn"
