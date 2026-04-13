@@ -1733,6 +1733,8 @@ app.post('/api/image-edits/api', async (req, res) => {
 });
 
 app.post('/api/image-edits/comfy', async (req, res) => {
+  let executionMonitor = null;
+
   try {
     const { projectId, assetId, workflowId, prompt } = req.body;
 
@@ -1772,7 +1774,29 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       [imageParameter.id]: uploadedFilename,
       [stringParameter.id]: String(prompt).trim()
     });
-    const { promptId } = await queueComfyPrompt(baseUrl, promptWorkflow);
+    const executionClientId = String(req.body.clientId || '').trim() || randomUUID();
+    const executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+
+    executionMonitor = createComfyExecutionMonitor(baseUrl, {
+      clientId: executionClientId,
+      promptId: executionPromptId,
+      workflowJson: promptWorkflow,
+      selectedOutputs: workflow.outputs
+    });
+
+    await executionMonitor.ready;
+    publishComfyProgress(executionPromptId, {
+      status: 'queued',
+      progressPercent: 0,
+      detail: 'Queueing ComfyUI image edit',
+      currentNodeLabel: workflow.name
+    });
+
+    const { promptId } = await queueComfyPrompt(baseUrl, promptWorkflow, {
+      clientId: executionClientId,
+      promptId: executionPromptId
+    });
+    await executionMonitor.completion;
     const historyRecord = await waitForComfyHistory(baseUrl, promptId);
     const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
 
@@ -1806,6 +1830,15 @@ app.post('/api/image-edits/comfy', async (req, res) => {
     });
   } catch (err) {
     console.error('ComfyUI image edit execution failed:', err);
+    executionMonitor?.close();
+    const failedPromptId = String(req.body?.promptId || '').trim();
+    if (failedPromptId) {
+      publishComfyProgress(failedPromptId, {
+        status: 'error',
+        detail: err.message || 'Failed to run ComfyUI image edit',
+        currentNodeLabel: 'ComfyUI image edit failed'
+      });
+    }
     res.status(500).json({ error: err.message || 'Failed to run ComfyUI image edit' });
   }
 });

@@ -91,7 +91,7 @@ export function ProjectProvider({ children }) {
     const res = await fetch(`${API_BASE}/image-edits/comfy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, ...editData })
+      body: JSON.stringify({ projectId, ...editData, progressId: editData.progressId })
     })
 
     const data = await res.json()

@@ -851,6 +851,13 @@
   gap: 0.875rem;
 }
 
+.image-card__edit-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  margin-top: 0.75rem;
+}
+
 .image-card__toggle-row {
   display: flex;
   align-items: center;

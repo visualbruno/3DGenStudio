@@ -125,9 +125,11 @@ export default function KanbanPage() {
   const [dropTarget, setDropTarget] = useState(null)
   const [imageEditDraft, setImageEditDraft] = useState(null)
   const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
+  const [imageEditProgressByCardId, setImageEditProgressByCardId] = useState({})
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
   const pendingComfyProgressSubscriptionRef = useRef(null)
+  const imageEditProgressSubscriptionsRef = useRef(new Map())
 
   // Fetch all data for this project
   useEffect(() => {
@@ -270,9 +272,21 @@ export default function KanbanPage() {
     })
   }
 
+  const closeImageEditProgressSubscription = (cardId = null) => {
+    if (cardId) {
+      imageEditProgressSubscriptionsRef.current.get(cardId)?.()
+      imageEditProgressSubscriptionsRef.current.delete(cardId)
+      return
+    }
+
+    imageEditProgressSubscriptionsRef.current.forEach(unsubscribe => unsubscribe?.())
+    imageEditProgressSubscriptionsRef.current.clear()
+  }
+
   useEffect(() => {
     return () => {
       closePendingComfyProgressSubscription()
+      closeImageEditProgressSubscription()
     }
   }, [])
 
@@ -618,6 +632,19 @@ export default function KanbanPage() {
   }
 
   const closeImageEditActionMenu = () => {
+    if (imageEditDraft?.cardId) {
+      closeImageEditProgressSubscription(imageEditDraft.cardId)
+      setImageEditProgressByCardId(prev => {
+        if (!(imageEditDraft.cardId in prev)) {
+          return prev
+        }
+
+        const nextState = { ...prev }
+        delete nextState[imageEditDraft.cardId]
+        return nextState
+      })
+    }
+
     setImageEditDraft(null)
     setImageEditPendingCardId(null)
   }
@@ -685,11 +712,61 @@ export default function KanbanPage() {
           return
         }
 
+        const promptId = createComfyExecutionId('comfy-edit-prompt')
+        const clientId = createComfyExecutionId('comfy-edit-client')
+
+        setImageEditProgressByCardId(prev => ({
+          ...prev,
+          [card.id]: {
+            progressPercent: 0,
+            detail: 'Preparing ComfyUI image edit',
+            currentNodeLabel: 'Waiting for ComfyUI execution to start',
+            promptId
+          }
+        }))
+
+        closeImageEditProgressSubscription(card.id)
+        imageEditProgressSubscriptionsRef.current.set(card.id, subscribeToComfyWorkflowProgress(promptId, {
+          onMessage: (payload) => {
+            setImageEditProgressByCardId(prev => {
+              const currentState = prev[card.id]
+              if (!currentState || currentState.promptId !== promptId) {
+                return prev
+              }
+
+              return {
+                ...prev,
+                [card.id]: {
+                  ...currentState,
+                  progressPercent: Math.max(currentState.progressPercent || 0, Number(payload?.progressPercent) || 0),
+                  detail: payload?.detail || currentState.detail,
+                  currentNodeLabel: payload?.currentNodeLabel || currentState.currentNodeLabel
+                }
+              }
+            })
+          },
+          onError: () => {}
+        }))
+
         await runImageEditComfy(projectId, {
           assetId: Number(imageEditDraft.selectedAssetId),
           workflowId: Number(imageEditDraft.workflowId),
-          prompt
+          prompt,
+          promptId,
+          clientId
         })
+
+        setImageEditProgressByCardId(prev => prev[card.id]
+          ? {
+              ...prev,
+              [card.id]: {
+                ...prev[card.id],
+                progressPercent: 100,
+                detail: 'Saving edited image',
+                currentNodeLabel: 'ComfyUI image edit completed'
+              }
+            }
+          : prev)
       }
 
       closeImageEditActionMenu()
@@ -698,6 +775,16 @@ export default function KanbanPage() {
       console.error('Failed to run image edit:', err)
       alert(err.message || 'Failed to run image edit')
     } finally {
+      closeImageEditProgressSubscription(card.id)
+      setImageEditProgressByCardId(prev => {
+        if (!(card.id in prev)) {
+          return prev
+        }
+
+        const nextState = { ...prev }
+        delete nextState[card.id]
+        return nextState
+      })
       setImageEditPendingCardId(null)
     }
   }
@@ -1082,12 +1169,31 @@ export default function KanbanPage() {
                         disabled={imageEditPendingCardId === card.id}
                       >
                         <span className="material-symbols-outlined">bolt</span>
-                        {imageEditPendingCardId === card.id ? 'RUNNING...' : 'RUN ACTION'}
+                        {imageEditPendingCardId === card.id
+                          ? `${imageEditProgressByCardId[card.id]?.progressPercent || 0}%`
+                          : 'RUN ACTION'}
                       </button>
                       <button className="kanban-sidebar__nav-item" onClick={closeImageEditActionMenu} style={{ justifyContent: 'center' }}>
                         CANCEL
                       </button>
                     </div>
+
+                    {imageEditPendingCardId === card.id && imageEditProgressByCardId[card.id] && (
+                      <div className="image-card__edit-progress">
+                        <p className="image-card__meta font-label">{imageEditProgressByCardId[card.id].detail}</p>
+                        {imageEditProgressByCardId[card.id].currentNodeLabel && (
+                          <p className="image-card__meta font-label image-card__meta--loading-node">
+                            {imageEditProgressByCardId[card.id].currentNodeLabel}
+                          </p>
+                        )}
+                        <div className="image-card__progress" aria-hidden="true">
+                          <div
+                            className="image-card__progress-bar"
+                            style={{ width: `${Math.max(0, Math.min(100, imageEditProgressByCardId[card.id].progressPercent || 0))}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
