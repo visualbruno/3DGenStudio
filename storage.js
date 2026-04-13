@@ -356,6 +356,7 @@ export async function initializeStorage() {
     CREATE TABLE IF NOT EXISTS Assets_Edits (
       assetId INTEGER NOT NULL,
       editId TEXT NOT NULL,
+      name TEXT,
       filePath TEXT NOT NULL,
       creationDate INTEGER NOT NULL,
       FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
@@ -378,6 +379,11 @@ export async function initializeStorage() {
   const assetColumns = await all(db, 'PRAGMA table_info(Assets)');
   if (!assetColumns.some(column => column.name === 'thumbnail')) {
     await run(db, 'ALTER TABLE Assets ADD COLUMN thumbnail TEXT');
+  }
+
+  const assetEditColumns = await all(db, 'PRAGMA table_info(Assets_Edits)');
+  if (!assetEditColumns.some(column => column.name === 'name')) {
+    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN name TEXT');
   }
 
   await seedReferenceTables(db);
@@ -858,17 +864,18 @@ export async function createCardAttribute(projectId, externalCardId, { attribute
   return await getCardAttributeView(card.id, position);
 }
 
-export async function createAssetEditRecord({ assetId, editId, filePath, createdAt = Date.now() }) {
+export async function createAssetEditRecord({ assetId, editId, name = '', filePath, createdAt = Date.now() }) {
   const db = await getDb();
   await run(
     db,
-    'INSERT INTO Assets_Edits (assetId, editId, filePath, creationDate) VALUES (?, ?, ?, ?)',
-    [assetId, editId, toStoredAssetPath('image', filePath), createdAt]
+    'INSERT INTO Assets_Edits (assetId, editId, name, filePath, creationDate) VALUES (?, ?, ?, ?, ?)',
+    [assetId, editId, String(name || '').trim(), toStoredAssetPath('image', filePath), createdAt]
   );
 
   return {
     assetId,
     editId,
+    name: String(name || '').trim(),
     filePath: toStoredAssetPath('image', filePath),
     creationDate: createdAt
   };
@@ -1392,7 +1399,7 @@ export async function listLibraryAssetsByType(type, port) {
   const editRows = type === 'image' && candidateStoredPaths.length > 0
     ? await all(
       db,
-      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.filePath, ae.creationDate
+      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.creationDate
        FROM Assets_Edits ae
        JOIN Assets source ON source.id = ae.assetId
        JOIN AssetTypes at ON at.id = source.assetTypeId
@@ -1412,6 +1419,7 @@ export async function listLibraryAssetsByType(type, port) {
     if (!accumulator[row.sourceFilePath].some(edit => edit.filePath === row.filePath)) {
       accumulator[row.sourceFilePath].push({
         editId: row.editId,
+        name: row.name || '',
         filePath: row.filePath,
         filename,
         createdAt: row.creationDate,

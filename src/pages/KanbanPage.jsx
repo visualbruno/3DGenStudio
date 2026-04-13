@@ -613,6 +613,7 @@ export default function KanbanPage() {
     return {
       cardId: card.id,
       mode,
+      name: '',
       selectedApi: IMAGE_API_LIST[0]?.id || 'nanobana',
       selectedAssetId: card.assets[0]?.id || '',
       workflowId: imageEditWorkflows[0]?.id || '',
@@ -692,8 +693,10 @@ export default function KanbanPage() {
     }
 
     const prompt = resolveDraftPrompt(card, imageEditDraft)
-    if (!imageEditDraft.selectedAssetId || !prompt) {
-      alert('Select an image and provide a prompt.')
+    const name = imageEditDraft.name?.trim() || ''
+
+    if (!imageEditDraft.selectedAssetId || !prompt || !name) {
+      alert('Select an image, add a name, and provide a prompt.')
       return
     }
 
@@ -703,6 +706,7 @@ export default function KanbanPage() {
       if (imageEditDraft.mode === 'api') {
         await runImageEditApi(projectId, {
           assetId: Number(imageEditDraft.selectedAssetId),
+          name,
           selectedApi: imageEditDraft.selectedApi,
           prompt
         })
@@ -751,6 +755,7 @@ export default function KanbanPage() {
         await runImageEditComfy(projectId, {
           assetId: Number(imageEditDraft.selectedAssetId),
           workflowId: Number(imageEditDraft.workflowId),
+          name,
           prompt,
           promptId,
           clientId
@@ -1136,6 +1141,17 @@ export default function KanbanPage() {
                         </select>
                       </div>
                     )}
+
+                    <div className="params-card__field">
+                      <label className="params-card__label font-label">NAME</label>
+                      <input
+                        type="text"
+                        className="params-card__input"
+                        value={imageEditDraft.name}
+                        onChange={event => handleImageEditDraftChange(card, 'name', event.target.value)}
+                        placeholder="Enter edit name"
+                      />
+                    </div>
 
                     <div className="params-card__field">
                       <label className="params-card__label font-label">Prompt Source</label>

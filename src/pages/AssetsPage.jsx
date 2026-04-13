@@ -552,10 +552,12 @@ export default function AssetsPage() {
                   {editPreviewAsset.edits.map((edit, index) => (
                     <article key={`${edit.editId}-${edit.filePath}-${index}`} className="asset-edit-card">
                       <div className="asset-edit-card__preview">
-                        <img src={edit.url} alt={`${editPreviewAsset.name} edit ${index + 1}`} className="asset-card__image" />
+                        <img src={edit.url} alt={`${editPreviewAsset.name} ${edit.name?.trim() || `edit ${index + 1}`}`} className="asset-card__image" />
                       </div>
                       <div className="asset-edit-card__body">
-                        <span className="asset-edit-card__title">Edit {index + 1}</span>
+                        <div className="asset-edit-card__details">
+                          <span className="asset-edit-card__title">{edit.name?.trim() || `Edit ${index + 1}`}</span>
+                        </div>
                         <a href={edit.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
                       </div>
                     </article>

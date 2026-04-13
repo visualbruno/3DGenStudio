@@ -675,10 +675,19 @@
   padding: 0.85rem;
 }
 
+.asset-edit-card__details {
+  min-width: 0;
+  flex: 1;
+}
+
 .asset-edit-card__title {
+  display: block;
   color: var(--on-surface);
   font-size: 0.82rem;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .assets-page__empty-state--compact {

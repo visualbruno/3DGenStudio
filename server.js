@@ -1078,7 +1078,7 @@ function collectInlineImageParts(responseBody) {
     ?.filter(part => part?.data) || [];
 }
 
-async function saveImageEdits({ sourceAsset, editId, imageOutputs = [] }) {
+async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [] }) {
   const savedEdits = [];
 
   for (const [index, imageOutput] of imageOutputs.entries()) {
@@ -1093,6 +1093,7 @@ async function saveImageEdits({ sourceAsset, editId, imageOutputs = [] }) {
     savedEdits.push(await createAssetEditRecord({
       assetId: sourceAsset.id,
       editId,
+      name,
       filePath: storedFilePath,
       createdAt
     }));
@@ -1639,10 +1640,11 @@ app.delete('/api/card-attributes/:cardId/:position', async (req, res) => {
 
 app.post('/api/image-edits/api', async (req, res) => {
   try {
-    const { projectId, assetId, selectedApi, prompt } = req.body;
+    const { projectId, assetId, selectedApi, prompt, name } = req.body;
+    const trimmedName = String(name || '').trim();
 
-    if (!projectId || !assetId || !selectedApi || !prompt?.trim()) {
-      return res.status(400).json({ error: 'projectId, assetId, selectedApi and prompt are required' });
+    if (!projectId || !assetId || !selectedApi || !prompt?.trim() || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, assetId, selectedApi, prompt and name are required' });
     }
 
     const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
@@ -1713,6 +1715,7 @@ app.post('/api/image-edits/api', async (req, res) => {
     const savedEdits = await saveImageEdits({
       sourceAsset,
       editId,
+      name: trimmedName,
       imageOutputs: imageParts.map(part => ({
         buffer: Buffer.from(part.data, 'base64'),
         mimeType: part.mimeType,
@@ -1736,10 +1739,11 @@ app.post('/api/image-edits/comfy', async (req, res) => {
   let executionMonitor = null;
 
   try {
-    const { projectId, assetId, workflowId, prompt } = req.body;
+    const { projectId, assetId, workflowId, prompt, name } = req.body;
+    const trimmedName = String(name || '').trim();
 
-    if (!projectId || !assetId || !workflowId || !prompt?.trim()) {
-      return res.status(400).json({ error: 'projectId, assetId, workflowId and prompt are required' });
+    if (!projectId || !assetId || !workflowId || !prompt?.trim() || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, assetId, workflowId, prompt and name are required' });
     }
 
     const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
@@ -1817,6 +1821,7 @@ app.post('/api/image-edits/comfy', async (req, res) => {
     const savedEdits = await saveImageEdits({
       sourceAsset,
       editId,
+      name: trimmedName,
       imageOutputs: downloadedImages
     });
 
