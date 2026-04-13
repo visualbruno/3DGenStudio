@@ -1398,7 +1398,7 @@ export async function listLibraryAssetsByType(type, port) {
        JOIN AssetTypes at ON at.id = source.assetTypeId
        WHERE at.name = ?
          AND source.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
-       ORDER BY ae.creationDate DESC`,
+       ORDER BY ae.creationDate ASC`,
       [normalizeAssetTypeName(type), ...candidateStoredPaths]
     )
     : [];
@@ -1436,7 +1436,7 @@ export async function listLibraryAssetsByType(type, port) {
         return mergedAccumulator;
       }, []);
 
-      existingAsset.edits = mergedEdits.sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
+      existingAsset.edits = mergedEdits.sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0));
       existingAsset.editCount = existingAsset.edits.length;
       return accumulator;
     }
