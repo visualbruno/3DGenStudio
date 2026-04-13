@@ -1694,60 +1694,128 @@ app.post('/api/image-edits/api', async (req, res) => {
     const settings = await getSettings();
     const googleSettings = settings?.apis?.google;
     const googleGenerationSettings = googleSettings?.imageGeneration;
-    const modelConfig = googleGenerationSettings?.models?.[selectedApi];
-
-    if (!modelConfig?.url) {
-      return res.status(400).json({ error: `Unsupported image edit API: ${selectedApi}` });
-    }
-
-    if (!googleSettings?.apiKey) {
-      return res.status(400).json({ error: 'Google API key is not configured in settings' });
-    }
+    const openAiSettings = settings?.apis?.openai;
+    const openAiEditSettings = openAiSettings?.imageEdit;
 
     const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
     const sourceBuffer = await fs.readFile(sourceFilePath);
     const mimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
     const trimmedPrompt = String(prompt).trim();
-    const response = await fetch(modelConfig.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [googleGenerationSettings?.headerName || 'x-goog-api-key']: googleSettings.apiKey
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              { text: trimmedPrompt },
-              {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: sourceBuffer.toString('base64')
-                }
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          responseModalities: ['IMAGE'],
-          imageConfig: {
-            aspectRatio: '1:1',
-            imageSize: '1K'
-          }
-        }
-      })
-    });
+    let response;
+    let responseBody;
+    let imageOutputs;
 
-    const responseBody = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: responseBody?.error?.message || responseBody?.error || 'Image edit request failed'
+    if (selectedApi.startsWith('openai')) {
+      if (!openAiSettings?.apiKey) {
+        return res.status(400).json({ error: 'OpenAI API key is not configured in settings' });
+      }
+
+      const modelConfig = openAiEditSettings?.models?.[selectedApi];
+      if (!openAiEditSettings?.url || !modelConfig?.model) {
+        return res.status(400).json({ error: `Unsupported image edit API: ${selectedApi}` });
+      }
+
+      const requestHeaders = replaceTemplatePlaceholders(openAiEditSettings?.headers || {}, {
+        apiKey: openAiSettings.apiKey,
+        prompt: trimmedPrompt,
+        model: modelConfig.model
       });
-    }
+      const requestPayload = replaceTemplatePlaceholders(openAiEditSettings?.payloadTemplate || {}, {
+        apiKey: openAiSettings.apiKey,
+        prompt: trimmedPrompt,
+        model: modelConfig.model
+      });
+      const formData = new FormData();
+      const imageBlob = new Blob([sourceBuffer], { type: mimeType || 'image/png' });
 
-    const imageParts = collectInlineImageParts(responseBody);
-    if (imageParts.length === 0) {
-      return res.status(502).json({ error: 'Image edit succeeded but no image data was returned' });
+      formData.append('image', imageBlob, path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'image.png'));
+      Object.entries(requestPayload || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          formData.append(key, String(value));
+        }
+      });
+
+      response = await fetch(openAiEditSettings.url, {
+        method: 'POST',
+        headers: requestHeaders,
+        body: formData
+      });
+
+      responseBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: responseBody?.error?.message || responseBody?.error || 'Image edit request failed'
+        });
+      }
+
+      const imageBase64 = responseBody?.data?.[0]?.b64_json;
+      if (!imageBase64) {
+        return res.status(502).json({ error: 'Image edit succeeded but no image data was returned' });
+      }
+
+      imageOutputs = [{
+        buffer: Buffer.from(imageBase64, 'base64'),
+        mimeType: 'image/png',
+        extension: 'png'
+      }];
+    } else {
+      const modelConfig = googleGenerationSettings?.models?.[selectedApi];
+
+      if (!modelConfig?.url) {
+        return res.status(400).json({ error: `Unsupported image edit API: ${selectedApi}` });
+      }
+
+      if (!googleSettings?.apiKey) {
+        return res.status(400).json({ error: 'Google API key is not configured in settings' });
+      }
+
+      response = await fetch(modelConfig.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [googleGenerationSettings?.headerName || 'x-goog-api-key']: googleSettings.apiKey
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { text: trimmedPrompt },
+                {
+                  inline_data: {
+                    mime_type: mimeType,
+                    data: sourceBuffer.toString('base64')
+                  }
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            responseModalities: ['IMAGE'],
+            imageConfig: {
+              aspectRatio: '1:1',
+              imageSize: '1K'
+            }
+          }
+        })
+      });
+
+      responseBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        return res.status(response.status).json({
+          error: responseBody?.error?.message || responseBody?.error || 'Image edit request failed'
+        });
+      }
+
+      const imageParts = collectInlineImageParts(responseBody);
+      if (imageParts.length === 0) {
+        return res.status(502).json({ error: 'Image edit succeeded but no image data was returned' });
+      }
+
+      imageOutputs = imageParts.map(part => ({
+        buffer: Buffer.from(part.data, 'base64'),
+        mimeType: part.mimeType,
+        extension: getExtensionFromMimeType(part.mimeType)
+      }));
     }
 
     const editId = randomUUID();
@@ -1755,11 +1823,7 @@ app.post('/api/image-edits/api', async (req, res) => {
       sourceAsset,
       editId,
       name: trimmedName,
-      imageOutputs: imageParts.map(part => ({
-        buffer: Buffer.from(part.data, 'base64'),
-        mimeType: part.mimeType,
-        extension: getExtensionFromMimeType(part.mimeType)
-      }))
+      imageOutputs
     });
 
     res.status(201).json({

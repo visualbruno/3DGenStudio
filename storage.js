@@ -81,11 +81,37 @@ export const DEFAULT_SETTINGS = {
             size: '1024x1024'
           },
           models: {
-            gpt_image_1: {
+            openai_gpt_image_1: {
               name: 'gpt-image-1',
               model: 'gpt-image-1'
             },
-            gpt_image_1_5: {
+            openai_gpt_image_1_5: {
+              name: 'gpt-image-1.5',
+              model: 'gpt-image-1.5'
+            }
+          },
+          responseMapping: {
+            imageBase64Field: 'data[0].b64_json',
+            createdField: 'created',
+            usageField: 'usage'
+          }
+        },
+        imageEdit: {
+          url: 'https://api.openai.com/v1/images/edits',
+          headers: {
+            Authorization: 'Bearer {apiKey}'
+          },
+          payloadTemplate: {
+            model: 'gpt-image-1.5',
+            prompt: '{prompt}',
+            size: '1024x1024'
+          },
+          models: {
+            openai_gpt_image_1: {
+              name: 'gpt-image-1',
+              model: 'gpt-image-1'
+            },
+            openai_gpt_image_1_5: {
               name: 'gpt-image-1.5',
               model: 'gpt-image-1.5'
             }
