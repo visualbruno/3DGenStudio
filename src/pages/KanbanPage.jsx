@@ -583,32 +583,84 @@ export default function KanbanPage() {
 
   const imageEditWorkflows = useMemo(() => {
     return comfyWorkflows.filter(workflow => {
-      const hasImageInput = (workflow.parameters || []).some(parameter => getWorkflowParameterValueType(parameter) === 'image')
-      const hasStringInput = (workflow.parameters || []).some(parameter => getWorkflowParameterValueType(parameter) === 'string')
-      return hasImageInput && hasStringInput
+      const valueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
+      return valueTypes.includes('image') && valueTypes.every(valueType => ['image', 'string', 'number'].includes(valueType))
     })
   }, [comfyWorkflows])
 
-  const getPromptOptionsForCard = (cardId) => {
-    const textAttributes = (cardAttributesByCardId[cardId] || []).filter(attribute => {
+  const selectedImageEditWorkflow = imageEditWorkflows.find(workflow => workflow.id == imageEditDraft?.workflowId) || null
+
+  const getAttributeOptionsForCard = (cardId, typeName) => {
+    const matchingAttributes = (cardAttributesByCardId[cardId] || []).filter(attribute => {
       const attributeType = attributeTypes.find(type => type.id === attribute.attributeTypeId)
-      return attributeType?.name === 'Text'
+      return attributeType?.name === typeName
     })
 
     return [
-      ...textAttributes.map(attribute => ({
+      ...matchingAttributes.map(attribute => ({
         id: `attribute:${attribute.position}`,
-        label: attribute.attributeValue?.trim() ? attribute.attributeValue : `Text Attribute ${attribute.position + 1}`,
+        label: attribute.attributeValue?.toString().trim() ? attribute.attributeValue : `${typeName} Attribute ${attribute.position + 1}`,
         value: attribute.attributeValue || ''
       })),
       { id: 'custom', label: 'Custom', value: '' }
     ]
   }
 
+  const getPromptOptionsForCard = (cardId) => {
+    return getAttributeOptionsForCard(cardId, 'Text')
+  }
+
+  const createImageEditInputBindings = (card, workflow) => {
+    return Object.fromEntries((workflow?.parameters || []).map(parameter => {
+      const valueType = getWorkflowParameterValueType(parameter)
+
+      if (valueType === 'image') {
+        const assetId = card.assets[0]?.id || ''
+        return [parameter.id, {
+          source: assetId ? `asset:${assetId}` : '',
+          customValue: ''
+        }]
+      }
+
+      const options = getAttributeOptionsForCard(card.id, valueType === 'number' ? 'Number' : 'Text')
+      const firstOption = options[0] || { id: 'custom', value: parameter.defaultValue ?? '' }
+
+      return [parameter.id, {
+        source: firstOption.id,
+        customValue: String(firstOption.id === 'custom' ? (parameter.defaultValue ?? '') : (firstOption.value ?? ''))
+      }]
+    }))
+  }
+
+  const getImageEditParameterBinding = (draft, parameter) => {
+    return draft?.inputBindings?.[parameter.id] || {
+      source: getWorkflowParameterValueType(parameter) === 'image' ? '' : 'custom',
+      customValue: ''
+    }
+  }
+
+  const resolveImageEditParameterValue = (card, draft, parameter) => {
+    const binding = getImageEditParameterBinding(draft, parameter)
+    const valueType = getWorkflowParameterValueType(parameter)
+
+    if (valueType === 'image') {
+      return binding.source?.startsWith('asset:') ? Number(binding.source.slice(6)) : null
+    }
+
+    if (binding.source?.startsWith('attribute:')) {
+      const attributePosition = Number(binding.source.slice(10))
+      const attribute = (cardAttributesByCardId[card.id] || []).find(item => item.position === attributePosition)
+      return attribute?.attributeValue ?? ''
+    }
+
+    return binding.customValue ?? ''
+  }
+
   const createImageEditDraft = (card, mode) => {
     const promptOptions = getPromptOptionsForCard(card.id)
     const firstPromptOption = promptOptions[0] || { id: 'custom', value: '' }
     const isCustomPrompt = firstPromptOption.id === 'custom'
+    const initialWorkflow = mode === 'comfy' ? (imageEditWorkflows[0] || null) : null
 
     return {
       cardId: card.id,
@@ -616,7 +668,8 @@ export default function KanbanPage() {
       name: '',
       selectedApi: IMAGE_API_LIST[0]?.id || 'nanobana',
       selectedAssetId: card.assets[0]?.id || '',
-      workflowId: imageEditWorkflows[0]?.id || '',
+      workflowId: initialWorkflow?.id || '',
+      inputBindings: createImageEditInputBindings(card, initialWorkflow),
       promptSource: firstPromptOption.id,
       customPrompt: isCustomPrompt ? '' : firstPromptOption.value,
       promptValue: isCustomPrompt ? '' : firstPromptOption.value
@@ -672,9 +725,61 @@ export default function KanbanPage() {
 
       if (field === 'mode' && value === 'comfy' && !nextDraft.workflowId) {
         nextDraft.workflowId = imageEditWorkflows[0]?.id || ''
+        nextDraft.inputBindings = createImageEditInputBindings(card, imageEditWorkflows[0])
+      }
+
+      if (field === 'workflowId' && nextDraft.mode === 'comfy') {
+        const workflow = imageEditWorkflows.find(item => item.id == value)
+        nextDraft.inputBindings = createImageEditInputBindings(card, workflow)
       }
 
       return nextDraft
+    })
+  }
+
+  const handleImageEditParameterSourceChange = (card, parameter, source) => {
+    setImageEditDraft(prev => {
+      if (!prev || prev.cardId !== card.id) {
+        return prev
+      }
+
+      const currentBinding = getImageEditParameterBinding(prev, parameter)
+      const currentValue = resolveImageEditParameterValue(card, prev, parameter)
+
+      return {
+        ...prev,
+        inputBindings: {
+          ...(prev.inputBindings || {}),
+          [parameter.id]: {
+            ...currentBinding,
+            source,
+            customValue: source === 'custom'
+              ? String(currentValue ?? currentBinding.customValue ?? parameter.defaultValue ?? '')
+              : currentBinding.customValue
+          }
+        }
+      }
+    })
+  }
+
+  const handleImageEditParameterValueChange = (card, parameter, value) => {
+    setImageEditDraft(prev => {
+      if (!prev || prev.cardId !== card.id) {
+        return prev
+      }
+
+      const currentBinding = getImageEditParameterBinding(prev, parameter)
+
+      return {
+        ...prev,
+        inputBindings: {
+          ...(prev.inputBindings || {}),
+          [parameter.id]: {
+            ...currentBinding,
+            customValue: value
+          }
+        }
+      }
     })
   }
 
@@ -692,18 +797,19 @@ export default function KanbanPage() {
       return
     }
 
-    const prompt = resolveDraftPrompt(card, imageEditDraft)
     const name = imageEditDraft.name?.trim() || ''
-
-    if (!imageEditDraft.selectedAssetId || !prompt || !name) {
-      alert('Select an image, add a name, and provide a prompt.')
-      return
-    }
 
     try {
       setImageEditPendingCardId(card.id)
 
       if (imageEditDraft.mode === 'api') {
+        const prompt = resolveDraftPrompt(card, imageEditDraft)
+
+        if (!imageEditDraft.selectedAssetId || !prompt || !name) {
+          alert('Select an image, add a name, and provide a prompt.')
+          return
+        }
+
         await runImageEditApi(projectId, {
           assetId: Number(imageEditDraft.selectedAssetId),
           name,
@@ -713,6 +819,64 @@ export default function KanbanPage() {
       } else if (imageEditDraft.mode === 'comfy') {
         if (!imageEditDraft.workflowId) {
           alert('Select a ComfyUI workflow.')
+          return
+        }
+
+        if (!name) {
+          alert('Add a name for the generated edit.')
+          return
+        }
+
+        const workflow = imageEditWorkflows.find(item => item.id == imageEditDraft.workflowId)
+        if (!workflow) {
+          alert('Select a valid ComfyUI workflow.')
+          return
+        }
+
+        const inputValues = {}
+        let primaryAssetId = null
+
+        for (const parameter of workflow.parameters || []) {
+          const valueType = getWorkflowParameterValueType(parameter)
+          const resolvedValue = resolveImageEditParameterValue(card, imageEditDraft, parameter)
+
+          if (valueType === 'image') {
+            if (!resolvedValue) {
+              alert(`Select an image for ${parameter.name}.`)
+              return
+            }
+
+            const numericAssetId = Number(resolvedValue)
+            if (!primaryAssetId) {
+              primaryAssetId = numericAssetId
+            }
+
+            inputValues[parameter.id] = { assetId: numericAssetId }
+            continue
+          }
+
+          if (valueType === 'number') {
+            const trimmedValue = String(resolvedValue ?? '').trim()
+            if (trimmedValue === '' || Number.isNaN(Number(trimmedValue))) {
+              alert(`Enter a valid number for ${parameter.name}.`)
+              return
+            }
+
+            inputValues[parameter.id] = trimmedValue
+            continue
+          }
+
+          const trimmedValue = String(resolvedValue ?? '').trim()
+          if (!trimmedValue) {
+            alert(`Enter a value for ${parameter.name}.`)
+            return
+          }
+
+          inputValues[parameter.id] = trimmedValue
+        }
+
+        if (!primaryAssetId) {
+          alert('Select at least one image input for the workflow.')
           return
         }
 
@@ -753,10 +917,10 @@ export default function KanbanPage() {
         }))
 
         await runImageEditComfy(projectId, {
-          assetId: Number(imageEditDraft.selectedAssetId),
+          assetId: primaryAssetId,
           workflowId: Number(imageEditDraft.workflowId),
           name,
-          prompt,
+          inputValues,
           promptId,
           clientId
         })
@@ -1102,47 +1266,6 @@ export default function KanbanPage() {
                 {imageEditDraft?.cardId === card.id && imageEditDraft?.mode && (
                   <div className="image-card__edit-panel">
                     <div className="params-card__field">
-                      <label className="params-card__label font-label">Image</label>
-                      <select
-                        className="image-card__attribute-select"
-                        value={imageEditDraft.selectedAssetId}
-                        onChange={event => handleImageEditDraftChange(card, 'selectedAssetId', event.target.value)}
-                      >
-                        {card.assets.map(asset => (
-                          <option key={asset.id} value={asset.id}>{asset.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {imageEditDraft.mode === 'api' ? (
-                      <div className="params-card__field">
-                        <label className="params-card__label font-label">API</label>
-                        <select
-                          className="image-card__attribute-select"
-                          value={imageEditDraft.selectedApi}
-                          onChange={event => handleImageEditDraftChange(card, 'selectedApi', event.target.value)}
-                        >
-                          {combinedApis.filter(api => api.id !== 'openai').map(api => (
-                            <option key={api.id} value={api.id}>{api.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    ) : (
-                      <div className="params-card__field">
-                        <label className="params-card__label font-label">ComfyUI Workflow</label>
-                        <select
-                          className="image-card__attribute-select"
-                          value={imageEditDraft.workflowId}
-                          onChange={event => handleImageEditDraftChange(card, 'workflowId', event.target.value)}
-                        >
-                          {imageEditWorkflows.map(workflow => (
-                            <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="params-card__field">
                       <label className="params-card__label font-label">NAME</label>
                       <input
                         type="text"
@@ -1153,29 +1276,133 @@ export default function KanbanPage() {
                       />
                     </div>
 
-                    <div className="params-card__field">
-                      <label className="params-card__label font-label">Prompt Source</label>
-                      <select
-                        className="image-card__attribute-select"
-                        value={imageEditDraft.promptSource}
-                        onChange={event => handleImageEditDraftChange(card, 'promptSource', event.target.value)}
-                      >
-                        {getPromptOptionsForCard(card.id).map(option => (
-                          <option key={option.id} value={option.id}>{option.label}</option>
-                        ))}
-                      </select>
-                    </div>
+                    {imageEditDraft.mode === 'api' ? (
+                      <>
+                        <div className="params-card__field">
+                          <label className="params-card__label font-label">Image</label>
+                          <select
+                            className="image-card__attribute-select"
+                            value={imageEditDraft.selectedAssetId}
+                            onChange={event => handleImageEditDraftChange(card, 'selectedAssetId', event.target.value)}
+                          >
+                            {card.assets.map(asset => (
+                              <option key={asset.id} value={asset.id}>{asset.name}</option>
+                            ))}
+                          </select>
+                        </div>
 
-                    {imageEditDraft.promptSource === 'custom' && (
-                      <div className="params-card__field">
-                        <label className="params-card__label font-label">Custom Prompt</label>
-                        <textarea
-                          className="gen-prompt-input"
-                          value={imageEditDraft.customPrompt}
-                          onChange={event => handleImageEditDraftChange(card, 'customPrompt', event.target.value)}
-                          placeholder="Enter a custom prompt"
-                        />
-                      </div>
+                        <div className="params-card__field">
+                          <label className="params-card__label font-label">API</label>
+                          <select
+                            className="image-card__attribute-select"
+                            value={imageEditDraft.selectedApi}
+                            onChange={event => handleImageEditDraftChange(card, 'selectedApi', event.target.value)}
+                          >
+                            {combinedApis.filter(api => api.id !== 'openai').map(api => (
+                              <option key={api.id} value={api.id}>{api.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="params-card__field">
+                          <label className="params-card__label font-label">Prompt Source</label>
+                          <select
+                            className="image-card__attribute-select"
+                            value={imageEditDraft.promptSource}
+                            onChange={event => handleImageEditDraftChange(card, 'promptSource', event.target.value)}
+                          >
+                            {getPromptOptionsForCard(card.id).map(option => (
+                              <option key={option.id} value={option.id}>{option.label}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {imageEditDraft.promptSource === 'custom' && (
+                          <div className="params-card__field">
+                            <label className="params-card__label font-label">Custom Prompt</label>
+                            <textarea
+                              className="gen-prompt-input"
+                              value={imageEditDraft.customPrompt}
+                              onChange={event => handleImageEditDraftChange(card, 'customPrompt', event.target.value)}
+                              placeholder="Enter a custom prompt"
+                            />
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="params-card__field">
+                          <label className="params-card__label font-label">ComfyUI Workflow</label>
+                          <select
+                            className="image-card__attribute-select"
+                            value={imageEditDraft.workflowId}
+                            onChange={event => handleImageEditDraftChange(card, 'workflowId', event.target.value)}
+                          >
+                            {imageEditWorkflows.map(workflow => (
+                              <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {selectedImageEditWorkflow ? (
+                          selectedImageEditWorkflow.parameters.map(parameter => {
+                            const valueType = getWorkflowParameterValueType(parameter)
+                            const binding = getImageEditParameterBinding(imageEditDraft, parameter)
+                            const resolvedValue = resolveImageEditParameterValue(card, imageEditDraft, parameter)
+
+                            if (valueType === 'image') {
+                              const selectedAssetId = binding.source?.startsWith('asset:') ? binding.source.slice(6) : ''
+
+                              return (
+                                <div key={parameter.id} className="params-card__field">
+                                  <label className="params-card__label font-label">{parameter.name} • IMAGE</label>
+                                  <select
+                                    className="image-card__attribute-select"
+                                    value={selectedAssetId}
+                                    onChange={event => handleImageEditParameterSourceChange(card, parameter, `asset:${event.target.value}`)}
+                                  >
+                                    {card.assets.map(asset => (
+                                      <option key={asset.id} value={asset.id}>{asset.name}</option>
+                                    ))}
+                                  </select>
+                                  <span className="image-card__param-hint">{parameter.label}</span>
+                                </div>
+                              )
+                            }
+
+                            const sourceOptions = getAttributeOptionsForCard(card.id, valueType === 'number' ? 'Number' : 'Text')
+
+                            return (
+                              <div key={parameter.id} className="params-card__field">
+                                <label className="params-card__label font-label">{parameter.name} • {valueType.toUpperCase()}</label>
+                                <select
+                                  className="image-card__attribute-select"
+                                  value={binding.source || 'custom'}
+                                  onChange={event => handleImageEditParameterSourceChange(card, parameter, event.target.value)}
+                                >
+                                  {sourceOptions.map(option => (
+                                    <option key={option.id} value={option.id}>{option.label}</option>
+                                  ))}
+                                </select>
+                                <input
+                                  type={valueType === 'number' ? 'number' : 'text'}
+                                  className="params-card__input"
+                                  value={binding.source === 'custom' ? (binding.customValue ?? '') : String(resolvedValue ?? '')}
+                                  onChange={event => handleImageEditParameterValueChange(card, parameter, event.target.value)}
+                                  disabled={binding.source !== 'custom'}
+                                  placeholder={`Enter ${valueType} value`}
+                                />
+                                <span className="image-card__param-hint">{parameter.label}</span>
+                              </div>
+                            )
+                          })
+                        ) : (
+                          <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
+                            <span className="material-symbols-outlined">tune</span>
+                            <span>No compatible ComfyUI workflow available for image edits.</span>
+                          </div>
+                        )}
+                      </>
                     )}
 
                     <div className="image-card__edit-panel-actions">

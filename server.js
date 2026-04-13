@@ -1741,14 +1741,10 @@ app.post('/api/image-edits/comfy', async (req, res) => {
   try {
     const { projectId, assetId, workflowId, prompt, name } = req.body;
     const trimmedName = String(name || '').trim();
+    const rawInputValues = isPlainObject(req.body?.inputValues) ? req.body.inputValues : {};
 
-    if (!projectId || !assetId || !workflowId || !prompt?.trim() || !trimmedName) {
-      return res.status(400).json({ error: 'projectId, assetId, workflowId, prompt and name are required' });
-    }
-
-    const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
-    if (!sourceAsset || sourceAsset.type !== 'image') {
-      return res.status(404).json({ error: 'Source image asset not found' });
+    if (!projectId || !workflowId || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, workflowId and name are required' });
     }
 
     const workflowRecord = await getWorkflowRecordById(Number(workflowId));
@@ -1758,26 +1754,71 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
     }
 
-    const imageParameter = (workflow.parameters || []).find(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'image');
-    const stringParameter = (workflow.parameters || []).find(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'string');
+    const imageParameters = (workflow.parameters || []).filter(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'image');
 
-    if (!imageParameter || !stringParameter) {
-      return res.status(400).json({ error: 'The selected workflow must expose at least one image input and one string input' });
+    if (imageParameters.length === 0) {
+      return res.status(400).json({ error: 'The selected workflow must expose at least one image input' });
     }
+
+    const firstStringParameterId = (workflow.parameters || []).find(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'string')?.id;
 
     const settings = await getSettings();
     const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
-    const sourceBuffer = await fs.readFile(toAbsoluteStoragePath(sourceAsset.filePath));
-    const uploadedFilename = await uploadComfyInputFile(baseUrl, {
-      buffer: sourceBuffer,
-      mimetype: getMimeTypeFromFilename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name),
-      originalname: path.basename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name)
-    });
+    const resolvedInputs = {};
+    const referencedImageAssets = [];
 
-    const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, {
-      [imageParameter.id]: uploadedFilename,
-      [stringParameter.id]: String(prompt).trim()
-    });
+    for (const parameter of workflow.parameters || []) {
+      const valueType = normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter));
+      const providedValue = rawInputValues?.[parameter.id];
+
+      if (valueType === 'image') {
+        const selectedAssetId = Number(isPlainObject(providedValue) ? providedValue.assetId : providedValue);
+        if (!selectedAssetId) {
+          return res.status(400).json({ error: `An image asset is required for ${parameter.name}` });
+        }
+
+        const inputAsset = await getProjectAssetById(Number(projectId), selectedAssetId);
+        if (!inputAsset || inputAsset.type !== 'image') {
+          return res.status(404).json({ error: `Image asset not found for ${parameter.name}` });
+        }
+
+        const inputBuffer = await fs.readFile(toAbsoluteStoragePath(inputAsset.filePath));
+        resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, {
+          buffer: inputBuffer,
+          mimetype: getMimeTypeFromFilename(inputAsset.filePath || inputAsset.filename || inputAsset.name),
+          originalname: path.basename(inputAsset.filePath || inputAsset.filename || inputAsset.name)
+        });
+        referencedImageAssets.push(inputAsset);
+        continue;
+      }
+
+      if (valueType === 'number') {
+        const numericValue = Number(providedValue);
+        if (providedValue === '' || providedValue === null || providedValue === undefined || Number.isNaN(numericValue)) {
+          return res.status(400).json({ error: `A valid number is required for ${parameter.name}` });
+        }
+
+        resolvedInputs[parameter.id] = numericValue;
+        continue;
+      }
+
+      const stringValue = String(providedValue ?? '').trim() || (parameter.id === firstStringParameterId
+        ? String(prompt || '').trim()
+        : '');
+
+      if (!stringValue) {
+        return res.status(400).json({ error: `A value is required for ${parameter.name}` });
+      }
+
+      resolvedInputs[parameter.id] = stringValue;
+    }
+
+    const sourceAsset = referencedImageAssets.find(item => item.id === Number(assetId)) || referencedImageAssets[0];
+    if (!sourceAsset) {
+      return res.status(400).json({ error: 'At least one workflow image input is required' });
+    }
+
+    const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
     const executionClientId = String(req.body.clientId || '').trim() || randomUUID();
     const executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
 
