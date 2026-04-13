@@ -78,6 +78,8 @@ export default function KanbanPage() {
     createCardAttribute,
     updateCardAttribute,
     deleteCardAttribute,
+    runImageEditApi,
+    runImageEditComfy,
     generateImage,
     getComfyWorkflows,
     runComfyWorkflow
@@ -112,6 +114,8 @@ export default function KanbanPage() {
   const [cardAttributes, setCardAttributes] = useState([])
   const [draggedCard, setDraggedCard] = useState(null)
   const [dropTarget, setDropTarget] = useState(null)
+  const [imageEditDraft, setImageEditDraft] = useState(null)
+  const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
 
@@ -504,6 +508,141 @@ export default function KanbanPage() {
     }, {})
   }, [cardAttributes])
 
+  const imageEditWorkflows = useMemo(() => {
+    return comfyWorkflows.filter(workflow => {
+      const hasImageInput = (workflow.parameters || []).some(parameter => getWorkflowParameterValueType(parameter) === 'image')
+      const hasStringInput = (workflow.parameters || []).some(parameter => getWorkflowParameterValueType(parameter) === 'string')
+      return hasImageInput && hasStringInput
+    })
+  }, [comfyWorkflows])
+
+  const getPromptOptionsForCard = (cardId) => {
+    const textAttributes = (cardAttributesByCardId[cardId] || []).filter(attribute => {
+      const attributeType = attributeTypes.find(type => type.id === attribute.attributeTypeId)
+      return attributeType?.name === 'Text'
+    })
+
+    return [
+      ...textAttributes.map(attribute => ({
+        id: `attribute:${attribute.position}`,
+        label: attribute.attributeValue?.trim() ? attribute.attributeValue : `Text Attribute ${attribute.position + 1}`,
+        value: attribute.attributeValue || ''
+      })),
+      { id: 'custom', label: 'Custom', value: '' }
+    ]
+  }
+
+  const createImageEditDraft = (card, mode) => {
+    const promptOptions = getPromptOptionsForCard(card.id)
+    const firstPromptOption = promptOptions[0] || { id: 'custom', value: '' }
+    const isCustomPrompt = firstPromptOption.id === 'custom'
+
+    return {
+      cardId: card.id,
+      mode,
+      selectedApi: IMAGE_API_LIST[0]?.id || 'nanobana',
+      selectedAssetId: card.assets[0]?.id || '',
+      workflowId: imageEditWorkflows[0]?.id || '',
+      promptSource: firstPromptOption.id,
+      customPrompt: isCustomPrompt ? '' : firstPromptOption.value,
+      promptValue: isCustomPrompt ? '' : firstPromptOption.value
+    }
+  }
+
+  const openImageEditActionMenu = (card, mode = null) => {
+    if (!mode) {
+      setImageEditDraft(prev => prev?.cardId === card.id && !prev?.mode ? null : { cardId: card.id, mode: null })
+      return
+    }
+
+    setImageEditDraft(createImageEditDraft(card, mode))
+  }
+
+  const closeImageEditActionMenu = () => {
+    setImageEditDraft(null)
+    setImageEditPendingCardId(null)
+  }
+
+  const handleImageEditDraftChange = (card, field, value) => {
+    setImageEditDraft(prev => {
+      if (!prev || prev.cardId !== card.id) {
+        return prev
+      }
+
+      const nextDraft = {
+        ...prev,
+        [field]: value
+      }
+
+      if (field === 'promptSource') {
+        const promptOption = getPromptOptionsForCard(card.id).find(option => option.id === value)
+        nextDraft.promptValue = promptOption?.id === 'custom' ? (prev.customPrompt || '') : (promptOption?.value || '')
+      }
+
+      if (field === 'customPrompt') {
+        nextDraft.promptValue = prev.promptSource === 'custom' ? value : prev.promptValue
+      }
+
+      if (field === 'mode' && value === 'comfy' && !nextDraft.workflowId) {
+        nextDraft.workflowId = imageEditWorkflows[0]?.id || ''
+      }
+
+      return nextDraft
+    })
+  }
+
+  const resolveDraftPrompt = (card, draft) => {
+    const promptOption = getPromptOptionsForCard(card.id).find(option => option.id === draft.promptSource)
+    if (promptOption?.id === 'custom') {
+      return draft.customPrompt?.trim() || ''
+    }
+
+    return promptOption?.value?.trim() || ''
+  }
+
+  const handleRunImageEdit = async (card) => {
+    if (!imageEditDraft || imageEditDraft.cardId !== card.id) {
+      return
+    }
+
+    const prompt = resolveDraftPrompt(card, imageEditDraft)
+    if (!imageEditDraft.selectedAssetId || !prompt) {
+      alert('Select an image and provide a prompt.')
+      return
+    }
+
+    try {
+      setImageEditPendingCardId(card.id)
+
+      if (imageEditDraft.mode === 'api') {
+        await runImageEditApi(projectId, {
+          assetId: Number(imageEditDraft.selectedAssetId),
+          selectedApi: imageEditDraft.selectedApi,
+          prompt
+        })
+      } else if (imageEditDraft.mode === 'comfy') {
+        if (!imageEditDraft.workflowId) {
+          alert('Select a ComfyUI workflow.')
+          return
+        }
+
+        await runImageEditComfy(projectId, {
+          assetId: Number(imageEditDraft.selectedAssetId),
+          workflowId: Number(imageEditDraft.workflowId),
+          prompt
+        })
+      }
+
+      closeImageEditActionMenu()
+      alert('Image edit completed successfully.')
+    } catch (err) {
+      console.error('Failed to run image edit:', err)
+      alert(err.message || 'Failed to run image edit')
+    } finally {
+      setImageEditPendingCardId(null)
+    }
+  }
+
   const getCardInsertPosition = (cardId, destinationColumnId, destinationIndex) => {
     const sourceColumnId = draggedCard?.columnId
     const sourceCards = imageCardsByColumn[sourceColumnId] || []
@@ -667,16 +806,18 @@ export default function KanbanPage() {
         onDragEnd={handleCardDragEnd}
       >
         <div className="image-card__actions">
-          <button
-            className="image-card__action-btn"
-            onClick={(e) => {
-              e.stopPropagation()
-              openImageSourceMenu(card.id)
-            }}
-            title="Add more images"
-          >
-            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_photo_alternate</span>
-          </button>
+          {!showAttributes && (
+            <button
+              className="image-card__action-btn"
+              onClick={(e) => {
+                e.stopPropagation()
+                openImageSourceMenu(card.id)
+              }}
+              title="Add more images"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_photo_alternate</span>
+            </button>
+          )}
           <button
             className="image-card__action-btn image-card__delete"
             onClick={(e) => {
@@ -705,16 +846,18 @@ export default function KanbanPage() {
                   </div>
                 )}
 
-                <button
-                  className="image-card__thumb-remove"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleRemoveImage(asset.id)
-                  }}
-                  title="Remove image"
-                >
-                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
-                </button>
+                {!showAttributes && (
+                  <button
+                    className="image-card__thumb-remove"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      handleRemoveImage(asset.id)
+                    }}
+                    title="Remove image"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
+                  </button>
+                )}
               </div>
             ))
           ) : (
@@ -782,6 +925,108 @@ export default function KanbanPage() {
 
           {showAttributes && (
             <div className="image-card__attributes">
+              <div className="image-card__edit-actions">
+                <button className="image-card__edit-action-btn" onClick={() => openImageEditActionMenu(card)}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>play_arrow</span>
+                  Action
+                </button>
+
+                {imageEditDraft?.cardId === card.id && !imageEditDraft?.mode && (
+                  <div className="image-card__edit-action-menu">
+                    <button className="image-card__edit-action-option" onClick={() => openImageEditActionMenu(card, 'api')}>
+                      API
+                    </button>
+                    <button className="image-card__edit-action-option" onClick={() => openImageEditActionMenu(card, 'comfy')}>
+                      ComfyUI
+                    </button>
+                  </div>
+                )}
+
+                {imageEditDraft?.cardId === card.id && imageEditDraft?.mode && (
+                  <div className="image-card__edit-panel">
+                    <div className="params-card__field">
+                      <label className="params-card__label font-label">Image</label>
+                      <select
+                        className="image-card__attribute-select"
+                        value={imageEditDraft.selectedAssetId}
+                        onChange={event => handleImageEditDraftChange(card, 'selectedAssetId', event.target.value)}
+                      >
+                        {card.assets.map(asset => (
+                          <option key={asset.id} value={asset.id}>{asset.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {imageEditDraft.mode === 'api' ? (
+                      <div className="params-card__field">
+                        <label className="params-card__label font-label">API</label>
+                        <select
+                          className="image-card__attribute-select"
+                          value={imageEditDraft.selectedApi}
+                          onChange={event => handleImageEditDraftChange(card, 'selectedApi', event.target.value)}
+                        >
+                          {combinedApis.filter(api => api.id !== 'openai').map(api => (
+                            <option key={api.id} value={api.id}>{api.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="params-card__field">
+                        <label className="params-card__label font-label">ComfyUI Workflow</label>
+                        <select
+                          className="image-card__attribute-select"
+                          value={imageEditDraft.workflowId}
+                          onChange={event => handleImageEditDraftChange(card, 'workflowId', event.target.value)}
+                        >
+                          {imageEditWorkflows.map(workflow => (
+                            <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="params-card__field">
+                      <label className="params-card__label font-label">Prompt Source</label>
+                      <select
+                        className="image-card__attribute-select"
+                        value={imageEditDraft.promptSource}
+                        onChange={event => handleImageEditDraftChange(card, 'promptSource', event.target.value)}
+                      >
+                        {getPromptOptionsForCard(card.id).map(option => (
+                          <option key={option.id} value={option.id}>{option.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {imageEditDraft.promptSource === 'custom' && (
+                      <div className="params-card__field">
+                        <label className="params-card__label font-label">Custom Prompt</label>
+                        <textarea
+                          className="gen-prompt-input"
+                          value={imageEditDraft.customPrompt}
+                          onChange={event => handleImageEditDraftChange(card, 'customPrompt', event.target.value)}
+                          placeholder="Enter a custom prompt"
+                        />
+                      </div>
+                    )}
+
+                    <div className="image-card__edit-panel-actions">
+                      <button
+                        className="gen-btn"
+                        onClick={() => handleRunImageEdit(card)}
+                        disabled={imageEditPendingCardId === card.id}
+                      >
+                        <span className="material-symbols-outlined">bolt</span>
+                        {imageEditPendingCardId === card.id ? 'RUNNING...' : 'RUN ACTION'}
+                      </button>
+                      <button className="kanban-sidebar__nav-item" onClick={closeImageEditActionMenu} style={{ justifyContent: 'center' }}>
+                        CANCEL
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="image-card__attributes-header">
                 <span className="image-card__attributes-title font-label">CUSTOM ATTRIBUTES</span>
                 <button className="image-card__attribute-add" onClick={() => handleAddCustomAttribute(card.id)}>

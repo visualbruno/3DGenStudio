@@ -4,6 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
+import { createAssetEditRecord, getProjectAssetById } from './storage.js';
 import fs from 'fs/promises';
 import {
   ASSETS_DIR,
@@ -664,6 +665,59 @@ function createLibraryThumbnailFilename(originalName = 'asset') {
   return `${baseName || 'asset'}-thumbnail-${randomUUID().slice(0, 8)}.png`;
 }
 
+function getMimeTypeFromFilename(filename = '') {
+  const extension = path.extname(filename).toLowerCase();
+
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.webp') return 'image/webp';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.bmp') return 'image/bmp';
+
+  return 'image/png';
+}
+
+function sanitizeAssetFolderName(value = 'image') {
+  return String(value)
+    .replace(/[^a-z0-9-_]+/gi, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+}
+
+function getImageEditStoredFilePath(sourceAsset, editId, extension) {
+  const sourceName = sanitizeAssetFolderName(path.basename(sourceAsset.name || sourceAsset.filename || sourceAsset.filePath, path.extname(sourceAsset.name || sourceAsset.filename || sourceAsset.filePath))) || 'image';
+  return toStoredAssetPath('image', `images/${sourceName}/${editId}/${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`);
+}
+
+function collectInlineImageParts(responseBody) {
+  return responseBody?.candidates
+    ?.flatMap(candidate => candidate?.content?.parts || [])
+    ?.map(part => part?.inlineData)
+    ?.filter(part => part?.data) || [];
+}
+
+async function saveImageEdits({ sourceAsset, editId, imageOutputs = [] }) {
+  const savedEdits = [];
+
+  for (const [index, imageOutput] of imageOutputs.entries()) {
+    const extension = imageOutput.extension || getExtensionFromMimeType(imageOutput.mimeType);
+    const storedFilePath = getImageEditStoredFilePath(sourceAsset, editId, extension);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+    const createdAt = Date.now() + index;
+
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, imageOutput.buffer);
+
+    savedEdits.push(await createAssetEditRecord({
+      assetId: sourceAsset.id,
+      editId,
+      filePath: storedFilePath,
+      createdAt
+    }));
+  }
+
+  return savedEdits;
+}
+
 async function loadWorkflowJson(filePath) {
   const workflowContent = await fs.readFile(toAbsoluteStoragePath(filePath), 'utf-8');
   return JSON.parse(workflowContent);
@@ -1137,6 +1191,179 @@ app.delete('/api/card-attributes/:cardId/:position', async (req, res) => {
   } catch (err) {
     console.error('Failed to delete card attribute:', err);
     res.status(500).json({ error: err.message || 'Failed to delete card attribute' });
+  }
+});
+
+app.post('/api/image-edits/api', async (req, res) => {
+  try {
+    const { projectId, assetId, selectedApi, prompt } = req.body;
+
+    if (!projectId || !assetId || !selectedApi || !prompt?.trim()) {
+      return res.status(400).json({ error: 'projectId, assetId, selectedApi and prompt are required' });
+    }
+
+    const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
+    if (!sourceAsset || sourceAsset.type !== 'image') {
+      return res.status(404).json({ error: 'Source image asset not found' });
+    }
+
+    const settings = await getSettings();
+    const googleSettings = settings?.apis?.google;
+    const googleGenerationSettings = googleSettings?.imageGeneration;
+    const modelConfig = googleGenerationSettings?.models?.[selectedApi];
+
+    if (!modelConfig?.url) {
+      return res.status(400).json({ error: `Unsupported image edit API: ${selectedApi}` });
+    }
+
+    if (!googleSettings?.apiKey) {
+      return res.status(400).json({ error: 'Google API key is not configured in settings' });
+    }
+
+    const sourceFilePath = toAbsoluteStoragePath(sourceAsset.filePath);
+    const sourceBuffer = await fs.readFile(sourceFilePath);
+    const mimeType = getMimeTypeFromFilename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name);
+    const trimmedPrompt = String(prompt).trim();
+    const response = await fetch(modelConfig.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [googleGenerationSettings?.headerName || 'x-goog-api-key']: googleSettings.apiKey
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              { text: trimmedPrompt },
+              {
+                inline_data: {
+                  mime_type: mimeType,
+                  data: sourceBuffer.toString('base64')
+                }
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          responseModalities: ['IMAGE'],
+          imageConfig: {
+            aspectRatio: '1:1',
+            imageSize: '1K'
+          }
+        }
+      })
+    });
+
+    const responseBody = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: responseBody?.error?.message || responseBody?.error || 'Image edit request failed'
+      });
+    }
+
+    const imageParts = collectInlineImageParts(responseBody);
+    if (imageParts.length === 0) {
+      return res.status(502).json({ error: 'Image edit succeeded but no image data was returned' });
+    }
+
+    const editId = randomUUID();
+    const savedEdits = await saveImageEdits({
+      sourceAsset,
+      editId,
+      imageOutputs: imageParts.map(part => ({
+        buffer: Buffer.from(part.data, 'base64'),
+        mimeType: part.mimeType,
+        extension: getExtensionFromMimeType(part.mimeType)
+      }))
+    });
+
+    res.status(201).json({
+      editId,
+      assetId: sourceAsset.id,
+      savedEdits,
+      provider: modelConfig.name
+    });
+  } catch (err) {
+    console.error('Image edit API execution failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to run image edit API' });
+  }
+});
+
+app.post('/api/image-edits/comfy', async (req, res) => {
+  try {
+    const { projectId, assetId, workflowId, prompt } = req.body;
+
+    if (!projectId || !assetId || !workflowId || !prompt?.trim()) {
+      return res.status(400).json({ error: 'projectId, assetId, workflowId and prompt are required' });
+    }
+
+    const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
+    if (!sourceAsset || sourceAsset.type !== 'image') {
+      return res.status(404).json({ error: 'Source image asset not found' });
+    }
+
+    const workflowRecord = await getWorkflowRecordById(Number(workflowId));
+    const workflow = workflowRecord ? await buildWorkflowResponse(workflowRecord) : null;
+
+    if (!workflow) {
+      return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
+    }
+
+    const imageParameter = (workflow.parameters || []).find(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'image');
+    const stringParameter = (workflow.parameters || []).find(parameter => normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter)) === 'string');
+
+    if (!imageParameter || !stringParameter) {
+      return res.status(400).json({ error: 'The selected workflow must expose at least one image input and one string input' });
+    }
+
+    const settings = await getSettings();
+    const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
+    const sourceBuffer = await fs.readFile(toAbsoluteStoragePath(sourceAsset.filePath));
+    const uploadedFilename = await uploadComfyInputFile(baseUrl, {
+      buffer: sourceBuffer,
+      mimetype: getMimeTypeFromFilename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name),
+      originalname: path.basename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name)
+    });
+
+    const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, {
+      [imageParameter.id]: uploadedFilename,
+      [stringParameter.id]: String(prompt).trim()
+    });
+    const { promptId } = await queueComfyPrompt(baseUrl, promptWorkflow);
+    const historyRecord = await waitForComfyHistory(baseUrl, promptId);
+    const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
+
+    if (workflowImages.length === 0) {
+      return res.status(502).json({ error: 'The ComfyUI workflow finished but no images were returned' });
+    }
+
+    const downloadedImages = await Promise.all(workflowImages.map(async workflowImage => {
+      const downloadedImage = await downloadComfyImage(baseUrl, workflowImage);
+      return {
+        buffer: downloadedImage.buffer,
+        mimeType: downloadedImage.contentType,
+        extension: path.extname(workflowImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType)
+      };
+    }));
+
+    const editId = randomUUID();
+    const savedEdits = await saveImageEdits({
+      sourceAsset,
+      editId,
+      imageOutputs: downloadedImages
+    });
+
+    res.status(201).json({
+      editId,
+      assetId: sourceAsset.id,
+      workflowId: workflow.id,
+      workflowName: workflow.name,
+      promptId,
+      savedEdits
+    });
+  } catch (err) {
+    console.error('ComfyUI image edit execution failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to run ComfyUI image edit' });
   }
 });
 

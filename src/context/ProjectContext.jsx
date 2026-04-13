@@ -55,6 +55,38 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const runImageEditApi = async (projectId, editData) => {
+    const res = await fetch(`${API_BASE}/image-edits/api`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...editData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to run image edit API')
+    }
+
+    return data
+  }
+
+  const runImageEditComfy = async (projectId, editData) => {
+    const res = await fetch(`${API_BASE}/image-edits/comfy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...editData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to run ComfyUI image edit')
+    }
+
+    return data
+  }
+
   const getAttributeTypes = async () => {
     const res = await fetch(`${API_BASE}/card-attributes/types`)
     const data = await res.json()
@@ -390,6 +422,8 @@ export function ProjectProvider({ children }) {
       createCardAttribute,
       updateCardAttribute,
       deleteCardAttribute,
+      runImageEditApi,
+      runImageEditComfy,
       generateImage,
       getComfyWorkflows,
       inspectComfyWorkflow,

@@ -353,6 +353,14 @@ export async function initializeStorage() {
       UNIQUE(cardId, position)
     );
 
+    CREATE TABLE IF NOT EXISTS Assets_Edits (
+      assetId INTEGER NOT NULL,
+      editId TEXT NOT NULL,
+      filePath TEXT NOT NULL,
+      creationDate INTEGER NOT NULL,
+      FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS WorkflowConfigs (
       assetId INTEGER PRIMARY KEY,
       parametersJson TEXT NOT NULL DEFAULT '[]',
@@ -697,6 +705,15 @@ async function getAssetViewById(assetId) {
   return row ? mapAssetRow(row) : null;
 }
 
+export async function getProjectAssetById(projectId, assetId) {
+  const asset = await getAssetViewById(assetId);
+  if (!asset || Number(asset.projectId) !== Number(projectId)) {
+    return null;
+  }
+
+  return asset;
+}
+
 export async function listProjects() {
   const db = await getDb();
   const rows = await all(db, 'SELECT * FROM Projects ORDER BY creationDate DESC');
@@ -839,6 +856,22 @@ export async function createCardAttribute(projectId, externalCardId, { attribute
   );
 
   return await getCardAttributeView(card.id, position);
+}
+
+export async function createAssetEditRecord({ assetId, editId, filePath, createdAt = Date.now() }) {
+  const db = await getDb();
+  await run(
+    db,
+    'INSERT INTO Assets_Edits (assetId, editId, filePath, creationDate) VALUES (?, ?, ?, ?)',
+    [assetId, editId, toStoredAssetPath('image', filePath), createdAt]
+  );
+
+  return {
+    assetId,
+    editId,
+    filePath: toStoredAssetPath('image', filePath),
+    creationDate: createdAt
+  };
 }
 
 export async function updateCardAttribute(projectId, externalCardId, position, { attributeTypeId, attributeValue }) {

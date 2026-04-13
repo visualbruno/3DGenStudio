@@ -525,6 +525,49 @@
   gap: 0.75rem;
 }
 
+.image-card__edit-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.image-card__edit-action-btn,
+.image-card__edit-action-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: fit-content;
+  border: 1px solid rgba(143, 245, 255, 0.2);
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--primary);
+  border-radius: var(--radius-md);
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  font-size: 0.72rem;
+}
+
+.image-card__edit-action-menu {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.image-card__edit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(13, 14, 16, 0.4);
+}
+
+.image-card__edit-panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
 .image-card__attributes-header {
   display: flex;
   align-items: center;
