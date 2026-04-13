@@ -108,6 +108,7 @@ export default function AssetsPage() {
     getLibraryAssets,
     importLibraryAssets,
     deleteLibraryAsset,
+    renameLibraryAsset,
     deleteAsset,
     getComfyWorkflows,
     inspectComfyWorkflow,
@@ -136,6 +137,9 @@ export default function AssetsPage() {
   const [deletingAssetKey, setDeletingAssetKey] = useState(null)
   const [linkedAssetDialog, setLinkedAssetDialog] = useState(null)
   const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
+  const [renamingAsset, setRenamingAsset] = useState(null)
+  const [renamingAssetName, setRenamingAssetName] = useState('')
+  const [renamingAssetKey, setRenamingAssetKey] = useState(null)
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -269,6 +273,53 @@ export default function AssetsPage() {
     } finally {
       setImporting(false)
       input.value = ''
+    }
+  }
+
+  const handleStartRenameAsset = (asset) => {
+    setRenamingAsset(asset)
+    setRenamingAssetName(asset.name || '')
+    setImportFeedback(null)
+  }
+
+  const handleRenameAsset = async () => {
+    if (!renamingAsset) {
+      return
+    }
+
+    const nextName = renamingAssetName.trim()
+    if (!nextName) {
+      setImportFeedback({
+        type: 'error',
+        message: 'Asset name cannot be empty.'
+      })
+      return
+    }
+
+    const assetKey = `${renamingAsset.type}:${renamingAsset.filename}`
+    setRenamingAssetKey(assetKey)
+
+    try {
+      await renameLibraryAsset({
+        type: renamingAsset.type,
+        filename: renamingAsset.filename,
+        name: nextName
+      })
+
+      await loadLibrary()
+      setImportFeedback({
+        type: 'success',
+        message: `${renamingAsset.name} renamed to ${nextName}.`
+      })
+      setRenamingAsset(null)
+      setRenamingAssetName('')
+    } catch (err) {
+      setImportFeedback({
+        type: 'error',
+        message: err.message || 'Failed to rename asset.'
+      })
+    } finally {
+      setRenamingAssetKey(null)
     }
   }
 
@@ -479,6 +530,39 @@ export default function AssetsPage() {
               </button>
               <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleGoToProject} disabled={!linkedAssetDialog.projectId}>
                 Go to project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renamingAsset && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setRenamingAsset(null)}>
+          <div className="assets-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-asset-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="rename-asset-dialog-title" className="assets-dialog__title font-headline">Rename asset</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setRenamingAsset(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body">
+              <div className="library-field">
+                <label className="library-label">Asset Name</label>
+                <input
+                  className="library-input"
+                  value={renamingAssetName}
+                  onChange={event => setRenamingAssetName(event.target.value)}
+                  placeholder="Enter a new asset name"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setRenamingAsset(null)}>
+                Cancel
+              </button>
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleRenameAsset} disabled={renamingAssetKey === `${renamingAsset.type}:${renamingAsset.filename}`}>
+                {renamingAssetKey === `${renamingAsset.type}:${renamingAsset.filename}` ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>
@@ -876,6 +960,15 @@ export default function AssetsPage() {
                                 ) : (
                                   <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
                                 )}
+                                <button
+                                  type="button"
+                                  className="asset-card__icon-btn asset-card__icon-btn--edit"
+                                  onClick={() => handleStartRenameAsset(asset)}
+                                  disabled={renamingAssetKey === `${asset.type}:${asset.filename}`}
+                                  title="Rename asset"
+                                >
+                                  <span className="material-symbols-outlined">edit</span>
+                                </button>
                                 <button
                                   type="button"
                                   className="asset-card__icon-btn"

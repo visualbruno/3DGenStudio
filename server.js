@@ -36,6 +36,7 @@ import {
   listProjects,
   listWorkflowRecords,
   moveCard,
+  renameLibraryAssetByFilePath,
   saveSettings,
   toAbsoluteStoragePath,
   toStoredAssetPath,
@@ -926,6 +927,30 @@ app.delete('/api/assets/library', async (req, res) => {
   } catch (err) {
     console.error('Failed to delete library asset:', err);
     res.status(500).json({ error: 'Failed to delete library asset' });
+  }
+});
+
+app.put('/api/assets/library', async (req, res) => {
+  try {
+    const { type, filename, name } = req.body;
+
+    if (!type || !filename || !name?.trim()) {
+      return res.status(400).json({ error: 'type, filename and name are required' });
+    }
+
+    const storedFilePath = toStoredAssetPath(String(type), String(filename));
+    const absoluteAssetPath = toAbsoluteStoragePath(storedFilePath);
+
+    try {
+      await fs.access(absoluteAssetPath);
+    } catch {
+      return res.status(404).json({ error: 'Selected asset file was not found' });
+    }
+
+    res.json(await renameLibraryAssetByFilePath(String(type), String(filename), String(name)));
+  } catch (err) {
+    console.error('Failed to rename library asset:', err);
+    res.status(500).json({ error: err.message || 'Failed to rename library asset' });
   }
 });
 

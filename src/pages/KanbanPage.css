@@ -392,6 +392,23 @@
   color: var(--error);
 }
 
+.image-card__thumb-caption {
+  position: absolute;
+  left: 0.35rem;
+  right: 0.35rem;
+  bottom: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.62);
+  color: var(--on-surface);
+  font-size: 0.58rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  z-index: 1;
+}
+
 .image-card__thumb-nav {
   position: absolute;
   top: 50%;

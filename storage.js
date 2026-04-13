@@ -1090,6 +1090,73 @@ export async function findLibraryAssetByFilePath(type, filePath) {
   );
 }
 
+export async function renameLibraryAssetByFilePath(type, filePath, name) {
+  const db = await getDb();
+  const normalizedType = normalizeAssetTypeName(type);
+  const storedFilePath = toStoredAssetPath(type, filePath);
+  const trimmedName = String(name || '').trim();
+
+  if (!trimmedName) {
+    throw new Error('A name is required');
+  }
+
+  const unlinkedAssets = await all(
+    db,
+    `SELECT a.id, a.thumbnail
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND a.filePath = ?
+       AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
+     ORDER BY a.creationDate DESC, a.id DESC`,
+    [normalizedType, storedFilePath]
+  );
+
+  if (unlinkedAssets.length > 0) {
+    await run(db, 'UPDATE Assets SET name = ? WHERE id = ?', [trimmedName, unlinkedAssets[0].id]);
+
+    for (const asset of unlinkedAssets.slice(1)) {
+      await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
+    }
+
+    return {
+      id: `library:${unlinkedAssets[0].id}`,
+      name: trimmedName,
+      filePath: storedFilePath,
+      thumbnailPath: unlinkedAssets[0].thumbnail || null,
+      created: false
+    };
+  }
+
+  const existingAsset = await get(
+    db,
+    `SELECT a.thumbnail
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND a.filePath = ?
+     ORDER BY a.creationDate DESC
+     LIMIT 1`,
+    [normalizedType, storedFilePath]
+  );
+
+  const createdAsset = await createLibraryAsset({
+    name: trimmedName,
+    type,
+    filePath: storedFilePath,
+    thumbnailPath: existingAsset?.thumbnail || null,
+    metadata: {
+      source: 'LIBRARY RENAME'
+    },
+    createdAt: Date.now()
+  });
+
+  return {
+    ...createdAsset,
+    created: true
+  };
+}
+
 export async function deleteLibraryAssetByFilePath(type, filePath) {
   const db = await getDb();
   const storedFilePath = toStoredAssetPath(type, filePath);
@@ -1133,6 +1200,16 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
     return { status: 'deleted' };
   }
 
+  const editFileRows = normalizedType === 'Image'
+    ? await all(
+      db,
+      `SELECT DISTINCT editId, filePath
+       FROM Assets_Edits
+       WHERE assetId IN (${assets.map(() => '?').join(', ')})`,
+      assets.map(asset => asset.id)
+    )
+    : [];
+
   for (const asset of assets) {
     await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
   }
@@ -1143,6 +1220,11 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
     if (asset.thumbnail) {
       await fs.rm(toAbsoluteStoragePath(asset.thumbnail), { force: true }).catch(() => null);
     }
+  }
+
+  for (const editFileRow of editFileRows) {
+    const absoluteEditFilePath = toAbsoluteStoragePath(editFileRow.filePath);
+    await fs.rm(path.dirname(absoluteEditFilePath), { recursive: true, force: true }).catch(() => null);
   }
 
   return { status: 'deleted' };
@@ -1299,11 +1381,15 @@ export async function listLibraryAssetsByType(type, port) {
     [normalizeAssetTypeName(type)]
   );
 
-  const dbAssets = rows.map(row => {
+  const dbAssets = rows.reduce((accumulator, row) => {
     const filename = toAssetUrlPath(row.filePath);
+    if (accumulator.some(asset => asset.filename === filename)) {
+      return accumulator;
+    }
+
     const thumbnailFilename = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
 
-    return {
+    accumulator.push({
       id: `library:${row.id}`,
       name: row.name,
       filename,
@@ -1313,8 +1399,10 @@ export async function listLibraryAssetsByType(type, port) {
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
       thumbnailPath: row.thumbnail || null,
       thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null
-    };
-  });
+    });
+
+    return accumulator;
+  }, []);
 
   const knownFilenames = new Set(dbAssets.map(asset => asset.filename));
 

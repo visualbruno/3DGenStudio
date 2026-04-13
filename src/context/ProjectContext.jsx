@@ -55,6 +55,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const renameLibraryAsset = async ({ type, filename, name }) => {
+    const res = await fetch(`${API_BASE}/assets/library`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, filename, name })
+    })
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to rename asset')
+    }
+
+    return data
+  }
+
   const runImageEditApi = async (projectId, editData) => {
     const res = await fetch(`${API_BASE}/image-edits/api`, {
       method: 'POST',
@@ -417,6 +433,7 @@ export function ProjectProvider({ children }) {
       getLibraryAssets,
       importLibraryAssets,
       deleteLibraryAsset,
+      renameLibraryAsset,
       getAttributeTypes,
       getProjectCardAttributes,
       createCardAttribute,

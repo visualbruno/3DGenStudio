@@ -563,6 +563,11 @@
   border-color: rgba(255, 113, 108, 0.28);
 }
 
+.asset-card__icon-btn--edit:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: rgba(143, 245, 255, 0.32);
+}
+
 .asset-card__icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;

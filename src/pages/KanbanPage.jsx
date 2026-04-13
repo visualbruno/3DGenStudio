@@ -858,6 +858,12 @@ export default function KanbanPage() {
                     <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
                   </button>
                 )}
+
+                {showAttributes && (
+                  <div className="image-card__thumb-caption font-label">
+                    {asset.name}
+                  </div>
+                )}
               </div>
             ))
           ) : (
