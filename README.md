@@ -1,16 +1,135 @@
-# React + Vite
+# 3D Gen Studio
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+`3D Gen Studio` is a creative production workspace for turning ideas into 3D-ready assets.
 
-Currently, two official plugins are available:
+The application combines **image generation**, **asset management**, and a **kanban-style workflow** to help organize creation from concept to result. With the help of **external image-generation APIs** and **ComfyUI**, users can generate images, manage edits, and transform visual inputs into meshes inside a structured project workflow.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Designed as a visual studio for experimentation and production, `3D Gen Studio` helps keep assets, steps, and outputs organized in one place.
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Why 3D Gen Studio?
 
-## Expanding the ESLint configuration
+- Generate images using external AI APIs
+- Organize work in a kanban workflow
+- Manage image assets, edits, meshes, and reusable workflows
+- Connect with `ComfyUI` for advanced generation pipelines
+- Build a smoother path from **image concept** to **3D mesh output**
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+---
+
+## Screenshots
+
+Add your screenshots here.
+
+### Dashboard / Kanban
+
+`[ Screenshot placeholder ]`
+
+### Assets Library
+
+`[ Screenshot placeholder ]`
+
+### Mesh Preview / Viewer
+
+`[ Screenshot placeholder ]`
+
+### Workflow / ComfyUI Integration
+
+`[ Screenshot placeholder ]`
+
+---
+
+## Installation
+
+### Prerequisites
+
+Before starting, make sure you have:
+
+- `Node.js` and `npm`
+- A running `ComfyUI` installation
+- Access to at least one external image-generation API
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/visualbruno/3DGenStudio.git
+cd 3DGenStudio
+```
+
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Start the application
+
+```bash
+npm run dev
+```
+
+This starts:
+
+- the backend server on `http://localhost:3001`
+- the Vite frontend development server
+
+### 4. Configure integrations
+
+Open the application and configure your services in the settings area:
+
+- `ComfyUI` path / host / port
+- external API credentials
+- optional custom endpoints
+
+### 5. Start creating
+
+You can then:
+
+- create and manage projects
+- generate images
+- review and organize edits
+- import assets into the library
+- generate or manage meshes in your workflow
+
+---
+
+## Technologies and Frameworks Used
+
+### Frontend
+
+- `React`
+- `Vite`
+- `React Router`
+- `Three.js`
+- `@react-three/fiber`
+- `@react-three/drei`
+
+### Backend
+
+- `Node.js`
+- `Express`
+- `Multer`
+
+### Data and Storage
+
+- `SQLite`
+- `LowDB`
+- local asset storage for images and meshes
+
+### Tooling
+
+- `ESLint`
+- `concurrently`
+
+### Integrations
+
+- `ComfyUI`
+- external AI image-generation APIs
+- custom API endpoints
+
+---
+
+## Project Vision
+
+`3D Gen Studio` aims to make 3D content creation more accessible by combining generation tools, asset tracking, and workflow organization in a single interface. It is built for creators who want a practical bridge between **AI-generated imagery** and **3D production workflows**.
