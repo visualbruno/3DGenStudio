@@ -1954,9 +1954,14 @@ app.post('/api/images/generate', async (req, res) => {
     let responseId;
     let outputFormat;
 
-    if (selectedApi === 'openai') {
+    if (selectedApi.startsWith('openai')) {
       if (!openAiSettings?.apiKey) {
         return res.status(400).json({ error: 'OpenAI API key is not configured in settings' });
+      }
+
+      const openAiModelConfig = openAiGenerationSettings?.models?.[selectedApi];
+      if (!openAiGenerationSettings?.url || !openAiModelConfig?.model) {
+        return res.status(400).json({ error: `Unsupported image API: ${selectedApi}` });
       }
 
       const requestHeaders = replaceTemplatePlaceholders(openAiGenerationSettings?.headers || {}, {
@@ -1965,7 +1970,8 @@ app.post('/api/images/generate', async (req, res) => {
       });
       const requestPayload = replaceTemplatePlaceholders(openAiGenerationSettings?.payloadTemplate, {
         apiKey: openAiSettings.apiKey,
-        prompt: trimmedPrompt
+        prompt: trimmedPrompt,
+        model: openAiModelConfig.model
       });
 
       response = await fetch(openAiGenerationSettings?.url, {
@@ -1996,7 +2002,7 @@ app.post('/api/images/generate', async (req, res) => {
         data: imageBase64
       };
       providerName = 'OpenAI';
-      modelVersion = openAiGenerationSettings?.payloadTemplate?.model || 'gpt-image-1.5';
+      modelVersion = openAiModelConfig.model;
       responseId = responseBody?.created ? String(responseBody.created) : null;
       outputFormat = 'PNG';
     } else {

@@ -20,7 +20,8 @@ const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
   { id: 'nanobana_pro', name: 'Nanobana Pro' },
   { id: 'nanobana_2', name: 'Nanobana 2' },
-  { id: 'openai', name: 'OpenAI (DALL-E 3)' },
+  { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
+  { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' },
 ]
 
 const IMAGE_CARD_COLUMNS = [
@@ -1409,7 +1410,7 @@ export default function KanbanPage() {
                             value={imageEditDraft.selectedApi}
                             onChange={event => handleImageEditDraftChange(card, 'selectedApi', event.target.value)}
                           >
-                            {combinedApis.filter(api => api.id !== 'openai').map(api => (
+                            {combinedApis.map(api => (
                               <option key={api.id} value={api.id}>{api.name}</option>
                             ))}
                           </select>

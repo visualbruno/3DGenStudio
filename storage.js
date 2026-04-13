@@ -67,7 +67,36 @@ export const DEFAULT_SETTINGS = {
         }
       }
     },
-    openai: { apiKey: '' },
+      openai: {
+        apiKey: '',
+        imageGeneration: {
+          url: 'https://api.openai.com/v1/images/generations',
+          headers: {
+            Authorization: 'Bearer {apiKey}'
+          },
+          payloadTemplate: {
+            model: 'gpt-image-1.5',
+            prompt: '{prompt}',
+            n: 1,
+            size: '1024x1024'
+          },
+          models: {
+            gpt_image_1: {
+              name: 'gpt-image-1',
+              model: 'gpt-image-1'
+            },
+            gpt_image_1_5: {
+              name: 'gpt-image-1.5',
+              model: 'gpt-image-1.5'
+            }
+          },
+          responseMapping: {
+            imageBase64Field: 'data[0].b64_json',
+            createdField: 'created',
+            usageField: 'usage'
+          }
+        }
+      },
     comfyui: {
       path: '',
       url: 'http://127.0.0.1',
@@ -152,6 +181,26 @@ function parseJson(value, fallback) {
   } catch {
     return fallback;
   }
+}
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function mergeWithDefaults(defaultValue, currentValue) {
+  if (!isPlainObject(defaultValue) || !isPlainObject(currentValue)) {
+    return currentValue === undefined ? defaultValue : currentValue;
+  }
+
+  const merged = { ...defaultValue };
+
+  for (const [key, value] of Object.entries(currentValue)) {
+    merged[key] = key in defaultValue
+      ? mergeWithDefaults(defaultValue[key], value)
+      : value;
+  }
+
+  return merged;
 }
 
 function mapProjectRow(row) {
@@ -1464,7 +1513,7 @@ export async function deleteAssetById(assetId) {
 export async function getSettings() {
   const db = await getDb();
   const row = await get(db, 'SELECT json FROM Settings WHERE id = 1');
-  return parseJson(row?.json, DEFAULT_SETTINGS);
+  return mergeWithDefaults(DEFAULT_SETTINGS, parseJson(row?.json, DEFAULT_SETTINGS));
 }
 
 export async function saveSettings(settings) {
