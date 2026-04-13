@@ -4,7 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
-import { createAssetEditRecord, getProjectAssetById } from './storage.js';
+import { createAssetEditRecord, resolveProjectImageSource } from './storage.js';
 import fs from 'fs/promises';
 import {
   ASSETS_DIR,
@@ -37,6 +37,7 @@ import {
   listWorkflowRecords,
   moveCard,
   renameLibraryAssetByFilePath,
+  renameAssetEditByFilePath,
   saveSettings,
   toAbsoluteStoragePath,
   toStoredAssetPath,
@@ -71,6 +72,21 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+app.put('/api/assets/library/edits', async (req, res) => {
+  try {
+    const { filePath, name } = req.body;
+
+    if (!filePath || !name?.trim()) {
+      return res.status(400).json({ error: 'filePath and name are required' });
+    }
+
+    res.json(await renameAssetEditByFilePath(String(filePath), name));
+  } catch (err) {
+    console.error('Failed to rename asset edit:', err);
+    res.status(500).json({ error: err.message || 'Failed to rename asset edit' });
   }
 });
 
@@ -1640,16 +1656,17 @@ app.delete('/api/card-attributes/:cardId/:position', async (req, res) => {
 
 app.post('/api/image-edits/api', async (req, res) => {
   try {
-    const { projectId, assetId, selectedApi, prompt, name } = req.body;
+    const { projectId, assetId, selectedApi, prompt, name, imageSource } = req.body;
     const trimmedName = String(name || '').trim();
 
-    if (!projectId || !assetId || !selectedApi || !prompt?.trim() || !trimmedName) {
-      return res.status(400).json({ error: 'projectId, assetId, selectedApi, prompt and name are required' });
+    if (!projectId || !selectedApi || !prompt?.trim() || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
     }
 
-    const sourceAsset = await getProjectAssetById(Number(projectId), Number(assetId));
-    if (!sourceAsset || sourceAsset.type !== 'image') {
-      return res.status(404).json({ error: 'Source image asset not found' });
+    const resolvedSource = await resolveProjectImageSource(Number(projectId), imageSource || assetId);
+    const sourceAsset = resolvedSource?.asset;
+    if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'image') {
+      return res.status(404).json({ error: 'Source image or edit not found' });
     }
 
     const settings = await getSettings();
@@ -1665,9 +1682,9 @@ app.post('/api/image-edits/api', async (req, res) => {
       return res.status(400).json({ error: 'Google API key is not configured in settings' });
     }
 
-    const sourceFilePath = toAbsoluteStoragePath(sourceAsset.filePath);
+    const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
     const sourceBuffer = await fs.readFile(sourceFilePath);
-    const mimeType = getMimeTypeFromFilename(sourceAsset.filePath || sourceAsset.filename || sourceAsset.name);
+    const mimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
     const trimmedPrompt = String(prompt).trim();
     const response = await fetch(modelConfig.url, {
       method: 'POST',
@@ -1772,23 +1789,26 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       const providedValue = rawInputValues?.[parameter.id];
 
       if (valueType === 'image') {
-        const selectedAssetId = Number(isPlainObject(providedValue) ? providedValue.assetId : providedValue);
-        if (!selectedAssetId) {
+        const sourceReference = isPlainObject(providedValue)
+          ? (providedValue.source || providedValue.filePath || providedValue.assetId)
+          : providedValue;
+
+        if (!sourceReference) {
           return res.status(400).json({ error: `An image asset is required for ${parameter.name}` });
         }
 
-        const inputAsset = await getProjectAssetById(Number(projectId), selectedAssetId);
-        if (!inputAsset || inputAsset.type !== 'image') {
-          return res.status(404).json({ error: `Image asset not found for ${parameter.name}` });
+        const resolvedImageSource = await resolveProjectImageSource(Number(projectId), sourceReference);
+        if (!resolvedImageSource?.asset || resolvedImageSource.asset.type !== 'image') {
+          return res.status(404).json({ error: `Image source not found for ${parameter.name}` });
         }
 
-        const inputBuffer = await fs.readFile(toAbsoluteStoragePath(inputAsset.filePath));
+        const inputBuffer = await fs.readFile(toAbsoluteStoragePath(resolvedImageSource.inputFilePath));
         resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, {
           buffer: inputBuffer,
-          mimetype: getMimeTypeFromFilename(inputAsset.filePath || inputAsset.filename || inputAsset.name),
-          originalname: path.basename(inputAsset.filePath || inputAsset.filename || inputAsset.name)
+          mimetype: getMimeTypeFromFilename(resolvedImageSource.inputFilePath || resolvedImageSource.inputFilename || resolvedImageSource.inputName),
+          originalname: path.basename(resolvedImageSource.inputFilePath || resolvedImageSource.inputFilename || resolvedImageSource.inputName)
         });
-        referencedImageAssets.push(inputAsset);
+        referencedImageAssets.push(resolvedImageSource.asset);
         continue;
       }
 

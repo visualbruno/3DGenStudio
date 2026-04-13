@@ -126,6 +126,7 @@ export default function KanbanPage() {
   const [imageEditDraft, setImageEditDraft] = useState(null)
   const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
   const [imageEditProgressByCardId, setImageEditProgressByCardId] = useState({})
+  const [imageEditPreviewIndexes, setImageEditPreviewIndexes] = useState({})
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
   const pendingComfyProgressSubscriptionRef = useRef(null)
@@ -610,6 +611,68 @@ export default function KanbanPage() {
     return getAttributeOptionsForCard(cardId, 'Text')
   }
 
+  const getCardImageSourceGroups = (card) => {
+    return (card.assets || []).map(asset => ({
+      asset,
+      options: [
+        {
+          value: `asset:${asset.id}`,
+          label: asset.name,
+          previewFilename: asset.filename,
+          isEdit: false
+        },
+        ...(asset.edits || []).map((edit, index) => ({
+          value: `edit:${edit.filePath}`,
+          label: edit.name?.trim() || `Edit ${index + 1}`,
+          previewFilename: edit.filename,
+          isEdit: true
+        }))
+      ]
+    }))
+  }
+
+  const getAssetEditDisplayItems = (asset) => {
+    return [
+      {
+        key: `asset:${asset.id}`,
+        name: asset.name,
+        filename: asset.filename,
+        isEdit: false
+      },
+      ...((asset.edits || []).map((edit, index) => ({
+        key: `edit:${edit.filePath}`,
+        name: edit.name?.trim() || `Edit ${index + 1}`,
+        filename: edit.filename,
+        isEdit: true
+      })))
+    ]
+  }
+
+  const handleImageEditPreviewStep = (asset, step) => {
+    const itemCount = 1 + (asset.edits?.length || 0)
+    if (itemCount <= 1) {
+      return
+    }
+
+    setImageEditPreviewIndexes(prev => {
+      const currentIndex = prev[asset.id] || 0
+      let nextIndex = currentIndex + step
+
+      if (nextIndex < 0) {
+        nextIndex = itemCount - 1
+      }
+
+      if (nextIndex >= itemCount) {
+        nextIndex = 0
+      }
+
+      return {
+        ...prev,
+        [asset.id]: nextIndex
+      }
+    })
+  }
+
   const createImageEditInputBindings = (card, workflow) => {
     return Object.fromEntries((workflow?.parameters || []).map(parameter => {
       const valueType = getWorkflowParameterValueType(parameter)
@@ -644,7 +707,7 @@ export default function KanbanPage() {
     const valueType = getWorkflowParameterValueType(parameter)
 
     if (valueType === 'image') {
-      return binding.source?.startsWith('asset:') ? Number(binding.source.slice(6)) : null
+      return binding.source || ''
     }
 
     if (binding.source?.startsWith('attribute:')) {
@@ -667,7 +730,7 @@ export default function KanbanPage() {
       mode,
       name: '',
       selectedApi: IMAGE_API_LIST[0]?.id || 'nanobana',
-      selectedAssetId: card.assets[0]?.id || '',
+      selectedAssetId: card.assets[0]?.id ? `asset:${card.assets[0].id}` : '',
       workflowId: initialWorkflow?.id || '',
       inputBindings: createImageEditInputBindings(card, initialWorkflow),
       promptSource: firstPromptOption.id,
@@ -811,7 +874,7 @@ export default function KanbanPage() {
         }
 
         await runImageEditApi(projectId, {
-          assetId: Number(imageEditDraft.selectedAssetId),
+          imageSource: imageEditDraft.selectedAssetId,
           name,
           selectedApi: imageEditDraft.selectedApi,
           prompt
@@ -846,12 +909,12 @@ export default function KanbanPage() {
               return
             }
 
-            const numericAssetId = Number(resolvedValue)
-            if (!primaryAssetId) {
-              primaryAssetId = numericAssetId
+            const matchingAssetGroup = getCardImageSourceGroups(card).find(group => group.options.some(option => option.value === resolvedValue))
+            if (!primaryAssetId && matchingAssetGroup?.asset?.id) {
+              primaryAssetId = matchingAssetGroup.asset.id
             }
 
-            inputValues[parameter.id] = { assetId: numericAssetId }
+            inputValues[parameter.id] = { source: resolvedValue }
             continue
           }
 
@@ -938,6 +1001,7 @@ export default function KanbanPage() {
           : prev)
       }
 
+      await refreshProjectAssets()
       closeImageEditActionMenu()
       alert('Image edit completed successfully.')
     } catch (err) {
@@ -1110,6 +1174,7 @@ export default function KanbanPage() {
     const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
     const visibleAssets = card.assets.slice(currentPage * 4, currentPage * 4 + 4)
     const attributes = cardAttributesByCardId[card.id] || []
+    const imageSourceGroups = getCardImageSourceGroups(card)
 
     return (
       <div
@@ -1147,12 +1212,21 @@ export default function KanbanPage() {
 
         <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
           {visibleAssets.length > 0 ? (
-            visibleAssets.map(asset => (
+            visibleAssets.map(asset => {
+              const displayItems = showAttributes ? getAssetEditDisplayItems(asset) : []
+              const previewIndex = showAttributes
+                ? Math.min(imageEditPreviewIndexes[asset.id] || 0, Math.max(0, displayItems.length - 1))
+                : 0
+              const previewItem = showAttributes ? (displayItems[previewIndex] || displayItems[0]) : asset
+              const previewFilename = showAttributes ? previewItem?.filename : asset.filename
+              const previewName = showAttributes ? previewItem?.name : asset.name
+
+              return (
               <div key={asset.id} className="image-card__thumb-item">
-                {asset.filename ? (
+                {previewFilename ? (
                   <img
-                    src={`http://localhost:3001/assets/${encodeURI(asset.filename)}`}
-                    alt={asset.name}
+                    src={`http://localhost:3001/assets/${encodeURI(previewFilename)}`}
+                    alt={previewName}
                     className="image-card__thumb-image"
                   />
                 ) : (
@@ -1176,11 +1250,41 @@ export default function KanbanPage() {
 
                 {showAttributes && (
                   <div className="image-card__thumb-caption font-label">
-                    {asset.name}
+                    {previewName}
                   </div>
                 )}
+
+                {showAttributes && displayItems.length > 1 && (
+                  <>
+                    <div className="image-card__edit-preview-indicator font-label">
+                      {previewIndex === 0
+                        ? `ORIGINAL • 1/${displayItems.length}`
+                        : `EDIT ${previewIndex}/${displayItems.length - 1} • ${previewIndex + 1}/${displayItems.length}`}
+                    </div>
+                    <button
+                      className="image-card__thumb-nav image-card__thumb-nav--prev"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleImageEditPreviewStep(asset, -1)
+                      }}
+                      title="Previous image edit"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
+                    </button>
+                    <button
+                      className="image-card__thumb-nav image-card__thumb-nav--next"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleImageEditPreviewStep(asset, 1)
+                      }}
+                      title="Next image edit"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
+                    </button>
+                  </>
+                )}
               </div>
-            ))
+            )})
           ) : (
             <div className="image-card__thumb-placeholder">
               <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
@@ -1273,6 +1377,7 @@ export default function KanbanPage() {
                         value={imageEditDraft.name}
                         onChange={event => handleImageEditDraftChange(card, 'name', event.target.value)}
                         placeholder="Enter edit name"
+                        required
                       />
                     </div>
 
@@ -1285,8 +1390,14 @@ export default function KanbanPage() {
                             value={imageEditDraft.selectedAssetId}
                             onChange={event => handleImageEditDraftChange(card, 'selectedAssetId', event.target.value)}
                           >
-                            {card.assets.map(asset => (
-                              <option key={asset.id} value={asset.id}>{asset.name}</option>
+                            {imageSourceGroups.map(group => (
+                              <optgroup key={group.asset.id} label={group.asset.name}>
+                                {group.options.map(option => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.isEdit ? `Edit • ${option.label}` : `Image • ${option.label}`}
+                                  </option>
+                                ))}
+                              </optgroup>
                             ))}
                           </select>
                         </div>
@@ -1351,18 +1462,24 @@ export default function KanbanPage() {
                             const resolvedValue = resolveImageEditParameterValue(card, imageEditDraft, parameter)
 
                             if (valueType === 'image') {
-                              const selectedAssetId = binding.source?.startsWith('asset:') ? binding.source.slice(6) : ''
+                              const selectedAssetSource = binding.source || ''
 
                               return (
                                 <div key={parameter.id} className="params-card__field">
                                   <label className="params-card__label font-label">{parameter.name} • IMAGE</label>
                                   <select
                                     className="image-card__attribute-select"
-                                    value={selectedAssetId}
-                                    onChange={event => handleImageEditParameterSourceChange(card, parameter, `asset:${event.target.value}`)}
+                                    value={selectedAssetSource}
+                                    onChange={event => handleImageEditParameterSourceChange(card, parameter, event.target.value)}
                                   >
-                                    {card.assets.map(asset => (
-                                      <option key={asset.id} value={asset.id}>{asset.name}</option>
+                                    {imageSourceGroups.map(group => (
+                                      <optgroup key={group.asset.id} label={group.asset.name}>
+                                        {group.options.map(option => (
+                                          <option key={option.value} value={option.value}>
+                                            {option.isEdit ? `Edit • ${option.label}` : `Image • ${option.label}`}
+                                          </option>
+                                        ))}
+                                      </optgroup>
                                     ))}
                                   </select>
                                   <span className="image-card__param-hint">{parameter.label}</span>
@@ -1409,7 +1526,7 @@ export default function KanbanPage() {
                       <button
                         className="gen-btn"
                         onClick={() => handleRunImageEdit(card)}
-                        disabled={imageEditPendingCardId === card.id}
+                        disabled={imageEditPendingCardId === card.id || !imageEditDraft.name?.trim()}
                       >
                         <span className="material-symbols-outlined">bolt</span>
                         {imageEditPendingCardId === card.id

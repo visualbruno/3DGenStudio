@@ -109,6 +109,7 @@ export default function AssetsPage() {
     importLibraryAssets,
     deleteLibraryAsset,
     renameLibraryAsset,
+    renameAssetEdit,
     deleteAsset,
     getComfyWorkflows,
     inspectComfyWorkflow,
@@ -141,6 +142,9 @@ export default function AssetsPage() {
   const [renamingAsset, setRenamingAsset] = useState(null)
   const [renamingAssetName, setRenamingAssetName] = useState('')
   const [renamingAssetKey, setRenamingAssetKey] = useState(null)
+  const [renamingEdit, setRenamingEdit] = useState(null)
+  const [renamingEditName, setRenamingEditName] = useState('')
+  const [renamingEditKey, setRenamingEditKey] = useState(null)
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -274,6 +278,56 @@ export default function AssetsPage() {
     } finally {
       setImporting(false)
       input.value = ''
+    }
+  }
+
+  const handleStartRenameEdit = (asset, edit) => {
+    setRenamingEdit({ asset, edit })
+    setRenamingEditName(edit.name || '')
+    setImportFeedback(null)
+  }
+
+  const handleRenameEdit = async () => {
+    if (!renamingEdit?.edit) {
+      return
+    }
+
+    const nextName = renamingEditName.trim()
+    if (!nextName) {
+      setImportFeedback({
+        type: 'error',
+        message: 'Edit name cannot be empty.'
+      })
+      return
+    }
+
+    const editKey = renamingEdit.edit.filePath
+    setRenamingEditKey(editKey)
+
+    try {
+      await renameAssetEdit({
+        filePath: renamingEdit.edit.filePath,
+        name: nextName
+      })
+
+      const data = await getLibraryAssets()
+      setLibraryAssets(data)
+
+      const refreshedAsset = (data.images || []).find(asset => asset.filename === renamingEdit.asset.filename)
+      setEditPreviewAsset(refreshedAsset || null)
+      setImportFeedback({
+        type: 'success',
+        message: `Edit renamed to ${nextName}.`
+      })
+      setRenamingEdit(null)
+      setRenamingEditName('')
+    } catch (err) {
+      setImportFeedback({
+        type: 'error',
+        message: err.message || 'Failed to rename edit.'
+      })
+    } finally {
+      setRenamingEditKey(null)
     }
   }
 
@@ -558,7 +612,18 @@ export default function AssetsPage() {
                         <div className="asset-edit-card__details">
                           <span className="asset-edit-card__title">{edit.name?.trim() || `Edit ${index + 1}`}</span>
                         </div>
-                        <a href={edit.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                        <div className="asset-card__actions">
+                          <button
+                            type="button"
+                            className="asset-card__icon-btn asset-card__icon-btn--edit"
+                            onClick={() => handleStartRenameEdit(editPreviewAsset, edit)}
+                            disabled={renamingEditKey === edit.filePath}
+                            title="Rename edit"
+                          >
+                            <span className="material-symbols-outlined">edit</span>
+                          </button>
+                          <a href={edit.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                        </div>
                       </div>
                     </article>
                   ))}
@@ -606,6 +671,39 @@ export default function AssetsPage() {
               </button>
               <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleRenameAsset} disabled={renamingAssetKey === `${renamingAsset.type}:${renamingAsset.filename}`}>
                 {renamingAssetKey === `${renamingAsset.type}:${renamingAsset.filename}` ? 'Saving...' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {renamingEdit && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setRenamingEdit(null)}>
+          <div className="assets-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-edit-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="rename-edit-dialog-title" className="assets-dialog__title font-headline">Rename edit</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setRenamingEdit(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body">
+              <div className="library-field">
+                <label className="library-label">Edit Name</label>
+                <input
+                  className="library-input"
+                  value={renamingEditName}
+                  onChange={event => setRenamingEditName(event.target.value)}
+                  placeholder="Enter a new edit name"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setRenamingEdit(null)}>
+                Cancel
+              </button>
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleRenameEdit} disabled={renamingEditKey === renamingEdit.edit.filePath}>
+                {renamingEditKey === renamingEdit.edit.filePath ? 'Saving...' : 'Save'}
               </button>
             </div>
           </div>

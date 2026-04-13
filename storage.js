@@ -720,6 +720,72 @@ export async function getProjectAssetById(projectId, assetId) {
   return asset;
 }
 
+export async function resolveProjectImageSource(projectId, sourceReference) {
+  const parsedReference = typeof sourceReference === 'string'
+    ? sourceReference
+    : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
+
+  if (typeof parsedReference === 'string' && parsedReference.startsWith('edit:')) {
+    const editFilePath = parsedReference.slice(5);
+    const db = await getDb();
+    const row = await get(
+      db,
+      `SELECT source.id AS assetId, source.projectId, source.name AS assetName, source.filePath AS assetFilePath,
+              ae.editId, ae.name AS editName, ae.filePath AS editFilePath, ae.creationDate
+       FROM Assets_Edits ae
+       JOIN (
+         SELECT a.id, c.projectId, a.name, a.filePath
+         FROM Assets a
+         JOIN Cards_Assets ca ON ca.assetId = a.id
+         JOIN Cards c ON c.id = ca.cardId
+       ) source ON source.id = ae.assetId
+       WHERE source.projectId = ? AND ae.filePath = ?
+       LIMIT 1`,
+      [projectId, editFilePath]
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    const asset = await getProjectAssetById(projectId, row.assetId);
+    if (!asset) {
+      return null;
+    }
+
+    return {
+      asset,
+      inputFilePath: row.editFilePath,
+      inputFilename: toAssetUrlPath(row.editFilePath),
+      inputName: row.editName || `Edit ${row.editId}`,
+      isEdit: true,
+      editId: row.editId
+    };
+  }
+
+  const assetId = typeof parsedReference === 'string' && parsedReference.startsWith('asset:')
+    ? Number(parsedReference.slice(6))
+    : Number(parsedReference);
+
+  if (!assetId) {
+    return null;
+  }
+
+  const asset = await getProjectAssetById(projectId, assetId);
+  if (!asset || asset.type !== 'image') {
+    return null;
+  }
+
+  return {
+    asset,
+    inputFilePath: asset.filePath,
+    inputFilename: asset.filename,
+    inputName: asset.name,
+    isEdit: false,
+    editId: null
+  };
+}
+
 export async function listProjects() {
   const db = await getDb();
   const rows = await all(db, 'SELECT * FROM Projects ORDER BY creationDate DESC');
@@ -818,7 +884,44 @@ export async function listProjectAssets(projectId = null) {
     params
   );
 
-  return rows.map(mapAssetRow);
+  const imageAssetIds = rows
+    .filter(row => String(row.assetTypeName || '').toLowerCase() === 'image')
+    .map(row => row.id);
+
+  const editRows = imageAssetIds.length > 0
+    ? await all(
+      db,
+      `SELECT assetId, editId, name, filePath, creationDate
+       FROM Assets_Edits
+       WHERE assetId IN (${imageAssetIds.map(() => '?').join(', ')})
+       ORDER BY creationDate ASC`,
+      imageAssetIds
+    )
+    : [];
+
+  const editsByAssetId = editRows.reduce((accumulator, row) => {
+    if (!accumulator[row.assetId]) {
+      accumulator[row.assetId] = [];
+    }
+
+    accumulator[row.assetId].push({
+      id: `edit:${row.filePath}`,
+      editId: row.editId,
+      name: row.name || '',
+      filePath: row.filePath,
+      filename: toAssetUrlPath(row.filePath),
+      createdAt: row.creationDate,
+      isEdit: true
+    });
+
+    return accumulator;
+  }, {});
+
+  return rows.map(row => ({
+    ...mapAssetRow(row),
+    edits: editsByAssetId[row.id] || [],
+    editCount: (editsByAssetId[row.id] || []).length
+  }));
 }
 
 export async function listAttributeTypes() {
@@ -1161,6 +1264,39 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
   return {
     ...createdAsset,
     created: true
+  };
+}
+
+export async function renameAssetEditByFilePath(filePath, name) {
+  const db = await getDb();
+  const storedFilePath = toStoredAssetPath('image', filePath);
+  const trimmedName = String(name || '').trim();
+
+  if (!trimmedName) {
+    throw new Error('A name is required');
+  }
+
+  const existingEdit = await get(
+    db,
+    `SELECT assetId, editId, filePath, creationDate
+     FROM Assets_Edits
+     WHERE filePath = ?
+     LIMIT 1`,
+    [storedFilePath]
+  );
+
+  if (!existingEdit) {
+    throw new Error('Edit not found');
+  }
+
+  await run(db, 'UPDATE Assets_Edits SET name = ? WHERE filePath = ?', [trimmedName, storedFilePath]);
+
+  return {
+    assetId: existingEdit.assetId,
+    editId: existingEdit.editId,
+    name: trimmedName,
+    filePath: existingEdit.filePath,
+    creationDate: existingEdit.creationDate
   };
 }
 
