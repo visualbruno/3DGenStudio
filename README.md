@@ -24,19 +24,20 @@ Add your screenshots here.
 
 ### Dashboard / Kanban
 
-`[ Screenshot placeholder ]`
+<img width="2548" height="1352" alt="image" src="https://github.com/user-attachments/assets/8968d0f8-2b70-41d4-870e-4031b1f521f7" />
 
 ### Assets Library
 
-`[ Screenshot placeholder ]`
+<img width="2548" height="1352" alt="image" src="https://github.com/user-attachments/assets/6fa89b0d-c630-4d17-a775-b18fecf9e60b" />
+<img width="2548" height="1352" alt="image" src="https://github.com/user-attachments/assets/3d5aeedb-f734-4e98-98f8-d0a965fba187" />
 
 ### Mesh Preview / Viewer
 
-`[ Screenshot placeholder ]`
+<img width="2548" height="1352" alt="image" src="https://github.com/user-attachments/assets/5ad29bb2-1937-45d7-a598-15dd637687a5" />
 
 ### Workflow / ComfyUI Integration
 
-`[ Screenshot placeholder ]`
+<img width="2548" height="1352" alt="image" src="https://github.com/user-attachments/assets/23d045f1-3789-47e7-8fba-22ebdd837b03" />
 
 ---
 
