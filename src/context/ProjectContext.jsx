@@ -386,6 +386,12 @@ export function ProjectProvider({ children }) {
 
     formData.append('projectId', projectId)
     formData.append('workflowId', workflowData.workflowId)
+    if (workflowData.clientId) {
+      formData.append('clientId', workflowData.clientId)
+    }
+    if (workflowData.promptId) {
+      formData.append('promptId', workflowData.promptId)
+    }
     if (workflowData.cardId) {
       formData.append('cardId', workflowData.cardId)
     }
@@ -414,6 +420,31 @@ export function ProjectProvider({ children }) {
     }
 
     return data
+  }
+
+  const subscribeToComfyWorkflowProgress = (promptId, handlers = {}) => {
+    if (!promptId || typeof EventSource === 'undefined') {
+      return () => {}
+    }
+
+    const eventSource = new EventSource(`${API_BASE}/comfyui/workflows/progress/${encodeURIComponent(promptId)}`)
+
+    eventSource.onmessage = (event) => {
+      try {
+        const payload = JSON.parse(event.data)
+        handlers.onMessage?.(payload)
+      } catch (err) {
+        handlers.onError?.(err)
+      }
+    }
+
+    eventSource.onerror = (event) => {
+      handlers.onError?.(event)
+    }
+
+    return () => {
+      eventSource.close()
+    }
   }
 
   return (
@@ -447,6 +478,7 @@ export function ProjectProvider({ children }) {
       importComfyWorkflow,
       updateComfyWorkflow,
       runComfyWorkflow,
+      subscribeToComfyWorkflowProgress,
       refreshProjects: fetchProjects
     }}>
       {children}

@@ -61,6 +61,14 @@ function createImageCardId() {
   return `image-card-${Date.now()}-${Math.round(Math.random() * 1E9)}`
 }
 
+function createComfyExecutionId(prefix = 'comfy') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${prefix}-${Date.now()}-${Math.round(Math.random() * 1E9)}`
+}
+
 export default function KanbanPage() {
   const { projectId } = useParams()
   const {
@@ -82,7 +90,8 @@ export default function KanbanPage() {
     runImageEditComfy,
     generateImage,
     getComfyWorkflows,
-    runComfyWorkflow
+    runComfyWorkflow,
+    subscribeToComfyWorkflowProgress
   } = useProjects()
   const { settings } = useSettings()
   
@@ -118,6 +127,7 @@ export default function KanbanPage() {
   const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
+  const pendingComfyProgressSubscriptionRef = useRef(null)
 
   // Fetch all data for this project
   useEffect(() => {
@@ -232,6 +242,39 @@ export default function KanbanPage() {
     const attributesData = await getProjectCardAttributes(projectId)
     setCardAttributes(attributesData)
   }
+
+  const closePendingComfyProgressSubscription = () => {
+    pendingComfyProgressSubscriptionRef.current?.()
+    pendingComfyProgressSubscriptionRef.current = null
+  }
+
+  const openPendingComfyProgressSubscription = (promptId) => {
+    closePendingComfyProgressSubscription()
+
+    pendingComfyProgressSubscriptionRef.current = subscribeToComfyWorkflowProgress(promptId, {
+      onMessage: (payload) => {
+        setPendingImageGeneration(prev => {
+          if (!prev || prev.promptId !== promptId) {
+            return prev
+          }
+
+          return {
+            ...prev,
+            progressPercent: Math.max(prev.progressPercent || 0, Number(payload?.progressPercent) || 0),
+            detail: payload?.detail || prev.detail,
+            currentNodeLabel: payload?.currentNodeLabel || prev.currentNodeLabel
+          }
+        })
+      },
+      onError: () => {}
+    })
+  }
+
+  useEffect(() => {
+    return () => {
+      closePendingComfyProgressSubscription()
+    }
+  }, [])
 
   const selectedComfyWorkflow = comfyWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
 
@@ -364,24 +407,40 @@ export default function KanbanPage() {
       }
 
       try {
+        const comfyClientId = createComfyExecutionId('comfy-client')
+        const promptId = createComfyExecutionId('comfy-prompt')
+
         setPendingImageGeneration({
           title: workflow.name,
           source: 'ComfyUI',
-          detail: `Running ${workflow.parameters?.length || 0} configured input${workflow.parameters?.length === 1 ? '' : 's'}`
+          detail: 'Preparing ComfyUI workflow',
+          progressPercent: 0,
+          currentNodeLabel: 'Waiting for ComfyUI execution to start',
+          promptId
         })
         setImageDraft(null)
         setLoading(true)
+        openPendingComfyProgressSubscription(promptId)
         await runComfyWorkflow(projectId, {
           workflowId: draft.workflowId,
           inputs: draft.inputs || {},
-          cardId: draft.cardId || createImageCardId()
+          cardId: draft.cardId || createImageCardId(),
+          clientId: comfyClientId,
+          promptId
         })
+        setPendingImageGeneration(prev => prev ? {
+          ...prev,
+          progressPercent: 100,
+          detail: 'Saving generated image',
+          currentNodeLabel: 'Generated image received'
+        } : prev)
         await refreshProjectAssets()
       } catch (err) {
         console.error('ComfyUI workflow failed:', err)
         setImageDraft(draft)
         alert(err.message || 'ComfyUI workflow failed')
       } finally {
+        closePendingComfyProgressSubscription()
         setPendingImageGeneration(null)
         setLoading(false)
       }
@@ -1305,7 +1364,9 @@ export default function KanbanPage() {
               <div className="image-card__thumb image-card__thumb--loading">
                 <div className="image-card__loading-state">
                   <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                  <span className="font-label image-card__loading-label">Processing image...</span>
+                  <span className="font-label image-card__loading-label">
+                    {Number.isFinite(pendingImageGeneration.progressPercent) ? `${pendingImageGeneration.progressPercent}%` : 'Processing image...'}
+                  </span>
                 </div>
               </div>
               <div className="image-card__info">
@@ -1314,6 +1375,15 @@ export default function KanbanPage() {
                   <span className="image-card__source image-card__source--loading">PENDING</span>
                 </div>
                 <p className="image-card__meta font-label">{pendingImageGeneration.source} • {pendingImageGeneration.detail}</p>
+                {pendingImageGeneration.currentNodeLabel && (
+                  <p className="image-card__meta font-label image-card__meta--loading-node">{pendingImageGeneration.currentNodeLabel}</p>
+                )}
+                <div className="image-card__progress" aria-hidden="true">
+                  <div
+                    className="image-card__progress-bar"
+                    style={{ width: `${Math.max(0, Math.min(100, pendingImageGeneration.progressPercent || 0))}%` }}
+                  />
+                </div>
               </div>
             </div>
           )}

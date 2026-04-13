@@ -49,6 +49,8 @@ const app = express();
 const PORT = 3001;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const MESH_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.fbx', '.stl', '.ply']);
+const comfyProgressSubscribers = new Map();
+const comfyProgressSnapshots = new Map();
 
 console.log('DEBUG: DATA_DIR is', DATA_DIR);
 console.log('DEBUG: DB_FILE is', path.join(DATA_DIR, 'app.db'));
@@ -401,6 +403,386 @@ function buildComfyUiBaseUrl(settings = {}) {
   return parsedUrl.toString().replace(/\/$/, '');
 }
 
+function buildComfyUiWebSocketUrl(baseUrl, clientId) {
+  const parsedUrl = new URL(baseUrl);
+  const currentPath = parsedUrl.pathname && parsedUrl.pathname !== '/' ? parsedUrl.pathname.replace(/\/$/, '') : '';
+
+  parsedUrl.protocol = parsedUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+  parsedUrl.pathname = `${currentPath}/ws`;
+  parsedUrl.search = '';
+  parsedUrl.hash = '';
+  parsedUrl.searchParams.set('clientId', clientId);
+
+  return parsedUrl.toString();
+}
+
+function getComfyExecutionNodeIds(workflowJson = {}, selectedOutputs = []) {
+  const availableNodeIds = Object.keys(workflowJson || {});
+
+  if (availableNodeIds.length === 0) {
+    return new Set();
+  }
+
+  const preferredNodeIds = selectedOutputs
+    .map(output => String(output?.nodeId || output?.id || ''))
+    .filter(nodeId => nodeId && workflowJson?.[nodeId]);
+  const reachableNodeIds = new Set();
+  const queue = preferredNodeIds.length > 0 ? [...preferredNodeIds] : [...availableNodeIds];
+
+  while (queue.length > 0) {
+    const nodeId = String(queue.pop());
+    if (!nodeId || reachableNodeIds.has(nodeId) || !workflowJson?.[nodeId]) {
+      continue;
+    }
+
+    reachableNodeIds.add(nodeId);
+
+    for (const inputValue of Object.values(workflowJson[nodeId]?.inputs || {})) {
+      if (Array.isArray(inputValue) && inputValue.length > 0 && workflowJson?.[String(inputValue[0])]) {
+        queue.push(String(inputValue[0]));
+      }
+    }
+  }
+
+  return reachableNodeIds.size > 0 ? reachableNodeIds : new Set(availableNodeIds);
+}
+
+function getComfyExecutionNodeLabel(workflowJson, nodeId) {
+  const node = workflowJson?.[String(nodeId)];
+  return node?._meta?.title || node?.title || node?.class_type || `Node ${nodeId}`;
+}
+
+function getComfyExecutionProgressPercent(completedNodeCount, totalNodeCount, nodeProgress = 0, isComplete = false) {
+  if (isComplete) {
+    return 100;
+  }
+
+  const safeTotalNodeCount = Math.max(1, Number(totalNodeCount) || 1);
+  const safeNodeProgress = Number.isFinite(nodeProgress) ? Math.min(Math.max(nodeProgress, 0), 1) : 0;
+  const rawPercent = ((completedNodeCount + safeNodeProgress) / safeTotalNodeCount) * 100;
+
+  return Math.max(0, Math.min(99, Math.round(rawPercent)));
+}
+
+function getComfyProgressSubscribers(promptId) {
+  const key = String(promptId || '');
+  if (!comfyProgressSubscribers.has(key)) {
+    comfyProgressSubscribers.set(key, new Set());
+  }
+
+  return comfyProgressSubscribers.get(key);
+}
+
+function publishComfyProgress(promptId, payload) {
+  const key = String(promptId || '');
+  const message = {
+    promptId: key,
+    timestamp: Date.now(),
+    ...payload
+  };
+
+  comfyProgressSnapshots.set(key, message);
+
+  for (const response of getComfyProgressSubscribers(key)) {
+    response.write(`data: ${JSON.stringify(message)}\n\n`);
+  }
+
+  if (message.status === 'completed' || message.status === 'error') {
+    setTimeout(() => {
+      if ((comfyProgressSubscribers.get(key)?.size || 0) === 0) {
+        comfyProgressSubscribers.delete(key);
+        comfyProgressSnapshots.delete(key);
+      }
+    }, 60000);
+  }
+}
+
+function subscribeToComfyProgress(promptId, req, res) {
+  const key = String(promptId || '');
+  const subscribers = getComfyProgressSubscribers(key);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write('retry: 1000\n\n');
+
+  subscribers.add(res);
+
+  const snapshot = comfyProgressSnapshots.get(key);
+  if (snapshot) {
+    res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
+  }
+
+  const heartbeat = setInterval(() => {
+    res.write(': keep-alive\n\n');
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    subscribers.delete(res);
+
+    if (subscribers.size === 0 && !comfyProgressSnapshots.has(key)) {
+      comfyProgressSubscribers.delete(key);
+    }
+  });
+}
+
+function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson, selectedOutputs = [], timeout = 300000 }) {
+  const trackedNodeIds = getComfyExecutionNodeIds(workflowJson, selectedOutputs);
+  const totalNodeCount = Math.max(1, trackedNodeIds.size || Object.keys(workflowJson || {}).length || 1);
+  const wsUrl = buildComfyUiWebSocketUrl(baseUrl, clientId);
+  const completedNodes = new Set();
+  let currentNodeId = null;
+  let currentNodeProgress = 0;
+  let socket = null;
+  let timer = null;
+  let isReady = false;
+  let isSettled = false;
+  let rejectCompletion = null;
+
+  const normalizeNodeId = (nodeId) => String(nodeId || '');
+  const isTrackedNode = (nodeId) => trackedNodeIds.size === 0 || trackedNodeIds.has(normalizeNodeId(nodeId));
+  const getCompletedNodeCount = () => completedNodes.size;
+  const getProgressPercent = (isComplete = false) => {
+    const runningNodeBonus = currentNodeId && !completedNodes.has(currentNodeId) && isTrackedNode(currentNodeId)
+      ? currentNodeProgress
+      : 0;
+
+    return getComfyExecutionProgressPercent(getCompletedNodeCount(), totalNodeCount, runningNodeBonus, isComplete);
+  };
+  const markNodeCompleted = (nodeId) => {
+    const normalizedNodeId = normalizeNodeId(nodeId);
+    if (!normalizedNodeId || !isTrackedNode(normalizedNodeId)) {
+      return false;
+    }
+
+    completedNodes.add(normalizedNodeId);
+
+    if (currentNodeId === normalizedNodeId) {
+      currentNodeProgress = 0;
+    }
+
+    return true;
+  };
+  const publishState = (payload) => {
+    publishComfyProgress(promptId, {
+      totalNodeCount,
+      completedNodeCount: getCompletedNodeCount(),
+      progressPercent: getProgressPercent(payload?.status === 'completed'),
+      ...payload
+    });
+  };
+
+  const ready = new Promise((resolve, reject) => {
+    socket = new WebSocket(wsUrl);
+
+    timer = setTimeout(() => {
+      isSettled = true;
+      publishState({
+        status: 'error',
+        detail: `Job did not complete within ${Math.round(timeout / 1000)}s`,
+        currentNodeLabel: 'Timed out'
+      });
+      socket.close();
+      rejectCompletion?.(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
+      reject(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
+    }, timeout);
+
+    socket.onopen = () => {
+      isReady = true;
+      publishState({
+        status: 'connected',
+        detail: `Connected to ComfyUI • ${totalNodeCount} workflow nodes`,
+        currentNodeLabel: 'Waiting for execution to start'
+      });
+      resolve();
+    };
+
+    socket.onerror = (error) => {
+      if (isSettled) {
+        return;
+      }
+
+      isSettled = true;
+      publishState({
+        status: 'error',
+        detail: 'Failed to connect to ComfyUI progress stream',
+        currentNodeLabel: 'Connection failed'
+      });
+
+      rejectCompletion?.(error instanceof Error ? error : new Error('Failed to connect to ComfyUI progress stream'));
+      reject(error instanceof Error ? error : new Error('Failed to connect to ComfyUI progress stream'));
+    };
+  });
+
+  const completion = new Promise((resolve, reject) => {
+    rejectCompletion = reject;
+
+    socket.onmessage = (event) => {
+      if (typeof event.data !== 'string') {
+        return;
+      }
+
+      let payload;
+
+      try {
+        payload = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+
+      const messageType = payload?.type;
+      const messageData = payload?.data || {};
+
+      if (messageData.prompt_id && String(messageData.prompt_id) !== String(promptId)) {
+        return;
+      }
+
+      if (messageType === 'execution_cached') {
+        for (const nodeId of messageData.nodes || []) {
+          markNodeCompleted(nodeId);
+        }
+
+        publishState({
+          status: 'running',
+          detail: `Completed ${getCompletedNodeCount()}/${totalNodeCount} workflow nodes`,
+          currentNodeLabel: 'Using cached nodes'
+        });
+        return;
+      }
+
+      if (messageType === 'executing') {
+        const previousNodeId = currentNodeId;
+        const nextNodeId = messageData.node ? normalizeNodeId(messageData.node) : null;
+
+        if (previousNodeId && previousNodeId !== nextNodeId) {
+          markNodeCompleted(previousNodeId);
+        }
+
+        currentNodeId = nextNodeId;
+        currentNodeProgress = 0;
+
+        if (!nextNodeId) {
+          if (previousNodeId) {
+            markNodeCompleted(previousNodeId);
+          }
+
+          publishState({
+            status: 'running',
+            detail: 'Finalizing outputs',
+            currentNodeLabel: 'Execution complete',
+            progressPercent: Math.max(getProgressPercent(), 99)
+          });
+          return;
+        }
+
+        if (!isTrackedNode(nextNodeId)) {
+          return;
+        }
+
+        publishState({
+          status: 'running',
+          detail: `Completed ${getCompletedNodeCount()}/${totalNodeCount} workflow nodes`,
+          currentNodeLabel: `Running ${getComfyExecutionNodeLabel(workflowJson, nextNodeId)}`
+        });
+        return;
+      }
+
+      if (messageType === 'progress') {
+        const maxValue = Number(messageData.max) || 0;
+        const currentValue = Number(messageData.value) || 0;
+        currentNodeProgress = maxValue > 0 ? currentValue / maxValue : 0;
+
+        publishState({
+          status: 'running',
+          detail: maxValue > 0 ? `Step ${currentValue}/${maxValue}` : `Completed ${getCompletedNodeCount()}/${totalNodeCount} workflow nodes`,
+          currentNodeLabel: currentNodeId ? `Running ${getComfyExecutionNodeLabel(workflowJson, currentNodeId)}` : 'Processing workflow'
+        });
+        return;
+      }
+
+      if (messageType === 'executed' && messageData.node) {
+        const executedNodeId = normalizeNodeId(messageData.node);
+
+        if (!markNodeCompleted(executedNodeId)) {
+          return;
+        }
+
+        publishState({
+          status: 'running',
+          detail: `Completed ${getCompletedNodeCount()}/${totalNodeCount} workflow nodes`,
+          currentNodeLabel: `Completed ${getComfyExecutionNodeLabel(workflowJson, executedNodeId)}`
+        });
+        return;
+      }
+
+      if (messageType === 'execution_success') {
+        if (currentNodeId) {
+          markNodeCompleted(currentNodeId);
+        }
+
+        isSettled = true;
+
+        publishState({
+          status: 'completed',
+          detail: 'ComfyUI execution completed',
+          currentNodeLabel: 'Saving generated image',
+          progressPercent: 100
+        });
+
+        clearTimeout(timer);
+        socket.close();
+        resolve();
+        return;
+      }
+
+      if (messageType === 'execution_error') {
+        const errorMessage = messageData.exception_message || 'Unknown ComfyUI error';
+
+        isSettled = true;
+
+        publishState({
+          status: 'error',
+          detail: errorMessage,
+          currentNodeLabel: 'ComfyUI execution failed'
+        });
+
+        clearTimeout(timer);
+        socket.close();
+        reject(new Error(errorMessage));
+      }
+    };
+
+    socket.onclose = () => {
+      clearTimeout(timer);
+
+      if (!isSettled && isReady) {
+        isSettled = true;
+        publishState({
+          status: 'error',
+          detail: 'ComfyUI progress stream closed unexpectedly',
+          currentNodeLabel: 'Connection closed'
+        });
+        reject(new Error('ComfyUI progress stream closed unexpectedly'));
+      }
+    };
+  });
+
+  return {
+    ready,
+    completion,
+    close: () => {
+      isSettled = true;
+      clearTimeout(timer);
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+    }
+  };
+}
+
 function coerceComfyParameterValue(parameter, providedValue) {
   if (providedValue === undefined) return cloneSerializable(parameter.defaultValue);
 
@@ -444,9 +826,9 @@ async function sleep(ms) {
   return await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function queueComfyPrompt(baseUrl, workflowJson) {
-  const clientId = randomUUID();
-  const promptId = randomUUID();
+async function queueComfyPrompt(baseUrl, workflowJson, identifiers = {}) {
+  const clientId = String(identifiers?.clientId || '').trim() || randomUUID();
+  const promptId = String(identifiers?.promptId || '').trim() || randomUUID();
   const response = await fetch(`${baseUrl}/prompt`, {
     method: 'POST',
     headers: {
@@ -769,7 +1151,13 @@ app.get('/api/projects', async (req, res) => {
   }
 });
 
+app.get('/api/comfyui/workflows/progress/:promptId', (req, res) => {
+  subscribeToComfyProgress(req.params.promptId, req, res);
+});
+
 app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req, res) => {
+  let executionMonitor = null;
+
   try {
     const { projectId, workflowId, cardId } = req.body;
     const inputValues = JSON.parse(req.body.inputValues || '{}');
@@ -806,8 +1194,29 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     }
 
     const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
-    const { promptId } = await queueComfyPrompt(baseUrl, promptWorkflow);
-    const historyRecord = await waitForComfyHistory(baseUrl, promptId);
+    const executionClientId = String(req.body.clientId || '').trim() || randomUUID();
+    const executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+    executionMonitor = createComfyExecutionMonitor(baseUrl, {
+      clientId: executionClientId,
+      promptId: executionPromptId,
+      workflowJson: promptWorkflow,
+      selectedOutputs: workflow.outputs
+    });
+
+    await executionMonitor.ready;
+    publishComfyProgress(executionPromptId, {
+      status: 'queued',
+      progressPercent: 0,
+      detail: 'Queueing ComfyUI workflow',
+      currentNodeLabel: workflow.name
+    });
+
+    const { promptId: queuedPromptId } = await queueComfyPrompt(baseUrl, promptWorkflow, {
+      clientId: executionClientId,
+      promptId: executionPromptId
+    });
+    await executionMonitor.completion;
+    const historyRecord = await waitForComfyHistory(baseUrl, queuedPromptId);
     const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
 
     if (workflowImages.length === 0) {
@@ -839,7 +1248,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           provider: 'ComfyUI',
           workflowId: workflow.id,
           workflowName: workflow.name,
-          promptId,
+          promptId: queuedPromptId,
           outputNodeId: workflowImage.nodeId,
           outputFilename: workflowImage.filename,
           savedOutputs: workflowImages.length,
@@ -852,6 +1261,15 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     res.status(201).json(generatedAssets);
   } catch (err) {
     console.error('ComfyUI workflow execution failed:', err);
+    executionMonitor?.close();
+    const failedPromptId = String(req.body?.promptId || '').trim();
+    if (failedPromptId) {
+      publishComfyProgress(failedPromptId, {
+        status: 'error',
+        detail: err.message || 'Failed to execute ComfyUI workflow',
+        currentNodeLabel: 'ComfyUI execution failed'
+      });
+    }
     res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
   }
 });
