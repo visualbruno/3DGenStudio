@@ -1370,6 +1370,7 @@ export async function listLibraryAssetsByType(type, port) {
   const subdirectory = getAssetSubdirectory(type);
   await fs.mkdir(assetDirectory, { recursive: true });
   const entries = await fs.readdir(assetDirectory, { withFileTypes: true });
+  const fileEntries = entries.filter(entry => entry.isFile());
   const rows = await all(
     db,
     `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate
@@ -1381,9 +1382,62 @@ export async function listLibraryAssetsByType(type, port) {
     [normalizeAssetTypeName(type)]
   );
 
+  const candidateStoredPaths = [
+    ...new Set([
+      ...rows.map(row => row.filePath),
+      ...fileEntries.map(entry => toStoredAssetPath(type, `${subdirectory}/${entry.name}`))
+    ])
+  ];
+
+  const editRows = type === 'image' && candidateStoredPaths.length > 0
+    ? await all(
+      db,
+      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.filePath, ae.creationDate
+       FROM Assets_Edits ae
+       JOIN Assets source ON source.id = ae.assetId
+       JOIN AssetTypes at ON at.id = source.assetTypeId
+       WHERE at.name = ?
+         AND source.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
+       ORDER BY ae.creationDate DESC`,
+      [normalizeAssetTypeName(type), ...candidateStoredPaths]
+    )
+    : [];
+
+  const editsBySourceFilePath = editRows.reduce((accumulator, row) => {
+    if (!accumulator[row.sourceFilePath]) {
+      accumulator[row.sourceFilePath] = [];
+    }
+
+    const filename = toAssetUrlPath(row.filePath);
+    if (!accumulator[row.sourceFilePath].some(edit => edit.filePath === row.filePath)) {
+      accumulator[row.sourceFilePath].push({
+        editId: row.editId,
+        filePath: row.filePath,
+        filename,
+        createdAt: row.creationDate,
+        url: `http://localhost:${port}/assets/${encodeURI(filename)}`
+      });
+    }
+
+    return accumulator;
+  }, {});
+
   const dbAssets = rows.reduce((accumulator, row) => {
     const filename = toAssetUrlPath(row.filePath);
-    if (accumulator.some(asset => asset.filename === filename)) {
+    const existingAsset = accumulator.find(asset => asset.filename === filename);
+    const assetEdits = editsBySourceFilePath[row.filePath] || [];
+
+    if (existingAsset) {
+      const mergedEdits = [...existingAsset.edits, ...assetEdits].reduce((mergedAccumulator, edit) => {
+        if (!mergedAccumulator.some(existingEdit => existingEdit.filePath === edit.filePath)) {
+          mergedAccumulator.push(edit);
+        }
+
+        return mergedAccumulator;
+      }, []);
+
+      existingAsset.edits = mergedEdits.sort((left, right) => (right.createdAt || 0) - (left.createdAt || 0));
+      existingAsset.editCount = existingAsset.edits.length;
       return accumulator;
     }
 
@@ -1398,7 +1452,9 @@ export async function listLibraryAssetsByType(type, port) {
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
       thumbnailPath: row.thumbnail || null,
-      thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null
+      thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
+      edits: assetEdits,
+      editCount: assetEdits.length
     });
 
     return accumulator;
@@ -1406,22 +1462,26 @@ export async function listLibraryAssetsByType(type, port) {
 
   const knownFilenames = new Set(dbAssets.map(asset => asset.filename));
 
-  const fileAssets = entries
-    .filter(entry => entry.isFile())
+  const fileAssets = fileEntries
     .filter(entry => !knownFilenames.has(`${subdirectory}/${entry.name}`))
     .sort((left, right) => right.name.localeCompare(left.name))
     .map(entry => {
       const filename = `${subdirectory}/${entry.name}`;
+      const storedFilePath = toStoredAssetPath(type, filename);
+      const assetEdits = editsBySourceFilePath[storedFilePath] || [];
+
       return {
         id: `file:${type}:${entry.name}`,
         name: entry.name,
         filename,
-        filePath: toStoredAssetPath(type, filename),
+        filePath: storedFilePath,
         type,
         extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
         url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
         thumbnailPath: null,
-        thumbnailUrl: null
+        thumbnailUrl: null,
+        edits: assetEdits,
+        editCount: assetEdits.length
       };
     });
 

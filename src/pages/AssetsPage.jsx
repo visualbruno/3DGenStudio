@@ -137,6 +137,7 @@ export default function AssetsPage() {
   const [deletingAssetKey, setDeletingAssetKey] = useState(null)
   const [linkedAssetDialog, setLinkedAssetDialog] = useState(null)
   const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
+  const [editPreviewAsset, setEditPreviewAsset] = useState(null)
   const [renamingAsset, setRenamingAsset] = useState(null)
   const [renamingAssetName, setRenamingAssetName] = useState('')
   const [renamingAssetKey, setRenamingAssetKey] = useState(null)
@@ -530,6 +531,46 @@ export default function AssetsPage() {
               </button>
               <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleGoToProject} disabled={!linkedAssetDialog.projectId}>
                 Go to project
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editPreviewAsset && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setEditPreviewAsset(null)}>
+          <div className="assets-dialog assets-dialog--viewer" role="dialog" aria-modal="true" aria-labelledby="asset-edits-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="asset-edits-dialog-title" className="assets-dialog__title font-headline">{editPreviewAsset.name} edits</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setEditPreviewAsset(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body">
+              {editPreviewAsset.edits?.length > 0 ? (
+                <div className="asset-edits-grid">
+                  {editPreviewAsset.edits.map((edit, index) => (
+                    <article key={`${edit.editId}-${edit.filePath}-${index}`} className="asset-edit-card">
+                      <div className="asset-edit-card__preview">
+                        <img src={edit.url} alt={`${editPreviewAsset.name} edit ${index + 1}`} className="asset-card__image" />
+                      </div>
+                      <div className="asset-edit-card__body">
+                        <span className="asset-edit-card__title">Edit {index + 1}</span>
+                        <a href={edit.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="assets-page__empty-state assets-page__empty-state--compact">
+                  <span className="material-symbols-outlined">image_not_supported</span>
+                  <span>No edits available for this asset.</span>
+                </div>
+              )}
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setEditPreviewAsset(null)}>
+                Close
               </button>
             </div>
           </div>
@@ -953,6 +994,17 @@ export default function AssetsPage() {
                             <div className="asset-card__meta">
                               <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
                               <div className="asset-card__actions">
+                                {activeSection === 'images' && asset.editCount > 0 && (
+                                  <button
+                                    type="button"
+                                    className="asset-card__edits-btn"
+                                    onClick={() => setEditPreviewAsset(asset)}
+                                    title="Show edits"
+                                  >
+                                    <span className="material-symbols-outlined">history</span>
+                                    {asset.editCount}
+                                  </button>
+                                )}
                                 {activeSection === 'meshes' ? (
                                   <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
                                     OPEN

@@ -515,6 +515,24 @@
   gap: 0.5rem;
 }
 
+.asset-card__edits-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(143, 245, 255, 0.22);
+  border-radius: var(--radius-full);
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--primary);
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.asset-card__edits-btn .material-symbols-outlined {
+  font-size: 16px;
+}
+
 .asset-card__badge {
   padding: 0.2rem 0.45rem;
   border-radius: var(--radius-sm);
@@ -629,6 +647,42 @@
 .assets-dialog__body {
   padding: 1.5rem;
   color: var(--on-surface-variant);
+}
+
+.asset-edits-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 1rem;
+}
+
+.asset-edit-card {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-high);
+  border: 1px solid rgba(71, 72, 74, 0.15);
+}
+
+.asset-edit-card__preview {
+  aspect-ratio: 1 / 1;
+  background: var(--surface-container-lowest);
+}
+
+.asset-edit-card__body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.85rem;
+}
+
+.asset-edit-card__title {
+  color: var(--on-surface);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.assets-page__empty-state--compact {
+  min-height: 160px;
 }
 
 .assets-dialog__body--viewer {
