@@ -1300,6 +1300,36 @@ export async function renameAssetEditByFilePath(filePath, name) {
   };
 }
 
+export async function deleteAssetEditByFilePath(filePath) {
+  const db = await getDb();
+  const storedFilePath = toStoredAssetPath('image', filePath);
+  const existingEdit = await get(
+    db,
+    `SELECT assetId, editId, filePath
+     FROM Assets_Edits
+     WHERE filePath = ?
+     LIMIT 1`,
+    [storedFilePath]
+  );
+
+  if (!existingEdit) {
+    return { status: 'not-found' };
+  }
+
+  await run(db, 'DELETE FROM Assets_Edits WHERE filePath = ?', [storedFilePath]);
+
+  const absoluteEditFilePath = toAbsoluteStoragePath(existingEdit.filePath);
+  await fs.rm(absoluteEditFilePath, { force: true }).catch(() => null);
+  await fs.rmdir(path.dirname(absoluteEditFilePath)).catch(() => null);
+
+  return {
+    status: 'deleted',
+    assetId: existingEdit.assetId,
+    editId: existingEdit.editId,
+    filePath: existingEdit.filePath
+  };
+}
+
 export async function deleteLibraryAssetByFilePath(type, filePath) {
   const db = await getDb();
   const storedFilePath = toStoredAssetPath(type, filePath);

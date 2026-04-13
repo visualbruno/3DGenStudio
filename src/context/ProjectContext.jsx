@@ -55,6 +55,25 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const deleteAssetEdit = async ({ filePath }) => {
+    const params = new URLSearchParams({ filePath })
+    const res = await fetch(`${API_BASE}/assets/library/edits?${params.toString()}`, {
+      method: 'DELETE'
+    })
+
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete asset edit')
+    }
+
+    return data
+  }
+
   const renameAssetEdit = async ({ filePath, name }) => {
     const res = await fetch(`${API_BASE}/assets/library/edits`, {
       method: 'PUT',
@@ -482,6 +501,7 @@ export function ProjectProvider({ children }) {
       deleteLibraryAsset,
       renameLibraryAsset,
       renameAssetEdit,
+      deleteAssetEdit,
       getAttributeTypes,
       getProjectCardAttributes,
       createCardAttribute,

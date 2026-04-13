@@ -19,6 +19,7 @@ import {
   createTask,
   createWorkflowRecord,
   deleteCardAttribute,
+  deleteAssetEditByFilePath,
   deleteAssetById,
   deleteLibraryAssetByFilePath,
   deleteProjectById,
@@ -72,6 +73,27 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
+app.delete('/api/assets/library/edits', async (req, res) => {
+  try {
+    const { filePath } = req.query;
+
+    if (!filePath) {
+      return res.status(400).json({ error: 'filePath is required' });
+    }
+
+    const result = await deleteAssetEditByFilePath(String(filePath));
+
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Edit not found' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete asset edit:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete asset edit' });
   }
 });
 

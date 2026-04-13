@@ -110,6 +110,7 @@ export default function AssetsPage() {
     deleteLibraryAsset,
     renameLibraryAsset,
     renameAssetEdit,
+    deleteAssetEdit,
     deleteAsset,
     getComfyWorkflows,
     inspectComfyWorkflow,
@@ -145,6 +146,7 @@ export default function AssetsPage() {
   const [renamingEdit, setRenamingEdit] = useState(null)
   const [renamingEditName, setRenamingEditName] = useState('')
   const [renamingEditKey, setRenamingEditKey] = useState(null)
+  const [deletingEditKey, setDeletingEditKey] = useState(null)
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -328,6 +330,41 @@ export default function AssetsPage() {
       })
     } finally {
       setRenamingEditKey(null)
+    }
+  }
+
+  const handleDeleteEdit = async (asset, edit) => {
+    if (!edit?.filePath) {
+      return
+    }
+
+    const confirmed = window.confirm(`Delete edit "${edit.name?.trim() || 'Unnamed edit'}"?`)
+    if (!confirmed) {
+      return
+    }
+
+    setDeletingEditKey(edit.filePath)
+    setImportFeedback(null)
+
+    try {
+      await deleteAssetEdit({ filePath: edit.filePath })
+
+      const data = await getLibraryAssets()
+      setLibraryAssets(data)
+
+      const refreshedAsset = (data.images || []).find(item => item.filename === asset.filename)
+      setEditPreviewAsset(refreshedAsset || { ...asset, edits: [], editCount: 0 })
+      setImportFeedback({
+        type: 'success',
+        message: 'Edit deleted.'
+      })
+    } catch (err) {
+      setImportFeedback({
+        type: 'error',
+        message: err.message || 'Failed to delete edit.'
+      })
+    } finally {
+      setDeletingEditKey(null)
     }
   }
 
@@ -617,10 +654,19 @@ export default function AssetsPage() {
                             type="button"
                             className="asset-card__icon-btn asset-card__icon-btn--edit"
                             onClick={() => handleStartRenameEdit(editPreviewAsset, edit)}
-                            disabled={renamingEditKey === edit.filePath}
+                            disabled={renamingEditKey === edit.filePath || deletingEditKey === edit.filePath}
                             title="Rename edit"
                           >
                             <span className="material-symbols-outlined">edit</span>
+                          </button>
+                          <button
+                            type="button"
+                            className="asset-card__icon-btn"
+                            onClick={() => handleDeleteEdit(editPreviewAsset, edit)}
+                            disabled={deletingEditKey === edit.filePath || renamingEditKey === edit.filePath}
+                            title="Delete edit"
+                          >
+                            <span className="material-symbols-outlined">delete</span>
                           </button>
                           <a href={edit.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
                         </div>
