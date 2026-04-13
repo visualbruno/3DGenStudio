@@ -39,6 +39,94 @@ export function ProjectProvider({ children }) {
     }
   }
 
+  const moveKanbanCard = async (projectId, cardId, kanbanColumnId, position) => {
+    const res = await fetch(`${API_BASE}/cards/move`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, cardId, kanbanColumnId, position })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to move card')
+    }
+
+    return data
+  }
+
+  const getAttributeTypes = async () => {
+    const res = await fetch(`${API_BASE}/card-attributes/types`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load attribute types')
+    }
+
+    return data
+  }
+
+  const getProjectCardAttributes = async (projectId) => {
+    const res = await fetch(`${API_BASE}/card-attributes?projectId=${projectId}`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load card attributes')
+    }
+
+    return data
+  }
+
+  const createCardAttribute = async (projectId, cardId, attributeData) => {
+    const res = await fetch(`${API_BASE}/card-attributes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, cardId, ...attributeData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to create card attribute')
+    }
+
+    return data
+  }
+
+  const updateCardAttribute = async (projectId, cardId, position, attributeData) => {
+    const res = await fetch(`${API_BASE}/card-attributes/${encodeURIComponent(cardId)}/${position}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...attributeData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update card attribute')
+    }
+
+    return data
+  }
+
+  const deleteCardAttribute = async (projectId, cardId, position) => {
+    const res = await fetch(`${API_BASE}/card-attributes/${encodeURIComponent(cardId)}/${position}?projectId=${projectId}`, {
+      method: 'DELETE'
+    })
+
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete card attribute')
+    }
+
+    return data
+  }
+
   const getProject = async (id) => {
     const res = await fetch(`${API_BASE}/projects/${id}`)
     if (!res.ok) return null
@@ -293,9 +381,15 @@ export function ProjectProvider({ children }) {
       uploadAsset,
       attachExistingAsset,
       deleteAsset,
+      moveKanbanCard,
       getLibraryAssets,
       importLibraryAssets,
       deleteLibraryAsset,
+      getAttributeTypes,
+      getProjectCardAttributes,
+      createCardAttribute,
+      updateCardAttribute,
+      deleteCardAttribute,
       generateImage,
       getComfyWorkflows,
       inspectComfyWorkflow,

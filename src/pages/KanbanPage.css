@@ -238,6 +238,35 @@
   border-radius: var(--radius-sm);
 }
 
+.kanban-drop-zone {
+  min-height: 10px;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-base);
+}
+
+.kanban-drop-zone--active {
+  min-height: 56px;
+  border: 2px dashed rgba(143, 245, 255, 0.35);
+  background: rgba(143, 245, 255, 0.06);
+}
+
+.kanban-drop-zone--empty {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed rgba(143, 245, 255, 0.18);
+  background: rgba(143, 245, 255, 0.03);
+  color: var(--on-surface-variant);
+  text-align: center;
+  padding: 1rem;
+}
+
+.kanban-drop-zone__label {
+  font-size: 0.65rem;
+  letter-spacing: 0.08em;
+}
+
 /* ══════════════════════════════════
    Image Cards
    ══════════════════════════════════ */
@@ -257,6 +286,10 @@
   border-color: rgba(143, 245, 255, 0.4);
   transform: translateY(-4px);
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.3);
+}
+
+.image-card--dragging {
+  opacity: 0.45;
 }
 
 .image-card__actions {
@@ -481,6 +514,94 @@
 .image-card__meta {
   font-size: 0.6875rem;
   color: var(--on-surface-variant);
+}
+
+.image-card__attributes {
+  margin-top: 0.875rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid rgba(71, 72, 74, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.image-card__attributes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.image-card__attributes-title {
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--on-surface-variant);
+}
+
+.image-card__attribute-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(143, 245, 255, 0.2);
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--primary);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.image-card__attribute-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.image-card__attribute-row {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 34px;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.image-card__attribute-select,
+.image-card__attribute-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  border-radius: var(--radius-md);
+  padding: 0.55rem 0.65rem;
+  color: var(--on-surface);
+  font-size: 0.75rem;
+  outline: none;
+}
+
+.image-card__attribute-input:focus,
+.image-card__attribute-select:focus {
+  border-color: rgba(143, 245, 255, 0.4);
+}
+
+.image-card__attribute-delete {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-md);
+  background: rgba(255, 82, 82, 0.08);
+  color: var(--error);
+  cursor: pointer;
+}
+
+.image-card__attribute-empty {
+  padding: 0.75rem;
+  border-radius: var(--radius-md);
+  background: rgba(13, 14, 16, 0.35);
+  color: var(--on-surface-variant);
+  font-size: 0.72rem;
+  text-align: center;
 }
 
 /* ── Draft Card ── */

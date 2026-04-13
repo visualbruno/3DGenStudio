@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext'
@@ -22,6 +22,13 @@ const IMAGE_API_LIST = [
   { id: 'nanobana_2', name: 'Nanobana 2' },
   { id: 'openai', name: 'OpenAI (DALL-E 3)' },
 ]
+
+const IMAGE_CARD_COLUMNS = [
+  { id: 'images', dbId: 1, icon: 'image', title: 'IMAGES' },
+  { id: 'imageedit', dbId: 2, icon: 'photo_filter', title: 'IMAGE EDIT' },
+]
+
+const DEFAULT_ATTRIBUTE_TYPE_ID = 1
 
 function getComfyDraftFromWorkflow(workflow) {
   return {
@@ -63,8 +70,14 @@ export default function KanbanPage() {
     uploadAsset,
     attachExistingAsset,
     deleteAsset,
+    moveKanbanCard,
     getLibraryAssets,
     createTask,
+    getAttributeTypes,
+    getProjectCardAttributes,
+    createCardAttribute,
+    updateCardAttribute,
+    deleteCardAttribute,
     generateImage,
     getComfyWorkflows,
     runComfyWorkflow
@@ -95,6 +108,10 @@ export default function KanbanPage() {
   const [comfyWorkflows, setComfyWorkflows] = useState([])
   const [comfyLoading, setComfyLoading] = useState(false)
   const [imageCardPages, setImageCardPages] = useState({})
+  const [attributeTypes, setAttributeTypes] = useState([])
+  const [cardAttributes, setCardAttributes] = useState([])
+  const [draggedCard, setDraggedCard] = useState(null)
+  const [dropTarget, setDropTarget] = useState(null)
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
 
@@ -103,14 +120,16 @@ export default function KanbanPage() {
     async function loadData() {
       setLoading(true)
       try {
-        const [projData, assetsData, tasksData] = await Promise.all([
+        const [projData, assetsData, tasksData, attributesData] = await Promise.all([
           getProject(projectId),
           getProjectAssets(projectId),
-          getProjectTasks(projectId)
+          getProjectTasks(projectId),
+          getProjectCardAttributes(projectId)
         ])
         setProject(projData)
         setAssets(assetsData)
         setTasks(tasksData)
+        setCardAttributes(attributesData)
       } catch (err) {
         console.error('Failed to load project data:', err)
       } finally {
@@ -118,7 +137,20 @@ export default function KanbanPage() {
       }
     }
     loadData()
-  }, [projectId, getProject, getProjectAssets, getProjectTasks])
+  }, [projectId, getProject, getProjectAssets, getProjectTasks, getProjectCardAttributes])
+
+  useEffect(() => {
+    async function loadAttributeTypes() {
+      try {
+        const types = await getAttributeTypes()
+        setAttributeTypes(types)
+      } catch (err) {
+        console.error('Failed to load attribute types:', err)
+      }
+    }
+
+    loadAttributeTypes()
+  }, [getAttributeTypes])
 
   useEffect(() => {
     async function loadComfyWorkflows() {
@@ -190,6 +222,11 @@ export default function KanbanPage() {
   const refreshProjectAssets = async () => {
     const assetsData = await getProjectAssets(projectId)
     setAssets(assetsData)
+  }
+
+  const refreshCardAttributes = async () => {
+    const attributesData = await getProjectCardAttributes(projectId)
+    setCardAttributes(attributesData)
   }
 
   const selectedComfyWorkflow = comfyWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
@@ -277,7 +314,7 @@ export default function KanbanPage() {
   const handleRemoveImage = async (assetId) => {
     try {
       await deleteAsset(assetId)
-      await refreshProjectAssets()
+      await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to remove image:', err)
       alert(err.message || 'Failed to remove image')
@@ -290,7 +327,7 @@ export default function KanbanPage() {
         await deleteAsset(asset.id)
       }
 
-      await refreshProjectAssets()
+      await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to remove image card:', err)
       alert(err.message || 'Failed to remove image card')
@@ -428,11 +465,19 @@ export default function KanbanPage() {
           metaLabel: sortedAssets.length === 1
             ? `${primaryAsset.metadata?.resolution || 'N/A'} • ${primaryAsset.metadata?.format || 'N/A'}`
             : `${sortedAssets.length} images • ${formats.slice(0, 2).join(', ') || 'Mixed formats'}`,
+          cardDbId: primaryAsset.cardDbId ?? null,
+          cardKey: primaryAsset.cardKey || id,
+          kanbanColumnId: primaryAsset.kanbanColumnId ?? 1,
+          kanbanColumnName: primaryAsset.kanbanColumnName || 'Images',
           cardPosition: primaryAsset.cardPosition ?? Number.MAX_SAFE_INTEGER,
           createdAt: primaryAsset.createdAt || 0
         }
       })
       .sort((left, right) => {
+        if (left.kanbanColumnId !== right.kanbanColumnId) {
+          return left.kanbanColumnId - right.kanbanColumnId
+        }
+
         if (left.cardPosition !== right.cardPosition) {
           return left.cardPosition - right.cardPosition
         }
@@ -440,6 +485,134 @@ export default function KanbanPage() {
         return right.createdAt - left.createdAt
       })
   }, [images])
+
+  const imageCardsByColumn = useMemo(() => {
+    return IMAGE_CARD_COLUMNS.reduce((accumulator, column) => {
+      accumulator[column.dbId] = imageCards.filter(card => card.kanbanColumnId === column.dbId)
+      return accumulator
+    }, {})
+  }, [imageCards])
+
+  const cardAttributesByCardId = useMemo(() => {
+    return cardAttributes.reduce((accumulator, attribute) => {
+      if (!accumulator[attribute.cardId]) {
+        accumulator[attribute.cardId] = []
+      }
+
+      accumulator[attribute.cardId].push(attribute)
+      return accumulator
+    }, {})
+  }, [cardAttributes])
+
+  const getCardInsertPosition = (cardId, destinationColumnId, destinationIndex) => {
+    const sourceColumnId = draggedCard?.columnId
+    const sourceCards = imageCardsByColumn[sourceColumnId] || []
+    const sourceIndex = sourceCards.findIndex(card => card.id === cardId)
+
+    if (sourceColumnId === destinationColumnId && sourceIndex !== -1 && sourceIndex < destinationIndex) {
+      return destinationIndex - 1
+    }
+
+    return destinationIndex
+  }
+
+  const handleCardDragStart = (event, card) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', card.id)
+    setDraggedCard({ id: card.id, columnId: card.kanbanColumnId })
+    setDropTarget({ columnId: card.kanbanColumnId, position: card.cardPosition ?? 0 })
+  }
+
+  const handleCardDragEnd = () => {
+    setDraggedCard(null)
+    setDropTarget(null)
+  }
+
+  const handleCardDragOver = (event, columnId, position) => {
+    event.preventDefault()
+
+    if (!draggedCard) {
+      return
+    }
+
+    setDropTarget({ columnId, position })
+  }
+
+  const handleCardDrop = async (event, columnId, destinationIndex) => {
+    event.preventDefault()
+
+    if (!draggedCard) {
+      return
+    }
+
+    const nextPosition = getCardInsertPosition(draggedCard.id, columnId, destinationIndex)
+
+    try {
+      await moveKanbanCard(projectId, draggedCard.id, columnId, nextPosition)
+      await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
+    } catch (err) {
+      console.error('Failed to move card:', err)
+      alert(err.message || 'Failed to move card')
+    } finally {
+      handleCardDragEnd()
+    }
+  }
+
+  const handleAddCustomAttribute = async (cardId) => {
+    try {
+      await createCardAttribute(projectId, cardId, {
+        attributeTypeId: attributeTypes[0]?.id || DEFAULT_ATTRIBUTE_TYPE_ID,
+        attributeValue: ''
+      })
+      await refreshCardAttributes()
+    } catch (err) {
+      console.error('Failed to add custom attribute:', err)
+      alert(err.message || 'Failed to add custom attribute')
+    }
+  }
+
+  const handleAttributeTypeChange = async (cardId, position, attributeTypeId) => {
+    try {
+      await updateCardAttribute(projectId, cardId, position, { attributeTypeId })
+      await refreshCardAttributes()
+    } catch (err) {
+      console.error('Failed to update attribute type:', err)
+      alert(err.message || 'Failed to update attribute type')
+    }
+  }
+
+  const handleAttributeValueChange = (cardId, position, value) => {
+    setCardAttributes(prev => prev.map(attribute => {
+      if (attribute.cardId !== cardId || attribute.position !== position) {
+        return attribute
+      }
+
+      return {
+        ...attribute,
+        attributeValue: value
+      }
+    }))
+  }
+
+  const handleAttributeValueBlur = async (cardId, position, attributeValue) => {
+    try {
+      await updateCardAttribute(projectId, cardId, position, { attributeValue })
+      await refreshCardAttributes()
+    } catch (err) {
+      console.error('Failed to update attribute value:', err)
+      alert(err.message || 'Failed to update attribute value')
+    }
+  }
+
+  const handleDeleteCustomAttribute = async (cardId, position) => {
+    try {
+      await deleteCardAttribute(projectId, cardId, position)
+      await refreshCardAttributes()
+    } catch (err) {
+      console.error('Failed to delete attribute:', err)
+      alert(err.message || 'Failed to delete attribute')
+    }
+  }
 
   if (loading && !project) {
     return (
@@ -454,6 +627,469 @@ export default function KanbanPage() {
     ...IMAGE_API_LIST,
     ...(settings?.apis?.custom || []).map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ]
+
+  const draftColumnId = imageDraft?.cardId
+    ? imageCards.find(card => card.id === imageDraft.cardId)?.kanbanColumnId || IMAGE_CARD_COLUMNS[0].dbId
+    : IMAGE_CARD_COLUMNS[0].dbId
+
+  const renderDropZone = (columnId, position, isEmpty = false) => {
+    const isActive = dropTarget?.columnId === columnId && dropTarget?.position === position
+
+    return (
+      <div
+        key={`drop-zone-${columnId}-${position}`}
+        className={`kanban-drop-zone ${isActive ? 'kanban-drop-zone--active' : ''} ${isEmpty ? 'kanban-drop-zone--empty' : ''}`}
+        onDragOver={event => handleCardDragOver(event, columnId, position)}
+        onDrop={event => handleCardDrop(event, columnId, position)}
+      >
+        {isEmpty && !imageDraft && !pendingImageGeneration && (
+          <span className="kanban-drop-zone__label font-label">
+            {columnId === 2 ? 'Drag an image card here to edit it' : 'Drop image cards here'}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  const renderImageCard = (card, showAttributes = false) => {
+    const totalPages = Math.max(1, Math.ceil(card.assets.length / 4))
+    const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
+    const visibleAssets = card.assets.slice(currentPage * 4, currentPage * 4 + 4)
+    const attributes = cardAttributesByCardId[card.id] || []
+
+    return (
+      <div
+        key={card.id}
+        className={`image-card ${draggedCard?.id === card.id ? 'image-card--dragging' : ''}`}
+        id={`image-card-${card.id}`}
+        draggable
+        onDragStart={(event) => handleCardDragStart(event, card)}
+        onDragEnd={handleCardDragEnd}
+      >
+        <div className="image-card__actions">
+          <button
+            className="image-card__action-btn"
+            onClick={(e) => {
+              e.stopPropagation()
+              openImageSourceMenu(card.id)
+            }}
+            title="Add more images"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_photo_alternate</span>
+          </button>
+          <button
+            className="image-card__action-btn image-card__delete"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleRemoveImageCard(card.assets)
+            }}
+            title="Remove card"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+          </button>
+        </div>
+
+        <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
+          {visibleAssets.length > 0 ? (
+            visibleAssets.map(asset => (
+              <div key={asset.id} className="image-card__thumb-item">
+                {asset.filename ? (
+                  <img
+                    src={`http://localhost:3001/assets/${encodeURI(asset.filename)}`}
+                    alt={asset.name}
+                    className="image-card__thumb-image"
+                  />
+                ) : (
+                  <div className="image-card__thumb-placeholder">
+                    <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
+                  </div>
+                )}
+
+                <button
+                  className="image-card__thumb-remove"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleRemoveImage(asset.id)
+                  }}
+                  title="Remove image"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
+                </button>
+              </div>
+            ))
+          ) : (
+            <div className="image-card__thumb-placeholder">
+              <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <>
+              <button
+                className="image-card__thumb-nav image-card__thumb-nav--prev"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setImageCardPages(prev => ({
+                    ...prev,
+                    [card.id]: Math.max(0, currentPage - 1)
+                  }))
+                }}
+                disabled={currentPage === 0}
+                title="Previous images"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
+              </button>
+              <button
+                className="image-card__thumb-nav image-card__thumb-nav--next"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setImageCardPages(prev => ({
+                    ...prev,
+                    [card.id]: Math.min(totalPages - 1, currentPage + 1)
+                  }))
+                }}
+                disabled={currentPage >= totalPages - 1}
+                title="Next images"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
+              </button>
+              <div className="image-card__thumb-page-indicator font-label">
+                {currentPage + 1}/{totalPages}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="image-card__info">
+          <div className="image-card__row">
+            <h3 className="image-card__name">{card.primaryAsset?.name || 'Untitled image'}</h3>
+            <div className="image-card__badges">
+              {card.assets.length > 1 && (
+                <span className="image-card__count font-label">{card.assets.length} IMAGES</span>
+              )}
+              <span
+                className="image-card__source"
+                style={{
+                  color: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'var(--primary)' : 'var(--on-surface-variant)',
+                  background: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
+                }}
+              >
+                {card.sourceLabel}
+              </span>
+            </div>
+          </div>
+          <p className="image-card__meta font-label">{card.metaLabel}</p>
+
+          {showAttributes && (
+            <div className="image-card__attributes">
+              <div className="image-card__attributes-header">
+                <span className="image-card__attributes-title font-label">CUSTOM ATTRIBUTES</span>
+                <button className="image-card__attribute-add" onClick={() => handleAddCustomAttribute(card.id)}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>add</span>
+                  Add Custom Attribute
+                </button>
+              </div>
+
+              {attributes.length > 0 ? (
+                <div className="image-card__attribute-list">
+                  {attributes.map(attribute => {
+                    const selectedType = attributeTypes.find(type => type.id === attribute.attributeTypeId)
+
+                    return (
+                      <div key={`${attribute.cardId}-${attribute.position}`} className="image-card__attribute-row">
+                        <select
+                          className="image-card__attribute-select"
+                          value={attribute.attributeTypeId}
+                          onChange={event => handleAttributeTypeChange(card.id, attribute.position, Number(event.target.value))}
+                        >
+                          {attributeTypes.map(type => (
+                            <option key={type.id} value={type.id}>{type.name}</option>
+                          ))}
+                        </select>
+
+                        <input
+                          type={selectedType?.name === 'Number' ? 'number' : 'text'}
+                          className="image-card__attribute-input"
+                          value={attribute.attributeValue || ''}
+                          onChange={event => handleAttributeValueChange(card.id, attribute.position, event.target.value)}
+                          onBlur={event => handleAttributeValueBlur(card.id, attribute.position, event.target.value)}
+                          placeholder={`Enter ${selectedType?.name?.toLowerCase() || 'attribute'} value`}
+                        />
+
+                        <button
+                          className="image-card__attribute-delete"
+                          onClick={() => handleDeleteCustomAttribute(card.id, attribute.position)}
+                          title="Delete attribute"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="image-card__attribute-empty">
+                  No custom attributes yet.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  const renderImageColumn = (column) => {
+    const cards = imageCardsByColumn[column.dbId] || []
+
+    return (
+      <div key={column.id} className="kanban-col" id={`col-${column.id}`}>
+        <div className="kanban-col__header">
+          <div className="kanban-col__title-group">
+            <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>{column.icon}</span>
+            <h2 className="kanban-col__title font-headline">{column.title}</h2>
+          </div>
+          <span className="kanban-col__badge font-label">{cards.length.toString().padStart(2, '0')} ITEMS</span>
+        </div>
+
+        <div className="kanban-col__content">
+          {cards.length === 0 && renderDropZone(column.dbId, 0, true)}
+
+          {cards.map((card, index) => (
+            <Fragment key={card.id}>
+              {renderDropZone(column.dbId, index)}
+              {renderImageCard(card, column.dbId === 2)}
+            </Fragment>
+          ))}
+
+          {cards.length > 0 && renderDropZone(column.dbId, cards.length)}
+
+          {imageDraft && draftColumnId === column.dbId && (
+            <div className="image-card image-card--draft">
+              {imageDraft.mode === 'select' && (
+                <div className="image-card__options">
+                  <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>IMAGE SOURCE</span>
+                  <button className="option-btn" onClick={() => openLocalFilePicker(imageDraft?.cardId || null)}>
+                    <span className="material-symbols-outlined">computer</span>
+                    Local Computer
+                  </button>
+                  <button className="option-btn" onClick={() => openAssetLibrary(imageDraft?.cardId || null)}>
+                    <span className="material-symbols-outlined">folder_open</span>
+                    From Assets
+                  </button>
+                  <button className="option-btn" onClick={() => openComfyWorkflowDraft(imageDraft?.cardId || null)}>
+                    <span className="material-symbols-outlined">account_tree</span>
+                    ComfyUI Workflow
+                  </button>
+                  <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '', cardId: imageDraft?.cardId || null })}>
+                    <span className="material-symbols-outlined">api</span>
+                    Remote API
+                  </button>
+                  <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft(null)} style={{ marginTop: '0.5rem', justifyContent: 'center' }}>CANCEL</button>
+                </div>
+              )}
+
+              {imageDraft.mode === 'assets' && (
+                <div className="image-card__options">
+                  <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>FROM ASSETS</span>
+                  {libraryLoading ? (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                      <span>Loading images...</span>
+                    </div>
+                  ) : libraryAssets.images.length > 0 ? (
+                    <div className="image-card__asset-picker">
+                      {libraryAssets.images.map(asset => (
+                        <button
+                          key={asset.id}
+                          className="image-card__asset-option"
+                          onClick={() => handleAttachLibraryImage(asset)}
+                        >
+                          <img
+                            src={asset.url}
+                            alt={asset.name}
+                            className="image-card__asset-thumb"
+                          />
+                          <span className="image-card__asset-name">{asset.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined">perm_media</span>
+                      <span>No images available in `assets/images`.</span>
+                    </div>
+                  )}
+                  <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
+                </div>
+              )}
+
+              {imageDraft.mode === 'comfy' && (
+                <div className="image-card__options">
+                  <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI WORKFLOW</span>
+                  {comfyLoading ? (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                      <span>Loading workflows...</span>
+                    </div>
+                  ) : comfyWorkflows.length > 0 ? (
+                    <>
+                      <select
+                        className="params-card__select"
+                        value={imageDraft.workflowId}
+                        onChange={e => handleComfyWorkflowChange(e.target.value)}
+                      >
+                        {comfyWorkflows.map(workflow => (
+                          <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                        ))}
+                      </select>
+
+                      <div className="image-card__workflow-meta">
+                        <span>{selectedComfyWorkflow?.parameters?.length || 0} input parameters configured</span>
+                        <span>{selectedComfyWorkflow?.outputs?.length || 0} outputs selected</span>
+                      </div>
+
+                      <div className="gen-section">
+                        {(selectedComfyWorkflow?.parameters || []).length > 0 ? (
+                          <div className="image-card__workflow-params">
+                            {selectedComfyWorkflow.parameters.map(parameter => (
+                              <div key={parameter.id} className="params-card__field">
+                                <label className="params-card__label font-label">
+                                  {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
+                                </label>
+
+                                {['image', 'video'].includes(getWorkflowParameterValueType(parameter)) ? (
+                                  <label className="image-card__file-input">
+                                    <input
+                                      type="file"
+                                      accept={getWorkflowParameterValueType(parameter) === 'video' ? 'video/*' : 'image/*'}
+                                      onChange={e => handleComfyInputChange(parameter, e.target.files?.[0] || null)}
+                                    />
+                                    <span className="material-symbols-outlined">
+                                      {getWorkflowParameterValueType(parameter) === 'video' ? 'video_file' : 'image'}
+                                    </span>
+                                    <span>
+                                      {imageDraft.inputs?.[parameter.id]?.name || `Select ${getWorkflowParameterValueType(parameter)} file`}
+                                    </span>
+                                  </label>
+                                ) : parameter.type === 'json' ? (
+                                  <textarea
+                                    className="gen-prompt-input image-card__param-textarea"
+                                    value={typeof imageDraft.inputs?.[parameter.id] === 'string'
+                                      ? imageDraft.inputs?.[parameter.id]
+                                      : JSON.stringify(imageDraft.inputs?.[parameter.id] ?? parameter.defaultValue, null, 2)}
+                                    onChange={e => handleComfyInputChange(parameter, e.target.value)}
+                                  />
+                                ) : (
+                                  <input
+                                    type={getWorkflowParameterValueType(parameter) === 'number' ? 'number' : 'text'}
+                                    className="params-card__input"
+                                    value={imageDraft.inputs?.[parameter.id] ?? ''}
+                                    onChange={e => handleComfyInputChange(parameter, e.target.value)}
+                                  />
+                                )}
+
+                                <span className="image-card__param-hint">
+                                  {parameter.label} • default: {formatWorkflowDefaultValue(parameter.defaultValue)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
+                            <span className="material-symbols-outlined">tune</span>
+                            <span>This workflow has no exposed parameters. Start it directly.</span>
+                          </div>
+                        )}
+
+                        <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
+                          <span className="material-symbols-outlined">bolt</span>
+                          START WORKFLOW
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined">account_tree</span>
+                      <span>No imported workflows available. Open the Library page to import one.</span>
+                    </div>
+                  )}
+                  <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
+                </div>
+              )}
+
+              {imageDraft.mode === 'api' && (
+                <div className="image-card__options">
+                  <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>REMOTE API</span>
+                  <select
+                    className="api-select"
+                    value={imageDraft.selectedApi}
+                    onChange={e => setImageDraft({ ...imageDraft, selectedApi: e.target.value })}
+                  >
+                    {combinedApis.map(api => (
+                      <option key={api.id} value={api.id}>{api.name}</option>
+                    ))}
+                  </select>
+
+                  <div className="gen-section">
+                    <textarea
+                      className="gen-prompt-input"
+                      placeholder="What should we generate?"
+                      value={imageDraft.prompt}
+                      onChange={e => setImageDraft({ ...imageDraft, prompt: e.target.value })}
+                    />
+                    <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
+                      <span className="material-symbols-outlined">auto_awesome</span>
+                      GENERATE
+                    </button>
+                  </div>
+                  <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {pendingImageGeneration && column.dbId === IMAGE_CARD_COLUMNS[0].dbId && (
+            <div className="image-card image-card--loading" id="image-card-loading">
+              <div className="image-card__thumb image-card__thumb--loading">
+                <div className="image-card__loading-state">
+                  <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                  <span className="font-label image-card__loading-label">Processing image...</span>
+                </div>
+              </div>
+              <div className="image-card__info">
+                <div className="image-card__row">
+                  <h3 className="image-card__name">{pendingImageGeneration.title}</h3>
+                  <span className="image-card__source image-card__source--loading">PENDING</span>
+                </div>
+                <p className="image-card__meta font-label">{pendingImageGeneration.source} • {pendingImageGeneration.detail}</p>
+              </div>
+            </div>
+          )}
+
+          {column.dbId === IMAGE_CARD_COLUMNS[0].dbId && (
+            <>
+              <input
+                type="file"
+                accept="image/*"
+                multiple
+                style={{ display: 'none' }}
+                onChange={handleFileUpload}
+                ref={fileInputRef}
+              />
+
+              {!imageDraft && !pendingImageGeneration && (
+                <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => openImageSourceMenu()}>
+                  <span className="material-symbols-outlined">add_photo_alternate</span>
+                  <span className="font-label">ADD NEW IMAGE</span>
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="kanban-layout">
@@ -512,411 +1148,7 @@ export default function KanbanPage() {
         {/* ── Main Kanban Area ── */}
         <main className="kanban-main" id="kanban-main">
           <div className="kanban-columns">
-            {/* ═══ Column 1: Images ═══ */}
-            <div className="kanban-col" id="col-images">
-              <div className="kanban-col__header">
-                <div className="kanban-col__title-group">
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>image</span>
-                  <h2 className="kanban-col__title font-headline">IMAGES</h2>
-                </div>
-                <span className="kanban-col__badge font-label">{imageCards.length.toString().padStart(2, '0')} ITEMS</span>
-              </div>
-
-              <div className="kanban-col__content">
-                {imageCards.map(card => (
-                  <div key={card.id} className="image-card" id={`image-card-${card.id}`}>
-                    {(() => {
-                      const totalPages = Math.max(1, Math.ceil(card.assets.length / 4))
-                      const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
-                      const visibleAssets = card.assets.slice(currentPage * 4, currentPage * 4 + 4)
-
-                      return (
-                        <>
-                    <div className="image-card__actions">
-                      <button
-                        className="image-card__action-btn"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          openImageSourceMenu(card.id)
-                        }}
-                        title="Add more images"
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>add_photo_alternate</span>
-                      </button>
-                      <button
-                        className="image-card__action-btn image-card__delete"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleRemoveImageCard(card.assets)
-                        }}
-                        title="Remove card"
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
-                      </button>
-                    </div>
-
-                    <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
-                      {visibleAssets.length > 0 ? (
-                        visibleAssets.map(asset => {
-                          return (
-                            <div key={asset.id} className="image-card__thumb-item">
-                              {asset.filename ? (
-                                <img
-                                  src={`http://localhost:3001/assets/${encodeURI(asset.filename)}`}
-                                  alt={asset.name}
-                                  className="image-card__thumb-image"
-                                />
-                              ) : (
-                                <div className="image-card__thumb-placeholder">
-                                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
-                                </div>
-                              )}
-
-                              <button
-                                className="image-card__thumb-remove"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleRemoveImage(asset.id)
-                                }}
-                                title="Remove image"
-                              >
-                                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
-                              </button>
-                            </div>
-                          )
-                        })
-                      ) : (
-                        <div className="image-card__thumb-placeholder">
-                          <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
-                        </div>
-                      )}
-
-                      {totalPages > 1 && (
-                        <>
-                          <button
-                            className="image-card__thumb-nav image-card__thumb-nav--prev"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setImageCardPages(prev => ({
-                                ...prev,
-                                [card.id]: Math.max(0, currentPage - 1)
-                              }))
-                            }}
-                            disabled={currentPage === 0}
-                            title="Previous images"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
-                          </button>
-                          <button
-                            className="image-card__thumb-nav image-card__thumb-nav--next"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              setImageCardPages(prev => ({
-                                ...prev,
-                                [card.id]: Math.min(totalPages - 1, currentPage + 1)
-                              }))
-                            }}
-                            disabled={currentPage >= totalPages - 1}
-                            title="Next images"
-                          >
-                            <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
-                          </button>
-                          <div className="image-card__thumb-page-indicator font-label">
-                            {currentPage + 1}/{totalPages}
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="image-card__info">
-                      <div className="image-card__row">
-                        <h3 className="image-card__name">{card.primaryAsset?.name || 'Untitled image'}</h3>
-                        <div className="image-card__badges">
-                          {card.assets.length > 1 && (
-                            <span className="image-card__count font-label">{card.assets.length} IMAGES</span>
-                          )}
-                          <span
-                            className="image-card__source"
-                            style={{
-                              color: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'var(--primary)' : 'var(--on-surface-variant)',
-                              background: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
-                            }}
-                          >
-                            {card.sourceLabel}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="image-card__meta font-label">{card.metaLabel}</p>
-                    </div>
-                        </>
-                      )
-                    })()}
-                  </div>
-                ))}
-
-                {/* DRAFT IMAGE CARD */}
-                {imageDraft && (
-                  <div className="image-card image-card--draft">
-                    {imageDraft.mode === 'select' && (
-                      <div className="image-card__options">
-                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>IMAGE SOURCE</span>
-                        <button className="option-btn" onClick={() => openLocalFilePicker(imageDraft?.cardId || null)}>
-                          <span className="material-symbols-outlined">computer</span>
-                          Local Computer
-                        </button>
-                        <button className="option-btn" onClick={() => openAssetLibrary(imageDraft?.cardId || null)}>
-                          <span className="material-symbols-outlined">folder_open</span>
-                          From Assets
-                        </button>
-                        <button className="option-btn" onClick={() => openComfyWorkflowDraft(imageDraft?.cardId || null)}>
-                          <span className="material-symbols-outlined">account_tree</span>
-                          ComfyUI Workflow
-                        </button>
-                        <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '', cardId: imageDraft?.cardId || null })}>
-                          <span className="material-symbols-outlined">api</span>
-                          Remote API
-                        </button>
-                        <button className="kanban-sidebar__nav-item" onClick={() => setImageDraft(null)} style={{ marginTop: '0.5rem', justifyContent: 'center' }}>CANCEL</button>
-                      </div>
-                    )}
-
-                    {imageDraft.mode === 'assets' && (
-                      <div className="image-card__options">
-                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>FROM ASSETS</span>
-                        {libraryLoading ? (
-                          <div className="image-card__asset-picker-empty">
-                            <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                            <span>Loading images...</span>
-                          </div>
-                        ) : libraryAssets.images.length > 0 ? (
-                          <div className="image-card__asset-picker">
-                            {libraryAssets.images.map(asset => (
-                              <button
-                                key={asset.id}
-                                className="image-card__asset-option"
-                                onClick={() => handleAttachLibraryImage(asset)}
-                              >
-                                <img
-                                  src={asset.url}
-                                  alt={asset.name}
-                                  className="image-card__asset-thumb"
-                                />
-                                <span className="image-card__asset-name">{asset.name}</span>
-                              </button>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="image-card__asset-picker-empty">
-                            <span className="material-symbols-outlined">perm_media</span>
-                            <span>No images available in `assets/images`.</span>
-                          </div>
-                        )}
-                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
-                      </div>
-                    )}
-
-                    {imageDraft.mode === 'comfy' && (
-                      <div className="image-card__options">
-                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI WORKFLOW</span>
-                        {comfyLoading ? (
-                          <div className="image-card__asset-picker-empty">
-                            <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                            <span>Loading workflows...</span>
-                          </div>
-                        ) : comfyWorkflows.length > 0 ? (
-                          <>
-                            <select
-                              className="params-card__select"
-                              value={imageDraft.workflowId}
-                              onChange={e => handleComfyWorkflowChange(e.target.value)}
-                            >
-                              {comfyWorkflows.map(workflow => (
-                                <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
-                              ))}
-                            </select>
-
-                            <div className="image-card__workflow-meta">
-                              <span>{selectedComfyWorkflow?.parameters?.length || 0} input parameters configured</span>
-                              <span>{selectedComfyWorkflow?.outputs?.length || 0} outputs selected</span>
-                            </div>
-
-                            <div className="gen-section">
-                              {(selectedComfyWorkflow?.parameters || []).length > 0 ? (
-                                <div className="image-card__workflow-params">
-                                  {selectedComfyWorkflow.parameters.map(parameter => (
-                                    <div key={parameter.id} className="params-card__field">
-                                      <label className="params-card__label font-label">
-                                        {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
-                                      </label>
-
-                                      {['image', 'video'].includes(getWorkflowParameterValueType(parameter)) ? (
-                                        <label className="image-card__file-input">
-                                          <input
-                                            type="file"
-                                            accept={getWorkflowParameterValueType(parameter) === 'video' ? 'video/*' : 'image/*'}
-                                            onChange={e => handleComfyInputChange(parameter, e.target.files?.[0] || null)}
-                                          />
-                                          <span className="material-symbols-outlined">
-                                            {getWorkflowParameterValueType(parameter) === 'video' ? 'video_file' : 'image'}
-                                          </span>
-                                          <span>
-                                            {imageDraft.inputs?.[parameter.id]?.name || `Select ${getWorkflowParameterValueType(parameter)} file`}
-                                          </span>
-                                        </label>
-                                      ) : parameter.type === 'json' ? (
-                                        <textarea
-                                          className="gen-prompt-input image-card__param-textarea"
-                                          value={typeof imageDraft.inputs?.[parameter.id] === 'string'
-                                            ? imageDraft.inputs?.[parameter.id]
-                                            : JSON.stringify(imageDraft.inputs?.[parameter.id] ?? parameter.defaultValue, null, 2)}
-                                          onChange={e => handleComfyInputChange(parameter, e.target.value)}
-                                        />
-                                      ) : (
-                                        <input
-                                          type={getWorkflowParameterValueType(parameter) === 'number' ? 'number' : 'text'}
-                                          className="params-card__input"
-                                          value={imageDraft.inputs?.[parameter.id] ?? ''}
-                                          onChange={e => handleComfyInputChange(parameter, e.target.value)}
-                                        />
-                                      )}
-
-                                      <span className="image-card__param-hint">
-                                        {parameter.label} • default: {formatWorkflowDefaultValue(parameter.defaultValue)}
-                                      </span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
-                                  <span className="material-symbols-outlined">tune</span>
-                                  <span>This workflow has no exposed parameters. Start it directly.</span>
-                                </div>
-                              )}
-
-                              <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
-                                <span className="material-symbols-outlined">bolt</span>
-                                START WORKFLOW
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <div className="image-card__asset-picker-empty">
-                            <span className="material-symbols-outlined">account_tree</span>
-                            <span>No imported workflows available. Open the Library page to import one.</span>
-                          </div>
-                        )}
-                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
-                      </div>
-                    )}
-
-                    {imageDraft.mode === 'api' && (
-                      <div className="image-card__options">
-                        <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>REMOTE API</span>
-                        <select 
-                          className="api-select"
-                          value={imageDraft.selectedApi}
-                          onChange={e => setImageDraft({...imageDraft, selectedApi: e.target.value})}
-                        >
-                          {combinedApis.map(api => (
-                            <option key={api.id} value={api.id}>{api.name}</option>
-                          ))}
-                        </select>
-                        
-                        <div className="gen-section">
-                          <textarea 
-                            className="gen-prompt-input" 
-                            placeholder="What should we generate?"
-                            value={imageDraft.prompt}
-                            onChange={e => setImageDraft({...imageDraft, prompt: e.target.value})}
-                          />
-                          <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
-                            <span className="material-symbols-outlined">auto_awesome</span>
-                            GENERATE
-                          </button>
-                        </div>
-                        <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {pendingImageGeneration && (
-                  <div className="image-card image-card--loading" id="image-card-loading">
-                    <div className="image-card__thumb image-card__thumb--loading">
-                      <div className="image-card__loading-state">
-                        <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                        <span className="font-label image-card__loading-label">Processing image...</span>
-                      </div>
-                    </div>
-                    <div className="image-card__info">
-                      <div className="image-card__row">
-                        <h3 className="image-card__name">{pendingImageGeneration.title}</h3>
-                        <span className="image-card__source image-card__source--loading">PENDING</span>
-                      </div>
-                      <p className="image-card__meta font-label">{pendingImageGeneration.source} • {pendingImageGeneration.detail}</p>
-                    </div>
-                  </div>
-                )}
-
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  style={{ display: 'none' }}
-                  onChange={handleFileUpload}
-                  ref={fileInputRef}
-                />
-
-                {!imageDraft && !pendingImageGeneration && (
-                  <button className="kanban-col__add-btn" id="add-image-btn" onClick={() => openImageSourceMenu()}>
-                    <span className="material-symbols-outlined">add_photo_alternate</span>
-                    <span className="font-label">ADD NEW IMAGE</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* ═══ Column 2: Image Edit ═══ */}
-            <div className="kanban-col" id="col-imageedit">
-              <div className="kanban-col__header">
-                <div className="kanban-col__title-group">
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--primary)' }}>photo_filter</span>
-                  <h2 className="kanban-col__title font-headline">IMAGE EDIT</h2>
-                </div>
-                <span className="kanban-col__badge font-label">READY</span>
-              </div>
-
-              <div className="kanban-col__content">
-                <div className="tool-card tool-card--hoverable-primary" id="tool-upscale">
-                  <div className="tool-card__header">
-                    <div className="tool-card__inline-header">
-                      <div className="tool-card__inline-left">
-                        <span className="material-symbols-outlined" style={{ color: 'var(--primary)' }}>high_quality</span>
-                        <h3 className="tool-card__name">Upscale</h3>
-                      </div>
-                      <span className="tool-card__api-badge">API</span>
-                    </div>
-                  </div>
-                  <p className="tool-card__body-text">Enhance source image resolution before mesh generation.</p>
-                </div>
-
-                <div className="tool-card tool-card--hoverable-primary" id="tool-background-removal">
-                  <div className="tool-card__header">
-                    <span className="material-symbols-outlined">layers_clear</span>
-                    <h3 className="tool-card__name">Background Removal</h3>
-                  </div>
-                  <p className="tool-card__body-text">Prepare clean silhouettes and transparent cutouts for generation workflows.</p>
-                </div>
-
-                <div className="tool-card tool-card--hoverable-primary" id="tool-image-variations">
-                  <div className="tool-card__header">
-                    <span className="material-symbols-outlined">auto_fix_high</span>
-                    <h3 className="tool-card__name">Variations</h3>
-                  </div>
-                  <p className="tool-card__body-text">Create alternate renders, lighting passes, or style iterations from an existing image.</p>
-                </div>
-              </div>
-            </div>
+            {IMAGE_CARD_COLUMNS.map(renderImageColumn)}
 
             {/* ═══ Column 3: Mesh Generation ═══ */}
             <div className="kanban-col" id="col-meshgen">

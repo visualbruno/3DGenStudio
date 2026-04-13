@@ -24,6 +24,10 @@ const ASSET_TYPES = [
   { id: 2, name: 'Mesh' },
   { id: 3, name: 'Workflow' }
 ];
+const ATTRIBUTE_TYPES = [
+  { id: 1, name: 'Text' },
+  { id: 2, name: 'Number' }
+];
 
 export const DEFAULT_SETTINGS = {
   profile: {
@@ -191,10 +195,25 @@ function mapAssetRow(row) {
     filename,
     thumbnailPath: row.thumbnail || null,
     thumbnail,
+    cardDbId: row.cardId ?? null,
+    cardKey: row.cardId ? (row.clientKey || String(row.cardId)) : null,
+    kanbanColumnId: row.kanbanColumnId ?? null,
+    kanbanColumnName: row.kanbanColumnName || null,
     cardPosition: row.cardPosition ?? null,
     assetPosition: row.assetPosition ?? null,
     metadata,
     createdAt: row.creationDate
+  };
+}
+
+function mapCardAttributeRow(row) {
+  return {
+    cardDbId: row.cardId,
+    cardId: row.clientKey || String(row.cardId),
+    position: row.position,
+    attributeTypeId: row.attributeTypeId,
+    attributeTypeName: row.attributeTypeName,
+    attributeValue: row.attributeValue ?? ''
   };
 }
 
@@ -228,6 +247,16 @@ async function seedReferenceTables(db) {
        VALUES (?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
       [assetType.id, assetType.name]
+    );
+  }
+
+  for (const attributeType of ATTRIBUTE_TYPES) {
+    await run(
+      db,
+      `INSERT INTO Attributes (id, name)
+       VALUES (?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
+      [attributeType.id, attributeType.name]
     );
   }
 
@@ -288,6 +317,11 @@ export async function initializeStorage() {
       name TEXT NOT NULL UNIQUE
     );
 
+    CREATE TABLE IF NOT EXISTS Attributes (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE
+    );
+
     CREATE TABLE IF NOT EXISTS Assets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -305,6 +339,17 @@ export async function initializeStorage() {
       PRIMARY KEY(cardId, assetId),
       FOREIGN KEY(cardId) REFERENCES Cards(id) ON DELETE CASCADE,
       FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE RESTRICT,
+      UNIQUE(cardId, position)
+    );
+
+    CREATE TABLE IF NOT EXISTS Cards_Attributes (
+      cardId INTEGER NOT NULL,
+      position INTEGER NOT NULL,
+      attributeTypeId INTEGER NOT NULL,
+      attributeValue TEXT,
+      PRIMARY KEY(cardId, position),
+      FOREIGN KEY(cardId) REFERENCES Cards(id) ON DELETE CASCADE,
+      FOREIGN KEY(attributeTypeId) REFERENCES Attributes(id),
       UNIQUE(cardId, position)
     );
 
@@ -401,6 +446,11 @@ async function getKanbanColumnIdByName(name) {
   return row.id;
 }
 
+async function getAttributeTypeById(attributeTypeId) {
+  const db = await getDb();
+  return await get(db, 'SELECT id, name FROM Attributes WHERE id = ?', [attributeTypeId]);
+}
+
 async function getAssetTypeIdByName(name) {
   const db = await getDb();
   const normalizedName = name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
@@ -421,6 +471,39 @@ async function getNextCardPosition(projectId, kanbanColumnId) {
   );
 
   return row?.nextPosition ?? 0;
+}
+
+async function getNextCardAttributePosition(cardId) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    'SELECT COALESCE(MAX(position), -1) + 1 AS nextPosition FROM Cards_Attributes WHERE cardId = ?',
+    [cardId]
+  );
+
+  return row?.nextPosition ?? 0;
+}
+
+async function resolveProjectCard(projectId, externalCardId = null) {
+  if (!externalCardId) return null;
+
+  const db = await getDb();
+  const externalCardIdString = String(externalCardId);
+  const numericCardId = Number(externalCardIdString);
+
+  if (Number.isInteger(numericCardId) && String(numericCardId) === externalCardIdString) {
+    return await get(
+      db,
+      'SELECT id, clientKey, projectId, kanbanColumnId, position FROM Cards WHERE id = ? AND projectId = ?',
+      [numericCardId, projectId]
+    );
+  }
+
+  return await get(
+    db,
+    'SELECT id, clientKey, projectId, kanbanColumnId, position FROM Cards WHERE clientKey = ? AND projectId = ?',
+    [externalCardIdString, projectId]
+  );
 }
 
 async function getNextCardAssetPosition(cardId) {
@@ -458,12 +541,13 @@ async function resolveCard(projectId, kanbanColumnId, externalCardId = null) {
 
 async function ensureCard(projectId, columnName, externalCardId = null, values = {}) {
   const db = await getDb();
-  const kanbanColumnId = await getKanbanColumnIdByName(columnName);
-  const existingCard = await resolveCard(projectId, kanbanColumnId, externalCardId);
+  const existingCard = await resolveProjectCard(projectId, externalCardId);
 
   if (existingCard) {
     return existingCard;
   }
+
+  const kanbanColumnId = await getKanbanColumnIdByName(columnName);
 
   const position = await getNextCardPosition(projectId, kanbanColumnId);
   const clientKey = externalCardId && !/^\d+$/.test(String(externalCardId)) ? String(externalCardId) : null;
@@ -491,6 +575,87 @@ async function ensureCard(projectId, columnName, externalCardId = null, values =
   };
 }
 
+async function normalizeCardPositions(projectId, kanbanColumnId) {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    `SELECT id
+     FROM Cards
+     WHERE projectId = ? AND kanbanColumnId = ?
+     ORDER BY position ASC, creationDate ASC, id ASC`,
+    [projectId, kanbanColumnId]
+  );
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards SET position = ? WHERE id = ?', [-(index + 1), rows[index].id]);
+  }
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards SET position = ? WHERE id = ?', [index, rows[index].id]);
+  }
+}
+
+async function applyCardOrder(db, orderedCards = []) {
+  for (let index = 0; index < orderedCards.length; index += 1) {
+    const card = orderedCards[index];
+    await run(db, 'UPDATE Cards SET kanbanColumnId = ?, position = ? WHERE id = ?', [card.kanbanColumnId, -(index + 1), card.id]);
+  }
+
+  for (let index = 0; index < orderedCards.length; index += 1) {
+    const card = orderedCards[index];
+    await run(db, 'UPDATE Cards SET kanbanColumnId = ?, position = ? WHERE id = ?', [card.kanbanColumnId, index, card.id]);
+  }
+}
+
+async function normalizeCardAssetPositions(cardId) {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    'SELECT assetId FROM Cards_Assets WHERE cardId = ? ORDER BY position ASC, assetId ASC',
+    [cardId]
+  );
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards_Assets SET position = ? WHERE cardId = ? AND assetId = ?', [-(index + 1), cardId, rows[index].assetId]);
+  }
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards_Assets SET position = ? WHERE cardId = ? AND assetId = ?', [index, cardId, rows[index].assetId]);
+  }
+}
+
+async function normalizeCardAttributePositions(cardId) {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    'SELECT position FROM Cards_Attributes WHERE cardId = ? ORDER BY position ASC',
+    [cardId]
+  );
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards_Attributes SET position = ? WHERE cardId = ? AND position = ?', [-(index + 1), cardId, rows[index].position]);
+  }
+
+  for (let index = 0; index < rows.length; index += 1) {
+    await run(db, 'UPDATE Cards_Attributes SET position = ? WHERE cardId = ? AND position = ?', [index, cardId, -(index + 1)]);
+  }
+}
+
+async function getCardAttributeView(cardId, position) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    `SELECT ca.cardId, c.clientKey, ca.position, ca.attributeTypeId, ca.attributeValue, a.name AS attributeTypeName
+     FROM Cards_Attributes ca
+     JOIN Cards c ON c.id = ca.cardId
+     JOIN Attributes a ON a.id = ca.attributeTypeId
+     WHERE ca.cardId = ? AND ca.position = ?`,
+    [cardId, position]
+  );
+
+  return row ? mapCardAttributeRow(row) : null;
+}
+
 async function insertAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
   const db = await getDb();
   const assetTypeId = await getAssetTypeIdByName(type);
@@ -516,12 +681,13 @@ async function getAssetViewById(assetId) {
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
-            c.projectId, c.id AS cardId, c.clientKey, c.position AS cardPosition,
+            c.projectId, c.id AS cardId, c.clientKey, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
             ca.position AS assetPosition
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      LEFT JOIN Cards_Assets ca ON ca.assetId = a.id
      LEFT JOIN Cards c ON c.id = ca.cardId
+      LEFT JOIN KanbanColumns kc ON kc.id = c.kanbanColumnId
      WHERE a.id = ?
      ORDER BY ca.position ASC
      LIMIT 1`,
@@ -617,18 +783,225 @@ export async function listProjectAssets(projectId = null) {
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
             at.name AS assetTypeName,
-            c.projectId, c.id AS cardId, c.clientKey, c.position AS cardPosition,
+            c.projectId, c.id AS cardId, c.clientKey, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
             ca.position AS assetPosition
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      JOIN Cards_Assets ca ON ca.assetId = a.id
      JOIN Cards c ON c.id = ca.cardId
+     JOIN KanbanColumns kc ON kc.id = c.kanbanColumnId
      ${whereClause}
-     ORDER BY c.position ASC, ca.position ASC, a.creationDate DESC`,
+     ORDER BY c.kanbanColumnId ASC, c.position ASC, ca.position ASC, a.creationDate DESC`,
     params
   );
 
   return rows.map(mapAssetRow);
+}
+
+export async function listAttributeTypes() {
+  const db = await getDb();
+  return await all(db, 'SELECT id, name FROM Attributes ORDER BY id ASC');
+}
+
+export async function listProjectCardAttributes(projectId) {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    `SELECT ca.cardId, c.clientKey, ca.position, ca.attributeTypeId, ca.attributeValue, a.name AS attributeTypeName
+     FROM Cards_Attributes ca
+     JOIN Cards c ON c.id = ca.cardId
+     JOIN Attributes a ON a.id = ca.attributeTypeId
+     WHERE c.projectId = ?
+     ORDER BY c.id ASC, ca.position ASC`,
+    [projectId]
+  );
+
+  return rows.map(mapCardAttributeRow);
+}
+
+export async function createCardAttribute(projectId, externalCardId, { attributeTypeId, attributeValue = '' }) {
+  const card = await resolveProjectCard(projectId, externalCardId);
+  if (!card) {
+    throw new Error('Card not found');
+  }
+
+  const attributeType = await getAttributeTypeById(Number(attributeTypeId));
+  if (!attributeType) {
+    throw new Error('Attribute type not found');
+  }
+
+  const db = await getDb();
+  const position = await getNextCardAttributePosition(card.id);
+  await run(
+    db,
+    'INSERT INTO Cards_Attributes (cardId, position, attributeTypeId, attributeValue) VALUES (?, ?, ?, ?)',
+    [card.id, position, attributeType.id, attributeValue]
+  );
+
+  return await getCardAttributeView(card.id, position);
+}
+
+export async function updateCardAttribute(projectId, externalCardId, position, { attributeTypeId, attributeValue }) {
+  const card = await resolveProjectCard(projectId, externalCardId);
+  if (!card) {
+    throw new Error('Card not found');
+  }
+
+  const db = await getDb();
+  const existing = await get(
+    db,
+    'SELECT cardId, position, attributeTypeId, attributeValue FROM Cards_Attributes WHERE cardId = ? AND position = ?',
+    [card.id, position]
+  );
+
+  if (!existing) {
+    throw new Error('Card attribute not found');
+  }
+
+  let nextAttributeTypeId = existing.attributeTypeId;
+  if (attributeTypeId !== undefined) {
+    const attributeType = await getAttributeTypeById(Number(attributeTypeId));
+    if (!attributeType) {
+      throw new Error('Attribute type not found');
+    }
+    nextAttributeTypeId = attributeType.id;
+  }
+
+  await run(
+    db,
+    `UPDATE Cards_Attributes
+     SET attributeTypeId = ?, attributeValue = ?
+     WHERE cardId = ? AND position = ?`,
+    [nextAttributeTypeId, attributeValue ?? existing.attributeValue ?? '', card.id, position]
+  );
+
+  return await getCardAttributeView(card.id, position);
+}
+
+export async function deleteCardAttribute(projectId, externalCardId, position) {
+  const card = await resolveProjectCard(projectId, externalCardId);
+  if (!card) {
+    throw new Error('Card not found');
+  }
+
+  const db = await getDb();
+  const existing = await get(
+    db,
+    'SELECT cardId, position FROM Cards_Attributes WHERE cardId = ? AND position = ?',
+    [card.id, position]
+  );
+
+  if (!existing) {
+    return { status: 'not-found' };
+  }
+
+  await run(db, 'DELETE FROM Cards_Attributes WHERE cardId = ? AND position = ?', [card.id, position]);
+  await normalizeCardAttributePositions(card.id);
+
+  return { status: 'deleted' };
+}
+
+export async function moveCard(projectId, externalCardId, kanbanColumnId, position) {
+  const db = await getDb();
+  const card = await resolveProjectCard(projectId, externalCardId);
+
+  if (!card) {
+    throw new Error('Card not found');
+  }
+
+  const targetColumn = await get(db, 'SELECT id, name FROM KanbanColumns WHERE id = ?', [kanbanColumnId]);
+  if (!targetColumn) {
+    throw new Error('Kanban column not found');
+  }
+
+  await exec(db, 'BEGIN TRANSACTION');
+
+  try {
+    await normalizeCardPositions(projectId, card.kanbanColumnId);
+    if (card.kanbanColumnId !== kanbanColumnId) {
+      await normalizeCardPositions(projectId, kanbanColumnId);
+    }
+
+    const currentCard = await get(
+      db,
+      'SELECT id, clientKey, kanbanColumnId, position FROM Cards WHERE id = ? AND projectId = ?',
+      [card.id, projectId]
+    );
+
+    const destinationCountRow = await get(
+      db,
+      `SELECT COUNT(*) AS total
+       FROM Cards
+       WHERE projectId = ? AND kanbanColumnId = ? AND id != ?`,
+      [projectId, kanbanColumnId, card.id]
+    );
+    const maxDestinationPosition = destinationCountRow?.total ?? 0;
+    const nextPosition = Math.max(0, Math.min(Number(position) || 0, maxDestinationPosition));
+
+    const sourceCards = await all(
+      db,
+      `SELECT id
+       FROM Cards
+       WHERE projectId = ? AND kanbanColumnId = ? AND id != ?
+       ORDER BY position ASC, creationDate ASC, id ASC`,
+      [projectId, currentCard.kanbanColumnId, card.id]
+    );
+
+    if (currentCard.kanbanColumnId === kanbanColumnId) {
+      const orderedCards = sourceCards.map(sourceCard => ({
+        id: sourceCard.id,
+        kanbanColumnId
+      }));
+
+      orderedCards.splice(nextPosition, 0, {
+        id: currentCard.id,
+        kanbanColumnId
+      });
+
+      await applyCardOrder(db, orderedCards);
+    } else {
+      await run(
+        db,
+        'UPDATE Cards SET position = ? WHERE id = ?',
+        [-(1000000 + currentCard.id), currentCard.id]
+      );
+
+      const destinationCards = await all(
+        db,
+        `SELECT id
+         FROM Cards
+         WHERE projectId = ? AND kanbanColumnId = ? AND id != ?
+         ORDER BY position ASC, creationDate ASC, id ASC`,
+        [projectId, kanbanColumnId, card.id]
+      );
+
+      await applyCardOrder(db, sourceCards.map(sourceCard => ({
+        id: sourceCard.id,
+        kanbanColumnId: currentCard.kanbanColumnId
+      })));
+
+      const orderedDestinationCards = destinationCards.map(destinationCard => ({
+        id: destinationCard.id,
+        kanbanColumnId
+      }));
+
+      orderedDestinationCards.splice(nextPosition, 0, {
+        id: currentCard.id,
+        kanbanColumnId
+      });
+
+      await applyCardOrder(db, orderedDestinationCards);
+    }
+
+    await normalizeCardPositions(projectId, currentCard.kanbanColumnId);
+    await normalizeCardPositions(projectId, kanbanColumnId);
+    await exec(db, 'COMMIT');
+  } catch (err) {
+    await exec(db, 'ROLLBACK').catch(() => null);
+    throw err;
+  }
+
+  return await resolveProjectCard(projectId, externalCardId);
 }
 
 export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
@@ -751,6 +1124,14 @@ async function deleteCardsIfEmpty(cardIds = []) {
 
   const db = await getDb();
   const placeholders = uniqueCardIds.map(() => '?').join(', ');
+  const cardsToDelete = await all(
+    db,
+    `SELECT id, projectId, kanbanColumnId
+     FROM Cards
+     WHERE id IN (${placeholders})
+       AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.cardId = Cards.id)`,
+    uniqueCardIds
+  );
 
   await run(
     db,
@@ -759,6 +1140,15 @@ async function deleteCardsIfEmpty(cardIds = []) {
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.cardId = Cards.id)`,
     uniqueCardIds
   );
+
+  const affectedColumns = new Map();
+  for (const card of cardsToDelete) {
+    affectedColumns.set(`${card.projectId}:${card.kanbanColumnId}`, card);
+  }
+
+  for (const card of affectedColumns.values()) {
+    await normalizeCardPositions(card.projectId, card.kanbanColumnId);
+  }
 }
 
 export async function deleteAssetById(assetId) {
@@ -772,6 +1162,9 @@ export async function deleteAssetById(assetId) {
   const links = await all(db, 'SELECT cardId FROM Cards_Assets WHERE assetId = ?', [assetId]);
   if (links.length > 0) {
     await run(db, 'DELETE FROM Cards_Assets WHERE assetId = ?', [assetId]);
+    for (const link of links) {
+      await normalizeCardAssetPositions(link.cardId);
+    }
     await deleteCardsIfEmpty(links.map(link => link.cardId));
     return { status: 'unlinked' };
   }

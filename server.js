@@ -13,14 +13,18 @@ import {
   THUMBNAIL_ASSETS_DIR,
   createProject,
   createLibraryAsset,
+  createCardAttribute,
   createProjectAsset,
   createTask,
   createWorkflowRecord,
+  deleteCardAttribute,
   deleteAssetById,
   deleteLibraryAssetByFilePath,
   deleteProjectById,
   findLibraryAssetByFilePath,
   getAssetDirectory,
+  listAttributeTypes,
+  listProjectCardAttributes,
   getProjectById,
   getSettings,
   getWorkflowRecordById,
@@ -30,10 +34,12 @@ import {
   listProjectTasks,
   listProjects,
   listWorkflowRecords,
+  moveCard,
   saveSettings,
   toAbsoluteStoragePath,
   toStoredAssetPath,
   toStoredThumbnailPath,
+  updateCardAttribute,
   updateWorkflowRecord
 } from './storage.js';
 
@@ -1026,6 +1032,111 @@ app.delete('/api/assets/:id', async (req, res) => {
   } catch (err) {
     console.error('Failed to remove asset card:', err);
     res.status(500).json({ error: 'Failed to remove asset card' });
+  }
+});
+
+app.put('/api/cards/move', async (req, res) => {
+  try {
+    const { projectId, cardId, kanbanColumnId, position } = req.body;
+
+    if (!projectId || !cardId || kanbanColumnId === undefined || position === undefined) {
+      return res.status(400).json({ error: 'projectId, cardId, kanbanColumnId and position are required' });
+    }
+
+    res.json(await moveCard(Number(projectId), cardId, Number(kanbanColumnId), Number(position)));
+  } catch (err) {
+    console.error('Failed to move card:', err);
+    res.status(500).json({ error: err.message || 'Failed to move card' });
+  }
+});
+
+app.get('/api/card-attributes/types', async (req, res) => {
+  try {
+    res.json(await listAttributeTypes());
+  } catch (err) {
+    console.error('Failed to list attribute types:', err);
+    res.status(500).json({ error: 'Failed to list attribute types' });
+  }
+});
+
+app.get('/api/card-attributes', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await listProjectCardAttributes(Number(projectId)));
+  } catch (err) {
+    console.error('Failed to list card attributes:', err);
+    res.status(500).json({ error: 'Failed to list card attributes' });
+  }
+});
+
+app.post('/api/card-attributes', async (req, res) => {
+  try {
+    const { projectId, cardId, attributeTypeId, attributeValue = '' } = req.body;
+
+    if (!projectId || !cardId || !attributeTypeId) {
+      return res.status(400).json({ error: 'projectId, cardId and attributeTypeId are required' });
+    }
+
+    const attribute = await createCardAttribute(Number(projectId), cardId, {
+      attributeTypeId: Number(attributeTypeId),
+      attributeValue
+    });
+
+    res.status(201).json(attribute);
+  } catch (err) {
+    console.error('Failed to create card attribute:', err);
+    res.status(500).json({ error: err.message || 'Failed to create card attribute' });
+  }
+});
+
+app.put('/api/card-attributes/:cardId/:position', async (req, res) => {
+  try {
+    const { projectId, attributeTypeId, attributeValue } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    const attribute = await updateCardAttribute(
+      Number(projectId),
+      req.params.cardId,
+      Number(req.params.position),
+      {
+        attributeTypeId: attributeTypeId === undefined ? undefined : Number(attributeTypeId),
+        attributeValue
+      }
+    );
+
+    res.json(attribute);
+  } catch (err) {
+    console.error('Failed to update card attribute:', err);
+    res.status(500).json({ error: err.message || 'Failed to update card attribute' });
+  }
+});
+
+app.delete('/api/card-attributes/:cardId/:position', async (req, res) => {
+  try {
+    const projectId = Number(req.query.projectId);
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    const result = await deleteCardAttribute(projectId, req.params.cardId, Number(req.params.position));
+
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Card attribute not found' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete card attribute:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete card attribute' });
   }
 });
 
