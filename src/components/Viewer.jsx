@@ -105,6 +105,31 @@ function loadWithLoader(loader, url) {
   })
 }
 
+function applyDisplayMaterial(object, showNormals) {
+  object?.traverse(child => {
+    if (!child.isMesh) {
+      return
+    }
+
+    if (!child.userData.originalMat) {
+      child.userData.originalMat = child.material
+    }
+
+    if (showNormals) {
+      if (!child.userData.normalMat) {
+        child.userData.normalMat = new THREE.MeshNormalMaterial()
+      }
+
+      child.material = child.userData.normalMat
+      return
+    }
+
+    if (child.userData.originalMat) {
+      child.material = child.userData.originalMat
+    }
+  })
+}
+
 async function loadModelFromUrl(url) {
   const extension = getExtensionFromUrl(url)
 
@@ -163,7 +188,7 @@ function CameraController({ autoRotate, target, cameraPosition }) {
   )
 }
 
-export default function Viewer({ height = '100%', modelUrl = null }) {
+export default function Viewer({ height = '100%', modelUrl = null, showNormals = false }) {
   const [modelState, setModelState] = useState(null)
 
   useEffect(() => {
@@ -196,8 +221,10 @@ export default function Viewer({ height = '100%', modelUrl = null }) {
       return null
     }
 
-    return modelState.object.clone()
-  }, [modelState, modelUrl])
+    const modelClone = modelState.object.clone(true)
+    applyDisplayMaterial(modelClone, showNormals)
+    return modelClone
+  }, [modelState, modelUrl, showNormals])
 
   const cameraTarget = modelState?.modelUrl === modelUrl ? modelState.target : new THREE.Vector3(0, 0.75, 0)
   const cameraPosition = modelState?.modelUrl === modelUrl ? modelState.cameraPosition : new THREE.Vector3(3, 3, 5)
