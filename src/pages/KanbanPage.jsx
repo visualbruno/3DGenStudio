@@ -347,22 +347,31 @@ export default function KanbanPage() {
     }
   }, [])
 
-  const selectedComfyWorkflow = comfyWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
+  const imageGenerationWorkflows = useMemo(() => {
+    return comfyWorkflows.filter(workflow => {
+      const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
+      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+      return parameterValueTypes.includes('string') && outputValueTypes.includes('image')
+    })
+  }, [comfyWorkflows])
+
+  const selectedComfyWorkflow = imageGenerationWorkflows.find(workflow => workflow.id == imageDraft?.workflowId) || null
 
   const openComfyWorkflowDraft = (cardId = imageDraft?.cardId || null) => {
-    if (comfyWorkflows.length === 0) {
-      alert('Import a ComfyUI workflow in Assets > Workflows first.')
+    if (imageGenerationWorkflows.length === 0) {
+      alert('No compatible ComfyUI workflows available. Import a workflow with at least one string input and one image output.')
       return
     }
 
     setImageDraft({
-      ...getComfyDraftFromWorkflow(comfyWorkflows[0]),
+      ...getComfyDraftFromWorkflow(imageGenerationWorkflows[0]),
       cardId
     })
   }
 
   const handleComfyWorkflowChange = (workflowId) => {
-    const workflow = comfyWorkflows.find(item => item.id == workflowId)
+    const workflow = imageGenerationWorkflows.find(item => item.id == workflowId)
     setImageDraft(prev => ({
       ...getComfyDraftFromWorkflow(workflow),
       cardId: prev?.cardId || null
@@ -653,7 +662,11 @@ export default function KanbanPage() {
   const imageEditWorkflows = useMemo(() => {
     return comfyWorkflows.filter(workflow => {
       const valueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
-      return valueTypes.includes('image') && valueTypes.every(valueType => ['image', 'string', 'number'].includes(valueType))
+      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+      return valueTypes.includes('image')
+        && outputValueTypes.includes('image')
+        && valueTypes.every(valueType => ['image', 'string', 'number'].includes(valueType))
     })
   }, [comfyWorkflows])
 
@@ -1933,14 +1946,14 @@ export default function KanbanPage() {
                       <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
                       <span>Loading workflows...</span>
                     </div>
-                  ) : comfyWorkflows.length > 0 ? (
+                  ) : imageGenerationWorkflows.length > 0 ? (
                     <>
                       <select
                         className="params-card__select"
                         value={imageDraft.workflowId}
                         onChange={e => handleComfyWorkflowChange(e.target.value)}
                       >
-                        {comfyWorkflows.map(workflow => (
+                        {imageGenerationWorkflows.map(workflow => (
                           <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
                         ))}
                       </select>
