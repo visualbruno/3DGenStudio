@@ -6,6 +6,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import Viewer from '../components/Viewer'
 import SettingsModal from '../components/SettingsModal'
+import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import './KanbanPage.css'
 
 const SIDEBAR_ITEMS = [
@@ -100,6 +101,7 @@ export default function KanbanPage() {
     getProject,
     getProjectAssets,
     uploadAsset,
+    uploadAssetThumbnail,
     attachExistingAsset,
     deleteAsset,
     moveKanbanCard,
@@ -256,6 +258,43 @@ export default function KanbanPage() {
   const refreshProjectAssets = async () => {
     const assetsData = await getProjectAssets(projectId)
     setAssets(assetsData)
+  }
+
+  const ensureGeneratedMeshThumbnail = async (asset) => {
+    if (!asset || asset.type !== 'mesh' || asset.thumbnail) {
+      return asset
+    }
+
+    const assetUrl = `http://localhost:3001/assets/${encodeURI(asset.filename)}`
+    const response = await fetch(assetUrl)
+
+    if (!response.ok) {
+      throw new Error(`Failed to download generated mesh ${asset.name || asset.filename}`)
+    }
+
+    const blob = await response.blob()
+    const file = new File([blob], asset.filename?.split('/').pop() || `${asset.name || 'mesh'}.glb`, {
+      type: blob.type || 'application/octet-stream'
+    })
+    const thumbnailFile = await createMeshThumbnailFile(file)
+
+    if (!thumbnailFile) {
+      return asset
+    }
+
+    return await uploadAssetThumbnail(asset.id, thumbnailFile)
+  }
+
+  const ensureGeneratedMeshThumbnails = async (generatedAssets) => {
+    const meshAssets = (Array.isArray(generatedAssets) ? generatedAssets : [generatedAssets]).filter(asset => asset?.type === 'mesh')
+
+    for (const meshAsset of meshAssets) {
+      try {
+        await ensureGeneratedMeshThumbnail(meshAsset)
+      } catch (err) {
+        console.warn(`Failed to generate thumbnail for mesh ${meshAsset?.name || meshAsset?.id}:`, err)
+      }
+    }
   }
 
   const refreshCardAttributes = async () => {
@@ -985,13 +1024,15 @@ export default function KanbanPage() {
         }
 
         if (isMeshGenCard) {
-          await runMeshGenerationApi(projectId, {
+          const generatedMesh = await runMeshGenerationApi(projectId, {
             imageSource: imageEditDraft.selectedAssetId,
             name,
             selectedApi: imageEditDraft.selectedApi,
             prompt,
             cardId: card.id
           })
+
+          await ensureGeneratedMeshThumbnails(generatedMesh)
         } else {
           await runImageEditApi(projectId, {
             imageSource: imageEditDraft.selectedAssetId,
@@ -1101,13 +1142,16 @@ export default function KanbanPage() {
         }))
 
         if (isMeshGenCard) {
-          await runComfyWorkflow(projectId, {
+          const generatedMeshes = await runComfyWorkflow(projectId, {
             workflowId: Number(imageEditDraft.workflowId),
             cardId: card.id,
+            name,
             inputs: inputValues,
             promptId,
             clientId
           })
+
+          await ensureGeneratedMeshThumbnails(generatedMeshes)
 
           setImageEditProgressByCardId(prev => prev[card.id]
             ? {

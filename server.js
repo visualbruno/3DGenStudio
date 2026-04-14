@@ -43,6 +43,7 @@ import {
   toAbsoluteStoragePath,
   toStoredAssetPath,
   toStoredThumbnailPath,
+  updateAssetThumbnail,
   updateCardAttribute,
   updateWorkflowRecord
 } from './storage.js';
@@ -259,6 +260,7 @@ app.put('/api/library/comfy-workflows/:id', async (req, res) => {
 const upload = multer({ storage });
 const workflowExecutionUpload = multer({ storage: multer.memoryStorage() });
 const libraryImportUpload = multer({ storage: multer.memoryStorage() });
+const thumbnailUpload = multer({ storage: multer.memoryStorage() });
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -1305,16 +1307,6 @@ function createGeneratedImageName(prompt, extension) {
   return `${baseName || 'generated_image'}.${extension}`;
 }
 
-function createGeneratedMeshName(prompt, extension) {
-  const baseName = String(prompt || 'generated_mesh')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 48);
-
-  return `${baseName || 'generated_mesh'}.${extension}`;
-}
-
 function inferAssetTypeFromFilename(filename = '') {
   const supportedType = inferSupportedAssetTypeFromFilename(filename);
 
@@ -1476,7 +1468,8 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
   let executionMonitor = null;
 
   try {
-    const { projectId, workflowId, cardId } = req.body;
+    const { projectId, workflowId, cardId, name } = req.body;
+    const trimmedName = String(name || '').trim();
     const inputValues = JSON.parse(req.body.inputValues || '{}');
 
     if (!projectId || !workflowId) {
@@ -1582,7 +1575,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         projectId: Number(projectId),
         type: inferredAssetType,
         name: inferredAssetType === 'mesh'
-          ? createGeneratedMeshName(workflow.name, extension)
+          ? (trimmedName || workflow.name)
           : createGeneratedImageName(workflow.name, extension),
         filePath: storedFilePath,
         metadata: {
@@ -1604,7 +1597,6 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     res.status(201).json(generatedAssets);
   } catch (err) {
     console.error('ComfyUI workflow execution failed:', err);
-    executionMonitor?.close();
     const failedPromptId = String(req.body?.promptId || '').trim();
     if (failedPromptId) {
       publishComfyProgress(failedPromptId, {
@@ -1612,6 +1604,13 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         detail: err.message || 'Failed to execute ComfyUI workflow',
         currentNodeLabel: 'ComfyUI execution failed'
       });
+    }
+
+    res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
+  } finally {
+    executionMonitor?.close();
+  }
+});
 
 app.post('/api/meshes/generate', async (req, res) => {
   try {
@@ -1683,7 +1682,7 @@ app.post('/api/meshes/generate', async (req, res) => {
     const savedAsset = await createProjectAsset({
       projectId: Number(projectId),
       type: 'mesh',
-      name: createGeneratedMeshName(trimmedName, extension),
+      name: trimmedName,
       filePath: storedFilePath,
       metadata: {
         format: extension.toUpperCase(),
@@ -1699,10 +1698,6 @@ app.post('/api/meshes/generate', async (req, res) => {
   } catch (err) {
     console.error('Mesh generation API execution failed:', err);
     res.status(500).json({ error: err.message || 'Failed to run mesh generation API' });
-  }
-});
-    }
-    res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
   }
 });
 
@@ -1899,6 +1894,38 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   } catch (err) {
     console.error('Upload recording failed:', err);
     res.status(500).json({ error: 'Upload recording failed' });
+  }
+});
+
+app.post('/api/assets/:id/thumbnail', thumbnailUpload.single('thumbnail'), async (req, res) => {
+  try {
+    const assetId = Number(req.params.id);
+
+    if (!assetId) {
+      return res.status(400).json({ error: 'A valid asset id is required' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No thumbnail provided' });
+    }
+
+    const thumbnailFilename = createLibraryThumbnailFilename(req.file.originalname || `asset-${assetId}.png`);
+    const thumbnailPath = toStoredThumbnailPath(thumbnailFilename);
+    const absoluteThumbnailPath = toAbsoluteStoragePath(thumbnailPath);
+
+    await fs.mkdir(path.dirname(absoluteThumbnailPath), { recursive: true });
+    await fs.writeFile(absoluteThumbnailPath, req.file.buffer);
+
+    const updatedAsset = await updateAssetThumbnail(assetId, thumbnailPath);
+
+    if (!updatedAsset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    res.json(updatedAsset);
+  } catch (err) {
+    console.error('Failed to upload asset thumbnail:', err);
+    res.status(500).json({ error: 'Failed to upload asset thumbnail' });
   }
 });
 

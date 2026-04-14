@@ -256,6 +256,24 @@ export function ProjectProvider({ children }) {
     return await res.json();
   }
 
+  const uploadAssetThumbnail = async (assetId, file) => {
+    const formData = new FormData()
+    formData.append('thumbnail', file)
+
+    const res = await fetch(`${API_BASE}/assets/${assetId}/thumbnail`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to upload asset thumbnail')
+    }
+
+    return data
+  }
+
   const uploadAsset = async (projectId, file, type = 'image', metadata = {}) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -446,6 +464,9 @@ export function ProjectProvider({ children }) {
     if (workflowData.cardId) {
       formData.append('cardId', workflowData.cardId)
     }
+    if (workflowData.name) {
+      formData.append('name', workflowData.name)
+    }
 
     Object.entries(workflowData.inputs || {}).forEach(([key, value]) => {
       if (typeof File !== 'undefined' && value instanceof File) {
@@ -509,6 +530,7 @@ export function ProjectProvider({ children }) {
       getProjectTasks,
       createTask,
       uploadAsset,
+      uploadAssetThumbnail,
       attachExistingAsset,
       deleteAsset,
       moveKanbanCard,

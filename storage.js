@@ -1310,6 +1310,18 @@ export async function createProjectAsset({ projectId, type, name, filePath, thum
   return await getAssetViewById(assetId);
 }
 
+export async function updateAssetThumbnail(assetId, thumbnailPath) {
+  const db = await getDb();
+
+  await run(
+    db,
+    'UPDATE Assets SET thumbnail = ? WHERE id = ?',
+    [thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null, Number(assetId)]
+  );
+
+  return await getAssetViewById(Number(assetId));
+}
+
 export async function createLibraryAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
   const assetId = await insertAsset({
     name,
