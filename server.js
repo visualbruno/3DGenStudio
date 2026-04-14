@@ -1105,7 +1105,8 @@ function sanitizeAssetFolderName(value = 'image') {
 }
 
 function getImageEditStoredFilePath(sourceAsset, editId, extension) {
-  const sourceName = sanitizeAssetFolderName(path.basename(sourceAsset.name || sourceAsset.filename || sourceAsset.filePath, path.extname(sourceAsset.name || sourceAsset.filename || sourceAsset.filePath))) || 'image';
+  const sourcePath = sourceAsset.filePath || sourceAsset.filename || sourceAsset.name || 'image';
+  const sourceName = sanitizeAssetFolderName(path.basename(sourcePath, path.extname(sourcePath))) || 'image';
   return toStoredAssetPath('image', `images/${sourceName}/${editId}/${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`);
 }
 
