@@ -357,7 +357,7 @@ function getDefaultComfyValueType(item, isOutput = false) {
 }
 
 function normalizeComfyValueType(value, fallback = 'string') {
-  return ['string', 'number', 'image', 'video'].includes(value) ? value : fallback;
+  return ['string', 'number', 'image', 'video', 'mesh'].includes(value) ? value : fallback;
 }
 
 function getComfyNodeLabel(nodeId, node = {}) {
@@ -567,7 +567,7 @@ function subscribeToComfyProgress(promptId, req, res) {
   });
 }
 
-function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson, selectedOutputs = [], timeout = 300000 }) {
+function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson, selectedOutputs = [], timeout = null }) {
   const trackedNodeIds = getComfyExecutionNodeIds(workflowJson, selectedOutputs);
   const totalNodeCount = Math.max(1, trackedNodeIds.size || Object.keys(workflowJson || {}).length || 1);
   const wsUrl = buildComfyUiWebSocketUrl(baseUrl, clientId);
@@ -616,17 +616,19 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
   const ready = new Promise((resolve, reject) => {
     socket = new WebSocket(wsUrl);
 
-    timer = setTimeout(() => {
-      isSettled = true;
-      publishState({
-        status: 'error',
-        detail: `Job did not complete within ${Math.round(timeout / 1000)}s`,
-        currentNodeLabel: 'Timed out'
-      });
-      socket.close();
-      rejectCompletion?.(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
-      reject(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
-    }, timeout);
+    if (Number.isFinite(timeout) && timeout > 0) {
+      timer = setTimeout(() => {
+        isSettled = true;
+        publishState({
+          status: 'error',
+          detail: `Job did not complete within ${Math.round(timeout / 1000)}s`,
+          currentNodeLabel: 'Timed out'
+        });
+        socket.close();
+        rejectCompletion?.(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
+        reject(new Error(`Job did not complete within ${Math.round(timeout / 1000)}s`));
+      }, timeout);
+    }
 
     socket.onopen = () => {
       isReady = true;
@@ -1030,6 +1032,259 @@ function replaceTemplatePlaceholders(value, replacements) {
   return value;
 }
 
+function parseJsonTemplate(value, label, fallback = {}) {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+
+  if (isPlainObject(value) || Array.isArray(value)) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+}
+
+function getCustomApiConfig(settings, selectedApi, expectedType = null) {
+  const customApiId = String(selectedApi || '').startsWith('custom_')
+    ? String(selectedApi).slice(7)
+    : '';
+  const customApi = (settings?.apis?.custom || []).find(api => String(api?.id) === customApiId);
+
+  if (!customApi) {
+    throw new Error('Selected custom API was not found in settings');
+  }
+
+  const normalizedType = ['image-generation', 'image-edit', 'mesh-generation'].includes(customApi?.type)
+    ? customApi.type
+    : 'image-generation';
+
+  if (expectedType && normalizedType !== expectedType) {
+    throw new Error(`Selected custom API must be of type ${expectedType}`);
+  }
+
+  return {
+    ...customApi,
+    type: normalizedType
+  };
+}
+
+function getNestedValue(value, pathExpression = '') {
+  return String(pathExpression || '')
+    .split('.')
+    .filter(Boolean)
+    .reduce((currentValue, segment) => currentValue?.[segment], value);
+}
+
+function findFirstResponseField(responseBody, paths = []) {
+  for (const pathExpression of paths) {
+    const value = getNestedValue(responseBody, pathExpression);
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function parseDataUri(value = '') {
+  const match = String(value || '').match(/^data:([^;]+);base64,(.+)$/i);
+  if (!match) return null;
+
+  return {
+    mimeType: match[1],
+    data: match[2]
+  };
+}
+
+function getFilenameFromUrl(rawUrl = '', fallback = 'generated_mesh.glb') {
+  try {
+    const parsedUrl = new URL(String(rawUrl || ''));
+    const filename = path.basename(parsedUrl.pathname || '');
+    return filename || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function extractMeshOutputFromApiResponse(response, responseBody) {
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!String(contentType).toLowerCase().includes('application/json')) {
+    const extension = getExtensionFromContentType(contentType, 'glb');
+    return {
+      buffer: Buffer.from(await response.arrayBuffer()),
+      filename: `generated_mesh.${extension}`,
+      contentType
+    };
+  }
+
+  const base64Value = findFirstResponseField(responseBody, [
+    'meshBase64',
+    'mesh_base64',
+    'base64',
+    'data.meshBase64',
+    'data.mesh_base64',
+    'data.base64',
+    'file.base64',
+    'output.base64'
+  ]);
+  const meshUrl = findFirstResponseField(responseBody, [
+    'meshUrl',
+    'mesh_url',
+    'url',
+    'fileUrl',
+    'downloadUrl',
+    'data.meshUrl',
+    'data.mesh_url',
+    'data.url',
+    'file.url',
+    'output.url'
+  ]);
+  const filename = findFirstResponseField(responseBody, [
+    'filename',
+    'fileName',
+    'meshFilename',
+    'mesh_filename',
+    'data.filename',
+    'data.fileName',
+    'file.filename',
+    'output.filename'
+  ]);
+  const declaredMimeType = findFirstResponseField(responseBody, [
+    'mimeType',
+    'contentType',
+    'data.mimeType',
+    'data.contentType',
+    'file.mimeType',
+    'output.mimeType'
+  ]);
+
+  if (typeof base64Value === 'string' && base64Value.trim()) {
+    const parsedDataUri = parseDataUri(base64Value);
+    const normalizedBase64 = parsedDataUri?.data || base64Value;
+    const mimeType = parsedDataUri?.mimeType || declaredMimeType || 'model/gltf-binary';
+    const inferredFilename = filename || `generated_mesh.${getExtensionFromContentType(mimeType, 'glb')}`;
+
+    return {
+      buffer: Buffer.from(normalizedBase64, 'base64'),
+      filename: inferredFilename,
+      contentType: mimeType
+    };
+  }
+
+  if (typeof meshUrl === 'string' && meshUrl.trim()) {
+    const downloadResponse = await fetch(meshUrl);
+    if (!downloadResponse.ok) {
+      throw new Error('Failed to download generated mesh from custom API response');
+    }
+
+    const downloadedContentType = downloadResponse.headers.get('content-type') || declaredMimeType || 'model/gltf-binary';
+    return {
+      buffer: Buffer.from(await downloadResponse.arrayBuffer()),
+      filename: filename || getFilenameFromUrl(meshUrl, `generated_mesh.${getExtensionFromContentType(downloadedContentType, 'glb')}`),
+      contentType: downloadedContentType
+    };
+  }
+
+  throw new Error('Mesh generation API succeeded but no mesh payload was returned');
+}
+
+function getComfyHistoryFiles(historyRecord, selectedOutputs = []) {
+  const selectedOutputsByNodeId = new Map(selectedOutputs.map(output => [String(output.nodeId || output.id), output]));
+  const preferredNodeIds = selectedOutputs.map(output => String(output.nodeId || output.id));
+  const orderedNodeIds = [
+    ...preferredNodeIds,
+    ...Object.keys(historyRecord?.outputs || {}).filter(nodeId => !preferredNodeIds.includes(String(nodeId)))
+  ];
+  const files = [];
+
+  for (const nodeId of orderedNodeIds) {
+    const nodeOutput = historyRecord?.outputs?.[nodeId];
+    const selectedOutput = selectedOutputsByNodeId.get(String(nodeId));
+    const expectedType = normalizeComfyValueType(selectedOutput?.valueType, getDefaultComfyValueType(selectedOutput, true));
+
+    for (const [outputKey, outputValue] of Object.entries(nodeOutput || {})) {
+      if (!Array.isArray(outputValue)) {
+        continue;
+      }
+
+      for (const file of outputValue) {
+        let normalizedFile = null;
+
+        if (typeof file === 'string' && file.trim()) {
+          normalizedFile = {
+            filename: path.basename(file.trim()),
+            absolutePath: file.trim()
+          };
+        } else if (file && typeof file === 'object' && file.filename) {
+          normalizedFile = file;
+        }
+
+        if (!normalizedFile?.filename) {
+          continue;
+        }
+
+        const inferredType = inferSupportedAssetTypeFromFilename(normalizedFile.filename);
+        const normalizedKey = String(outputKey || '').toLowerCase();
+
+        if (expectedType === 'mesh') {
+          if (inferredType && inferredType !== 'mesh') continue;
+          if (!inferredType && !normalizedKey.includes('mesh') && normalizedKey !== 'result') continue;
+        }
+
+        if (expectedType === 'image') {
+          if (inferredType && inferredType !== 'image') continue;
+          if (!inferredType && !normalizedKey.includes('image')) continue;
+        }
+
+        files.push({
+          nodeId,
+          outputKey,
+          expectedType,
+          ...normalizedFile
+        });
+      }
+    }
+  }
+
+  return files;
+}
+
+async function downloadComfyOutputFile(baseUrl, file) {
+  if (file.absolutePath && path.isAbsolute(file.absolutePath)) {
+    const extension = path.extname(file.filename || file.absolutePath).toLowerCase();
+    const contentType = extension === '.glb'
+      ? 'model/gltf-binary'
+      : extension === '.gltf'
+        ? 'model/gltf+json'
+        : 'application/octet-stream';
+
+    return {
+      buffer: await fs.readFile(file.absolutePath),
+      contentType
+    };
+  }
+
+  const viewUrl = new URL(`${baseUrl}/view`);
+  viewUrl.searchParams.set('filename', file.filename);
+  viewUrl.searchParams.set('subfolder', file.subfolder || '');
+  viewUrl.searchParams.set('type', file.type || 'output');
+
+  const response = await fetch(viewUrl);
+  if (!response.ok) {
+    throw new Error('Failed to download ComfyUI output file');
+  }
+
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type') || 'application/octet-stream'
+  };
+}
+
 function getExtensionFromMimeType(mimeType = 'image/png') {
   const mimeMap = {
     'image/png': 'png',
@@ -1050,6 +1305,16 @@ function createGeneratedImageName(prompt, extension) {
   return `${baseName || 'generated_image'}.${extension}`;
 }
 
+function createGeneratedMeshName(prompt, extension) {
+  const baseName = String(prompt || 'generated_mesh')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+
+  return `${baseName || 'generated_mesh'}.${extension}`;
+}
+
 function inferAssetTypeFromFilename(filename = '') {
   const supportedType = inferSupportedAssetTypeFromFilename(filename);
 
@@ -1065,6 +1330,18 @@ function inferSupportedAssetTypeFromFilename(filename = '') {
   if (IMAGE_EXTENSIONS.has(extension)) return 'image';
 
   return null;
+}
+
+function getExtensionFromContentType(contentType = '', fallback = 'bin') {
+  const normalized = String(contentType || '').toLowerCase();
+
+  if (normalized.includes('model/gltf-binary')) return 'glb';
+  if (normalized.includes('model/gltf+json')) return 'gltf';
+  if (normalized.includes('model/obj') || normalized.includes('application/x-tgif')) return 'obj';
+  if (normalized.includes('application/octet-stream')) return fallback;
+  if (normalized.includes('application/json')) return 'json';
+
+  return fallback;
 }
 
 function createLibraryImportFilename(originalName = 'asset') {
@@ -1220,17 +1497,37 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 
     for (const parameter of workflow.parameters || []) {
       const parameterValueType = normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter));
-      if (!['image', 'video'].includes(parameterValueType)) continue;
+      if (!['image', 'video', 'mesh'].includes(parameterValueType)) continue;
 
       const fileMarker = inputValues?.[parameter.id];
       const fieldName = fileMarker?.__fileField;
       const uploadedFile = uploadedFiles.get(fieldName);
 
-      if (!uploadedFile) {
-        throw new Error(`A reference file is required for ${parameter.name}`);
+      if (uploadedFile) {
+        resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, uploadedFile);
+        continue;
       }
 
-      resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, uploadedFile);
+      if (parameterValueType === 'image') {
+        const sourceReference = isPlainObject(fileMarker)
+          ? (fileMarker.source || fileMarker.filePath || fileMarker.assetId)
+          : fileMarker;
+        const resolvedImageSource = await resolveProjectImageSource(Number(projectId), sourceReference);
+
+        if (!resolvedImageSource?.asset || resolvedImageSource.asset.type !== 'image') {
+          throw new Error(`A reference file is required for ${parameter.name}`);
+        }
+
+        const inputBuffer = await fs.readFile(toAbsoluteStoragePath(resolvedImageSource.inputFilePath));
+        resolvedInputs[parameter.id] = await uploadComfyInputFile(baseUrl, {
+          buffer: inputBuffer,
+          mimetype: getMimeTypeFromFilename(resolvedImageSource.inputFilePath || resolvedImageSource.inputFilename || resolvedImageSource.inputName),
+          originalname: path.basename(resolvedImageSource.inputFilePath || resolvedImageSource.inputFilename || resolvedImageSource.inputName)
+        });
+        continue;
+      }
+
+      throw new Error(`A reference file is required for ${parameter.name}`);
     }
 
     const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
@@ -1257,41 +1554,47 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     });
     await executionMonitor.completion;
     const historyRecord = await waitForComfyHistory(baseUrl, queuedPromptId);
-    const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
+    const workflowFiles = getComfyHistoryFiles(historyRecord, workflow.outputs);
 
-    if (workflowImages.length === 0) {
-      return res.status(502).json({ error: 'The ComfyUI workflow finished but no images were returned' });
+    if (workflowFiles.length === 0) {
+      return res.status(502).json({ error: 'The ComfyUI workflow finished but no compatible files were returned' });
     }
 
     const imageCardId = cardId || randomUUID();
     const baseTimestamp = Date.now();
     const generatedAssets = [];
 
-    for (const [index, workflowImage] of workflowImages.entries()) {
-      const downloadedImage = await downloadComfyImage(baseUrl, workflowImage);
-      const extension = path.extname(workflowImage.filename).replace('.', '') || getExtensionFromMimeType(downloadedImage.contentType);
+    for (const [index, workflowFile] of workflowFiles.entries()) {
+      const downloadedFile = await downloadComfyOutputFile(baseUrl, workflowFile);
+      const inferredAssetType = inferSupportedAssetTypeFromFilename(workflowFile.filename) || workflowFile.expectedType || 'image';
+      const fallbackExtension = inferredAssetType === 'mesh'
+        ? getExtensionFromContentType(downloadedFile.contentType, 'glb')
+        : getExtensionFromMimeType(downloadedFile.contentType);
+      const extension = path.extname(workflowFile.filename).replace('.', '') || fallbackExtension;
       const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
-      const storedFilePath = toStoredAssetPath('image', filename);
+      const storedFilePath = toStoredAssetPath(inferredAssetType, filename);
       const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
 
-      await fs.writeFile(absoluteFilePath, downloadedImage.buffer);
+      await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+      await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
 
       generatedAssets.push(await createProjectAsset({
         projectId: Number(projectId),
-        type: 'image',
-        name: createGeneratedImageName(workflow.name, extension),
+        type: inferredAssetType,
+        name: inferredAssetType === 'mesh'
+          ? createGeneratedMeshName(workflow.name, extension)
+          : createGeneratedImageName(workflow.name, extension),
         filePath: storedFilePath,
         metadata: {
-          resolution: 'Unknown',
           format: extension.toUpperCase(),
           source: 'COMFYUI',
           provider: 'ComfyUI',
           workflowId: workflow.id,
           workflowName: workflow.name,
           promptId: queuedPromptId,
-          outputNodeId: workflowImage.nodeId,
-          outputFilename: workflowImage.filename,
-          savedOutputs: workflowImages.length,
+          outputNodeId: workflowFile.nodeId,
+          outputFilename: workflowFile.filename,
+          savedOutputs: workflowFiles.length,
           cardId: imageCardId
         },
         createdAt: baseTimestamp + index
@@ -1309,6 +1612,95 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         detail: err.message || 'Failed to execute ComfyUI workflow',
         currentNodeLabel: 'ComfyUI execution failed'
       });
+
+app.post('/api/meshes/generate', async (req, res) => {
+  try {
+    const { projectId, selectedApi, prompt, name, imageSource, cardId } = req.body;
+    const trimmedName = String(name || '').trim();
+    const trimmedPrompt = String(prompt || '').trim();
+
+    if (!projectId || !selectedApi || !trimmedPrompt || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
+    }
+
+    if (!String(selectedApi).startsWith('custom_')) {
+      return res.status(400).json({ error: 'Mesh generation currently supports custom APIs only' });
+    }
+
+    const resolvedSource = await resolveProjectImageSource(Number(projectId), imageSource);
+    const sourceAsset = resolvedSource?.asset;
+    if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'image') {
+      return res.status(404).json({ error: 'Source image or edit not found' });
+    }
+
+    const settings = await getSettings();
+    const customApi = getCustomApiConfig(settings, selectedApi, 'mesh-generation');
+    const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
+    const sourceBuffer = await fs.readFile(sourceFilePath);
+    const imageMimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
+    const replacements = {
+      prompt: trimmedPrompt,
+      name: trimmedName,
+      projectId: String(projectId),
+      cardId: String(cardId || sourceAsset.metadata?.cardId || ''),
+      imageBase64: sourceBuffer.toString('base64'),
+      imageMimeType,
+      imageFilename: path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'image.png')
+    };
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...replaceTemplatePlaceholders(parseJsonTemplate(customApi.headers, 'Custom API headers', {}), replacements)
+    };
+    const requestPayload = replaceTemplatePlaceholders(parseJsonTemplate(customApi.body, 'Custom API body template', {}), replacements);
+
+    const response = await fetch(customApi.url, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(requestPayload)
+    });
+
+    let responseBody = null;
+    const responseContentType = response.headers.get('content-type') || '';
+    if (String(responseContentType).toLowerCase().includes('application/json')) {
+      responseBody = await response.json().catch(() => ({}));
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: responseBody?.error?.message || responseBody?.error || 'Mesh generation request failed'
+      });
+    }
+
+    const meshOutput = await extractMeshOutputFromApiResponse(response, responseBody);
+    const extension = path.extname(meshOutput.filename).replace('.', '') || getExtensionFromContentType(meshOutput.contentType, 'glb');
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+    const storedFilePath = toStoredAssetPath('mesh', filename);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, meshOutput.buffer);
+
+    const savedAsset = await createProjectAsset({
+      projectId: Number(projectId),
+      type: 'mesh',
+      name: createGeneratedMeshName(trimmedName, extension),
+      filePath: storedFilePath,
+      metadata: {
+        format: extension.toUpperCase(),
+        source: 'API',
+        provider: customApi.name,
+        prompt: trimmedPrompt,
+        cardId: cardId || sourceAsset.metadata?.cardId || randomUUID()
+      },
+      createdAt: Date.now()
+    });
+
+    res.status(201).json(savedAsset);
+  } catch (err) {
+    console.error('Mesh generation API execution failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to run mesh generation API' });
+  }
+});
     }
     res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
   }
@@ -1705,6 +2097,7 @@ app.post('/api/image-edits/api', async (req, res) => {
     let response;
     let responseBody;
     let imageOutputs;
+    let providerName;
 
     if (selectedApi.startsWith('openai')) {
       if (!openAiSettings?.apiKey) {
@@ -1759,6 +2152,7 @@ app.post('/api/image-edits/api', async (req, res) => {
         mimeType: 'image/png',
         extension: 'png'
       }];
+      providerName = modelConfig.name;
     } else {
       const modelConfig = googleGenerationSettings?.models?.[selectedApi];
 
@@ -1817,6 +2211,7 @@ app.post('/api/image-edits/api', async (req, res) => {
         mimeType: part.mimeType,
         extension: getExtensionFromMimeType(part.mimeType)
       }));
+      providerName = modelConfig.name;
     }
 
     const editId = randomUUID();
@@ -1831,7 +2226,7 @@ app.post('/api/image-edits/api', async (req, res) => {
       editId,
       assetId: sourceAsset.id,
       savedEdits,
-      provider: modelConfig.name
+      provider: providerName
     });
   } catch (err) {
     console.error('Image edit API execution failed:', err);

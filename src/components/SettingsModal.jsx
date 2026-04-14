@@ -1,13 +1,23 @@
 import { useState, useEffect } from 'react'
-import { useSettings } from '../context/SettingsContext'
+import { useSettings } from '../context/SettingsContext.shared'
 import './SettingsModal.css'
+
+const CUSTOM_API_TYPE_OPTIONS = [
+  { value: 'image-generation', label: 'Image Generation' },
+  { value: 'image-edit', label: 'Image Edit' },
+  { value: 'mesh-generation', label: 'Mesh Generation' }
+]
+
+function getCustomApiTypeLabel(type) {
+  return CUSTOM_API_TYPE_OPTIONS.find(option => option.value === type)?.label || 'Image Generation'
+}
 
 export default function SettingsModal({ onClose }) {
   const { settings, updateSettings, addCustomApi } = useSettings()
   const [localSettings, setLocalSettings] = useState(settings)
   const [activeTab, setActiveTab] = useState('apis')
   const [showAddCustom, setShowAddCustom] = useState(false)
-  const [newCustom, setNewCustom] = useState({ name: '', url: '', headers: '', body: '' })
+  const [newCustom, setNewCustom] = useState({ name: '', url: '', headers: '', body: '', type: 'image-generation' })
 
   // Ensure local state is updated if context settings load/change
   useEffect(() => {
@@ -21,17 +31,10 @@ export default function SettingsModal({ onClose }) {
 
   const handleAddCustom = async () => {
     if (!newCustom.name || !newCustom.url) return
-    await addCustomApi(newCustom)
-    setNewCustom({ name: '', url: '', headers: '', body: '' })
+    const updatedSettings = await addCustomApi(newCustom)
+    setLocalSettings(updatedSettings)
+    setNewCustom({ name: '', url: '', headers: '', body: '', type: 'image-generation' })
     setShowAddCustom(false)
-    // Refresh local settings to show the new one
-    setLocalSettings(prev => ({
-      ...prev,
-      apis: {
-        ...prev.apis,
-        custom: [...(prev.apis.custom || []), { ...newCustom, id: Date.now() }]
-      }
-    }))
   }
 
   return (
@@ -159,6 +162,18 @@ export default function SettingsModal({ onClose }) {
                           onChange={e => setNewCustom({ ...newCustom, url: e.target.value })}
                         />
                       </div>
+                      <div className="settings-input-group">
+                        <label className="settings-label">Type</label>
+                        <select
+                          className="settings-input"
+                          value={newCustom.type}
+                          onChange={e => setNewCustom({ ...newCustom, type: e.target.value })}
+                        >
+                          {CUSTOM_API_TYPE_OPTIONS.map(option => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                     <div className="settings-input-group">
                       <label className="settings-label">Headers (JSON)</label>
@@ -191,6 +206,7 @@ export default function SettingsModal({ onClose }) {
                     <div key={api.id} className="custom-api-item">
                       <div className="custom-api-info">
                         <span style={{ fontWeight: 600 }}>{api.name}</span>
+                        <span className="custom-api-url">{getCustomApiTypeLabel(api.type)}</span>
                         <span className="custom-api-url">{api.url}</span>
                       </div>
                       <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--on-surface-variant)' }}>

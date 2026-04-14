@@ -1,7 +1,7 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
-import { useSettings } from '../context/SettingsContext'
+import { useSettings } from '../context/SettingsContext.shared'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import Viewer from '../components/Viewer'
@@ -26,10 +26,34 @@ const IMAGE_API_LIST = [
 
 const IMAGE_CARD_COLUMNS = [
   { id: 'images', dbId: 1, icon: 'image', title: 'IMAGES' },
-  { id: 'imageedit', dbId: 2, icon: 'photo_filter', title: 'IMAGE EDIT' },
+  { id: 'imageedit', dbId: 2, icon: 'photo_filter', title: 'IMAGE EDIT', showAttributes: true, emptyLabel: 'Drag an image card here to edit it' },
+  { id: 'meshgen', dbId: 3, icon: 'deployed_code', title: 'MESH GEN', showAttributes: true, emptyLabel: 'Drag an image card here to generate a mesh' },
 ]
 
 const DEFAULT_ATTRIBUTE_TYPE_ID = 1
+const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
+
+function isFileWorkflowValueType(valueType) {
+  return ['image', 'video', 'mesh'].includes(valueType)
+}
+
+function getWorkflowFileInputAccept(valueType) {
+  if (valueType === 'video') return 'video/*'
+  if (valueType === 'mesh') return '.glb,.gltf,.obj,.fbx,.stl,.ply,.usdz,.usd,.usda,.usdc'
+  return 'image/*'
+}
+
+function getWorkflowFileInputIcon(valueType) {
+  if (valueType === 'video') return 'video_file'
+  if (valueType === 'mesh') return 'deployed_code'
+  return 'image'
+}
+
+function normalizeCustomApiType(type) {
+  return ['image-generation', 'image-edit', 'mesh-generation'].includes(type)
+    ? type
+    : DEFAULT_CUSTOM_API_TYPE
+}
 
 function getComfyDraftFromWorkflow(workflow) {
   return {
@@ -38,7 +62,7 @@ function getComfyDraftFromWorkflow(workflow) {
     inputs: Object.fromEntries(
       (workflow?.parameters || []).map(parameter => {
         const valueType = parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
-        return [parameter.id, ['image', 'video'].includes(valueType) ? null : (parameter.defaultValue ?? '')]
+        return [parameter.id, isFileWorkflowValueType(valueType) ? null : (parameter.defaultValue ?? '')]
       })
     )
   }
@@ -75,19 +99,18 @@ export default function KanbanPage() {
   const {
     getProject,
     getProjectAssets,
-    getProjectTasks,
     uploadAsset,
     attachExistingAsset,
     deleteAsset,
     moveKanbanCard,
     getLibraryAssets,
-    createTask,
     getAttributeTypes,
     getProjectCardAttributes,
     createCardAttribute,
     updateCardAttribute,
     deleteCardAttribute,
     runImageEditApi,
+    runMeshGenerationApi,
     runImageEditComfy,
     generateImage,
     getComfyWorkflows,
@@ -98,14 +121,9 @@ export default function KanbanPage() {
   
   const [project, setProject] = useState(null)
   const [assets, setAssets] = useState([])
-  const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
 
   const [activeTab, setActiveTab] = useState('meshgen')
-  const [genSeed, setGenSeed] = useState('8841295201')
-  const [faceCount, setFaceCount] = useState('15000')
-  const [meshBatch, setMeshBatch] = useState('1')
-  const [processEngine, setProcessEngine] = useState('api')
   const [texResolution, setTexResolution] = useState('2048 x 2048 (2K)')
   const [texEngine, setTexEngine] = useState('stable')
   const [pbrEnabled, setPbrEnabled] = useState(true)
@@ -138,15 +156,13 @@ export default function KanbanPage() {
     async function loadData() {
       setLoading(true)
       try {
-        const [projData, assetsData, tasksData, attributesData] = await Promise.all([
+        const [projData, assetsData, attributesData] = await Promise.all([
           getProject(projectId),
           getProjectAssets(projectId),
-          getProjectTasks(projectId),
           getProjectCardAttributes(projectId)
         ])
         setProject(projData)
         setAssets(assetsData)
-        setTasks(tasksData)
         setCardAttributes(attributesData)
       } catch (err) {
         console.error('Failed to load project data:', err)
@@ -155,7 +171,7 @@ export default function KanbanPage() {
       }
     }
     loadData()
-  }, [projectId, getProject, getProjectAssets, getProjectTasks, getProjectCardAttributes])
+  }, [projectId, getProject, getProjectAssets, getProjectCardAttributes])
 
   useEffect(() => {
     async function loadAttributeTypes() {
@@ -470,7 +486,7 @@ export default function KanbanPage() {
       setPendingImageGeneration({
         selectedApi: draft.selectedApi,
         title: draft.prompt.trim(),
-        source: combinedApis.find(api => api.id === draft.selectedApi)?.name || 'Remote API',
+        source: imageGenerationApis.find(api => api.id === draft.selectedApi)?.name || 'Remote API',
         detail: 'Waiting for image response'
       })
       setImageDraft(null)
@@ -492,21 +508,21 @@ export default function KanbanPage() {
     }
   }
 
-  const handleGenerateMesh = async () => {
-    try {
-      await createTask({
-        projectId,
-        name: `Mesh_Synth_${tasks.length + 1}`,
-        metadata: { genSeed, faceCount, meshBatch, processEngine }
-      });
-      const tasksData = await getProjectTasks(projectId);
-      setTasks(tasksData);
-    } catch (err) {
-      console.error('Failed to create task:', err);
-    }
-  };
-
   const images = assets.filter(a => a.type === 'image')
+  const meshes = assets.filter(a => a.type === 'mesh')
+
+  const meshAssetsByCardId = useMemo(() => {
+    return meshes.reduce((accumulator, asset) => {
+      const cardId = asset.metadata?.cardId || `asset-${asset.id}`
+      if (!accumulator[cardId]) {
+        accumulator[cardId] = []
+      }
+
+      accumulator[cardId].push(asset)
+      return accumulator
+    }, {})
+  }, [meshes])
+
   const imageCards = useMemo(() => {
     const cards = new Map()
 
@@ -533,12 +549,24 @@ export default function KanbanPage() {
           return (right.createdAt || 0) - (left.createdAt || 0)
         })
         const primaryAsset = sortedAssets[0]
+        const meshAssets = (meshAssetsByCardId[id] || []).slice().sort((left, right) => {
+          const leftPosition = left.assetPosition ?? Number.MAX_SAFE_INTEGER
+          const rightPosition = right.assetPosition ?? Number.MAX_SAFE_INTEGER
+
+          if (leftPosition !== rightPosition) {
+            return leftPosition - rightPosition
+          }
+
+          return (right.createdAt || 0) - (left.createdAt || 0)
+        })
         const sources = [...new Set(sortedAssets.map(asset => asset.metadata?.source).filter(Boolean))]
         const formats = [...new Set(sortedAssets.map(asset => asset.metadata?.format).filter(Boolean))]
 
         return {
           id,
           assets: sortedAssets,
+          meshAssets,
+          allAssets: [...sortedAssets, ...meshAssets],
           primaryAsset,
           sourceLabel: sources.length === 1 ? sources[0] : 'MIXED',
           metaLabel: sortedAssets.length === 1
@@ -563,7 +591,7 @@ export default function KanbanPage() {
 
         return right.createdAt - left.createdAt
       })
-  }, [images])
+  }, [images, meshAssetsByCardId])
 
   const imageCardsByColumn = useMemo(() => {
     return IMAGE_CARD_COLUMNS.reduce((accumulator, column) => {
@@ -590,7 +618,47 @@ export default function KanbanPage() {
     })
   }, [comfyWorkflows])
 
-  const selectedImageEditWorkflow = imageEditWorkflows.find(workflow => workflow.id == imageEditDraft?.workflowId) || null
+  const meshGenWorkflows = useMemo(() => {
+    return comfyWorkflows.filter(workflow => {
+      const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
+      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+      return parameterValueTypes.includes('image') && outputValueTypes.includes('mesh')
+    })
+  }, [comfyWorkflows])
+
+  const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
+
+  const imageGenerationApis = useMemo(() => ([
+    ...IMAGE_API_LIST,
+    ...customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'image-generation')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ]), [customApis])
+
+  const imageEditApis = useMemo(() => ([
+    ...IMAGE_API_LIST,
+    ...customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'image-edit')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ]), [customApis])
+
+  const meshGenerationApis = useMemo(() => (
+    customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'mesh-generation')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ), [customApis])
+
+  const getWorkflowsForCard = (card) => card?.kanbanColumnId === 3 ? meshGenWorkflows : imageEditWorkflows
+
+  const getApiOptionsForColumnId = (columnId) => {
+    if (columnId === 3) return meshGenerationApis
+    return imageEditApis
+  }
+
+  const getApiOptionsForCard = (card) => getApiOptionsForColumnId(card?.kanbanColumnId)
+
+  const getDefaultApiForCard = (card) => getApiOptionsForCard(card)[0]?.id || ''
 
   const getAttributeOptionsForCard = (cardId, typeName) => {
     const matchingAttributes = (cardAttributesByCardId[cardId] || []).filter(attribute => {
@@ -613,7 +681,7 @@ export default function KanbanPage() {
   }
 
   const getCardImageSourceGroups = (card) => {
-    return (card.assets || []).map(asset => ({
+    return (card.assets || []).filter(asset => asset.type === 'image').map(asset => ({
       asset,
       options: [
         {
@@ -724,13 +792,14 @@ export default function KanbanPage() {
     const promptOptions = getPromptOptionsForCard(card.id)
     const firstPromptOption = promptOptions[0] || { id: 'custom', value: '' }
     const isCustomPrompt = firstPromptOption.id === 'custom'
-    const initialWorkflow = mode === 'comfy' ? (imageEditWorkflows[0] || null) : null
+    const availableWorkflows = getWorkflowsForCard(card)
+    const initialWorkflow = mode === 'comfy' ? (availableWorkflows[0] || null) : null
 
     return {
       cardId: card.id,
       mode,
       name: '',
-      selectedApi: IMAGE_API_LIST[0]?.id || 'nanobana',
+      selectedApi: getDefaultApiForCard(card),
       selectedAssetId: card.assets[0]?.id ? `asset:${card.assets[0].id}` : '',
       workflowId: initialWorkflow?.id || '',
       inputBindings: createImageEditInputBindings(card, initialWorkflow),
@@ -788,12 +857,13 @@ export default function KanbanPage() {
       }
 
       if (field === 'mode' && value === 'comfy' && !nextDraft.workflowId) {
-        nextDraft.workflowId = imageEditWorkflows[0]?.id || ''
-        nextDraft.inputBindings = createImageEditInputBindings(card, imageEditWorkflows[0])
+        const availableWorkflows = getWorkflowsForCard(card)
+        nextDraft.workflowId = availableWorkflows[0]?.id || ''
+        nextDraft.inputBindings = createImageEditInputBindings(card, availableWorkflows[0])
       }
 
       if (field === 'workflowId' && nextDraft.mode === 'comfy') {
-        const workflow = imageEditWorkflows.find(item => item.id == value)
+        const workflow = getWorkflowsForCard(card).find(item => item.id == value)
         nextDraft.inputBindings = createImageEditInputBindings(card, workflow)
       }
 
@@ -862,6 +932,7 @@ export default function KanbanPage() {
     }
 
     const name = imageEditDraft.name?.trim() || ''
+    const isMeshGenCard = card.kanbanColumnId === 3
 
     try {
       setImageEditPendingCardId(card.id)
@@ -874,12 +945,22 @@ export default function KanbanPage() {
           return
         }
 
-        await runImageEditApi(projectId, {
-          imageSource: imageEditDraft.selectedAssetId,
-          name,
-          selectedApi: imageEditDraft.selectedApi,
-          prompt
-        })
+        if (isMeshGenCard) {
+          await runMeshGenerationApi(projectId, {
+            imageSource: imageEditDraft.selectedAssetId,
+            name,
+            selectedApi: imageEditDraft.selectedApi,
+            prompt,
+            cardId: card.id
+          })
+        } else {
+          await runImageEditApi(projectId, {
+            imageSource: imageEditDraft.selectedAssetId,
+            name,
+            selectedApi: imageEditDraft.selectedApi,
+            prompt
+          })
+        }
       } else if (imageEditDraft.mode === 'comfy') {
         if (!imageEditDraft.workflowId) {
           alert('Select a ComfyUI workflow.')
@@ -891,7 +972,7 @@ export default function KanbanPage() {
           return
         }
 
-        const workflow = imageEditWorkflows.find(item => item.id == imageEditDraft.workflowId)
+        const workflow = getWorkflowsForCard(card).find(item => item.id == imageEditDraft.workflowId)
         if (!workflow) {
           alert('Select a valid ComfyUI workflow.')
           return
@@ -980,34 +1061,56 @@ export default function KanbanPage() {
           onError: () => {}
         }))
 
-        await runImageEditComfy(projectId, {
-          assetId: primaryAssetId,
-          workflowId: Number(imageEditDraft.workflowId),
-          name,
-          inputValues,
-          promptId,
-          clientId
-        })
+        if (isMeshGenCard) {
+          await runComfyWorkflow(projectId, {
+            workflowId: Number(imageEditDraft.workflowId),
+            cardId: card.id,
+            inputs: inputValues,
+            promptId,
+            clientId
+          })
 
-        setImageEditProgressByCardId(prev => prev[card.id]
-          ? {
-              ...prev,
-              [card.id]: {
-                ...prev[card.id],
-                progressPercent: 100,
-                detail: 'Saving edited image',
-                currentNodeLabel: 'ComfyUI image edit completed'
+          setImageEditProgressByCardId(prev => prev[card.id]
+            ? {
+                ...prev,
+                [card.id]: {
+                  ...prev[card.id],
+                  progressPercent: 100,
+                  detail: 'Saving generated mesh',
+                  currentNodeLabel: 'ComfyUI mesh generation completed'
+                }
               }
-            }
-          : prev)
+            : prev)
+        } else {
+          await runImageEditComfy(projectId, {
+            assetId: primaryAssetId,
+            workflowId: Number(imageEditDraft.workflowId),
+            name,
+            inputValues,
+            promptId,
+            clientId
+          })
+
+          setImageEditProgressByCardId(prev => prev[card.id]
+            ? {
+                ...prev,
+                [card.id]: {
+                  ...prev[card.id],
+                  progressPercent: 100,
+                  detail: 'Saving edited image',
+                  currentNodeLabel: 'ComfyUI image edit completed'
+                }
+              }
+            : prev)
+        }
       }
 
       await refreshProjectAssets()
       closeImageEditActionMenu()
-      alert('Image edit completed successfully.')
+      alert(isMeshGenCard ? 'Mesh generation completed successfully.' : 'Image edit completed successfully.')
     } catch (err) {
-      console.error('Failed to run image edit:', err)
-      alert(err.message || 'Failed to run image edit')
+      console.error(isMeshGenCard ? 'Failed to run mesh generation:' : 'Failed to run image edit:', err)
+      alert(err.message || (isMeshGenCard ? 'Failed to run mesh generation' : 'Failed to run image edit'))
     } finally {
       closeImageEditProgressSubscription(card.id)
       setImageEditProgressByCardId(prev => {
@@ -1141,18 +1244,13 @@ export default function KanbanPage() {
     )
   }
 
-  // Combined API list: Static + Custom from settings
-  const combinedApis = [
-    ...IMAGE_API_LIST,
-    ...(settings?.apis?.custom || []).map(api => ({ id: `custom_${api.id}`, name: api.name }))
-  ]
-
   const draftColumnId = imageDraft?.cardId
     ? imageCards.find(card => card.id === imageDraft.cardId)?.kanbanColumnId || IMAGE_CARD_COLUMNS[0].dbId
     : IMAGE_CARD_COLUMNS[0].dbId
 
   const renderDropZone = (columnId, position, isEmpty = false) => {
     const isActive = dropTarget?.columnId === columnId && dropTarget?.position === position
+    const column = IMAGE_CARD_COLUMNS.find(item => item.dbId === columnId)
 
     return (
       <div
@@ -1163,7 +1261,7 @@ export default function KanbanPage() {
       >
         {isEmpty && !imageDraft && !pendingImageGeneration && (
           <span className="kanban-drop-zone__label font-label">
-            {columnId === 2 ? 'Drag an image card here to edit it' : 'Drop image cards here'}
+            {column?.emptyLabel || 'Drop image cards here'}
           </span>
         )}
       </div>
@@ -1171,11 +1269,18 @@ export default function KanbanPage() {
   }
 
   const renderImageCard = (card, showAttributes = false) => {
-    const totalPages = Math.max(1, Math.ceil(card.assets.length / 4))
+    const isMeshGenCard = card.kanbanColumnId === 3
+    const previewAssets = isMeshGenCard && (card.meshAssets?.length || 0) > 0
+      ? card.meshAssets
+      : card.assets
+    const totalPages = Math.max(1, Math.ceil(previewAssets.length / 4))
     const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
-    const visibleAssets = card.assets.slice(currentPage * 4, currentPage * 4 + 4)
+    const visibleAssets = previewAssets.slice(currentPage * 4, currentPage * 4 + 4)
     const attributes = cardAttributesByCardId[card.id] || []
     const imageSourceGroups = getCardImageSourceGroups(card)
+    const availableActionApis = getApiOptionsForCard(card)
+    const availableActionWorkflows = getWorkflowsForCard(card)
+    const selectedActionWorkflow = availableActionWorkflows.find(workflow => workflow.id == imageEditDraft?.workflowId) || null
 
     return (
       <div
@@ -1203,7 +1308,7 @@ export default function KanbanPage() {
             className="image-card__action-btn image-card__delete"
             onClick={(e) => {
               e.stopPropagation()
-              handleRemoveImageCard(card.assets)
+              handleRemoveImageCard(card.allAssets || card.assets)
             }}
             title="Remove card"
           >
@@ -1214,7 +1319,7 @@ export default function KanbanPage() {
         <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
           {visibleAssets.length > 0 ? (
             visibleAssets.map(asset => {
-              const displayItems = showAttributes ? getAssetEditDisplayItems(asset) : []
+              const displayItems = showAttributes && asset.type === 'image' ? getAssetEditDisplayItems(asset) : []
               const previewIndex = showAttributes
                 ? Math.min(imageEditPreviewIndexes[asset.id] || 0, Math.max(0, displayItems.length - 1))
                 : 0
@@ -1224,7 +1329,12 @@ export default function KanbanPage() {
 
               return (
               <div key={asset.id} className="image-card__thumb-item">
-                {previewFilename ? (
+                {asset.type === 'mesh' && previewFilename ? (
+                  <Viewer
+                    height="100%"
+                    modelUrl={`http://localhost:3001/assets/${encodeURI(previewFilename)}`}
+                  />
+                ) : previewFilename ? (
                   <img
                     src={`http://localhost:3001/assets/${encodeURI(previewFilename)}`}
                     alt={previewName}
@@ -1232,7 +1342,7 @@ export default function KanbanPage() {
                   />
                 ) : (
                   <div className="image-card__thumb-placeholder">
-                    <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>{asset.type === 'mesh' ? 'deployed_code' : 'image'}</span>
                   </div>
                 )}
 
@@ -1409,8 +1519,10 @@ export default function KanbanPage() {
                             className="image-card__attribute-select"
                             value={imageEditDraft.selectedApi}
                             onChange={event => handleImageEditDraftChange(card, 'selectedApi', event.target.value)}
+                            disabled={availableActionApis.length === 0}
                           >
-                            {combinedApis.map(api => (
+                            {availableActionApis.length === 0 && <option value="">No APIs available</option>}
+                            {availableActionApis.map(api => (
                               <option key={api.id} value={api.id}>{api.name}</option>
                             ))}
                           </select>
@@ -1449,15 +1561,17 @@ export default function KanbanPage() {
                             className="image-card__attribute-select"
                             value={imageEditDraft.workflowId}
                             onChange={event => handleImageEditDraftChange(card, 'workflowId', event.target.value)}
+                            disabled={availableActionWorkflows.length === 0}
                           >
-                            {imageEditWorkflows.map(workflow => (
+                            {availableActionWorkflows.length === 0 && <option value="">No workflows available</option>}
+                            {availableActionWorkflows.map(workflow => (
                               <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
                             ))}
                           </select>
                         </div>
 
-                        {selectedImageEditWorkflow ? (
-                          selectedImageEditWorkflow.parameters.map(parameter => {
+                        {selectedActionWorkflow ? (
+                          selectedActionWorkflow.parameters.map(parameter => {
                             const valueType = getWorkflowParameterValueType(parameter)
                             const binding = getImageEditParameterBinding(imageEditDraft, parameter)
                             const resolvedValue = resolveImageEditParameterValue(card, imageEditDraft, parameter)
@@ -1517,7 +1631,7 @@ export default function KanbanPage() {
                         ) : (
                           <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
                             <span className="material-symbols-outlined">tune</span>
-                            <span>No compatible ComfyUI workflow available for image edits.</span>
+                            <span>{isMeshGenCard ? 'No compatible ComfyUI workflow available for mesh generation.' : 'No compatible ComfyUI workflow available for image edits.'}</span>
                           </div>
                         )}
                       </>
@@ -1635,7 +1749,7 @@ export default function KanbanPage() {
           {cards.map((card, index) => (
             <Fragment key={card.id}>
               {renderDropZone(column.dbId, index)}
-              {renderImageCard(card, column.dbId === 2)}
+              {renderImageCard(card, column.showAttributes)}
             </Fragment>
           ))}
 
@@ -1658,7 +1772,7 @@ export default function KanbanPage() {
                     <span className="material-symbols-outlined">account_tree</span>
                     ComfyUI Workflow
                   </button>
-                  <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: 'nanobana', prompt: '', cardId: imageDraft?.cardId || null })}>
+                  <button className="option-btn" onClick={() => setImageDraft({ mode: 'api', selectedApi: imageGenerationApis[0]?.id || '', prompt: '', cardId: imageDraft?.cardId || null })}>
                     <span className="material-symbols-outlined">api</span>
                     Remote API
                   </button>
@@ -1735,15 +1849,15 @@ export default function KanbanPage() {
                                   {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
                                 </label>
 
-                                {['image', 'video'].includes(getWorkflowParameterValueType(parameter)) ? (
+                                {isFileWorkflowValueType(getWorkflowParameterValueType(parameter)) ? (
                                   <label className="image-card__file-input">
                                     <input
                                       type="file"
-                                      accept={getWorkflowParameterValueType(parameter) === 'video' ? 'video/*' : 'image/*'}
+                                      accept={getWorkflowFileInputAccept(getWorkflowParameterValueType(parameter))}
                                       onChange={e => handleComfyInputChange(parameter, e.target.files?.[0] || null)}
                                     />
                                     <span className="material-symbols-outlined">
-                                      {getWorkflowParameterValueType(parameter) === 'video' ? 'video_file' : 'image'}
+                                      {getWorkflowFileInputIcon(getWorkflowParameterValueType(parameter))}
                                     </span>
                                     <span>
                                       {imageDraft.inputs?.[parameter.id]?.name || `Select ${getWorkflowParameterValueType(parameter)} file`}
@@ -1803,7 +1917,7 @@ export default function KanbanPage() {
                     value={imageDraft.selectedApi}
                     onChange={e => setImageDraft({ ...imageDraft, selectedApi: e.target.value })}
                   >
-                    {combinedApis.map(api => (
+                    {imageGenerationApis.map(api => (
                       <option key={api.id} value={api.id}>{api.name}</option>
                     ))}
                   </select>
@@ -1937,105 +2051,6 @@ export default function KanbanPage() {
         <main className="kanban-main" id="kanban-main">
           <div className="kanban-columns">
             {IMAGE_CARD_COLUMNS.map(renderImageColumn)}
-
-            {/* ═══ Column 3: Mesh Generation ═══ */}
-            <div className="kanban-col" id="col-meshgen">
-              <div className="kanban-col__header">
-                <div className="kanban-col__title-group">
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--secondary)' }}>deployed_code</span>
-                  <h2 className="kanban-col__title font-headline">MESH GEN</h2>
-                </div>
-                <span className="kanban-col__badge kanban-col__badge--secondary font-label">
-                  {tasks.some(t => t.status === 'processing') ? 'PROCESSING' : 'READY'}
-                </span>
-              </div>
-
-              <div className="kanban-col__content">
-                {/* Parameters Card */}
-                <div className="params-card params-card--secondary" id="meshgen-params">
-                  <div className="params-card__header">
-                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>settings_input_component</span>
-                    <span className="params-card__title font-label">PARAMETERS</span>
-                  </div>
-
-                  <div className="params-card__body">
-                    <div className="params-card__field">
-                      <label className="params-card__label font-label">Generation Seed</label>
-                      <input
-                        type="text"
-                        className="params-card__input params-card__input--seed"
-                        value={genSeed}
-                        onChange={(e) => setGenSeed(e.target.value)}
-                        id="gen-seed-input"
-                      />
-                    </div>
-
-                    <div className="params-card__row">
-                      <div className="params-card__field">
-                        <label className="params-card__label font-label">Face Count</label>
-                        <input
-                          type="number"
-                          className="params-card__input"
-                          value={faceCount}
-                          onChange={(e) => setFaceCount(e.target.value)}
-                          id="face-count-input"
-                        />
-                      </div>
-                      <div className="params-card__field">
-                        <label className="params-card__label font-label">Mesh Batch</label>
-                        <input
-                          type="number"
-                          className="params-card__input"
-                          value={meshBatch}
-                          onChange={(e) => setMeshBatch(e.target.value)}
-                          id="mesh-batch-input"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="params-card__engine">
-                      <span className="params-card__engine-label">Processing Engine</span>
-                      <div className="params-card__toggle-group">
-                        <button
-                          className={`params-card__toggle ${processEngine === 'api' ? 'params-card__toggle--active-secondary' : ''}`}
-                          onClick={() => setProcessEngine('api')}
-                          id="engine-api-btn"
-                        >API</button>
-                        <button
-                          className={`params-card__toggle ${processEngine === 'comfy' ? 'params-card__toggle--active-secondary' : ''}`}
-                          onClick={() => setProcessEngine('comfy')}
-                          id="engine-comfy-btn"
-                        >COMFY</button>
-                      </div>
-                    </div>
-                  </div>
-
-                  <button className="params-card__action params-card__action--secondary" id="generate-mesh-btn" onClick={handleGenerateMesh}>
-                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>bolt</span>
-                    GENERATE MESH
-                  </button>
-                </div>
-
-                {/* Active Tasks */}
-                {tasks.map(task => (
-                  <div key={task.id} className="task-card" id={`task-card-${task.id}`}>
-                    <div className="task-card__progress-bar">
-                      <div className="task-card__progress-fill" style={{ width: `${task.progress}%` }} />
-                    </div>
-                    <div className="task-card__header">
-                      <span className="task-card__name">Task: {task.name}</span>
-                      <span className="task-card__pct">{task.progress}%</span>
-                    </div>
-                    <p className="task-card__status">{task.status === 'processing' ? 'Processing...' : 'Complete'}</p>
-                    <div className="task-card__preview">
-                      <span className="material-symbols-outlined task-card__preview-icon">
-                        {task.status === 'processing' ? 'hourglass_top' : 'check_circle'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             {/* ═══ Column 4: Mesh Edit ═══ */}
             <div className="kanban-col" id="col-meshedit">

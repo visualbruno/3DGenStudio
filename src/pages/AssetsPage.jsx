@@ -13,7 +13,8 @@ const COMFY_VALUE_TYPES = [
   { value: 'string', label: 'String' },
   { value: 'number', label: 'Number' },
   { value: 'image', label: 'Image' },
-  { value: 'video', label: 'Video' }
+  { value: 'video', label: 'Video' },
+  { value: 'mesh', label: 'Mesh' }
 ]
 
 const ASSET_SECTIONS = [

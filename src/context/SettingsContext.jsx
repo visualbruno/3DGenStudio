@@ -1,7 +1,27 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { SettingsContext } from './SettingsContext.shared'
 
-const SettingsContext = createContext(null)
 const API_BASE = 'http://localhost:3001/api'
+const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
+
+function normalizeCustomApiType(type) {
+  return ['image-generation', 'image-edit', 'mesh-generation'].includes(type)
+    ? type
+    : DEFAULT_CUSTOM_API_TYPE
+}
+
+function normalizeSettings(settings) {
+  return {
+    ...settings,
+    apis: {
+      ...settings?.apis,
+      custom: (settings?.apis?.custom || []).map(api => ({
+        ...api,
+        type: normalizeCustomApiType(api?.type)
+      }))
+    }
+  }
+}
 
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({
@@ -107,7 +127,7 @@ export function SettingsProvider({ children }) {
       const res = await fetch(`${API_BASE}/settings`)
       if (res.ok) {
         const data = await res.json()
-        setSettings(data)
+        setSettings(normalizeSettings(data))
       }
     } catch (err) {
       console.error('Failed to fetch settings:', err)
@@ -122,14 +142,16 @@ export function SettingsProvider({ children }) {
 
   const updateSettings = async (newSettings) => {
     try {
+      const normalizedSettings = normalizeSettings(newSettings)
       const res = await fetch(`${API_BASE}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSettings)
+        body: JSON.stringify(normalizedSettings)
       })
       const data = await res.json()
-      setSettings(data)
-      return data
+      const normalizedData = normalizeSettings(data)
+      setSettings(normalizedData)
+      return normalizedData
     } catch (err) {
       console.error('Failed to update settings:', err)
       throw err
@@ -141,7 +163,7 @@ export function SettingsProvider({ children }) {
       ...settings,
       apis: {
         ...settings.apis,
-        custom: [...(settings.apis.custom || []), { ...api, id: Date.now() }]
+        custom: [...(settings.apis.custom || []), { ...api, id: Date.now(), type: normalizeCustomApiType(api?.type) }]
       }
     }
     return await updateSettings(newSettings)
@@ -160,8 +182,3 @@ export function SettingsProvider({ children }) {
   )
 }
 
-export function useSettings() {
-  const ctx = useContext(SettingsContext)
-  if (!ctx) throw new Error('useSettings must be used within SettingsProvider')
-  return ctx
-}

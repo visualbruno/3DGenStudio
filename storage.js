@@ -132,6 +132,27 @@ export const DEFAULT_SETTINGS = {
   }
 };
 
+const DEFAULT_CUSTOM_API_TYPE = 'image-generation';
+
+function normalizeCustomApiType(type) {
+  return ['image-generation', 'image-edit', 'mesh-generation'].includes(type)
+    ? type
+    : DEFAULT_CUSTOM_API_TYPE;
+}
+
+function normalizeSettingsValue(settings = DEFAULT_SETTINGS) {
+  return {
+    ...settings,
+    apis: {
+      ...settings?.apis,
+      custom: (settings?.apis?.custom || []).map(api => ({
+        ...api,
+        type: normalizeCustomApiType(api?.type)
+      }))
+    }
+  };
+}
+
 let dbPromise;
 
 function openDatabase(filename) {
@@ -1591,13 +1612,14 @@ export async function deleteAssetById(assetId) {
 export async function getSettings() {
   const db = await getDb();
   const row = await get(db, 'SELECT json FROM Settings WHERE id = 1');
-  return mergeWithDefaults(DEFAULT_SETTINGS, parseJson(row?.json, DEFAULT_SETTINGS));
+  return normalizeSettingsValue(mergeWithDefaults(DEFAULT_SETTINGS, parseJson(row?.json, DEFAULT_SETTINGS)));
 }
 
 export async function saveSettings(settings) {
   const db = await getDb();
-  await run(db, 'INSERT INTO Settings (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json', [JSON.stringify(settings)]);
-  return settings;
+  const normalizedSettings = normalizeSettingsValue(settings);
+  await run(db, 'INSERT INTO Settings (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json', [JSON.stringify(normalizedSettings)]);
+  return normalizedSettings;
 }
 
 export async function listWorkflowRecords() {
