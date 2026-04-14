@@ -44,6 +44,9 @@ function normalizeLoadedModel(asset) {
     throw new Error('No mesh data found')
   }
 
+  const container = new THREE.Group()
+  container.add(root)
+
   root.traverse(child => {
     if (!child.isMesh) {
       return
@@ -61,7 +64,16 @@ function normalizeLoadedModel(asset) {
     }
   })
 
-  return root
+  root.updateMatrixWorld(true)
+
+  const bounds = new THREE.Box3().setFromObject(root)
+  if (!bounds.isEmpty()) {
+    const center = bounds.getCenter(new THREE.Vector3())
+    root.position.sub(center)
+    root.updateMatrixWorld(true)
+  }
+
+  return container
 }
 
 function loadWithLoader(loader, url) {
