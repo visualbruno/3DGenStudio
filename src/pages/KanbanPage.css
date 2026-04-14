@@ -402,6 +402,7 @@
   color: var(--on-surface);
   cursor: pointer;
   opacity: 0;
+  z-index: 4;
   transition: all var(--transition-base);
 }
 
@@ -413,6 +414,13 @@
 .image-card__thumb-remove:hover {
   background: rgba(0, 0, 0, 0.78);
   color: var(--error);
+}
+
+.image-card__thumb-remove--left {
+  top: auto;
+  bottom: 2.1rem;
+  left: 0.35rem;
+  right: auto;
 }
 
 .image-card__thumb-caption {

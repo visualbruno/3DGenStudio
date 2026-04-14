@@ -1506,6 +1506,19 @@ export default function KanbanPage() {
                   </button>
                 )}
 
+                {previewType === 'mesh' && sourceAsset?.id && (
+                  <button
+                    className="image-card__thumb-remove image-card__thumb-remove--left"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      handleRemoveImage(sourceAsset.id)
+                    }}
+                    title="Remove mesh"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>close</span>
+                  </button>
+                )}
+
                 {showAttributes && (
                   <div className="image-card__thumb-caption font-label">
                     {previewName}
