@@ -148,6 +148,7 @@ export default function KanbanPage() {
   const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
   const [imageEditProgressByCardId, setImageEditProgressByCardId] = useState({})
   const [imageEditPreviewIndexes, setImageEditPreviewIndexes] = useState({})
+  const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
   const pendingComfyProgressSubscriptionRef = useRef(null)
@@ -808,6 +809,17 @@ export default function KanbanPage() {
     return `http://localhost:3001/assets/${encodeURI(filename)}`
   }
 
+  const openMeshPreview = (asset) => {
+    if (!asset?.filename) {
+      return
+    }
+
+    setMeshPreviewAsset({
+      name: asset.name,
+      url: getAssetPreviewUrl(asset.filename)
+    })
+  }
+
   const handleImageEditPreviewStep = (asset, step) => {
     const itemCount = 1 + (asset.edits?.length || 0)
     if (itemCount <= 1) {
@@ -1434,10 +1446,27 @@ export default function KanbanPage() {
                 : (showAttributes ? previewItem?.name : asset.name)
               const previewType = useAssetCarousel ? asset.assetType : asset.type
               const previewUrl = getAssetPreviewUrl(previewFilename)
-              const modelUrl = getAssetPreviewUrl(asset.filename)
+              const sourceAsset = useAssetCarousel ? asset.asset : asset
+              const modelUrl = getAssetPreviewUrl(sourceAsset?.filename)
 
               return (
-              <div key={asset.key || asset.id} className="image-card__thumb-item">
+              <div
+                key={asset.key || asset.id}
+                className={`image-card__thumb-item ${previewType === 'mesh' ? 'image-card__thumb-item--mesh' : ''}`}
+                onClick={previewType === 'mesh' ? (event) => {
+                  event.stopPropagation()
+                  openMeshPreview(sourceAsset)
+                } : undefined}
+                role={previewType === 'mesh' ? 'button' : undefined}
+                tabIndex={previewType === 'mesh' ? 0 : undefined}
+                onKeyDown={previewType === 'mesh' ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    openMeshPreview(sourceAsset)
+                  }
+                } : undefined}
+              >
                 {previewType === 'mesh' && previewUrl ? (
                   asset.previewFilename ? (
                     <img
@@ -2121,6 +2150,27 @@ export default function KanbanPage() {
       <Header showSearch showCreateNew onSettingsClick={() => setShowSettings(true)} />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {meshPreviewAsset && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setMeshPreviewAsset(null)}>
+          <div className="assets-dialog assets-dialog--viewer" role="dialog" aria-modal="true" aria-labelledby="kanban-mesh-preview-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="kanban-mesh-preview-dialog-title" className="assets-dialog__title font-headline">{meshPreviewAsset.name}</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setMeshPreviewAsset(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body assets-dialog__body--viewer">
+              <Viewer height="100%" modelUrl={meshPreviewAsset.url} />
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setMeshPreviewAsset(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="kanban-body">
         {/* ── Sidebar ── */}
