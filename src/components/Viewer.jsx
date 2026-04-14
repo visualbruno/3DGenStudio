@@ -1,6 +1,6 @@
-import { Canvas } from '@react-three/fiber'
-import { Bounds, Center, Environment, Grid, OrbitControls, PerspectiveCamera, Stage } from '@react-three/drei'
-import { Suspense, useEffect, useMemo, useState } from 'react'
+import { Canvas, useThree } from '@react-three/fiber'
+import { Environment, Grid, OrbitControls, PerspectiveCamera } from '@react-three/drei'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -67,13 +67,36 @@ function normalizeLoadedModel(asset) {
   root.updateMatrixWorld(true)
 
   const bounds = new THREE.Box3().setFromObject(root)
+  const target = new THREE.Vector3(0, 0, 0)
+  const cameraPosition = new THREE.Vector3(3, 3, 5)
+
   if (!bounds.isEmpty()) {
     const center = bounds.getCenter(new THREE.Vector3())
-    root.position.sub(center)
+    const size = bounds.getSize(new THREE.Vector3())
+    const maxDimension = Math.max(size.x, size.y, size.z, 1)
+    const scale = 2 / maxDimension
+
+    root.scale.setScalar(scale)
+    root.position.set(
+      -center.x * scale,
+      -bounds.min.y * scale,
+      -center.z * scale
+    )
     root.updateMatrixWorld(true)
+
+    const scaledHeight = size.y * scale
+    const maxScaledDimension = Math.max(size.x, size.y, size.z) * scale
+    const distance = Math.max(maxScaledDimension * 1.5, 2)
+
+    target.set(0, scaledHeight / 2, 0)
+    cameraPosition.set(distance, Math.max(scaledHeight * 0.8, distance * 0.55), distance)
   }
 
-  return container
+  return {
+    object: container,
+    target,
+    cameraPosition
+  }
 }
 
 function loadWithLoader(loader, url) {
@@ -114,8 +137,34 @@ async function loadModelFromUrl(url) {
   throw new Error('Unsupported mesh format')
 }
 
-function ModelPreview({ modelUrl }) {
-  const [model, setModel] = useState(null)
+function CameraController({ autoRotate, target, cameraPosition }) {
+  const { camera } = useThree()
+  const controlsRef = useRef(null)
+
+  useEffect(() => {
+    camera.position.copy(cameraPosition)
+    camera.lookAt(target)
+    camera.updateProjectionMatrix()
+
+    if (controlsRef.current) {
+      controlsRef.current.target.copy(target)
+      controlsRef.current.update()
+    }
+  }, [camera, cameraPosition, target])
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      autoRotate={autoRotate}
+      autoRotateSpeed={0.5}
+      enableDamping
+    />
+  )
+}
+
+export default function Viewer({ height = '100%', modelUrl = null }) {
+  const [modelState, setModelState] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -125,9 +174,12 @@ function ModelPreview({ modelUrl }) {
     }
 
     loadModelFromUrl(modelUrl)
-      .then(loadedModel => {
+      .then(loadedModelState => {
         if (active) {
-          setModel(loadedModel)
+          setModelState({
+            ...loadedModelState,
+            modelUrl
+          })
         }
       })
       .catch(err => {
@@ -140,35 +192,25 @@ function ModelPreview({ modelUrl }) {
   }, [modelUrl])
 
   const renderedModel = useMemo(() => {
-    if (!model) {
+    if (!modelState?.object || modelState.modelUrl !== modelUrl) {
       return null
     }
 
-    return model.clone()
-  }, [model])
+    return modelState.object.clone()
+  }, [modelState, modelUrl])
 
-  if (!renderedModel) {
-    return <PlaceholderMesh />
-  }
+  const cameraTarget = modelState?.modelUrl === modelUrl ? modelState.target : new THREE.Vector3(0, 0.75, 0)
+  const cameraPosition = modelState?.modelUrl === modelUrl ? modelState.cameraPosition : new THREE.Vector3(3, 3, 5)
 
-  return (
-    <Bounds fit clip observe margin={1.2}>
-      <Center>
-        <primitive object={renderedModel} />
-      </Center>
-    </Bounds>
-  )
-}
-
-export default function Viewer({ height = '100%', modelUrl = null }) {
   return (
     <div style={{ width: '100%', height, background: '#0D0E10', borderRadius: '8px', overflow: 'hidden' }}>
-      <Canvas shadows>
+      <Canvas key={modelUrl || 'placeholder'} shadows>
         <PerspectiveCamera makeDefault position={[3, 3, 5]} />
+        <ambientLight intensity={1.4} />
+        <directionalLight position={[4, 6, 8]} intensity={2.2} castShadow />
+        <directionalLight position={[-5, 3, -4]} intensity={0.9} color="#8ff5ff" />
         <Suspense fallback={null}>
-          <Stage environment="city" intensity={0.5} contactShadow={{ opacity: 0.4, blur: 2 }}>
-            {modelUrl ? <ModelPreview modelUrl={modelUrl} /> : <PlaceholderMesh />}
-          </Stage>
+          {renderedModel ? <primitive object={renderedModel} /> : <PlaceholderMesh />}
           <Grid 
             infiniteGrid 
             fadeDistance={30} 
@@ -179,7 +221,7 @@ export default function Viewer({ height = '100%', modelUrl = null }) {
           />
         </Suspense>
         <Environment preset="night" />
-        <OrbitControls makeDefault autoRotate={!modelUrl} autoRotateSpeed={0.5} enableDamping />
+        <CameraController autoRotate={!modelUrl} target={cameraTarget} cameraPosition={cameraPosition} />
       </Canvas>
     </div>
   )

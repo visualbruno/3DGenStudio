@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
-import Viewer from '../components/Viewer'
+import MeshPreviewDialog from '../components/MeshPreviewDialog'
 import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
@@ -757,26 +757,7 @@ export default function AssetsPage() {
         </div>
       )}
 
-      {meshPreviewAsset && (
-        <div className="assets-dialog-overlay" role="presentation" onClick={() => setMeshPreviewAsset(null)}>
-          <div className="assets-dialog assets-dialog--viewer" role="dialog" aria-modal="true" aria-labelledby="mesh-preview-dialog-title" onClick={event => event.stopPropagation()}>
-            <div className="assets-dialog__header">
-              <h2 id="mesh-preview-dialog-title" className="assets-dialog__title font-headline">{meshPreviewAsset.name}</h2>
-              <button type="button" className="assets-dialog__close" onClick={() => setMeshPreviewAsset(null)}>
-                <span className="material-symbols-outlined">close</span>
-              </button>
-            </div>
-            <div className="assets-dialog__body assets-dialog__body--viewer">
-              <Viewer height="100%" modelUrl={meshPreviewAsset.url} />
-            </div>
-            <div className="assets-dialog__actions">
-              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setMeshPreviewAsset(null)}>
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {meshPreviewAsset && <MeshPreviewDialog asset={meshPreviewAsset} onClose={() => setMeshPreviewAsset(null)} />}
 
       <main className="assets-page">
         <div className="assets-page__container">
