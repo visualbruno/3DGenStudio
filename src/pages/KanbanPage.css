@@ -340,6 +340,7 @@
   width: 100%;
   background: var(--surface-container-lowest);
   overflow: hidden;
+  position: relative;
 }
 
 .image-card__thumb--grid {
@@ -347,6 +348,10 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
   padding: 2px;
+}
+
+.image-card__thumb--carousel {
+  display: flex;
 }
 
 .image-card__thumb-item {

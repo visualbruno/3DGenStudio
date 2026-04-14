@@ -717,6 +717,45 @@ export default function KanbanPage() {
     ]
   }
 
+  const getCardPreviewItems = (card, showAttributes = false) => {
+    const hasMeshAssets = (card.meshAssets?.length || 0) > 0
+    const useMixedAssetCarousel = showAttributes && card.kanbanColumnId === 3 && hasMeshAssets
+
+    if (!useMixedAssetCarousel) {
+      return []
+    }
+
+    return [
+      ...(card.assets || []).flatMap(asset => (
+        getAssetEditDisplayItems(asset).map(item => ({
+          key: item.key,
+          name: item.name,
+          filename: item.filename,
+          assetType: 'image',
+          isEdit: item.isEdit,
+          asset
+        }))
+      )),
+      ...((card.meshAssets || []).map(asset => ({
+        key: `mesh:${asset.id}`,
+        name: asset.name,
+        filename: asset.filename,
+        previewFilename: asset.thumbnail || null,
+        assetType: 'mesh',
+        isEdit: false,
+        asset
+      })))
+    ]
+  }
+
+  const getAssetPreviewUrl = (filename) => {
+    if (!filename) {
+      return null
+    }
+
+    return `http://localhost:3001/assets/${encodeURI(filename)}`
+  }
+
   const handleImageEditPreviewStep = (asset, step) => {
     const itemCount = 1 + (asset.edits?.length || 0)
     if (itemCount <= 1) {
@@ -1270,12 +1309,18 @@ export default function KanbanPage() {
 
   const renderImageCard = (card, showAttributes = false) => {
     const isMeshGenCard = card.kanbanColumnId === 3
-    const previewAssets = isMeshGenCard && (card.meshAssets?.length || 0) > 0
+    const carouselItems = getCardPreviewItems(card, showAttributes)
+    const useAssetCarousel = carouselItems.length > 0
+    const previewAssets = isMeshGenCard && (card.meshAssets?.length || 0) > 0 && !useAssetCarousel
       ? card.meshAssets
       : card.assets
-    const totalPages = Math.max(1, Math.ceil(previewAssets.length / 4))
+    const totalPages = useAssetCarousel
+      ? Math.max(1, carouselItems.length)
+      : Math.max(1, Math.ceil(previewAssets.length / 4))
     const currentPage = Math.min(imageCardPages[card.id] || 0, totalPages - 1)
-    const visibleAssets = previewAssets.slice(currentPage * 4, currentPage * 4 + 4)
+    const visibleAssets = useAssetCarousel
+      ? carouselItems.slice(currentPage, currentPage + 1)
+      : previewAssets.slice(currentPage * 4, currentPage * 4 + 4)
     const attributes = cardAttributesByCardId[card.id] || []
     const imageSourceGroups = getCardImageSourceGroups(card)
     const availableActionApis = getApiOptionsForCard(card)
@@ -1316,37 +1361,52 @@ export default function KanbanPage() {
           </button>
         </div>
 
-        <div className={`image-card__thumb ${visibleAssets.length > 1 ? 'image-card__thumb--grid' : ''}`}>
+        <div className={`image-card__thumb ${visibleAssets.length > 1 && !useAssetCarousel ? 'image-card__thumb--grid' : ''} ${useAssetCarousel ? 'image-card__thumb--carousel' : ''}`}>
           {visibleAssets.length > 0 ? (
             visibleAssets.map(asset => {
-              const displayItems = showAttributes && asset.type === 'image' ? getAssetEditDisplayItems(asset) : []
+              const displayItems = showAttributes && !useAssetCarousel && asset.type === 'image' ? getAssetEditDisplayItems(asset) : []
               const previewIndex = showAttributes
                 ? Math.min(imageEditPreviewIndexes[asset.id] || 0, Math.max(0, displayItems.length - 1))
                 : 0
               const previewItem = showAttributes ? (displayItems[previewIndex] || displayItems[0]) : asset
-              const previewFilename = showAttributes ? previewItem?.filename : asset.filename
-              const previewName = showAttributes ? previewItem?.name : asset.name
+              const previewFilename = useAssetCarousel
+                ? (asset.previewFilename || asset.filename)
+                : (showAttributes ? previewItem?.filename : asset.filename)
+              const previewName = useAssetCarousel
+                ? asset.name
+                : (showAttributes ? previewItem?.name : asset.name)
+              const previewType = useAssetCarousel ? asset.assetType : asset.type
+              const previewUrl = getAssetPreviewUrl(previewFilename)
+              const modelUrl = getAssetPreviewUrl(asset.filename)
 
               return (
-              <div key={asset.id} className="image-card__thumb-item">
-                {asset.type === 'mesh' && previewFilename ? (
-                  <Viewer
-                    height="100%"
-                    modelUrl={`http://localhost:3001/assets/${encodeURI(previewFilename)}`}
-                  />
+              <div key={asset.key || asset.id} className="image-card__thumb-item">
+                {previewType === 'mesh' && previewUrl ? (
+                  asset.previewFilename ? (
+                    <img
+                      src={previewUrl}
+                      alt={previewName}
+                      className="image-card__thumb-image"
+                    />
+                  ) : (
+                    <Viewer
+                      height="100%"
+                      modelUrl={modelUrl}
+                    />
+                  )
                 ) : previewFilename ? (
                   <img
-                    src={`http://localhost:3001/assets/${encodeURI(previewFilename)}`}
+                    src={previewUrl}
                     alt={previewName}
                     className="image-card__thumb-image"
                   />
                 ) : (
                   <div className="image-card__thumb-placeholder">
-                    <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>{asset.type === 'mesh' ? 'deployed_code' : 'image'}</span>
+                    <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>{previewType === 'mesh' ? 'deployed_code' : 'image'}</span>
                   </div>
                 )}
 
-                {!showAttributes && (
+                {!showAttributes && !useAssetCarousel && (
                   <button
                     className="image-card__thumb-remove"
                     onClick={(e) => {
@@ -1365,7 +1425,13 @@ export default function KanbanPage() {
                   </div>
                 )}
 
-                {showAttributes && displayItems.length > 1 && (
+                {useAssetCarousel && previewType === 'mesh' && (
+                  <div className="image-card__edit-preview-indicator font-label">
+                    3D MESH
+                  </div>
+                )}
+
+                {showAttributes && !useAssetCarousel && displayItems.length > 1 && (
                   <>
                     <div className="image-card__edit-preview-indicator font-label">
                       {previewIndex === 0
@@ -1414,7 +1480,7 @@ export default function KanbanPage() {
                   }))
                 }}
                 disabled={currentPage === 0}
-                title="Previous images"
+                title={useAssetCarousel ? 'Previous asset' : 'Previous images'}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
               </button>
@@ -1428,7 +1494,7 @@ export default function KanbanPage() {
                   }))
                 }}
                 disabled={currentPage >= totalPages - 1}
-                title="Next images"
+                title={useAssetCarousel ? 'Next asset' : 'Next images'}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
               </button>
