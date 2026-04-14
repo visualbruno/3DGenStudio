@@ -805,16 +805,17 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
     const db = await getDb();
     const row = await get(
       db,
-      `SELECT source.id AS assetId, source.projectId, source.name AS assetName, source.filePath AS assetFilePath,
+      `SELECT projectAsset.id AS assetId, c.projectId, projectAsset.name AS assetName, projectAsset.filePath AS assetFilePath,
               ae.editId, ae.name AS editName, ae.filePath AS editFilePath, ae.creationDate
        FROM Assets_Edits ae
-       JOIN (
-         SELECT a.id, c.projectId, a.name, a.filePath
-         FROM Assets a
-         JOIN Cards_Assets ca ON ca.assetId = a.id
-         JOIN Cards c ON c.id = ca.cardId
-       ) source ON source.id = ae.assetId
-       WHERE source.projectId = ? AND ae.filePath = ?
+       JOIN Assets sourceAsset ON sourceAsset.id = ae.assetId
+       JOIN Assets projectAsset ON projectAsset.filePath = sourceAsset.filePath
+         AND projectAsset.assetTypeId = sourceAsset.assetTypeId
+       JOIN Cards_Assets ca ON ca.assetId = projectAsset.id
+       JOIN Cards c ON c.id = ca.cardId
+       JOIN AssetTypes at ON at.id = sourceAsset.assetTypeId
+       WHERE c.projectId = ? AND ae.filePath = ? AND at.name = 'Image'
+       ORDER BY c.creationDate DESC, projectAsset.creationDate DESC, projectAsset.id DESC
        LIMIT 1`,
       [projectId, editFilePath]
     );
@@ -959,44 +960,86 @@ export async function listProjectAssets(projectId = null) {
     params
   );
 
-  const imageAssetIds = rows
-    .filter(row => String(row.assetTypeName || '').toLowerCase() === 'image')
-    .map(row => row.id);
+  const assetFilePaths = [...new Set(rows.map(row => row.filePath).filter(Boolean))];
 
-  const editRows = imageAssetIds.length > 0
+  const canonicalAssetRows = assetFilePaths.length > 0
     ? await all(
       db,
-      `SELECT assetId, editId, name, filePath, creationDate
-       FROM Assets_Edits
-       WHERE assetId IN (${imageAssetIds.map(() => '?').join(', ')})
-       ORDER BY creationDate ASC`,
-      imageAssetIds
+      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate, at.name AS assetTypeName
+       FROM Assets a
+       JOIN AssetTypes at ON at.id = a.assetTypeId
+       WHERE at.name IN ('Image', 'Mesh')
+         AND a.filePath IN (${assetFilePaths.map(() => '?').join(', ')})
+       ORDER BY a.creationDate DESC, a.id DESC`,
+      assetFilePaths
     )
     : [];
 
-  const editsByAssetId = editRows.reduce((accumulator, row) => {
-    if (!accumulator[row.assetId]) {
-      accumulator[row.assetId] = [];
-    }
+  const canonicalAssetsByKey = canonicalAssetRows.reduce((accumulator, row) => {
+    const key = `${row.assetTypeName}:${row.filePath}`;
 
-    accumulator[row.assetId].push({
-      id: `edit:${row.filePath}`,
-      editId: row.editId,
-      name: row.name || '',
-      filePath: row.filePath,
-      filename: toAssetUrlPath(row.filePath),
-      createdAt: row.creationDate,
-      isEdit: true
-    });
+    if (!accumulator[key]) {
+      accumulator[key] = row;
+    }
 
     return accumulator;
   }, {});
 
-  return rows.map(row => ({
-    ...mapAssetRow(row),
-    edits: editsByAssetId[row.id] || [],
-    editCount: (editsByAssetId[row.id] || []).length
-  }));
+  const imageFilePaths = rows
+    .filter(row => String(row.assetTypeName || '').toLowerCase() === 'image')
+    .map(row => row.filePath)
+    .filter(Boolean);
+
+  const uniqueImageFilePaths = [...new Set(imageFilePaths)];
+
+  const editRows = uniqueImageFilePaths.length > 0
+    ? await all(
+      db,
+      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.creationDate
+       FROM Assets_Edits ae
+       JOIN Assets source ON source.id = ae.assetId
+       JOIN AssetTypes at ON at.id = source.assetTypeId
+       WHERE at.name = 'Image'
+         AND source.filePath IN (${uniqueImageFilePaths.map(() => '?').join(', ')})
+       ORDER BY ae.creationDate ASC`,
+      uniqueImageFilePaths
+    )
+    : [];
+
+  const editsByFilePath = editRows.reduce((accumulator, row) => {
+    if (!accumulator[row.sourceFilePath]) {
+      accumulator[row.sourceFilePath] = [];
+    }
+
+    if (!accumulator[row.sourceFilePath].some(edit => edit.filePath === row.filePath)) {
+      accumulator[row.sourceFilePath].push({
+        id: `edit:${row.filePath}`,
+        editId: row.editId,
+        name: row.name || '',
+        filePath: row.filePath,
+        filename: toAssetUrlPath(row.filePath),
+        createdAt: row.creationDate,
+        isEdit: true
+      });
+    }
+
+    return accumulator;
+  }, {});
+
+  return rows.map(row => {
+    const canonicalAsset = canonicalAssetsByKey[`${row.assetTypeName}:${row.filePath}`];
+    const assetEdits = editsByFilePath[row.filePath] || [];
+
+    return {
+      ...mapAssetRow({
+        ...row,
+        name: canonicalAsset?.name || row.name,
+        thumbnail: row.thumbnail || canonicalAsset?.thumbnail || null
+      }),
+      edits: assetEdits,
+      editCount: assetEdits.length
+    };
+  });
 }
 
 export async function listAttributeTypes() {
@@ -1285,30 +1328,39 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
     throw new Error('A name is required');
   }
 
-  const unlinkedAssets = await all(
+  const matchingAssets = await all(
     db,
-    `SELECT a.id, a.thumbnail
+    `SELECT a.id, a.thumbnail,
+            EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id) AS isLinked
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
-       AND a.filePath = ?
-       AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
+        AND a.filePath = ?
      ORDER BY a.creationDate DESC, a.id DESC`,
     [normalizedType, storedFilePath]
   );
 
-  if (unlinkedAssets.length > 0) {
-    await run(db, 'UPDATE Assets SET name = ? WHERE id = ?', [trimmedName, unlinkedAssets[0].id]);
+  if (matchingAssets.length > 0) {
+    await run(
+      db,
+      `UPDATE Assets
+       SET name = ?
+       WHERE id IN (${matchingAssets.map(() => '?').join(', ')})`,
+      [trimmedName, ...matchingAssets.map(asset => asset.id)]
+    );
+
+    const unlinkedAssets = matchingAssets.filter(asset => !asset.isLinked);
+    const retainedAsset = unlinkedAssets[0] || matchingAssets[0];
 
     for (const asset of unlinkedAssets.slice(1)) {
       await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
     }
 
     return {
-      id: `library:${unlinkedAssets[0].id}`,
+      id: `library:${retainedAsset.id}`,
       name: trimmedName,
       filePath: storedFilePath,
-      thumbnailPath: unlinkedAssets[0].thumbnail || null,
+      thumbnailPath: retainedAsset.thumbnail || null,
       created: false
     };
   }
@@ -1637,6 +1689,27 @@ export async function listLibraryAssetsByType(type, port) {
     ])
   ];
 
+  const canonicalAssetRows = candidateStoredPaths.length > 0
+    ? await all(
+      db,
+      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate
+       FROM Assets a
+       JOIN AssetTypes at ON at.id = a.assetTypeId
+       WHERE at.name = ?
+         AND a.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
+       ORDER BY a.creationDate DESC, a.id DESC`,
+      [normalizeAssetTypeName(type), ...candidateStoredPaths]
+    )
+    : [];
+
+  const canonicalAssetsByFilePath = canonicalAssetRows.reduce((accumulator, row) => {
+    if (!accumulator[row.filePath]) {
+      accumulator[row.filePath] = row;
+    }
+
+    return accumulator;
+  }, {});
+
   const editRows = type === 'image' && candidateStoredPaths.length > 0
     ? await all(
       db,
@@ -1690,17 +1763,19 @@ export async function listLibraryAssetsByType(type, port) {
       return accumulator;
     }
 
-    const thumbnailFilename = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
+    const canonicalAsset = canonicalAssetsByFilePath[row.filePath];
+    const thumbnailPath = row.thumbnail || canonicalAsset?.thumbnail || null;
+    const thumbnailFilename = thumbnailPath ? toAssetUrlPath(thumbnailPath) : null;
 
     accumulator.push({
       id: `library:${row.id}`,
-      name: row.name,
+      name: canonicalAsset?.name || row.name,
       filename,
       filePath: row.filePath,
       type,
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
-      thumbnailPath: row.thumbnail || null,
+      thumbnailPath,
       thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
       edits: assetEdits,
       editCount: assetEdits.length
@@ -1718,17 +1793,19 @@ export async function listLibraryAssetsByType(type, port) {
       const filename = `${subdirectory}/${entry.name}`;
       const storedFilePath = toStoredAssetPath(type, filename);
       const assetEdits = editsBySourceFilePath[storedFilePath] || [];
+      const canonicalAsset = canonicalAssetsByFilePath[storedFilePath];
+      const thumbnailFilename = canonicalAsset?.thumbnail ? toAssetUrlPath(canonicalAsset.thumbnail) : null;
 
       return {
         id: `file:${type}:${entry.name}`,
-        name: entry.name,
+        name: canonicalAsset?.name || entry.name,
         filename,
         filePath: storedFilePath,
         type,
         extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
         url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
-        thumbnailPath: null,
-        thumbnailUrl: null,
+        thumbnailPath: canonicalAsset?.thumbnail || null,
+        thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
         edits: assetEdits,
         editCount: assetEdits.length
       };
