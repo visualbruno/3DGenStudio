@@ -650,6 +650,9 @@ export default function AssetsPage() {
                     <article key={`${edit.editId}-${edit.filePath}-${index}`} className="asset-edit-card">
                       <div className="asset-edit-card__preview">
                         <img src={edit.url} alt={`${editPreviewAsset.name} ${edit.name?.trim() || `edit ${index + 1}`}`} className="asset-card__image" />
+                        {formatDimensions(edit.width, edit.height) && (
+                          <span className="asset-card__dimensions font-label">{formatDimensions(edit.width, edit.height)}</span>
+                        )}
                       </div>
                       <div className="asset-edit-card__body">
                         <div className="asset-edit-card__details">
