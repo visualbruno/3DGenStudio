@@ -432,6 +432,8 @@
 .asset-card__preview {
   width: 100%;
   background: var(--surface-container-high);
+  position: relative;
+  overflow: hidden;
 }
 
 .asset-card__preview--image {
@@ -484,6 +486,20 @@
   color: var(--on-surface);
   letter-spacing: 0.12em;
   font-size: 0.62rem;
+}
+
+.asset-card__dimensions {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(13, 14, 16, 0.72);
+  color: var(--on-surface);
+  letter-spacing: 0.08em;
+  font-size: 0.62rem;
+  z-index: 1;
 }
 
 .asset-card__body {
@@ -665,6 +681,8 @@
 .asset-edit-card__preview {
   aspect-ratio: 1 / 1;
   background: var(--surface-container-lowest);
+  position: relative;
+  overflow: hidden;
 }
 
 .asset-edit-card__body {

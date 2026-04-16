@@ -1366,6 +1366,109 @@ function getMimeTypeFromFilename(filename = '') {
   return 'image/png';
 }
 
+function readUInt24LE(buffer, offset) {
+  return buffer[offset] | (buffer[offset + 1] << 8) | (buffer[offset + 2] << 16);
+}
+
+function getImageDimensionsFromBuffer(buffer, { filename = '', mimeType = '' } = {}) {
+  if (!buffer || buffer.length < 10) {
+    return { width: 0, height: 0 };
+  }
+
+  const extension = path.extname(String(filename || '')).toLowerCase();
+  const normalizedMimeType = String(mimeType || '').toLowerCase();
+
+  if (buffer.length >= 24 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return {
+      width: buffer.readUInt32BE(16),
+      height: buffer.readUInt32BE(20)
+    };
+  }
+
+  if (buffer.length >= 10 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+    return {
+      width: buffer.readUInt16LE(6),
+      height: buffer.readUInt16LE(8)
+    };
+  }
+
+  if ((extension === '.bmp' || normalizedMimeType === 'image/bmp') && buffer.length >= 26) {
+    return {
+      width: Math.abs(buffer.readInt32LE(18)),
+      height: Math.abs(buffer.readInt32LE(22))
+    };
+  }
+
+  if ((extension === '.webp' || normalizedMimeType === 'image/webp') && buffer.length >= 30 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') {
+    const chunkType = buffer.toString('ascii', 12, 16);
+
+    if (chunkType === 'VP8X' && buffer.length >= 30) {
+      return {
+        width: readUInt24LE(buffer, 24) + 1,
+        height: readUInt24LE(buffer, 27) + 1
+      };
+    }
+
+    if (chunkType === 'VP8L' && buffer.length >= 25) {
+      const bits = buffer.readUInt32LE(21);
+      return {
+        width: (bits & 0x3fff) + 1,
+        height: ((bits >> 14) & 0x3fff) + 1
+      };
+    }
+
+    if (chunkType === 'VP8 ' && buffer.length >= 30 && buffer[23] === 0x9d && buffer[24] === 0x01 && buffer[25] === 0x2a) {
+      return {
+        width: buffer.readUInt16LE(26) & 0x3fff,
+        height: buffer.readUInt16LE(28) & 0x3fff
+      };
+    }
+  }
+
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+
+    while (offset < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+
+      const marker = buffer[offset + 1];
+      if (marker === 0xd8 || marker === 0xd9) {
+        offset += 2;
+        continue;
+      }
+
+      const segmentLength = buffer.readUInt16BE(offset + 2);
+      const isStartOfFrame = [0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker);
+
+      if (isStartOfFrame && offset + 8 < buffer.length) {
+        return {
+          width: buffer.readUInt16BE(offset + 7),
+          height: buffer.readUInt16BE(offset + 5)
+        };
+      }
+
+      if (!segmentLength || segmentLength < 2) {
+        break;
+      }
+
+      offset += 2 + segmentLength;
+    }
+  }
+
+  return { width: 0, height: 0 };
+}
+
+function formatImageResolution(width, height) {
+  if (!width || !height) {
+    return 'Unknown';
+  }
+
+  return `${width} x ${height}`;
+}
+
 function sanitizeAssetFolderName(value = 'image') {
   return String(value)
     .replace(/[^a-z0-9-_]+/gi, '_')
@@ -1394,6 +1497,10 @@ async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [
     const storedFilePath = getImageEditStoredFilePath(sourceAsset, editId, extension);
     const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
     const createdAt = Date.now() + index;
+    const { width, height } = getImageDimensionsFromBuffer(imageOutput.buffer, {
+      filename: `image.${extension}`,
+      mimeType: imageOutput.mimeType
+    });
 
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, imageOutput.buffer);
@@ -1403,6 +1510,8 @@ async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [
       editId,
       name,
       filePath: storedFilePath,
+      width,
+      height,
       createdAt
     }));
   }
@@ -1564,6 +1673,12 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         ? getExtensionFromContentType(downloadedFile.contentType, 'glb')
         : getExtensionFromMimeType(downloadedFile.contentType);
       const extension = path.extname(workflowFile.filename).replace('.', '') || fallbackExtension;
+      const dimensions = inferredAssetType === 'image'
+        ? getImageDimensionsFromBuffer(downloadedFile.buffer, {
+            filename: workflowFile.filename,
+            mimeType: downloadedFile.contentType
+          })
+        : { width: 0, height: 0 };
       const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
       const storedFilePath = toStoredAssetPath(inferredAssetType, filename);
       const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
@@ -1578,7 +1693,10 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           ? (trimmedName || workflow.name)
           : createGeneratedImageName(workflow.name, extension),
         filePath: storedFilePath,
+        width: dimensions.width,
+        height: dimensions.height,
         metadata: {
+          resolution: inferredAssetType === 'image' ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
           format: extension.toUpperCase(),
           source: 'COMFYUI',
           provider: 'ComfyUI',
@@ -1832,6 +1950,9 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
       const storedFilePath = toStoredAssetPath(assetType, filename);
       const thumbnailFile = thumbnailsByIndex.get(index);
       let thumbnailPath = null;
+      const dimensions = assetType === 'image'
+        ? getImageDimensionsFromBuffer(file.buffer, { filename: file.originalname, mimeType: file.mimetype })
+        : { width: 0, height: 0 };
 
       await fs.mkdir(destinationDir, { recursive: true });
       await fs.writeFile(path.join(destinationDir, filename), file.buffer);
@@ -1848,7 +1969,10 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         type: assetType,
         filePath: storedFilePath,
         thumbnailPath,
+        width: dimensions.width,
+        height: dimensions.height,
         metadata: {
+          resolution: assetType === 'image' ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
           source: 'LIBRARY IMPORT'
         },
         createdAt: Date.now()
@@ -1881,12 +2005,23 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
     const assetType = req.body.type || inferAssetTypeFromFilename(req.file.originalname);
+    const inputMetadata = req.body.metadata ? JSON.parse(req.body.metadata) : {};
+    const dimensions = assetType === 'image'
+      ? getImageDimensionsFromBuffer(await fs.readFile(req.file.path), { filename: req.file.originalname, mimeType: req.file.mimetype })
+      : { width: 0, height: 0 };
     const newAsset = await createProjectAsset({
       projectId: Number(req.body.projectId),
       type: assetType,
       name: req.body.name || req.file.originalname,
       filePath: toStoredAssetPath(assetType, req.file.filename),
-      metadata: req.body.metadata ? JSON.parse(req.body.metadata) : {},
+      width: dimensions.width,
+      height: dimensions.height,
+      metadata: {
+        ...inputMetadata,
+        resolution: assetType === 'image'
+          ? formatImageResolution(dimensions.width, dimensions.height)
+          : (inputMetadata.resolution || 'Unknown')
+      },
       createdAt: Date.now()
     });
 
@@ -1955,11 +2090,15 @@ app.post('/api/assets/link', async (req, res) => {
       name: name || path.basename(storedFilePath),
       filePath: storedFilePath,
       thumbnailPath: libraryAsset?.thumbnail || null,
+      width: libraryAsset?.width ?? 0,
+      height: libraryAsset?.height ?? 0,
       metadata: {
-        resolution: 'Unknown',
+        ...(metadata || {}),
+        resolution: assetType === 'image'
+          ? formatImageResolution(libraryAsset?.width ?? 0, libraryAsset?.height ?? 0)
+          : 'Unknown',
         format: path.extname(storedFilePath).replace('.', '').toUpperCase() || assetType.toUpperCase(),
-        source: 'ASSET LIB',
-        ...(metadata || {})
+        source: 'ASSET LIB'
       },
       createdAt: Date.now()
     });
@@ -2541,19 +2680,26 @@ app.post('/api/images/generate', async (req, res) => {
     }
 
     const extension = getExtensionFromMimeType(inlineData.mimeType);
+    const imageBuffer = Buffer.from(inlineData.data, 'base64');
+    const dimensions = getImageDimensionsFromBuffer(imageBuffer, {
+      filename: `generated.${extension}`,
+      mimeType: inlineData.mimeType
+    });
     const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
     const storedFilePath = toStoredAssetPath('image', filename);
     const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
 
-    await fs.writeFile(absoluteFilePath, Buffer.from(inlineData.data, 'base64'));
+    await fs.writeFile(absoluteFilePath, imageBuffer);
 
     const newAsset = await createProjectAsset({
       projectId: Number(projectId),
       type: 'image',
       name: createGeneratedImageName(trimmedPrompt, extension),
       filePath: storedFilePath,
+      width: dimensions.width,
+      height: dimensions.height,
       metadata: {
-        resolution: 'Unknown',
+        resolution: formatImageResolution(dimensions.width, dimensions.height),
         format: outputFormat || extension.toUpperCase(),
         source: 'AI GEN',
         provider: providerName,

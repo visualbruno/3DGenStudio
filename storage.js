@@ -289,6 +289,8 @@ function mapAssetRow(row) {
     name: row.name,
     filePath: row.filePath,
     filename,
+    width: row.width ?? 0,
+    height: row.height ?? 0,
     thumbnailPath: row.thumbnail || null,
     thumbnail,
     cardDbId: row.cardId ?? null,
@@ -425,6 +427,9 @@ export async function initializeStorage() {
       assetTypeId INTEGER NOT NULL,
       creationDate INTEGER NOT NULL,
       metadata TEXT,
+      thumbnail TEXT,
+      width INTEGER NOT NULL DEFAULT 0,
+      height INTEGER NOT NULL DEFAULT 0,
       FOREIGN KEY(assetTypeId) REFERENCES AssetTypes(id)
     );
 
@@ -454,6 +459,8 @@ export async function initializeStorage() {
       editId TEXT NOT NULL,
       name TEXT,
       filePath TEXT NOT NULL,
+      width INTEGER NOT NULL DEFAULT 0,
+      height INTEGER NOT NULL DEFAULT 0,
       creationDate INTEGER NOT NULL,
       FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
     );
@@ -476,10 +483,22 @@ export async function initializeStorage() {
   if (!assetColumns.some(column => column.name === 'thumbnail')) {
     await run(db, 'ALTER TABLE Assets ADD COLUMN thumbnail TEXT');
   }
+  if (!assetColumns.some(column => column.name === 'width')) {
+    await run(db, 'ALTER TABLE Assets ADD COLUMN width INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!assetColumns.some(column => column.name === 'height')) {
+    await run(db, 'ALTER TABLE Assets ADD COLUMN height INTEGER NOT NULL DEFAULT 0');
+  }
 
   const assetEditColumns = await all(db, 'PRAGMA table_info(Assets_Edits)');
   if (!assetEditColumns.some(column => column.name === 'name')) {
     await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN name TEXT');
+  }
+  if (!assetEditColumns.some(column => column.name === 'width')) {
+    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN width INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!assetEditColumns.some(column => column.name === 'height')) {
+    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN height INTEGER NOT NULL DEFAULT 0');
   }
 
   await seedReferenceTables(db);
@@ -766,19 +785,21 @@ async function getCardAttributeView(cardId, position) {
   return row ? mapCardAttributeRow(row) : null;
 }
 
-async function insertAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
+async function insertAsset({ name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
   const db = await getDb();
   const assetTypeId = await getAssetTypeIdByName(type);
   const result = await run(
     db,
-    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     [
       name,
       toStoredAssetPath(type, filePath),
       assetTypeId,
       createdAt,
       JSON.stringify(metadata),
-      thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null
+      thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null,
+      Number(width) || 0,
+      Number(height) || 0
     ]
   );
 
@@ -790,6 +811,7 @@ async function getAssetViewById(assetId) {
   const row = await get(
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
+            a.width, a.height,
             at.name AS assetTypeName,
             c.projectId, c.id AS cardId, c.clientKey, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
             ca.position AS assetPosition
@@ -826,8 +848,8 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
     const db = await getDb();
     const row = await get(
       db,
-      `SELECT projectAsset.id AS assetId, c.projectId, projectAsset.name AS assetName, projectAsset.filePath AS assetFilePath,
-              ae.editId, ae.name AS editName, ae.filePath AS editFilePath, ae.creationDate
+       `SELECT projectAsset.id AS assetId, c.projectId, projectAsset.name AS assetName, projectAsset.filePath AS assetFilePath,
+              ae.editId, ae.name AS editName, ae.filePath AS editFilePath, ae.width AS editWidth, ae.height AS editHeight, ae.creationDate
        FROM Assets_Edits ae
        JOIN Assets sourceAsset ON sourceAsset.id = ae.assetId
        JOIN Assets projectAsset ON projectAsset.filePath = sourceAsset.filePath
@@ -855,6 +877,8 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
       inputFilePath: row.editFilePath,
       inputFilename: toAssetUrlPath(row.editFilePath),
       inputName: row.editName || `Edit ${row.editId}`,
+      width: row.editWidth ?? 0,
+      height: row.editHeight ?? 0,
       isEdit: true,
       editId: row.editId
     };
@@ -967,7 +991,7 @@ export async function listProjectAssets(projectId = null) {
 
   const rows = await all(
     db,
-    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
+    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail, a.width, a.height,
             at.name AS assetTypeName,
             c.projectId, c.id AS cardId, c.clientKey, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
             ca.position AS assetPosition
@@ -986,7 +1010,7 @@ export async function listProjectAssets(projectId = null) {
   const canonicalAssetRows = assetFilePaths.length > 0
     ? await all(
       db,
-      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate, at.name AS assetTypeName
+      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.width, a.height, a.creationDate, at.name AS assetTypeName
        FROM Assets a
        JOIN AssetTypes at ON at.id = a.assetTypeId
        WHERE at.name IN ('Image', 'Mesh')
@@ -1016,7 +1040,7 @@ export async function listProjectAssets(projectId = null) {
   const editRows = uniqueImageFilePaths.length > 0
     ? await all(
       db,
-      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.creationDate
+      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.width, ae.height, ae.creationDate
        FROM Assets_Edits ae
        JOIN Assets source ON source.id = ae.assetId
        JOIN AssetTypes at ON at.id = source.assetTypeId
@@ -1039,6 +1063,8 @@ export async function listProjectAssets(projectId = null) {
         name: row.name || '',
         filePath: row.filePath,
         filename: toAssetUrlPath(row.filePath),
+        width: row.width ?? 0,
+        height: row.height ?? 0,
         createdAt: row.creationDate,
         isEdit: true
       });
@@ -1106,12 +1132,12 @@ export async function createCardAttribute(projectId, externalCardId, { attribute
   return await getCardAttributeView(card.id, position);
 }
 
-export async function createAssetEditRecord({ assetId, editId, name = '', filePath, createdAt = Date.now() }) {
+export async function createAssetEditRecord({ assetId, editId, name = '', filePath, width = 0, height = 0, createdAt = Date.now() }) {
   const db = await getDb();
   await run(
     db,
-    'INSERT INTO Assets_Edits (assetId, editId, name, filePath, creationDate) VALUES (?, ?, ?, ?, ?)',
-    [assetId, editId, String(name || '').trim(), toStoredAssetPath('image', filePath), createdAt]
+    'INSERT INTO Assets_Edits (assetId, editId, name, filePath, width, height, creationDate) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [assetId, editId, String(name || '').trim(), toStoredAssetPath('image', filePath), Number(width) || 0, Number(height) || 0, createdAt]
   );
 
   return {
@@ -1119,6 +1145,8 @@ export async function createAssetEditRecord({ assetId, editId, name = '', filePa
     editId,
     name: String(name || '').trim(),
     filePath: toStoredAssetPath('image', filePath),
+    width: Number(width) || 0,
+    height: Number(height) || 0,
     creationDate: createdAt
   };
 }
@@ -1286,7 +1314,7 @@ export async function moveCard(projectId, externalCardId, kanbanColumnId, positi
   return await resolveProjectCard(projectId, externalCardId);
 }
 
-export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
+export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
   const card = await ensureCard(projectId, 'Images', metadata.cardId, {
     creationDate: createdAt
   });
@@ -1295,6 +1323,8 @@ export async function createProjectAsset({ projectId, type, name, filePath, thum
     type,
     filePath,
     thumbnailPath,
+    width,
+    height,
     metadata,
     createdAt
   });
@@ -1322,12 +1352,14 @@ export async function updateAssetThumbnail(assetId, thumbnailPath) {
   return await getAssetViewById(Number(assetId));
 }
 
-export async function createLibraryAsset({ name, type, filePath, thumbnailPath = null, metadata = {}, createdAt = Date.now() }) {
+export async function createLibraryAsset({ name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
   const assetId = await insertAsset({
     name,
     type,
     filePath,
     thumbnailPath,
+    width,
+    height,
     metadata,
     createdAt
   });
@@ -1339,7 +1371,7 @@ export async function findLibraryAssetByFilePath(type, filePath) {
   const db = await getDb();
   return await get(
     db,
-    `SELECT a.id, a.thumbnail
+    `SELECT a.id, a.thumbnail, a.width, a.height
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
@@ -1363,7 +1395,7 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
 
   const matchingAssets = await all(
     db,
-    `SELECT a.id, a.thumbnail,
+      `SELECT a.id, a.thumbnail, a.width, a.height,
             EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id) AS isLinked
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
@@ -1394,13 +1426,15 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
       name: trimmedName,
       filePath: storedFilePath,
       thumbnailPath: retainedAsset.thumbnail || null,
+      width: retainedAsset.width ?? 0,
+      height: retainedAsset.height ?? 0,
       created: false
     };
   }
 
   const existingAsset = await get(
     db,
-    `SELECT a.thumbnail
+    `SELECT a.thumbnail, a.width, a.height
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
@@ -1415,6 +1449,8 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
     type,
     filePath: storedFilePath,
     thumbnailPath: existingAsset?.thumbnail || null,
+    width: existingAsset?.width ?? 0,
+    height: existingAsset?.height ?? 0,
     metadata: {
       source: 'LIBRARY RENAME'
     },
@@ -1707,7 +1743,7 @@ export async function listLibraryAssetsByType(type, port) {
   const fileEntries = entries.filter(entry => entry.isFile());
   const rows = await all(
     db,
-    `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate
+     `SELECT a.id, a.name, a.filePath, a.thumbnail, a.width, a.height, a.creationDate
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
@@ -1726,7 +1762,7 @@ export async function listLibraryAssetsByType(type, port) {
   const canonicalAssetRows = candidateStoredPaths.length > 0
     ? await all(
       db,
-      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.creationDate
+      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.width, a.height, a.creationDate
        FROM Assets a
        JOIN AssetTypes at ON at.id = a.assetTypeId
        WHERE at.name = ?
@@ -1747,7 +1783,7 @@ export async function listLibraryAssetsByType(type, port) {
   const editRows = type === 'image' && candidateStoredPaths.length > 0
     ? await all(
       db,
-      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.creationDate
+      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.width, ae.height, ae.creationDate
        FROM Assets_Edits ae
        JOIN Assets source ON source.id = ae.assetId
        JOIN AssetTypes at ON at.id = source.assetTypeId
@@ -1770,6 +1806,8 @@ export async function listLibraryAssetsByType(type, port) {
         name: row.name || '',
         filePath: row.filePath,
         filename,
+        width: row.width ?? 0,
+        height: row.height ?? 0,
         createdAt: row.creationDate,
         url: `http://localhost:${port}/assets/${encodeURI(filename)}`
       });
@@ -1809,6 +1847,8 @@ export async function listLibraryAssetsByType(type, port) {
       type,
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
+      width: canonicalAsset?.width ?? row.width ?? 0,
+      height: canonicalAsset?.height ?? row.height ?? 0,
       thumbnailPath,
       thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
       edits: assetEdits,
@@ -1838,6 +1878,8 @@ export async function listLibraryAssetsByType(type, port) {
         type,
         extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
         url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
+        width: canonicalAsset?.width ?? 0,
+        height: canonicalAsset?.height ?? 0,
         thumbnailPath: canonicalAsset?.thumbnail || null,
         thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
         edits: assetEdits,

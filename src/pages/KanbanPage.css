@@ -440,6 +440,24 @@
   z-index: 1;
 }
 
+.image-card__thumb-dimensions {
+  position: absolute;
+  left: 50%;
+  bottom: 0.35rem;
+  transform: translateX(-50%);
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.58);
+  color: var(--on-surface);
+  font-size: 0.56rem;
+  letter-spacing: 0.08em;
+  z-index: 2;
+}
+
+.image-card__thumb-dimensions--with-caption {
+  bottom: 1.9rem;
+}
+
 .image-card__thumb-nav {
   position: absolute;
   top: 50%;

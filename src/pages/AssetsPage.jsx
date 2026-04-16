@@ -104,6 +104,11 @@ function formatDefaultValue(value) {
   return String(value)
 }
 
+function formatDimensions(width, height) {
+  if (!width || !height) return null
+  return `${width} × ${height}`
+}
+
 export default function AssetsPage() {
   const {
     getLibraryAssets,
@@ -1101,6 +1106,9 @@ export default function AssetsPage() {
                           {activeSection === 'images' ? (
                             <div className="asset-card__preview asset-card__preview--image">
                               <img src={asset.url} alt={asset.name} className="asset-card__image" />
+                              {formatDimensions(asset.width, asset.height) && (
+                                <span className="asset-card__dimensions font-label">{formatDimensions(asset.width, asset.height)}</span>
+                              )}
                             </div>
                           ) : (
                             <div className={`asset-card__preview asset-card__preview--mesh ${asset.thumbnailUrl ? 'asset-card__preview--mesh-thumbnail' : ''}`}>

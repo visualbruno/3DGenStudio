@@ -760,12 +760,16 @@ export default function KanbanPage() {
         key: `asset:${asset.id}`,
         name: asset.name,
         filename: asset.filename,
+        width: asset.width,
+        height: asset.height,
         isEdit: false
       },
       ...((asset.edits || []).map((edit, index) => ({
         key: `edit:${edit.filePath}`,
         name: edit.name?.trim() || `Edit ${index + 1}`,
         filename: edit.filename,
+        width: edit.width,
+        height: edit.height,
         isEdit: true
       })))
     ]
@@ -785,6 +789,8 @@ export default function KanbanPage() {
           key: item.key,
           name: item.name,
           filename: item.filename,
+          width: item.width,
+          height: item.height,
           assetType: 'image',
           isEdit: item.isEdit,
           asset
@@ -808,6 +814,14 @@ export default function KanbanPage() {
     }
 
     return `http://localhost:3001/assets/${encodeURI(filename)}`
+  }
+
+  const formatAssetDimensions = (width, height) => {
+    if (!width || !height) {
+      return null
+    }
+
+    return `${width} × ${height}`
   }
 
   const openMeshPreview = (asset) => {
@@ -1445,6 +1459,9 @@ export default function KanbanPage() {
               const previewName = useAssetCarousel
                 ? asset.name
                 : (showAttributes ? previewItem?.name : asset.name)
+              const previewDimensions = useAssetCarousel
+                ? formatAssetDimensions(asset.width, asset.height)
+                : (showAttributes ? formatAssetDimensions(previewItem?.width, previewItem?.height) : formatAssetDimensions(asset.width, asset.height))
               const previewType = useAssetCarousel ? asset.assetType : asset.type
               const previewUrl = getAssetPreviewUrl(previewFilename)
               const sourceAsset = useAssetCarousel ? asset.asset : asset
@@ -1522,6 +1539,12 @@ export default function KanbanPage() {
                 {showAttributes && (
                   <div className="image-card__thumb-caption font-label">
                     {previewName}
+                  </div>
+                )}
+
+                {previewType === 'image' && previewDimensions && (
+                  <div className={`image-card__thumb-dimensions font-label ${showAttributes ? 'image-card__thumb-dimensions--with-caption' : ''}`}>
+                    {previewDimensions}
                   </div>
                 )}
 
