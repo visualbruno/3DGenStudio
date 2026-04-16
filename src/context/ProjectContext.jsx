@@ -242,6 +242,17 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
+  const getProjectCards = async (projectId) => {
+    const res = await fetch(`${API_BASE}/cards?projectId=${projectId}`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load project cards')
+    }
+
+    return data
+  }
+
   const getProjectTasks = async (projectId) => {
     const res = await fetch(`${API_BASE}/tasks?projectId=${projectId}`)
     return await res.json()
@@ -527,6 +538,7 @@ export function ProjectProvider({ children }) {
       getProject, 
       deleteProject,
       getProjectAssets,
+      getProjectCards,
       getProjectTasks,
       createTask,
       uploadAsset,

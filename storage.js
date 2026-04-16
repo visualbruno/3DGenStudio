@@ -273,8 +273,29 @@ function mapTaskRow(row) {
   };
 }
 
+function mapProjectCardRow(row) {
+  const metadata = parseJson(row.metadata, {});
+  const processing = isPlainObject(metadata?.processing) ? metadata.processing : null;
+
+  return {
+    id: row.clientKey || String(row.id),
+    cardDbId: row.id,
+    projectId: row.projectId,
+    name: row.name || '',
+    kanbanColumnId: row.kanbanColumnId ?? null,
+    kanbanColumnName: row.kanbanColumnName || null,
+    position: row.position ?? 0,
+    status: row.status || null,
+    progress: row.progress ?? null,
+    metadata,
+    processing,
+    createdAt: row.creationDate
+  };
+}
+
 function mapAssetRow(row) {
   const metadata = parseJson(row.metadata, {});
+  const cardMetadata = parseJson(row.cardMetadata, {});
   const filename = toAssetUrlPath(row.filePath);
   const thumbnail = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
 
@@ -295,10 +316,15 @@ function mapAssetRow(row) {
     thumbnail,
     cardDbId: row.cardId ?? null,
     cardKey: row.cardId ? (row.clientKey || String(row.cardId)) : null,
+    cardName: row.cardName || '',
     kanbanColumnId: row.kanbanColumnId ?? null,
     kanbanColumnName: row.kanbanColumnName || null,
     cardPosition: row.cardPosition ?? null,
     assetPosition: row.assetPosition ?? null,
+    cardStatus: row.cardStatus || null,
+    cardProgress: row.cardProgress ?? null,
+    cardMetadata,
+    processing: isPlainObject(cardMetadata?.processing) ? cardMetadata.processing : null,
     metadata,
     createdAt: row.creationDate
   };
@@ -575,6 +601,23 @@ async function getKanbanColumnIdByName(name) {
   return row.id;
 }
 
+async function ensureProjectExists(projectId) {
+  const normalizedProjectId = Number(projectId);
+
+  if (!Number.isInteger(normalizedProjectId) || normalizedProjectId <= 0) {
+    throw new Error('A valid projectId is required');
+  }
+
+  const db = await getDb();
+  const project = await get(db, 'SELECT id FROM Projects WHERE id = ?', [normalizedProjectId]);
+
+  if (!project) {
+    throw new Error(`Project not found: ${normalizedProjectId}`);
+  }
+
+  return normalizedProjectId;
+}
+
 async function getAttributeTypeById(attributeTypeId) {
   const db = await getDb();
   return await get(db, 'SELECT id, name FROM Attributes WHERE id = ?', [attributeTypeId]);
@@ -669,8 +712,9 @@ async function resolveCard(projectId, kanbanColumnId, externalCardId = null) {
 }
 
 async function ensureCard(projectId, columnName, externalCardId = null, values = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
   const db = await getDb();
-  const existingCard = await resolveProjectCard(projectId, externalCardId);
+  const existingCard = await resolveProjectCard(normalizedProjectId, externalCardId);
 
   if (existingCard) {
     return existingCard;
@@ -678,7 +722,7 @@ async function ensureCard(projectId, columnName, externalCardId = null, values =
 
   const kanbanColumnId = await getKanbanColumnIdByName(columnName);
 
-  const position = await getNextCardPosition(projectId, kanbanColumnId);
+  const position = await getNextCardPosition(normalizedProjectId, kanbanColumnId);
   const clientKey = externalCardId && !/^\d+$/.test(String(externalCardId)) ? String(externalCardId) : null;
   const metadata = JSON.stringify(values.metadata || {});
   const result = await run(
@@ -686,7 +730,7 @@ async function ensureCard(projectId, columnName, externalCardId = null, values =
     `INSERT INTO Cards (projectId, kanbanColumnId, clientKey, name, position, creationDate, status, progress, metadata)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      projectId,
+      normalizedProjectId,
       kanbanColumnId,
       clientKey,
       values.name || null,
@@ -702,6 +746,35 @@ async function ensureCard(projectId, columnName, externalCardId = null, values =
     id: result.lastID,
     clientKey
   };
+}
+
+async function getCardRow(projectId, externalCardId) {
+  const card = await resolveProjectCard(projectId, externalCardId);
+  if (!card) {
+    return null;
+  }
+
+  const db = await getDb();
+  return await get(
+    db,
+    `SELECT c.*, kc.name AS kanbanColumnName
+     FROM Cards c
+     JOIN KanbanColumns kc ON kc.id = c.kanbanColumnId
+     WHERE c.id = ? AND c.projectId = ?`,
+    [card.id, projectId]
+  );
+}
+
+function buildNextCardMetadata(existingMetadata = {}, processing = null) {
+  const nextMetadata = isPlainObject(existingMetadata) ? { ...existingMetadata } : {};
+
+  if (processing && isPlainObject(processing)) {
+    nextMetadata.processing = processing;
+    return nextMetadata;
+  }
+
+  delete nextMetadata.processing;
+  return nextMetadata;
 }
 
 async function normalizeCardPositions(projectId, kanbanColumnId) {
@@ -965,6 +1038,93 @@ export async function listProjectTasks(projectId) {
   return rows.map(mapTaskRow);
 }
 
+export async function listProjectCards(projectId) {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    `SELECT c.*, kc.name AS kanbanColumnName
+     FROM Cards c
+     JOIN KanbanColumns kc ON kc.id = c.kanbanColumnId
+     WHERE c.projectId = ?
+     ORDER BY c.kanbanColumnId ASC, c.position ASC, c.creationDate ASC, c.id ASC`,
+    [projectId]
+  );
+
+  return rows.map(mapProjectCardRow);
+}
+
+export async function setCardProcessingState(projectId, externalCardId, {
+  columnName = 'Images',
+  name = null,
+  status = 'processing',
+  progress = null,
+  processing = null,
+  creationDate = Date.now()
+} = {}) {
+  const card = await ensureCard(projectId, columnName, externalCardId, {
+    name,
+    status,
+    progress,
+    metadata: buildNextCardMetadata({}, processing),
+    creationDate
+  });
+  const existingRow = await getCardRow(projectId, card.clientKey || card.id);
+  if (!existingRow) {
+    throw new Error('Card not found');
+  }
+
+  const nextMetadata = buildNextCardMetadata(parseJson(existingRow.metadata, {}), processing);
+  const db = await getDb();
+
+  await run(
+    db,
+    `UPDATE Cards
+     SET name = ?, status = ?, progress = ?, metadata = ?
+     WHERE id = ? AND projectId = ?`,
+    [
+      name ?? existingRow.name ?? null,
+      status,
+      progress,
+      JSON.stringify(nextMetadata),
+      existingRow.id,
+      projectId
+    ]
+  );
+
+  return mapProjectCardRow(await getCardRow(projectId, card.clientKey || card.id));
+}
+
+export async function clearCardProcessingState(projectId, externalCardId, {
+  name,
+  status = null,
+  progress = null
+} = {}) {
+  const existingRow = await getCardRow(projectId, externalCardId);
+  if (!existingRow) {
+    return null;
+  }
+
+  const nextMetadata = buildNextCardMetadata(parseJson(existingRow.metadata, {}), null);
+  const db = await getDb();
+
+  await run(
+    db,
+    `UPDATE Cards
+     SET name = ?, status = ?, progress = ?, metadata = ?
+     WHERE id = ? AND projectId = ?`,
+    [
+      name ?? existingRow.name ?? null,
+      status,
+      progress,
+      JSON.stringify(nextMetadata),
+      existingRow.id,
+      projectId
+    ]
+  );
+
+  return mapProjectCardRow(await getCardRow(projectId, externalCardId));
+}
+
 export async function createTask(projectId, taskData = {}) {
   const card = await ensureCard(projectId, 'Mesh Gen', null, {
     name: taskData.name || null,
@@ -993,7 +1153,8 @@ export async function listProjectAssets(projectId = null) {
     db,
     `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail, a.width, a.height,
             at.name AS assetTypeName,
-            c.projectId, c.id AS cardId, c.clientKey, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
+            c.projectId, c.id AS cardId, c.clientKey, c.name AS cardName, c.status AS cardStatus, c.progress AS cardProgress,
+            c.metadata AS cardMetadata, c.kanbanColumnId, kc.name AS kanbanColumnName, c.position AS cardPosition,
             ca.position AS assetPosition
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId

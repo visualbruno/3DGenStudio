@@ -101,6 +101,7 @@ export default function KanbanPage() {
   const {
     getProject,
     getProjectAssets,
+      getProjectCards,
     uploadAsset,
     uploadAssetThumbnail,
     attachExistingAsset,
@@ -124,6 +125,7 @@ export default function KanbanPage() {
   
   const [project, setProject] = useState(null)
   const [assets, setAssets] = useState([])
+  const [projectCards, setProjectCards] = useState([])
   const [loading, setLoading] = useState(true)
 
   const [activeTab, setActiveTab] = useState('meshgen')
@@ -160,13 +162,15 @@ export default function KanbanPage() {
     async function loadData() {
       setLoading(true)
       try {
-        const [projData, assetsData, attributesData] = await Promise.all([
+        const [projData, assetsData, cardsData, attributesData] = await Promise.all([
           getProject(projectId),
           getProjectAssets(projectId),
+          getProjectCards(projectId),
           getProjectCardAttributes(projectId)
         ])
         setProject(projData)
         setAssets(assetsData)
+        setProjectCards(cardsData)
         setCardAttributes(attributesData)
       } catch (err) {
         console.error('Failed to load project data:', err)
@@ -175,7 +179,7 @@ export default function KanbanPage() {
       }
     }
     loadData()
-  }, [projectId, getProject, getProjectAssets, getProjectCardAttributes])
+  }, [projectId, getProject, getProjectAssets, getProjectCards, getProjectCardAttributes])
 
   useEffect(() => {
     async function loadAttributeTypes() {
@@ -258,8 +262,12 @@ export default function KanbanPage() {
   }
 
   const refreshProjectAssets = async () => {
-    const assetsData = await getProjectAssets(projectId)
+    const [assetsData, cardsData] = await Promise.all([
+      getProjectAssets(projectId),
+      getProjectCards(projectId)
+    ])
     setAssets(assetsData)
+    setProjectCards(cardsData)
   }
 
   const ensureGeneratedMeshThumbnail = async (asset) => {
@@ -573,6 +581,13 @@ export default function KanbanPage() {
     }, {})
   }, [meshes])
 
+  const projectCardsById = useMemo(() => {
+    return projectCards.reduce((accumulator, card) => {
+      accumulator[card.id] = card
+      return accumulator
+    }, {})
+  }, [projectCards])
+
   const imageCards = useMemo(() => {
     const cards = new Map()
 
@@ -586,8 +601,19 @@ export default function KanbanPage() {
       cards.get(cardId).push(asset)
     }
 
+    for (const card of projectCards) {
+      if (!IMAGE_CARD_COLUMNS.some(column => column.dbId === card.kanbanColumnId)) {
+        continue
+      }
+
+      if (!cards.has(card.id)) {
+        cards.set(card.id, [])
+      }
+    }
+
     return Array.from(cards.entries())
       .map(([id, cardAssets]) => {
+        const persistedCard = projectCardsById[id] || null
         const sortedAssets = [...cardAssets].sort((left, right) => {
           const leftPosition = left.assetPosition ?? Number.MAX_SAFE_INTEGER
           const rightPosition = right.assetPosition ?? Number.MAX_SAFE_INTEGER
@@ -611,6 +637,18 @@ export default function KanbanPage() {
         })
         const sources = [...new Set(sortedAssets.map(asset => asset.metadata?.source).filter(Boolean))]
         const formats = [...new Set(sortedAssets.map(asset => asset.metadata?.format).filter(Boolean))]
+        const processingState = sortedAssets.find(asset => asset.processing)?.processing || persistedCard?.processing || null
+        const isProcessing = processingState?.status === 'processing'
+        const sourceLabel = processingState?.source
+          ? String(processingState.source).toUpperCase()
+          : (sources.length === 1 ? sources[0] : 'MIXED')
+        const metaLabel = isProcessing
+          ? processingState?.detail || 'Processing…'
+          : sortedAssets.length === 1
+            ? `${primaryAsset?.metadata?.resolution || 'N/A'} • ${primaryAsset?.metadata?.format || 'N/A'}`
+            : sortedAssets.length > 1
+              ? `${sortedAssets.length} images • ${formats.slice(0, 2).join(', ') || 'Mixed formats'}`
+              : (processingState?.detail || 'Waiting for output')
 
         return {
           id,
@@ -618,18 +656,19 @@ export default function KanbanPage() {
           meshAssets,
           allAssets: [...sortedAssets, ...meshAssets],
           primaryAsset,
-          sourceLabel: sources.length === 1 ? sources[0] : 'MIXED',
-          metaLabel: sortedAssets.length === 1
-            ? `${primaryAsset.metadata?.resolution || 'N/A'} • ${primaryAsset.metadata?.format || 'N/A'}`
-            : `${sortedAssets.length} images • ${formats.slice(0, 2).join(', ') || 'Mixed formats'}`,
-          cardDbId: primaryAsset.cardDbId ?? null,
-          cardKey: primaryAsset.cardKey || id,
-          kanbanColumnId: primaryAsset.kanbanColumnId ?? 1,
-          kanbanColumnName: primaryAsset.kanbanColumnName || 'Images',
-          cardPosition: primaryAsset.cardPosition ?? Number.MAX_SAFE_INTEGER,
-          createdAt: primaryAsset.createdAt || 0
+          sourceLabel,
+          metaLabel,
+          processing: processingState,
+          isLocked: isProcessing,
+          cardDbId: primaryAsset?.cardDbId ?? persistedCard?.cardDbId ?? null,
+          cardKey: primaryAsset?.cardKey || persistedCard?.id || id,
+          kanbanColumnId: primaryAsset?.kanbanColumnId ?? persistedCard?.kanbanColumnId ?? 1,
+          kanbanColumnName: primaryAsset?.kanbanColumnName || persistedCard?.kanbanColumnName || 'Images',
+          cardPosition: primaryAsset?.cardPosition ?? persistedCard?.position ?? Number.MAX_SAFE_INTEGER,
+          createdAt: primaryAsset?.createdAt || persistedCard?.createdAt || 0
         }
       })
+      .filter(card => card.assets.length > 0 || card.processing)
       .sort((left, right) => {
         if (left.kanbanColumnId !== right.kanbanColumnId) {
           return left.kanbanColumnId - right.kanbanColumnId
@@ -641,7 +680,7 @@ export default function KanbanPage() {
 
         return right.createdAt - left.createdAt
       })
-  }, [images, meshAssetsByCardId])
+  }, [images, meshAssetsByCardId, projectCards, projectCardsById])
 
   const imageCardsByColumn = useMemo(() => {
     return IMAGE_CARD_COLUMNS.reduce((accumulator, column) => {
@@ -649,6 +688,75 @@ export default function KanbanPage() {
       return accumulator
     }, {})
   }, [imageCards])
+
+  useEffect(() => {
+    const activePromptIdsByCardId = new Map(
+      imageCards
+        .filter(card => card.processing?.status === 'processing' && card.processing?.promptId)
+        .map(card => [card.id, card.processing.promptId])
+    )
+
+    Object.entries(imageEditProgressByCardId).forEach(([cardId, runtimeState]) => {
+      if (runtimeState?.promptId && runtimeState?.status !== 'completed') {
+        activePromptIdsByCardId.set(cardId, runtimeState.promptId)
+      }
+    })
+
+    imageEditProgressSubscriptionsRef.current.forEach((unsubscribe, cardId) => {
+      const expectedPromptId = activePromptIdsByCardId.get(cardId)
+      const currentPromptId = imageEditProgressByCardId[cardId]?.promptId
+
+      if (!expectedPromptId || (currentPromptId && currentPromptId !== expectedPromptId)) {
+        unsubscribe?.()
+        imageEditProgressSubscriptionsRef.current.delete(cardId)
+      }
+    })
+
+    activePromptIdsByCardId.forEach((promptId, cardId) => {
+      if (!imageEditProgressByCardId[cardId] || imageEditProgressByCardId[cardId]?.promptId !== promptId) {
+        const sourceCard = imageCards.find(card => card.id === cardId)
+        if (sourceCard?.processing) {
+          setImageEditProgressByCardId(prev => ({
+            ...prev,
+            [cardId]: sourceCard.processing
+          }))
+        }
+      }
+
+      if (imageEditProgressSubscriptionsRef.current.has(cardId)) {
+        return
+      }
+
+      imageEditProgressSubscriptionsRef.current.set(cardId, subscribeToComfyWorkflowProgress(promptId, {
+        onMessage: async (payload) => {
+          setImageEditProgressByCardId(prev => ({
+            ...prev,
+            [cardId]: {
+              ...(prev[cardId] || {}),
+              ...payload,
+              promptId
+            }
+          }))
+
+          if (['completed', 'error'].includes(payload?.status)) {
+            closeImageEditProgressSubscription(cardId)
+
+            try {
+              const [assetsData, cardsData] = await Promise.all([
+                getProjectAssets(projectId),
+                getProjectCards(projectId)
+              ])
+              setAssets(assetsData)
+              setProjectCards(cardsData)
+            } catch (err) {
+              console.error('Failed to refresh project data after progress update:', err)
+            }
+          }
+        },
+        onError: () => {}
+      }))
+    })
+  }, [imageCards, imageEditProgressByCardId, projectId, getProjectAssets, getProjectCards, subscribeToComfyWorkflowProgress])
 
   const cardAttributesByCardId = useMemo(() => {
     return cardAttributes.reduce((accumulator, attribute) => {
@@ -954,6 +1062,10 @@ export default function KanbanPage() {
     setImageEditPendingCardId(null)
   }
 
+  const closeImageEditDraftPanel = () => {
+    setImageEditDraft(null)
+  }
+
   const handleImageEditDraftChange = (card, field, value) => {
     setImageEditDraft(prev => {
       if (!prev || prev.cardId !== card.id) {
@@ -1151,6 +1263,8 @@ export default function KanbanPage() {
         setImageEditProgressByCardId(prev => ({
           ...prev,
           [card.id]: {
+            status: 'processing',
+            source: 'ComfyUI',
             progressPercent: 0,
             detail: 'Preparing ComfyUI image edit',
             currentNodeLabel: 'Waiting for ComfyUI execution to start',
@@ -1171,6 +1285,12 @@ export default function KanbanPage() {
                 ...prev,
                 [card.id]: {
                   ...currentState,
+                  status: payload?.status === 'error'
+                    ? 'error'
+                    : payload?.status === 'completed'
+                      ? 'completed'
+                      : 'processing',
+                  source: payload?.source || currentState.source || 'ComfyUI',
                   progressPercent: Math.max(currentState.progressPercent || 0, Number(payload?.progressPercent) || 0),
                   detail: payload?.detail || currentState.detail,
                   currentNodeLabel: payload?.currentNodeLabel || currentState.currentNodeLabel
@@ -1233,6 +1353,9 @@ export default function KanbanPage() {
       alert(isMeshGenCard ? 'Mesh generation completed successfully.' : 'Image edit completed successfully.')
     } catch (err) {
       console.error(isMeshGenCard ? 'Failed to run mesh generation:' : 'Failed to run image edit:', err)
+      await refreshProjectAssets().catch(refreshErr => {
+        console.error('Failed to refresh project assets after action error:', refreshErr)
+      })
       alert(err.message || (isMeshGenCard ? 'Failed to run mesh generation' : 'Failed to run image edit'))
     } finally {
       closeImageEditProgressSubscription(card.id)
@@ -1249,6 +1372,17 @@ export default function KanbanPage() {
     }
   }
 
+  const getCardRuntimeState = (card) => {
+    const liveState = imageEditProgressByCardId[card.id]
+    if (liveState?.status === 'completed') {
+      return null
+    }
+
+    return liveState || card.processing || null
+  }
+
+  const isCardLocked = (card) => getCardRuntimeState(card)?.status === 'processing'
+
   const getCardInsertPosition = (cardId, destinationColumnId, destinationIndex) => {
     const sourceColumnId = draggedCard?.columnId
     const sourceCards = imageCardsByColumn[sourceColumnId] || []
@@ -1262,6 +1396,11 @@ export default function KanbanPage() {
   }
 
   const handleCardDragStart = (event, card) => {
+    if (isCardLocked(card)) {
+      event.preventDefault()
+      return
+    }
+
     event.dataTransfer.effectAllowed = 'move'
     event.dataTransfer.setData('text/plain', card.id)
     setDraggedCard({ id: card.id, columnId: card.kanbanColumnId })
@@ -1392,6 +1531,16 @@ export default function KanbanPage() {
   }
 
   const renderImageCard = (card, showAttributes = false) => {
+    const runtimeState = getCardRuntimeState(card)
+    const cardLocked = runtimeState?.status === 'processing'
+    const displaySourceLabel = runtimeState?.source
+      ? String(runtimeState.source).toUpperCase()
+      : card.sourceLabel
+    const displayMetaLabel = cardLocked
+      ? (Number.isFinite(runtimeState?.progressPercent)
+          ? `${runtimeState.progressPercent}%`
+          : (runtimeState?.detail || card.metaLabel || 'Processing…'))
+      : card.metaLabel
     const isMeshGenCard = card.kanbanColumnId === 3
     const carouselItems = getCardPreviewItems(card, showAttributes)
     const useAssetCarousel = carouselItems.length > 0
@@ -1414,9 +1563,9 @@ export default function KanbanPage() {
     return (
       <div
         key={card.id}
-        className={`image-card ${draggedCard?.id === card.id ? 'image-card--dragging' : ''}`}
+        className={`image-card ${draggedCard?.id === card.id ? 'image-card--dragging' : ''} ${cardLocked ? 'image-card--loading image-card--locked' : ''}`}
         id={`image-card-${card.id}`}
-        draggable
+        draggable={!cardLocked}
         onDragStart={(event) => handleCardDragStart(event, card)}
         onDragEnd={handleCardDragEnd}
       >
@@ -1424,6 +1573,7 @@ export default function KanbanPage() {
           {!showAttributes && (
             <button
               className="image-card__action-btn"
+              disabled={cardLocked}
               onClick={(e) => {
                 e.stopPropagation()
                 openImageSourceMenu(card.id)
@@ -1435,6 +1585,7 @@ export default function KanbanPage() {
           )}
           <button
             className="image-card__action-btn image-card__delete"
+            disabled={cardLocked}
             onClick={(e) => {
               e.stopPropagation()
               handleRemoveImageCard(card.allAssets || card.assets)
@@ -1445,7 +1596,7 @@ export default function KanbanPage() {
           </button>
         </div>
 
-        <div className={`image-card__thumb ${visibleAssets.length > 1 && !useAssetCarousel ? 'image-card__thumb--grid' : ''} ${useAssetCarousel ? 'image-card__thumb--carousel' : ''}`}>
+        <div className={`image-card__thumb ${visibleAssets.length > 1 && !useAssetCarousel ? 'image-card__thumb--grid' : ''} ${useAssetCarousel ? 'image-card__thumb--carousel' : ''} ${cardLocked && visibleAssets.length === 0 ? 'image-card__thumb--loading' : ''}`}>
           {visibleAssets.length > 0 ? (
             visibleAssets.map(asset => {
               const displayItems = showAttributes && !useAssetCarousel && asset.type === 'image' ? getAssetEditDisplayItems(asset) : []
@@ -1513,6 +1664,7 @@ export default function KanbanPage() {
                 {!showAttributes && !useAssetCarousel && (
                   <button
                     className="image-card__thumb-remove"
+                    disabled={cardLocked}
                     onClick={(e) => {
                       e.stopPropagation()
                       handleRemoveImage(asset.id)
@@ -1526,6 +1678,7 @@ export default function KanbanPage() {
                 {previewType === 'mesh' && sourceAsset?.id && (
                   <button
                     className="image-card__thumb-remove image-card__thumb-remove--left"
+                    disabled={cardLocked}
                     onClick={(event) => {
                       event.stopPropagation()
                       handleRemoveImage(sourceAsset.id)
@@ -1585,6 +1738,13 @@ export default function KanbanPage() {
                 )}
               </div>
             )})
+          ) : cardLocked ? (
+            <div className="image-card__loading-state">
+              <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+              <span className="font-label image-card__loading-label">
+                {Number.isFinite(runtimeState?.progressPercent) ? `${runtimeState.progressPercent}%` : 'PROCESSING'}
+              </span>
+            </div>
           ) : (
             <div className="image-card__thumb-placeholder">
               <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.08)' }}>image</span>
@@ -1602,7 +1762,7 @@ export default function KanbanPage() {
                     [card.id]: Math.max(0, currentPage - 1)
                   }))
                 }}
-                disabled={currentPage === 0}
+                disabled={cardLocked || currentPage === 0}
                 title={useAssetCarousel ? 'Previous asset' : 'Previous images'}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_left</span>
@@ -1616,7 +1776,7 @@ export default function KanbanPage() {
                     [card.id]: Math.min(totalPages - 1, currentPage + 1)
                   }))
                 }}
-                disabled={currentPage >= totalPages - 1}
+                disabled={cardLocked || currentPage >= totalPages - 1}
                 title={useAssetCarousel ? 'Next asset' : 'Next images'}
               >
                 <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>chevron_right</span>
@@ -1638,25 +1798,44 @@ export default function KanbanPage() {
               <span
                 className="image-card__source"
                 style={{
-                  color: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'var(--primary)' : 'var(--on-surface-variant)',
-                  background: ['AI GEN', 'COMFYUI'].includes(card.sourceLabel) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
+                  color: ['AI GEN', 'COMFYUI'].includes(displaySourceLabel) ? 'var(--primary)' : 'var(--on-surface-variant)',
+                  background: ['AI GEN', 'COMFYUI'].includes(displaySourceLabel) ? 'rgba(143,245,255,0.1)' : 'rgba(71,72,74,0.2)',
                 }}
               >
-                {card.sourceLabel}
+                {displaySourceLabel}
               </span>
             </div>
           </div>
-          <p className="image-card__meta font-label">{card.metaLabel}</p>
+          <p className="image-card__meta font-label">{displayMetaLabel}</p>
+
+          {runtimeState && (
+            <div className="image-card__edit-progress">
+              <p className="image-card__meta font-label">{runtimeState.detail || (cardLocked ? 'Processing…' : 'Last operation update')}</p>
+              {runtimeState.currentNodeLabel && (
+                <p className="image-card__meta font-label image-card__meta--loading-node">
+                  {runtimeState.currentNodeLabel}
+                </p>
+              )}
+              {Number.isFinite(runtimeState.progressPercent) && (
+                <div className="image-card__progress" aria-hidden="true">
+                  <div
+                    className="image-card__progress-bar"
+                    style={{ width: `${Math.max(0, Math.min(100, runtimeState.progressPercent || 0))}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {showAttributes && (
             <div className="image-card__attributes">
               <div className="image-card__edit-actions">
-                <button className="image-card__edit-action-btn" onClick={() => openImageEditActionMenu(card)}>
+                <button className="image-card__edit-action-btn" onClick={() => openImageEditActionMenu(card)} disabled={cardLocked}>
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>play_arrow</span>
                   Action
                 </button>
 
-                {imageEditDraft?.cardId === card.id && !imageEditDraft?.mode && (
+                {imageEditDraft?.cardId === card.id && !imageEditDraft?.mode && imageEditPendingCardId !== card.id && (
                   <div className="image-card__edit-action-menu">
                     <button className="image-card__edit-action-option" onClick={() => openImageEditActionMenu(card, 'api')}>
                       API
@@ -1667,7 +1846,7 @@ export default function KanbanPage() {
                   </div>
                 )}
 
-                {imageEditDraft?.cardId === card.id && imageEditDraft?.mode && (
+                {imageEditDraft?.cardId === card.id && imageEditDraft?.mode && imageEditPendingCardId !== card.id && (
                   <div className="image-card__edit-panel">
                     <div className="params-card__field">
                       <label className="params-card__label font-label">NAME</label>
@@ -1864,7 +2043,7 @@ export default function KanbanPage() {
 
               <div className="image-card__attributes-header">
                 <span className="image-card__attributes-title font-label">CUSTOM ATTRIBUTES</span>
-                <button className="image-card__attribute-add" onClick={() => handleAddCustomAttribute(card.id)}>
+                <button className="image-card__attribute-add" onClick={() => handleAddCustomAttribute(card.id)} disabled={cardLocked}>
                   <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>add</span>
                   Add Custom Attribute
                 </button>
@@ -1881,6 +2060,7 @@ export default function KanbanPage() {
                           className="image-card__attribute-select"
                           value={attribute.attributeTypeId}
                           onChange={event => handleAttributeTypeChange(card.id, attribute.position, Number(event.target.value))}
+                          disabled={cardLocked}
                         >
                           {attributeTypes.map(type => (
                             <option key={type.id} value={type.id}>{type.name}</option>
@@ -1893,12 +2073,14 @@ export default function KanbanPage() {
                           value={attribute.attributeValue || ''}
                           onChange={event => handleAttributeValueChange(card.id, attribute.position, event.target.value)}
                           onBlur={event => handleAttributeValueBlur(card.id, attribute.position, event.target.value)}
+                          disabled={cardLocked}
                           placeholder={`Enter ${selectedType?.name?.toLowerCase() || 'attribute'} value`}
                         />
 
                         <button
                           className="image-card__attribute-delete"
                           onClick={() => handleDeleteCustomAttribute(card.id, attribute.position)}
+                          disabled={cardLocked}
                           title="Delete attribute"
                         >
                           <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>

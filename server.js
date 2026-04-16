@@ -18,6 +18,7 @@ import {
   createProjectAsset,
   createTask,
   createWorkflowRecord,
+  clearCardProcessingState,
   deleteCardAttribute,
   deleteAssetEditByFilePath,
   deleteAssetById,
@@ -26,6 +27,7 @@ import {
   findLibraryAssetByFilePath,
   getAssetDirectory,
   listAttributeTypes,
+  listProjectCards,
   listProjectCardAttributes,
   getProjectById,
   getSettings,
@@ -40,6 +42,7 @@ import {
   renameLibraryAssetByFilePath,
   renameAssetEditByFilePath,
   saveSettings,
+  setCardProcessingState,
   toAbsoluteStoragePath,
   toStoredAssetPath,
   toStoredThumbnailPath,
@@ -327,6 +330,46 @@ const INITIAL_SCHEMA = {
   }
 };
 
+async function updateCardProcessingSnapshot(projectId, cardId, {
+  columnName = 'Images',
+  name = null,
+  status = 'processing',
+  progressPercent = null,
+  detail = '',
+  currentNodeLabel = '',
+  promptId = null,
+  source = 'ComfyUI',
+  operationType = 'workflow',
+  workflowId = null,
+  workflowName = null,
+  startedAt = Date.now()
+} = {}) {
+  if (!projectId || !cardId) {
+    return null;
+  }
+
+  return await setCardProcessingState(Number(projectId), cardId, {
+    columnName,
+    name,
+    status,
+    progress: Number.isFinite(progressPercent) ? Math.max(0, Math.min(100, Math.round(progressPercent))) : null,
+    processing: {
+      status,
+      progressPercent: Number.isFinite(progressPercent) ? Math.max(0, Math.min(100, Math.round(progressPercent))) : null,
+      detail,
+      currentNodeLabel,
+      promptId,
+      source,
+      operationType,
+      workflowId,
+      workflowName,
+      startedAt,
+      updatedAt: Date.now()
+    },
+    creationDate: startedAt
+  });
+}
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -569,7 +612,7 @@ function subscribeToComfyProgress(promptId, req, res) {
   });
 }
 
-function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson, selectedOutputs = [], timeout = null }) {
+function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson, selectedOutputs = [], timeout = null, onProgress = null }) {
   const trackedNodeIds = getComfyExecutionNodeIds(workflowJson, selectedOutputs);
   const totalNodeCount = Math.max(1, trackedNodeIds.size || Object.keys(workflowJson || {}).length || 1);
   const wsUrl = buildComfyUiWebSocketUrl(baseUrl, clientId);
@@ -607,12 +650,15 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
     return true;
   };
   const publishState = (payload) => {
-    publishComfyProgress(promptId, {
+    const nextPayload = {
       totalNodeCount,
       completedNodeCount: getCompletedNodeCount(),
       progressPercent: getProgressPercent(payload?.status === 'completed'),
       ...payload
-    });
+    };
+
+    publishComfyProgress(promptId, nextPayload);
+    onProgress?.(nextPayload);
   };
 
   const ready = new Promise((resolve, reject) => {
@@ -1575,6 +1621,13 @@ app.get('/api/comfyui/workflows/progress/:promptId', (req, res) => {
 
 app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req, res) => {
   let executionMonitor = null;
+  let processingCardId = null;
+  let processingProjectId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+  let processingWorkflowId = null;
+  let processingWorkflowName = null;
+  let executionPromptId = null;
 
   try {
     const { projectId, workflowId, cardId, name } = req.body;
@@ -1591,6 +1644,12 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     if (!workflow) {
       return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
     }
+
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || randomUUID();
+    processingCardName = trimmedName || workflow.name;
+    processingWorkflowId = workflow.id;
+    processingWorkflowName = workflow.name;
 
     const settings = await getSettings();
     const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
@@ -1634,12 +1693,47 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 
     const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
     const executionClientId = String(req.body.clientId || '').trim() || randomUUID();
-    const executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+    executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Images',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: 0,
+      detail: 'Preparing ComfyUI workflow',
+      currentNodeLabel: 'Waiting for ComfyUI execution to start',
+      promptId: executionPromptId,
+      source: 'ComfyUI',
+      operationType: 'workflow',
+      workflowId: processingWorkflowId,
+      workflowName: processingWorkflowName,
+      startedAt: processingStartedAt
+    });
+
     executionMonitor = createComfyExecutionMonitor(baseUrl, {
       clientId: executionClientId,
       promptId: executionPromptId,
       workflowJson: promptWorkflow,
-      selectedOutputs: workflow.outputs
+      selectedOutputs: workflow.outputs,
+      onProgress: (payload) => {
+        updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+          columnName: 'Images',
+          name: processingCardName,
+          status: payload?.status === 'error' ? 'error' : 'processing',
+          progressPercent: payload?.progressPercent,
+          detail: payload?.detail || 'Running ComfyUI workflow',
+          currentNodeLabel: payload?.currentNodeLabel || '',
+          promptId: executionPromptId,
+          source: 'ComfyUI',
+          operationType: 'workflow',
+          workflowId: processingWorkflowId,
+          workflowName: processingWorkflowName,
+          startedAt: processingStartedAt
+        }).catch(err => {
+          console.warn('Failed to persist ComfyUI workflow progress:', err.message);
+        });
+      }
     });
 
     await executionMonitor.ready;
@@ -1662,7 +1756,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       return res.status(502).json({ error: 'The ComfyUI workflow finished but no compatible files were returned' });
     }
 
-    const imageCardId = cardId || randomUUID();
+    const imageCardId = processingCardId;
     const baseTimestamp = Date.now();
     const generatedAssets = [];
 
@@ -1690,7 +1784,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         projectId: Number(projectId),
         type: inferredAssetType,
         name: inferredAssetType === 'mesh'
-          ? (trimmedName || workflow.name)
+          ? processingCardName
           : createGeneratedImageName(workflow.name, extension),
         filePath: storedFilePath,
         width: dimensions.width,
@@ -1712,9 +1806,31 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       }));
     }
 
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
     res.status(201).json(generatedAssets);
   } catch (err) {
     console.error('ComfyUI workflow execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Images',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to execute ComfyUI workflow',
+        currentNodeLabel: 'ComfyUI execution failed',
+        promptId: executionPromptId,
+        source: 'ComfyUI',
+        operationType: 'workflow',
+        workflowId: processingWorkflowId,
+        workflowName: processingWorkflowName,
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist ComfyUI workflow error state:', persistErr.message);
+      });
+    }
     const failedPromptId = String(req.body?.promptId || '').trim();
     if (failedPromptId) {
       publishComfyProgress(failedPromptId, {
@@ -1731,6 +1847,11 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 });
 
 app.post('/api/meshes/generate', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
   try {
     const { projectId, selectedApi, prompt, name, imageSource, cardId } = req.body;
     const trimmedName = String(name || '').trim();
@@ -1750,6 +1871,23 @@ app.post('/api/meshes/generate', async (req, res) => {
       return res.status(404).json({ error: 'Source image or edit not found' });
     }
 
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Mesh Gen',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting mesh generation request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'mesh-generation',
+      startedAt: processingStartedAt
+    });
+
     const settings = await getSettings();
     const customApi = getCustomApiConfig(settings, selectedApi, 'mesh-generation');
     const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
@@ -1759,7 +1897,7 @@ app.post('/api/meshes/generate', async (req, res) => {
       prompt: trimmedPrompt,
       name: trimmedName,
       projectId: String(projectId),
-      cardId: String(cardId || sourceAsset.metadata?.cardId || ''),
+      cardId: String(processingCardId || ''),
       imageBase64: sourceBuffer.toString('base64'),
       imageMimeType,
       imageFilename: path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'image.png')
@@ -1807,14 +1945,33 @@ app.post('/api/meshes/generate', async (req, res) => {
         source: 'API',
         provider: customApi.name,
         prompt: trimmedPrompt,
-        cardId: cardId || sourceAsset.metadata?.cardId || randomUUID()
+        cardId: processingCardId
       },
       createdAt: Date.now()
+    });
+
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
     });
 
     res.status(201).json(savedAsset);
   } catch (err) {
     console.error('Mesh generation API execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Mesh Gen',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run mesh generation API',
+        currentNodeLabel: 'Mesh generation failed',
+        source: 'API',
+        operationType: 'mesh-generation',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist mesh generation error state:', persistErr.message);
+      });
+    }
     res.status(500).json({ error: err.message || 'Failed to run mesh generation API' });
   }
 });
@@ -1849,6 +2006,21 @@ app.delete('/api/projects/:id', async (req, res) => {
 app.get('/api/assets', async (req, res) => {
   const { projectId } = req.query;
   res.json(await listProjectAssets(projectId ? Number(projectId) : null));
+});
+
+app.get('/api/cards', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await listProjectCards(Number(projectId)));
+  } catch (err) {
+    console.error('Failed to list project cards:', err);
+    res.status(500).json({ error: 'Failed to list project cards' });
+  }
 });
 
 app.get('/api/assets/library', async (req, res) => {
@@ -2028,6 +2200,14 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
     res.status(201).json(newAsset);
   } catch (err) {
     console.error('Upload recording failed:', err);
+    if (err.message?.startsWith('Project not found:')) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    if (err.message === 'A valid projectId is required') {
+      return res.status(400).json({ error: err.message });
+    }
+
     res.status(500).json({ error: 'Upload recording failed' });
   }
 });
@@ -2236,6 +2416,11 @@ app.delete('/api/card-attributes/:cardId/:position', async (req, res) => {
 });
 
 app.post('/api/image-edits/api', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
   try {
     const { projectId, assetId, selectedApi, prompt, name, imageSource } = req.body;
     const trimmedName = String(name || '').trim();
@@ -2249,6 +2434,23 @@ app.post('/api/image-edits/api', async (req, res) => {
     if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'image') {
       return res.status(404).json({ error: 'Source image or edit not found' });
     }
+
+    processingProjectId = Number(projectId);
+    processingCardId = sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Image Edit',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting image edit request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'image-edit',
+      startedAt: processingStartedAt
+    });
 
     const settings = await getSettings();
     const googleSettings = settings?.apis?.google;
@@ -2388,6 +2590,10 @@ app.post('/api/image-edits/api', async (req, res) => {
       imageOutputs
     });
 
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
     res.status(201).json({
       editId,
       assetId: sourceAsset.id,
@@ -2396,12 +2602,34 @@ app.post('/api/image-edits/api', async (req, res) => {
     });
   } catch (err) {
     console.error('Image edit API execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Image Edit',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run image edit API',
+        currentNodeLabel: 'Image edit failed',
+        source: 'API',
+        operationType: 'image-edit',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist image edit API error state:', persistErr.message);
+      });
+    }
     res.status(500).json({ error: err.message || 'Failed to run image edit API' });
   }
 });
 
 app.post('/api/image-edits/comfy', async (req, res) => {
   let executionMonitor = null;
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+  let executionPromptId = null;
+  let processingWorkflowId = null;
+  let processingWorkflowName = null;
 
   try {
     const { projectId, assetId, workflowId, prompt, name } = req.body;
@@ -2486,15 +2714,55 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       return res.status(400).json({ error: 'At least one workflow image input is required' });
     }
 
+    processingProjectId = Number(projectId);
+    processingCardId = sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingWorkflowId = workflow.id;
+    processingWorkflowName = workflow.name;
+
     const promptWorkflow = applyComfyParametersToWorkflow(workflow.workflowJson, workflow.parameters, resolvedInputs);
     const executionClientId = String(req.body.clientId || '').trim() || randomUUID();
-    const executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+    executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Image Edit',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: 0,
+      detail: 'Preparing ComfyUI image edit',
+      currentNodeLabel: 'Waiting for ComfyUI execution to start',
+      promptId: executionPromptId,
+      source: 'ComfyUI',
+      operationType: 'image-edit',
+      workflowId: processingWorkflowId,
+      workflowName: processingWorkflowName,
+      startedAt: processingStartedAt
+    });
 
     executionMonitor = createComfyExecutionMonitor(baseUrl, {
       clientId: executionClientId,
       promptId: executionPromptId,
       workflowJson: promptWorkflow,
-      selectedOutputs: workflow.outputs
+      selectedOutputs: workflow.outputs,
+      onProgress: (payload) => {
+        updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+          columnName: 'Image Edit',
+          name: processingCardName,
+          status: payload?.status === 'error' ? 'error' : 'processing',
+          progressPercent: payload?.progressPercent,
+          detail: payload?.detail || 'Running ComfyUI image edit',
+          currentNodeLabel: payload?.currentNodeLabel || '',
+          promptId: executionPromptId,
+          source: 'ComfyUI',
+          operationType: 'image-edit',
+          workflowId: processingWorkflowId,
+          workflowName: processingWorkflowName,
+          startedAt: processingStartedAt
+        }).catch(err => {
+          console.warn('Failed to persist ComfyUI image edit progress:', err.message);
+        });
+      }
     });
 
     await executionMonitor.ready;
@@ -2534,6 +2802,10 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       imageOutputs: downloadedImages
     });
 
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
     res.status(201).json({
       editId,
       assetId: sourceAsset.id,
@@ -2545,6 +2817,24 @@ app.post('/api/image-edits/comfy', async (req, res) => {
   } catch (err) {
     console.error('ComfyUI image edit execution failed:', err);
     executionMonitor?.close();
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Image Edit',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run ComfyUI image edit',
+        currentNodeLabel: 'ComfyUI image edit failed',
+        promptId: executionPromptId,
+        source: 'ComfyUI',
+        operationType: 'image-edit',
+        workflowId: processingWorkflowId,
+        workflowName: processingWorkflowName,
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist ComfyUI image edit error state:', persistErr.message);
+      });
+    }
     const failedPromptId = String(req.body?.promptId || '').trim();
     if (failedPromptId) {
       publishComfyProgress(failedPromptId, {
@@ -2558,6 +2848,11 @@ app.post('/api/image-edits/comfy', async (req, res) => {
 });
 
 app.post('/api/images/generate', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
   try {
     const { projectId, selectedApi, prompt, cardId } = req.body;
 
@@ -2567,6 +2862,23 @@ app.post('/api/images/generate', async (req, res) => {
 
     const settings = await getSettings();
     const trimmedPrompt = prompt.trim();
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || randomUUID();
+    processingCardName = trimmedPrompt;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Images',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting image generation request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'image-generation',
+      startedAt: processingStartedAt
+    });
+
     const googleSettings = settings?.apis?.google;
     const googleGenerationSettings = googleSettings?.imageGeneration;
     const openAiSettings = settings?.apis?.openai;
@@ -2707,14 +3019,33 @@ app.post('/api/images/generate', async (req, res) => {
         mimeType: inlineData.mimeType,
         responseId,
         usage: responseBody?.usage || responseBody?.usageMetadata || null,
-        cardId: cardId || randomUUID()
+        cardId: processingCardId
       },
       createdAt: Date.now()
+    });
+
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
     });
 
     res.status(201).json(newAsset);
   } catch (err) {
     console.error('Image generation failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Images',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to generate image',
+        currentNodeLabel: 'Image generation failed',
+        source: 'API',
+        operationType: 'image-generation',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist image generation error state:', persistErr.message);
+      });
+    }
     res.status(500).json({ error: 'Failed to generate and save image' });
   }
 });
