@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import './Header.css'
 
-export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick }) {
+export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false }) {
   const location = useLocation()
 
   const isActive = (path) => location.pathname.startsWith(path)
@@ -22,6 +22,12 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
           <Link to="/assets" className={`header__nav-link ${isActive('/assets') ? 'header__nav-link--active' : ''}`}>Assets</Link>
         </nav>
       </div>
+
+      {centerTitle && title && (
+        <div className="header__title-wrap">
+          <h1 className="header__title">{title}</h1>
+        </div>
+      )}
 
       <div className="header__right">
         {showSearch && (

@@ -10,14 +10,6 @@ import SettingsModal from '../components/SettingsModal'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import './KanbanPage.css'
 
-const SIDEBAR_ITEMS = [
-  { id: 'images', icon: 'image', label: 'Images' },
-  { id: 'imageedit', icon: 'photo_filter', label: 'Image Edit' },
-  { id: 'meshgen', icon: 'deployed_code', label: 'Mesh Gen', filled: true },
-  { id: 'meshedit', icon: 'edit_square', label: 'Mesh Edit' },
-  { id: 'texturing', icon: 'texture', label: 'Texturing' },
-]
-
 const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
   { id: 'nanobana_pro', name: 'Nanobana Pro' },
@@ -132,7 +124,6 @@ export default function KanbanPage() {
   const [projectCards, setProjectCards] = useState([])
   const [loading, setLoading] = useState(true)
 
-  const [activeTab, setActiveTab] = useState('meshgen')
   const [texResolution, setTexResolution] = useState('2048 x 2048 (2K)')
   const [texEngine, setTexEngine] = useState('stable')
   const [pbrEnabled, setPbrEnabled] = useState(true)
@@ -1064,10 +1055,6 @@ export default function KanbanPage() {
 
     setImageEditDraft(null)
     setImageEditPendingCardId(null)
-  }
-
-  const closeImageEditDraftPanel = () => {
-    setImageEditDraft(null)
   }
 
   const handleImageEditDraftChange = (card, field, value) => {
@@ -2370,61 +2357,19 @@ export default function KanbanPage() {
 
   return (
     <div className="kanban-layout">
-      <Header showSearch showCreateNew onSettingsClick={() => setShowSettings(true)} />
+      <Header
+        showSearch
+        showCreateNew
+        onSettingsClick={() => setShowSettings(true)}
+        title={project?.name || 'Workspace'}
+        centerTitle
+      />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       {meshPreviewAsset && <MeshPreviewDialog asset={meshPreviewAsset} titleId="kanban-mesh-preview-dialog-title" onClose={() => setMeshPreviewAsset(null)} />}
 
       <div className="kanban-body">
-        {/* ── Sidebar ── */}
-        <aside className="kanban-sidebar" id="kanban-sidebar">
-          <div className="kanban-sidebar__workspace">
-            <div className="kanban-sidebar__ws-icon">
-              <span className="material-symbols-outlined" style={{ color: 'var(--secondary)' }}>token</span>
-            </div>
-            <div className="kanban-sidebar__ws-info">
-              <span className="kanban-sidebar__ws-name">{project?.name || 'Workspace'}</span>
-              <span className="kanban-sidebar__ws-version font-label">V0.4.2 Prototype</span>
-            </div>
-          </div>
-
-          <nav className="kanban-sidebar__nav">
-            {SIDEBAR_ITEMS.map(item => (
-              <button
-                key={item.id}
-                className={`kanban-sidebar__nav-item ${activeTab === item.id ? 'kanban-sidebar__nav-item--active' : ''}`}
-                onClick={() => setActiveTab(item.id)}
-                id={`sidebar-${item.id}`}
-              >
-                <span className={`material-symbols-outlined ${item.filled && activeTab === item.id ? 'filled' : ''}`} style={{ fontSize: '18px' }}>
-                  {item.icon}
-                </span>
-                {item.label}
-              </button>
-            ))}
-
-            <div className="kanban-sidebar__divider" />
-
-            <button className="kanban-sidebar__new-asset" id="new-asset-btn" onClick={() => setShowSettings(true)}>
-              <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>settings</span>
-              <span className="font-label">PROJECT SETTINGS</span>
-            </button>
-          </nav>
-
-          <div className="kanban-sidebar__bottom">
-            <button className="kanban-sidebar__link" onClick={() => setShowSettings(true)} style={{ background: 'transparent', border: 'none', width: '100%', cursor: 'pointer', textAlign: 'left' }}>
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>account_circle</span>
-              Profile
-            </button>
-            <a href="#" className="kanban-sidebar__link">
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>help</span>
-              Support
-            </a>
-          </div>
-        </aside>
-
-        {/* ── Main Kanban Area ── */}
         <main className="kanban-main" id="kanban-main">
           <div className="kanban-columns">
             {IMAGE_CARD_COLUMNS.map(renderImageColumn)}

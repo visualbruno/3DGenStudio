@@ -16,6 +16,28 @@
   display: flex;
   align-items: center;
   gap: 2rem;
+  position: relative;
+  z-index: 1;
+}
+
+.header__title-wrap {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(40vw, 520px);
+  pointer-events: none;
+}
+
+.header__title {
+  margin: 0;
+  font-family: var(--font-headline);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--on-surface);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header__logo {
@@ -56,6 +78,8 @@
   display: flex;
   align-items: center;
   gap: 1rem;
+  position: relative;
+  z-index: 1;
 }
 
 .header__search-btn {
@@ -162,4 +186,7 @@
 @media (max-width: 768px) {
   .header__nav { display: none; }
   .header__search-btn { display: none; }
+  .header__title-wrap {
+    max-width: 50vw;
+  }
 }
