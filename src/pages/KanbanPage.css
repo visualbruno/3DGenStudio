@@ -12,6 +12,41 @@
   overflow: hidden;
 }
 
+.kanban-status-message {
+  position: fixed;
+  top: 4.25rem;
+  right: 1.5rem;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  max-width: min(420px, calc(100vw - 3rem));
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  background: rgba(18, 19, 21, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  color: var(--on-surface);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  animation: fadeIn 0.2s ease forwards;
+}
+
+.kanban-status-message--success {
+  border-color: rgba(143, 245, 255, 0.28);
+  color: var(--primary);
+}
+
+.kanban-status-message--error {
+  border-color: rgba(255, 120, 120, 0.28);
+  color: #ff9b9b;
+}
+
+.kanban-status-message--info {
+  border-color: rgba(172, 137, 255, 0.28);
+  color: var(--secondary);
+}
+
 /* ══════════════════════════════════
    Sidebar
    ══════════════════════════════════ */
@@ -1522,4 +1557,13 @@
 
 .presets-card__tag:hover {
   border-color: rgba(220, 255, 178, 0.3);
+}
+
+@media (max-width: 768px) {
+  .kanban-status-message {
+    top: 3.75rem;
+    right: 1rem;
+    left: 1rem;
+    max-width: none;
+  }
 }

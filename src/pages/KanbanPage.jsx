@@ -147,10 +147,25 @@ export default function KanbanPage() {
   const [imageEditProgressByCardId, setImageEditProgressByCardId] = useState({})
   const [imageEditPreviewIndexes, setImageEditPreviewIndexes] = useState({})
   const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
+  const [statusMessage, setStatusMessage] = useState(null)
   const fileInputRef = useRef(null)
   const fileUploadContextRef = useRef({ cardId: null, closeDraft: true })
   const pendingComfyProgressSubscriptionRef = useRef(null)
   const imageEditProgressSubscriptionsRef = useRef(new Map())
+  const statusMessageTimeoutRef = useRef(null)
+
+  const showStatusMessage = (message, tone = 'info') => {
+    if (!message) {
+      return
+    }
+
+    const id = Date.now()
+    clearTimeout(statusMessageTimeoutRef.current)
+    setStatusMessage({ id, message, tone })
+    statusMessageTimeoutRef.current = setTimeout(() => {
+      setStatusMessage(prev => prev?.id === id ? null : prev)
+    }, 10000)
+  }
 
   // Fetch all data for this project
   useEffect(() => {
@@ -248,7 +263,7 @@ export default function KanbanPage() {
       }
     } catch (err) {
       console.error('Upload failed:', err)
-      alert(err.message || 'Upload failed')
+      showStatusMessage(err.message || 'Upload failed', 'error')
     } finally {
       setLoading(false)
       e.target.value = ''
@@ -347,6 +362,7 @@ export default function KanbanPage() {
 
   useEffect(() => {
     return () => {
+      clearTimeout(statusMessageTimeoutRef.current)
       closePendingComfyProgressSubscription()
       closeImageEditProgressSubscription()
     }
@@ -365,7 +381,7 @@ export default function KanbanPage() {
 
   const openComfyWorkflowDraft = (cardId = imageDraft?.cardId || null) => {
     if (imageGenerationWorkflows.length === 0) {
-      alert('No compatible ComfyUI workflows available. Import a workflow with at least one string input and one image output.')
+      showStatusMessage('No compatible ComfyUI workflows available. Import a workflow with at least one string input and one image output.', 'error')
       return
     }
 
@@ -412,7 +428,7 @@ export default function KanbanPage() {
       setImageDraft({ mode: 'assets', cardId })
     } catch (err) {
       console.error('Failed to load asset library:', err)
-      alert(err.message || 'Failed to load assets library')
+      showStatusMessage(err.message || 'Failed to load assets library', 'error')
     } finally {
       setLibraryLoading(false)
     }
@@ -437,7 +453,7 @@ export default function KanbanPage() {
       setImageDraft(null)
     } catch (err) {
       console.error('Failed to attach image from assets:', err)
-      alert(err.message || 'Failed to attach image from assets')
+      showStatusMessage(err.message || 'Failed to attach image from assets', 'error')
     } finally {
       setLoading(false)
     }
@@ -449,7 +465,7 @@ export default function KanbanPage() {
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to remove image:', err)
-      alert(err.message || 'Failed to remove image')
+      showStatusMessage(err.message || 'Failed to remove image', 'error')
     }
   }
 
@@ -462,7 +478,7 @@ export default function KanbanPage() {
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to remove image card:', err)
-      alert(err.message || 'Failed to remove image card')
+      showStatusMessage(err.message || 'Failed to remove image card', 'error')
     }
   }
 
@@ -472,7 +488,7 @@ export default function KanbanPage() {
 
       const workflow = comfyWorkflows.find(item => item.id == draft.workflowId)
       if (!workflow) {
-        alert('Select a valid ComfyUI workflow.')
+        showStatusMessage('Select a valid ComfyUI workflow.', 'error')
         return
       }
 
@@ -481,12 +497,12 @@ export default function KanbanPage() {
         const currentValue = draft.inputs?.[parameter.id]
 
         if (['image', 'video'].includes(valueType) && !currentValue) {
-          alert(`Select a ${valueType} file for ${parameter.name}.`)
+          showStatusMessage(`Select a ${valueType} file for ${parameter.name}.`, 'error')
           return
         }
 
         if (valueType === 'string' && !String(currentValue ?? '').trim()) {
-          alert(`Enter a value for ${parameter.name}.`)
+          showStatusMessage(`Enter a value for ${parameter.name}.`, 'error')
           return
         }
       }
@@ -523,7 +539,7 @@ export default function KanbanPage() {
       } catch (err) {
         console.error('ComfyUI workflow failed:', err)
         setImageDraft(draft)
-        alert(err.message || 'ComfyUI workflow failed')
+        showStatusMessage(err.message || 'ComfyUI workflow failed', 'error')
       } finally {
         closePendingComfyProgressSubscription()
         setPendingImageGeneration(null)
@@ -554,7 +570,7 @@ export default function KanbanPage() {
     } catch (err) {
       console.error('Image generation failed:', err)
       setImageDraft(draft)
-      alert(err.message || 'Image generation failed')
+      showStatusMessage(err.message || 'Image generation failed', 'error')
     } finally {
       setPendingImageGeneration(null)
       setLoading(false)
@@ -1162,7 +1178,7 @@ export default function KanbanPage() {
         const prompt = resolveDraftPrompt(card, imageEditDraft)
 
         if (!imageEditDraft.selectedAssetId || !prompt || !name) {
-          alert('Select an image, add a name, and provide a prompt.')
+          showStatusMessage('Select an image, add a name, and provide a prompt.', 'error')
           return
         }
 
@@ -1186,18 +1202,18 @@ export default function KanbanPage() {
         }
       } else if (imageEditDraft.mode === 'comfy') {
         if (!imageEditDraft.workflowId) {
-          alert('Select a ComfyUI workflow.')
+          showStatusMessage('Select a ComfyUI workflow.', 'error')
           return
         }
 
         if (!name) {
-          alert('Add a name for the generated edit.')
+          showStatusMessage('Add a name for the generated edit.', 'error')
           return
         }
 
         const workflow = getWorkflowsForCard(card).find(item => item.id == imageEditDraft.workflowId)
         if (!workflow) {
-          alert('Select a valid ComfyUI workflow.')
+          showStatusMessage('Select a valid ComfyUI workflow.', 'error')
           return
         }
 
@@ -1210,7 +1226,7 @@ export default function KanbanPage() {
 
           if (valueType === 'image') {
             if (!resolvedValue) {
-              alert(`Select an image for ${parameter.name}.`)
+              showStatusMessage(`Select an image for ${parameter.name}.`, 'error')
               return
             }
 
@@ -1226,7 +1242,7 @@ export default function KanbanPage() {
           if (valueType === 'number') {
             const trimmedValue = String(resolvedValue ?? '').trim()
             if (trimmedValue === '' || Number.isNaN(Number(trimmedValue))) {
-              alert(`Enter a valid number for ${parameter.name}.`)
+              showStatusMessage(`Enter a valid number for ${parameter.name}.`, 'error')
               return
             }
 
@@ -1236,7 +1252,7 @@ export default function KanbanPage() {
 
           const trimmedValue = String(resolvedValue ?? '').trim()
           if (!trimmedValue) {
-            alert(`Enter a value for ${parameter.name}.`)
+            showStatusMessage(`Enter a value for ${parameter.name}.`, 'error')
             return
           }
 
@@ -1244,7 +1260,7 @@ export default function KanbanPage() {
         }
 
         if (!primaryAssetId) {
-          alert('Select at least one image input for the workflow.')
+          showStatusMessage('Select at least one image input for the workflow.', 'error')
           return
         }
 
@@ -1341,13 +1357,13 @@ export default function KanbanPage() {
 
       await refreshProjectAssets()
       closeImageEditActionMenu()
-      alert(isMeshGenCard ? 'Mesh generation completed successfully.' : 'Image edit completed successfully.')
+      showStatusMessage(isMeshGenCard ? 'Mesh generation completed successfully.' : 'Image edit completed successfully.', 'success')
     } catch (err) {
       console.error(isMeshGenCard ? 'Failed to run mesh generation:' : 'Failed to run image edit:', err)
       await refreshProjectAssets().catch(refreshErr => {
         console.error('Failed to refresh project assets after action error:', refreshErr)
       })
-      alert(err.message || (isMeshGenCard ? 'Failed to run mesh generation' : 'Failed to run image edit'))
+      showStatusMessage(err.message || (isMeshGenCard ? 'Failed to run mesh generation' : 'Failed to run image edit'), 'error')
     } finally {
       closeImageEditProgressSubscription(card.id)
       setImageEditProgressByCardId(prev => {
@@ -1427,7 +1443,7 @@ export default function KanbanPage() {
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to move card:', err)
-      alert(err.message || 'Failed to move card')
+      showStatusMessage(err.message || 'Failed to move card', 'error')
     } finally {
       handleCardDragEnd()
     }
@@ -1442,7 +1458,7 @@ export default function KanbanPage() {
       await refreshCardAttributes()
     } catch (err) {
       console.error('Failed to add custom attribute:', err)
-      alert(err.message || 'Failed to add custom attribute')
+      showStatusMessage(err.message || 'Failed to add custom attribute', 'error')
     }
   }
 
@@ -1452,7 +1468,7 @@ export default function KanbanPage() {
       await refreshCardAttributes()
     } catch (err) {
       console.error('Failed to update attribute type:', err)
-      alert(err.message || 'Failed to update attribute type')
+      showStatusMessage(err.message || 'Failed to update attribute type', 'error')
     }
   }
 
@@ -1475,7 +1491,7 @@ export default function KanbanPage() {
       await refreshCardAttributes()
     } catch (err) {
       console.error('Failed to update attribute value:', err)
-      alert(err.message || 'Failed to update attribute value')
+      showStatusMessage(err.message || 'Failed to update attribute value', 'error')
     }
   }
 
@@ -1485,7 +1501,7 @@ export default function KanbanPage() {
       await refreshCardAttributes()
     } catch (err) {
       console.error('Failed to delete attribute:', err)
-      alert(err.message || 'Failed to delete attribute')
+      showStatusMessage(err.message || 'Failed to delete attribute', 'error')
     }
   }
 
@@ -2364,6 +2380,15 @@ export default function KanbanPage() {
         title={project?.name || 'Workspace'}
         centerTitle
       />
+
+      {statusMessage && (
+        <div className={`kanban-status-message kanban-status-message--${statusMessage.tone}`} role="status" aria-live="polite">
+          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>
+            {statusMessage.tone === 'success' ? 'check_circle' : statusMessage.tone === 'error' ? 'error' : 'info'}
+          </span>
+          <span>{statusMessage.message}</span>
+        </div>
+      )}
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
