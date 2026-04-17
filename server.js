@@ -398,11 +398,12 @@ function inferComfyParameterType(value) {
 
 function getDefaultComfyValueType(item, isOutput = false) {
   if (isOutput) return 'image';
+  if (item?.type === 'boolean') return 'boolean';
   return item?.type === 'number' ? 'number' : 'string';
 }
 
 function normalizeComfyValueType(value, fallback = 'string') {
-  return ['string', 'number', 'image', 'video', 'mesh'].includes(value) ? value : fallback;
+  return ['string', 'number', 'boolean', 'image', 'video', 'mesh'].includes(value) ? value : fallback;
 }
 
 function getComfyNodeLabel(nodeId, node = {}) {

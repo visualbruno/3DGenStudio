@@ -55,8 +55,8 @@ function getComfyDraftFromWorkflow(workflow) {
     workflowId: workflow?.id || '',
     inputs: Object.fromEntries(
       (workflow?.parameters || []).map(parameter => {
-        const valueType = parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
-        return [parameter.id, isFileWorkflowValueType(valueType) ? null : (parameter.defaultValue ?? '')]
+        const valueType = getWorkflowParameterValueType(parameter)
+        return [parameter.id, isFileWorkflowValueType(valueType) ? null : (valueType === 'boolean' ? Boolean(parameter.defaultValue ?? false) : (parameter.defaultValue ?? ''))]
       })
     )
   }
@@ -69,7 +69,9 @@ function formatWorkflowDefaultValue(value) {
 }
 
 function getWorkflowParameterValueType(parameter) {
-  return parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
+  if (parameter?.valueType) return parameter.valueType
+  if (parameter?.type === 'boolean') return 'boolean'
+  return parameter?.type === 'number' ? 'number' : 'string'
 }
 
 function getAssetChildren(asset) {
@@ -370,10 +372,9 @@ export default function KanbanPage() {
 
   const imageGenerationWorkflows = useMemo(() => {
     return comfyWorkflows.filter(workflow => {
-      const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
       const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
 
-      return parameterValueTypes.includes('string') && outputValueTypes.includes('image')
+      return outputValueTypes.includes('image')
     })
   }, [comfyWorkflows])
 
@@ -381,7 +382,7 @@ export default function KanbanPage() {
 
   const openComfyWorkflowDraft = (cardId = imageDraft?.cardId || null) => {
     if (imageGenerationWorkflows.length === 0) {
-      showStatusMessage('No compatible ComfyUI workflows available. Import a workflow with at least one string input and one image output.', 'error')
+      showStatusMessage('No compatible ComfyUI workflows available. Import a workflow with at least one image output.', 'error')
       return
     }
 
@@ -405,6 +406,8 @@ export default function KanbanPage() {
 
     if (['image', 'video'].includes(valueType)) {
       nextValue = rawValue
+    } else if (valueType === 'boolean') {
+      nextValue = Boolean(rawValue)
     } else if (parameter.type === 'number' || valueType === 'number') {
       nextValue = rawValue
     } else if (parameter.type === 'json' && typeof rawValue === 'string') {
@@ -787,7 +790,7 @@ export default function KanbanPage() {
 
       return valueTypes.includes('image')
         && outputValueTypes.includes('image')
-        && valueTypes.every(valueType => ['image', 'string', 'number'].includes(valueType))
+        && valueTypes.every(valueType => ['image', 'string', 'number', 'boolean'].includes(valueType))
     })
   }, [comfyWorkflows])
 
@@ -991,6 +994,13 @@ export default function KanbanPage() {
         }]
       }
 
+      if (valueType === 'boolean') {
+        return [parameter.id, {
+          source: 'custom',
+          customValue: Boolean(parameter.defaultValue ?? false)
+        }]
+      }
+
       const options = getAttributeOptionsForCard(card.id, valueType === 'number' ? 'Number' : 'Text')
       const firstOption = options[0] || { id: 'custom', value: parameter.defaultValue ?? '' }
 
@@ -1004,7 +1014,7 @@ export default function KanbanPage() {
   const getImageEditParameterBinding = (draft, parameter) => {
     return draft?.inputBindings?.[parameter.id] || {
       source: getWorkflowParameterValueType(parameter) === 'image' ? '' : 'custom',
-      customValue: ''
+      customValue: getWorkflowParameterValueType(parameter) === 'boolean' ? false : ''
     }
   }
 
@@ -1014,6 +1024,10 @@ export default function KanbanPage() {
 
     if (valueType === 'image') {
       return binding.source || ''
+    }
+
+    if (valueType === 'boolean') {
+      return Boolean(binding.customValue)
     }
 
     if (binding.source?.startsWith('attribute:')) {
@@ -1116,6 +1130,7 @@ export default function KanbanPage() {
 
       const currentBinding = getImageEditParameterBinding(prev, parameter)
       const currentValue = resolveImageEditParameterValue(card, prev, parameter)
+      const valueType = getWorkflowParameterValueType(parameter)
 
       return {
         ...prev,
@@ -1125,7 +1140,9 @@ export default function KanbanPage() {
             ...currentBinding,
             source,
             customValue: source === 'custom'
-              ? String(currentValue ?? currentBinding.customValue ?? parameter.defaultValue ?? '')
+              ? valueType === 'boolean'
+                ? Boolean(currentValue ?? currentBinding.customValue ?? parameter.defaultValue ?? false)
+                : String(currentValue ?? currentBinding.customValue ?? parameter.defaultValue ?? '')
               : currentBinding.customValue
           }
         }
@@ -1247,6 +1264,11 @@ export default function KanbanPage() {
             }
 
             inputValues[parameter.id] = trimmedValue
+            continue
+          }
+
+          if (valueType === 'boolean') {
+            inputValues[parameter.id] = Boolean(resolvedValue)
             continue
           }
 
@@ -1977,6 +1999,20 @@ export default function KanbanPage() {
                               )
                             }
 
+                            if (valueType === 'boolean') {
+                              return (
+                                <div key={parameter.id} className="params-card__field">
+                                  <label className="params-card__label font-label">{parameter.name} • BOOLEAN</label>
+                                  <label className="params-card__checkbox-label">
+                                    <div className={`params-card__checkbox ${binding.customValue ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => handleImageEditParameterValueChange(card, parameter, !binding.customValue)}>
+                                      {binding.customValue && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                                    </div>
+                                    <span>{parameter.label || 'Toggle value'}</span>
+                                  </label>
+                                </div>
+                              )
+                            }
+
                             const sourceOptions = getAttributeOptionsForCard(card.id, valueType === 'number' ? 'Number' : 'Text')
 
                             return (
@@ -1991,14 +2027,24 @@ export default function KanbanPage() {
                                     <option key={option.id} value={option.id}>{option.label}</option>
                                   ))}
                                 </select>
-                                <input
-                                  type={valueType === 'number' ? 'number' : 'text'}
-                                  className="params-card__input"
-                                  value={binding.source === 'custom' ? (binding.customValue ?? '') : String(resolvedValue ?? '')}
-                                  onChange={event => handleImageEditParameterValueChange(card, parameter, event.target.value)}
-                                  disabled={binding.source !== 'custom'}
-                                  placeholder={`Enter ${valueType} value`}
-                                />
+                                {valueType === 'string' ? (
+                                  <textarea
+                                    className="gen-prompt-input image-card__param-textarea"
+                                    value={binding.source === 'custom' ? (binding.customValue ?? '') : String(resolvedValue ?? '')}
+                                    onChange={event => handleImageEditParameterValueChange(card, parameter, event.target.value)}
+                                    disabled={binding.source !== 'custom'}
+                                    placeholder={`Enter ${valueType} value`}
+                                  />
+                                ) : (
+                                  <input
+                                    type={valueType === 'number' ? 'number' : 'text'}
+                                    className="params-card__input"
+                                    value={binding.source === 'custom' ? (binding.customValue ?? '') : String(resolvedValue ?? '')}
+                                    onChange={event => handleImageEditParameterValueChange(card, parameter, event.target.value)}
+                                    disabled={binding.source !== 'custom'}
+                                    placeholder={`Enter ${valueType} value`}
+                                  />
+                                )}
                                 <span className="image-card__param-hint">{parameter.label}</span>
                               </div>
                             )
@@ -2241,6 +2287,19 @@ export default function KanbanPage() {
                                       {imageDraft.inputs?.[parameter.id]?.name || `Select ${getWorkflowParameterValueType(parameter)} file`}
                                     </span>
                                   </label>
+                                ) : getWorkflowParameterValueType(parameter) === 'boolean' ? (
+                                  <label className="params-card__checkbox-label">
+                                    <div className={`params-card__checkbox ${imageDraft.inputs?.[parameter.id] ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => handleComfyInputChange(parameter, !(imageDraft.inputs?.[parameter.id]))}>
+                                      {imageDraft.inputs?.[parameter.id] && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                                    </div>
+                                    <span>{parameter.label || 'Toggle value'}</span>
+                                  </label>
+                                ) : getWorkflowParameterValueType(parameter) === 'string' ? (
+                                  <textarea
+                                    className="gen-prompt-input image-card__param-textarea"
+                                    value={imageDraft.inputs?.[parameter.id] ?? ''}
+                                    onChange={e => handleComfyInputChange(parameter, e.target.value)}
+                                  />
                                 ) : parameter.type === 'json' ? (
                                   <textarea
                                     className="gen-prompt-input image-card__param-textarea"

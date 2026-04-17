@@ -12,6 +12,7 @@ const ASSETS_PER_PAGE = 20
 const COMFY_VALUE_TYPES = [
   { value: 'string', label: 'String' },
   { value: 'number', label: 'Number' },
+  { value: 'boolean', label: 'Boolean' },
   { value: 'image', label: 'Image' },
   { value: 'video', label: 'Video' },
   { value: 'mesh', label: 'Mesh' }
@@ -47,6 +48,7 @@ const ASSET_SECTIONS = [
 function getDefaultValueType(item, isOutput = false) {
   if (item?.valueType) return item.valueType
   if (isOutput) return 'image'
+  if (item?.type === 'boolean') return 'boolean'
   return item?.type === 'number' ? 'number' : 'string'
 }
 
