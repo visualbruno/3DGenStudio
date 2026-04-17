@@ -168,6 +168,18 @@ function openDatabase(filename) {
   });
 }
 
+async function tableExists(db, tableName) {
+  const row = await get(
+    db,
+    `SELECT name
+     FROM sqlite_master
+     WHERE type = 'table' AND name = ?`,
+    [tableName]
+  );
+
+  return Boolean(row);
+}
+
 function run(db, sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function onRun(err) {
@@ -261,6 +273,24 @@ function mapProjectRow(row) {
   };
 }
 
+function mapChildAssetRow(row) {
+  const metadata = parseJson(row.metadata, {});
+
+  return {
+    id: row.id,
+    parentId: row.parentId ?? null,
+    editId: metadata?.editId || null,
+    name: row.name || '',
+    filePath: row.filePath,
+    filename: toAssetUrlPath(row.filePath),
+    width: row.width ?? 0,
+    height: row.height ?? 0,
+    metadata,
+    createdAt: row.creationDate,
+    isEdit: true
+  };
+}
+
 function mapTaskRow(row) {
   return {
     id: row.id,
@@ -343,6 +373,133 @@ function mapCardAttributeRow(row) {
 
 function normalizeAssetTypeName(name) {
   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+}
+
+async function migrateLegacyAssetEditsToAssets(db) {
+  if (!(await tableExists(db, 'Assets_Edits'))) {
+    return;
+  }
+
+  const legacyEditRows = await all(
+    db,
+    `SELECT ae.assetId AS sourceAssetId,
+            ae.editId,
+            ae.name,
+            ae.filePath,
+            ae.width,
+            ae.height,
+            ae.creationDate,
+            source.assetTypeId
+     FROM Assets_Edits ae
+     JOIN Assets source ON source.id = ae.assetId`
+  );
+
+  for (const legacyEditRow of legacyEditRows) {
+    const existingChildAsset = await get(
+      db,
+      `SELECT id
+       FROM Assets
+       WHERE filePath = ? AND parentId IS NOT NULL
+       LIMIT 1`,
+      [legacyEditRow.filePath]
+    );
+
+    if (existingChildAsset) {
+      continue;
+    }
+
+    await run(
+      db,
+      `INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail, width, height, parentId)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(legacyEditRow.name || '').trim() || `Edit ${legacyEditRow.editId}`,
+        legacyEditRow.filePath,
+        legacyEditRow.assetTypeId,
+        legacyEditRow.creationDate,
+        JSON.stringify({
+          editId: legacyEditRow.editId,
+          migratedFrom: 'Assets_Edits'
+        }),
+        null,
+        Number(legacyEditRow.width) || 0,
+        Number(legacyEditRow.height) || 0,
+        legacyEditRow.sourceAssetId
+      ]
+    );
+  }
+}
+
+function groupChildAssetsByParentFilePath(rows = [], port = null) {
+  return rows.reduce((accumulator, row) => {
+    if (!accumulator[row.parentFilePath]) {
+      accumulator[row.parentFilePath] = [];
+    }
+
+    const childAsset = mapChildAssetRow(row);
+    const childWithUrl = port
+      ? {
+        ...childAsset,
+        url: `http://localhost:${port}/assets/${encodeURI(childAsset.filename)}`
+      }
+      : childAsset;
+
+    if (!accumulator[row.parentFilePath].some(existingChild => existingChild.filePath === childWithUrl.filePath)) {
+      accumulator[row.parentFilePath].push(childWithUrl);
+    }
+
+    return accumulator;
+  }, {});
+}
+
+async function listChildAssetsByParentFilePaths(db, parentFilePaths = [], assetTypeName = 'Image') {
+  if (parentFilePaths.length === 0) {
+    return [];
+  }
+
+  return await all(
+    db,
+    `SELECT child.id, child.parentId, child.name, child.filePath, child.creationDate, child.metadata,
+            child.width, child.height,
+            parent.filePath AS parentFilePath
+     FROM Assets child
+     JOIN Assets parent ON parent.id = child.parentId
+     JOIN AssetTypes childType ON childType.id = child.assetTypeId
+     JOIN AssetTypes parentType ON parentType.id = parent.assetTypeId
+     WHERE child.parentId IS NOT NULL
+       AND childType.name = ?
+       AND parentType.name = ?
+       AND parent.filePath IN (${parentFilePaths.map(() => '?').join(', ')})
+     ORDER BY child.creationDate ASC, child.id ASC`,
+    [assetTypeName, assetTypeName, ...parentFilePaths]
+  );
+}
+
+async function getRootAssetById(assetId) {
+  const db = await getDb();
+  const asset = await get(
+    db,
+    `SELECT id, parentId, assetTypeId, filePath, name
+     FROM Assets
+     WHERE id = ?`,
+    [Number(assetId)]
+  );
+
+  if (!asset) {
+    return null;
+  }
+
+  if (!asset.parentId) {
+    return asset;
+  }
+
+  return await get(
+    db,
+    `SELECT id, parentId, assetTypeId, filePath, name
+     FROM Assets
+     WHERE id = ?`,
+    [asset.parentId]
+  );
 }
 
 async function getDb() {
@@ -456,6 +613,8 @@ export async function initializeStorage() {
       thumbnail TEXT,
       width INTEGER NOT NULL DEFAULT 0,
       height INTEGER NOT NULL DEFAULT 0,
+      parentId INTEGER,
+      FOREIGN KEY(parentId) REFERENCES Assets(id) ON DELETE CASCADE,
       FOREIGN KEY(assetTypeId) REFERENCES AssetTypes(id)
     );
 
@@ -478,17 +637,6 @@ export async function initializeStorage() {
       FOREIGN KEY(cardId) REFERENCES Cards(id) ON DELETE CASCADE,
       FOREIGN KEY(attributeTypeId) REFERENCES Attributes(id),
       UNIQUE(cardId, position)
-    );
-
-    CREATE TABLE IF NOT EXISTS Assets_Edits (
-      assetId INTEGER NOT NULL,
-      editId TEXT NOT NULL,
-      name TEXT,
-      filePath TEXT NOT NULL,
-      width INTEGER NOT NULL DEFAULT 0,
-      height INTEGER NOT NULL DEFAULT 0,
-      creationDate INTEGER NOT NULL,
-      FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS WorkflowConfigs (
@@ -516,15 +664,16 @@ export async function initializeStorage() {
     await run(db, 'ALTER TABLE Assets ADD COLUMN height INTEGER NOT NULL DEFAULT 0');
   }
 
-  const assetEditColumns = await all(db, 'PRAGMA table_info(Assets_Edits)');
-  if (!assetEditColumns.some(column => column.name === 'name')) {
-    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN name TEXT');
+  if (!assetColumns.some(column => column.name === 'parentId')) {
+    await run(db, 'ALTER TABLE Assets ADD COLUMN parentId INTEGER');
   }
-  if (!assetEditColumns.some(column => column.name === 'width')) {
-    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN width INTEGER NOT NULL DEFAULT 0');
-  }
-  if (!assetEditColumns.some(column => column.name === 'height')) {
-    await run(db, 'ALTER TABLE Assets_Edits ADD COLUMN height INTEGER NOT NULL DEFAULT 0');
+
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_parentId ON Assets(parentId)');
+
+  await migrateLegacyAssetEditsToAssets(db);
+
+  if (await tableExists(db, 'Assets_Edits')) {
+    await run(db, 'DROP TABLE Assets_Edits');
   }
 
   await seedReferenceTables(db);
@@ -858,12 +1007,12 @@ async function getCardAttributeView(cardId, position) {
   return row ? mapCardAttributeRow(row) : null;
 }
 
-async function insertAsset({ name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
+async function insertAsset({ name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now(), parentId = null }) {
   const db = await getDb();
   const assetTypeId = await getAssetTypeIdByName(type);
   const result = await run(
     db,
-    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail, width, height) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail, width, height, parentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     [
       name,
       toStoredAssetPath(type, filePath),
@@ -872,7 +1021,8 @@ async function insertAsset({ name, type, filePath, thumbnailPath = null, width =
       JSON.stringify(metadata),
       thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null,
       Number(width) || 0,
-      Number(height) || 0
+      Number(height) || 0,
+      parentId ? Number(parentId) : null
     ]
   );
 
@@ -922,15 +1072,17 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
     const row = await get(
       db,
        `SELECT projectAsset.id AS assetId, c.projectId, projectAsset.name AS assetName, projectAsset.filePath AS assetFilePath,
-              ae.editId, ae.name AS editName, ae.filePath AS editFilePath, ae.width AS editWidth, ae.height AS editHeight, ae.creationDate
-       FROM Assets_Edits ae
-       JOIN Assets sourceAsset ON sourceAsset.id = ae.assetId
+              child.name AS editName, child.filePath AS editFilePath, child.width AS editWidth, child.height AS editHeight,
+              child.creationDate, child.metadata AS editMetadata
+       FROM Assets child
+       JOIN Assets sourceAsset ON sourceAsset.id = child.parentId
        JOIN Assets projectAsset ON projectAsset.filePath = sourceAsset.filePath
          AND projectAsset.assetTypeId = sourceAsset.assetTypeId
        JOIN Cards_Assets ca ON ca.assetId = projectAsset.id
        JOIN Cards c ON c.id = ca.cardId
-       JOIN AssetTypes at ON at.id = sourceAsset.assetTypeId
-       WHERE c.projectId = ? AND ae.filePath = ? AND at.name = 'Image'
+       JOIN AssetTypes sourceType ON sourceType.id = sourceAsset.assetTypeId
+       JOIN AssetTypes childType ON childType.id = child.assetTypeId
+       WHERE c.projectId = ? AND child.filePath = ? AND sourceType.name = 'Image' AND childType.name = 'Image'
        ORDER BY c.creationDate DESC, projectAsset.creationDate DESC, projectAsset.id DESC
        LIMIT 1`,
       [projectId, editFilePath]
@@ -945,15 +1097,17 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
       return null;
     }
 
+    const editMetadata = parseJson(row.editMetadata, {});
+
     return {
       asset,
       inputFilePath: row.editFilePath,
       inputFilename: toAssetUrlPath(row.editFilePath),
-      inputName: row.editName || `Edit ${row.editId}`,
+      inputName: row.editName || `Edit ${editMetadata?.editId || row.assetId}`,
       width: row.editWidth ?? 0,
       height: row.editHeight ?? 0,
       isEdit: true,
-      editId: row.editId
+      editId: editMetadata?.editId || null
     };
   }
 
@@ -1175,6 +1329,7 @@ export async function listProjectAssets(projectId = null) {
        FROM Assets a
        JOIN AssetTypes at ON at.id = a.assetTypeId
        WHERE at.name IN ('Image', 'Mesh')
+         AND a.parentId IS NULL
          AND a.filePath IN (${assetFilePaths.map(() => '?').join(', ')})
        ORDER BY a.creationDate DESC, a.id DESC`,
       assetFilePaths
@@ -1198,45 +1353,12 @@ export async function listProjectAssets(projectId = null) {
 
   const uniqueImageFilePaths = [...new Set(imageFilePaths)];
 
-  const editRows = uniqueImageFilePaths.length > 0
-    ? await all(
-      db,
-      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.width, ae.height, ae.creationDate
-       FROM Assets_Edits ae
-       JOIN Assets source ON source.id = ae.assetId
-       JOIN AssetTypes at ON at.id = source.assetTypeId
-       WHERE at.name = 'Image'
-         AND source.filePath IN (${uniqueImageFilePaths.map(() => '?').join(', ')})
-       ORDER BY ae.creationDate ASC`,
-      uniqueImageFilePaths
-    )
-    : [];
-
-  const editsByFilePath = editRows.reduce((accumulator, row) => {
-    if (!accumulator[row.sourceFilePath]) {
-      accumulator[row.sourceFilePath] = [];
-    }
-
-    if (!accumulator[row.sourceFilePath].some(edit => edit.filePath === row.filePath)) {
-      accumulator[row.sourceFilePath].push({
-        id: `edit:${row.filePath}`,
-        editId: row.editId,
-        name: row.name || '',
-        filePath: row.filePath,
-        filename: toAssetUrlPath(row.filePath),
-        width: row.width ?? 0,
-        height: row.height ?? 0,
-        createdAt: row.creationDate,
-        isEdit: true
-      });
-    }
-
-    return accumulator;
-  }, {});
+  const childAssetRows = await listChildAssetsByParentFilePaths(db, uniqueImageFilePaths, 'Image');
+  const childrenByFilePath = groupChildAssetsByParentFilePath(childAssetRows);
 
   return rows.map(row => {
     const canonicalAsset = canonicalAssetsByKey[`${row.assetTypeName}:${row.filePath}`];
-    const assetEdits = editsByFilePath[row.filePath] || [];
+    const assetChildren = childrenByFilePath[row.filePath] || [];
 
     return {
       ...mapAssetRow({
@@ -1244,8 +1366,10 @@ export async function listProjectAssets(projectId = null) {
         name: canonicalAsset?.name || row.name,
         thumbnail: row.thumbnail || canonicalAsset?.thumbnail || null
       }),
-      edits: assetEdits,
-      editCount: assetEdits.length
+      children: assetChildren,
+      childCount: assetChildren.length,
+      edits: assetChildren,
+      editCount: assetChildren.length
     };
   });
 }
@@ -1294,18 +1418,34 @@ export async function createCardAttribute(projectId, externalCardId, { attribute
 }
 
 export async function createAssetEditRecord({ assetId, editId, name = '', filePath, width = 0, height = 0, createdAt = Date.now() }) {
-  const db = await getDb();
-  await run(
-    db,
-    'INSERT INTO Assets_Edits (assetId, editId, name, filePath, width, height, creationDate) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [assetId, editId, String(name || '').trim(), toStoredAssetPath('image', filePath), Number(width) || 0, Number(height) || 0, createdAt]
-  );
+  const parentAsset = await getRootAssetById(assetId);
+
+  if (!parentAsset) {
+    throw new Error('Source asset not found');
+  }
+
+  const storedFilePath = toStoredAssetPath('image', filePath);
+  const childAssetId = await insertAsset({
+    name: String(name || '').trim() || `Edit ${editId}`,
+    type: 'image',
+    filePath: storedFilePath,
+    width,
+    height,
+    metadata: {
+      editId,
+      source: 'IMAGE EDIT'
+    },
+    createdAt,
+    parentId: parentAsset.id
+  });
 
   return {
-    assetId,
+    id: childAssetId,
+    assetId: parentAsset.id,
+    parentId: parentAsset.id,
     editId,
     name: String(name || '').trim(),
-    filePath: toStoredAssetPath('image', filePath),
+    filePath: storedFilePath,
     width: Number(width) || 0,
     height: Number(height) || 0,
     creationDate: createdAt
@@ -1536,6 +1676,7 @@ export async function findLibraryAssetByFilePath(type, filePath) {
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
+       AND a.parentId IS NULL
        AND a.filePath = ?
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
      ORDER BY a.creationDate DESC
@@ -1561,6 +1702,7 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
+       AND a.parentId IS NULL
         AND a.filePath = ?
      ORDER BY a.creationDate DESC, a.id DESC`,
     [normalizedType, storedFilePath]
@@ -1599,6 +1741,7 @@ export async function renameLibraryAssetByFilePath(type, filePath, name) {
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
+       AND a.parentId IS NULL
        AND a.filePath = ?
      ORDER BY a.creationDate DESC
      LIMIT 1`,
@@ -1635,9 +1778,10 @@ export async function renameAssetEditByFilePath(filePath, name) {
 
   const existingEdit = await get(
     db,
-    `SELECT assetId, editId, filePath, creationDate
-     FROM Assets_Edits
+    `SELECT id, parentId, filePath, creationDate, metadata
+     FROM Assets
      WHERE filePath = ?
+       AND parentId IS NOT NULL
      LIMIT 1`,
     [storedFilePath]
   );
@@ -1646,11 +1790,14 @@ export async function renameAssetEditByFilePath(filePath, name) {
     throw new Error('Edit not found');
   }
 
-  await run(db, 'UPDATE Assets_Edits SET name = ? WHERE filePath = ?', [trimmedName, storedFilePath]);
+  await run(db, 'UPDATE Assets SET name = ? WHERE filePath = ? AND parentId IS NOT NULL', [trimmedName, storedFilePath]);
+
+  const editMetadata = parseJson(existingEdit.metadata, {});
 
   return {
-    assetId: existingEdit.assetId,
-    editId: existingEdit.editId,
+    assetId: existingEdit.parentId,
+    parentId: existingEdit.parentId,
+    editId: editMetadata?.editId || null,
     name: trimmedName,
     filePath: existingEdit.filePath,
     creationDate: existingEdit.creationDate
@@ -1662,9 +1809,10 @@ export async function deleteAssetEditByFilePath(filePath) {
   const storedFilePath = toStoredAssetPath('image', filePath);
   const existingEdit = await get(
     db,
-    `SELECT assetId, editId, filePath
-     FROM Assets_Edits
+    `SELECT id, parentId, filePath, metadata
+     FROM Assets
      WHERE filePath = ?
+       AND parentId IS NOT NULL
      LIMIT 1`,
     [storedFilePath]
   );
@@ -1673,16 +1821,19 @@ export async function deleteAssetEditByFilePath(filePath) {
     return { status: 'not-found' };
   }
 
-  await run(db, 'DELETE FROM Assets_Edits WHERE filePath = ?', [storedFilePath]);
+  await run(db, 'DELETE FROM Assets WHERE filePath = ? AND parentId IS NOT NULL', [storedFilePath]);
 
   const absoluteEditFilePath = toAbsoluteStoragePath(existingEdit.filePath);
   await fs.rm(absoluteEditFilePath, { force: true }).catch(() => null);
   await fs.rmdir(path.dirname(absoluteEditFilePath)).catch(() => null);
 
+  const editMetadata = parseJson(existingEdit.metadata, {});
+
   return {
     status: 'deleted',
-    assetId: existingEdit.assetId,
-    editId: existingEdit.editId,
+    assetId: existingEdit.parentId,
+    parentId: existingEdit.parentId,
+    editId: editMetadata?.editId || null,
     filePath: existingEdit.filePath
   };
 }
@@ -1700,6 +1851,7 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
      JOIN Cards c ON c.id = ca.cardId
      LEFT JOIN Projects p ON p.id = c.projectId
      WHERE at.name = ?
+       AND a.parentId IS NULL
        AND a.filePath = ?
      ORDER BY c.creationDate DESC
      LIMIT 1`,
@@ -1720,6 +1872,7 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
+       AND a.parentId IS NULL
        AND a.filePath = ?`,
     [normalizedType, storedFilePath]
   );
@@ -1730,15 +1883,24 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
     return { status: 'deleted' };
   }
 
-  const editFileRows = normalizedType === 'Image'
+  const childAssetRows = normalizedType === 'Image' && assets.length > 0
     ? await all(
       db,
-      `SELECT DISTINCT editId, filePath
-       FROM Assets_Edits
-       WHERE assetId IN (${assets.map(() => '?').join(', ')})`,
+      `SELECT id, filePath
+       FROM Assets
+       WHERE parentId IN (${assets.map(() => '?').join(', ')})`,
       assets.map(asset => asset.id)
     )
     : [];
+
+  if (childAssetRows.length > 0) {
+    await run(
+      db,
+      `DELETE FROM Assets
+       WHERE id IN (${childAssetRows.map(() => '?').join(', ')})`,
+      childAssetRows.map(childAsset => childAsset.id)
+    );
+  }
 
   for (const asset of assets) {
     await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
@@ -1752,8 +1914,8 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
     }
   }
 
-  for (const editFileRow of editFileRows) {
-    const absoluteEditFilePath = toAbsoluteStoragePath(editFileRow.filePath);
+  for (const childAssetRow of childAssetRows) {
+    const absoluteEditFilePath = toAbsoluteStoragePath(childAssetRow.filePath);
     await fs.rm(path.dirname(absoluteEditFilePath), { recursive: true, force: true }).catch(() => null);
   }
 
@@ -1814,6 +1976,7 @@ export async function deleteAssetById(assetId) {
     return { status: 'unlinked' };
   }
 
+  await run(db, 'DELETE FROM Assets WHERE parentId = ?', [assetId]);
   await run(db, 'DELETE FROM Assets WHERE id = ?', [assetId]);
   return { status: 'deleted' };
 }
@@ -1908,6 +2071,7 @@ export async function listLibraryAssetsByType(type, port) {
      FROM Assets a
      JOIN AssetTypes at ON at.id = a.assetTypeId
      WHERE at.name = ?
+       AND a.parentId IS NULL
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets ca WHERE ca.assetId = a.id)
      ORDER BY a.creationDate DESC`,
     [normalizeAssetTypeName(type)]
@@ -1927,6 +2091,7 @@ export async function listLibraryAssetsByType(type, port) {
        FROM Assets a
        JOIN AssetTypes at ON at.id = a.assetTypeId
        WHERE at.name = ?
+         AND a.parentId IS NULL
          AND a.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
        ORDER BY a.creationDate DESC, a.id DESC`,
       [normalizeAssetTypeName(type), ...candidateStoredPaths]
@@ -1941,58 +2106,30 @@ export async function listLibraryAssetsByType(type, port) {
     return accumulator;
   }, {});
 
-  const editRows = type === 'image' && candidateStoredPaths.length > 0
-    ? await all(
-      db,
-      `SELECT source.filePath AS sourceFilePath, ae.editId, ae.name, ae.filePath, ae.width, ae.height, ae.creationDate
-       FROM Assets_Edits ae
-       JOIN Assets source ON source.id = ae.assetId
-       JOIN AssetTypes at ON at.id = source.assetTypeId
-       WHERE at.name = ?
-         AND source.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
-       ORDER BY ae.creationDate ASC`,
-      [normalizeAssetTypeName(type), ...candidateStoredPaths]
-    )
+  const childAssetRows = type === 'image'
+    ? await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type))
     : [];
 
-  const editsBySourceFilePath = editRows.reduce((accumulator, row) => {
-    if (!accumulator[row.sourceFilePath]) {
-      accumulator[row.sourceFilePath] = [];
-    }
-
-    const filename = toAssetUrlPath(row.filePath);
-    if (!accumulator[row.sourceFilePath].some(edit => edit.filePath === row.filePath)) {
-      accumulator[row.sourceFilePath].push({
-        editId: row.editId,
-        name: row.name || '',
-        filePath: row.filePath,
-        filename,
-        width: row.width ?? 0,
-        height: row.height ?? 0,
-        createdAt: row.creationDate,
-        url: `http://localhost:${port}/assets/${encodeURI(filename)}`
-      });
-    }
-
-    return accumulator;
-  }, {});
+  const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, port);
 
   const dbAssets = rows.reduce((accumulator, row) => {
     const filename = toAssetUrlPath(row.filePath);
     const existingAsset = accumulator.find(asset => asset.filename === filename);
-    const assetEdits = editsBySourceFilePath[row.filePath] || [];
+    const assetChildren = childrenBySourceFilePath[row.filePath] || [];
 
     if (existingAsset) {
-      const mergedEdits = [...existingAsset.edits, ...assetEdits].reduce((mergedAccumulator, edit) => {
-        if (!mergedAccumulator.some(existingEdit => existingEdit.filePath === edit.filePath)) {
-          mergedAccumulator.push(edit);
+      const mergedChildren = [...existingAsset.children, ...assetChildren].reduce((mergedAccumulator, childAsset) => {
+        if (!mergedAccumulator.some(existingChild => existingChild.filePath === childAsset.filePath)) {
+          mergedAccumulator.push(childAsset);
         }
 
         return mergedAccumulator;
       }, []);
 
-      existingAsset.edits = mergedEdits.sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0));
-      existingAsset.editCount = existingAsset.edits.length;
+      existingAsset.children = mergedChildren.sort((left, right) => (left.createdAt || 0) - (right.createdAt || 0));
+      existingAsset.childCount = existingAsset.children.length;
+      existingAsset.edits = existingAsset.children;
+      existingAsset.editCount = existingAsset.children.length;
       return accumulator;
     }
 
@@ -2012,8 +2149,10 @@ export async function listLibraryAssetsByType(type, port) {
       height: canonicalAsset?.height ?? row.height ?? 0,
       thumbnailPath,
       thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
-      edits: assetEdits,
-      editCount: assetEdits.length
+      children: assetChildren,
+      childCount: assetChildren.length,
+      edits: assetChildren,
+      editCount: assetChildren.length
     });
 
     return accumulator;
@@ -2027,7 +2166,7 @@ export async function listLibraryAssetsByType(type, port) {
     .map(entry => {
       const filename = `${subdirectory}/${entry.name}`;
       const storedFilePath = toStoredAssetPath(type, filename);
-      const assetEdits = editsBySourceFilePath[storedFilePath] || [];
+      const assetChildren = childrenBySourceFilePath[storedFilePath] || [];
       const canonicalAsset = canonicalAssetsByFilePath[storedFilePath];
       const thumbnailFilename = canonicalAsset?.thumbnail ? toAssetUrlPath(canonicalAsset.thumbnail) : null;
 
@@ -2043,8 +2182,10 @@ export async function listLibraryAssetsByType(type, port) {
         height: canonicalAsset?.height ?? 0,
         thumbnailPath: canonicalAsset?.thumbnail || null,
         thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
-        edits: assetEdits,
-        editCount: assetEdits.length
+        children: assetChildren,
+        childCount: assetChildren.length,
+        edits: assetChildren,
+        editCount: assetChildren.length
       };
     });
 

@@ -80,6 +80,10 @@ function getWorkflowParameterValueType(parameter) {
   return parameter.valueType || (parameter.type === 'number' ? 'number' : 'string')
 }
 
+function getAssetChildren(asset) {
+  return asset?.children || asset?.edits || []
+}
+
 function createImageCardId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -852,7 +856,7 @@ export default function KanbanPage() {
           previewFilename: asset.filename,
           isEdit: false
         },
-        ...(asset.edits || []).map((edit, index) => ({
+        ...getAssetChildren(asset).map((edit, index) => ({
           value: `edit:${edit.filePath}`,
           label: edit.name?.trim() || `Edit ${index + 1}`,
           previewFilename: edit.filename,
@@ -872,7 +876,7 @@ export default function KanbanPage() {
         height: asset.height,
         isEdit: false
       },
-      ...((asset.edits || []).map((edit, index) => ({
+      ...(getAssetChildren(asset).map((edit, index) => ({
         key: `edit:${edit.filePath}`,
         name: edit.name?.trim() || `Edit ${index + 1}`,
         filename: edit.filename,
@@ -944,7 +948,7 @@ export default function KanbanPage() {
   }
 
   const handleImageEditPreviewStep = (asset, step) => {
-    const itemCount = 1 + (asset.edits?.length || 0)
+    const itemCount = 1 + getAssetChildren(asset).length
     if (itemCount <= 1) {
       return
     }

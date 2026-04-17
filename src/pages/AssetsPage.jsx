@@ -109,6 +109,10 @@ function formatDimensions(width, height) {
   return `${width} × ${height}`
 }
 
+function getAssetChildren(asset) {
+  return asset?.children || asset?.edits || []
+}
+
 export default function AssetsPage() {
   const {
     getLibraryAssets,
@@ -359,7 +363,7 @@ export default function AssetsPage() {
       setLibraryAssets(data)
 
       const refreshedAsset = (data.images || []).find(item => item.filename === asset.filename)
-      setEditPreviewAsset(refreshedAsset || { ...asset, edits: [], editCount: 0 })
+      setEditPreviewAsset(refreshedAsset || { ...asset, children: [], edits: [], childCount: 0, editCount: 0 })
       setImportFeedback({
         type: 'success',
         message: 'Edit deleted.'
@@ -644,9 +648,9 @@ export default function AssetsPage() {
               </button>
             </div>
             <div className="assets-dialog__body">
-              {editPreviewAsset.edits?.length > 0 ? (
+              {getAssetChildren(editPreviewAsset).length > 0 ? (
                 <div className="asset-edits-grid">
-                  {editPreviewAsset.edits.map((edit, index) => (
+                  {getAssetChildren(editPreviewAsset).map((edit, index) => (
                     <article key={`${edit.editId}-${edit.filePath}-${index}`} className="asset-edit-card">
                       <div className="asset-edit-card__preview">
                         <img src={edit.url} alt={`${editPreviewAsset.name} ${edit.name?.trim() || `edit ${index + 1}`}`} className="asset-card__image" />
@@ -1133,7 +1137,7 @@ export default function AssetsPage() {
                             <div className="asset-card__meta">
                               <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
                               <div className="asset-card__actions">
-                                {activeSection === 'images' && asset.editCount > 0 && (
+                                {activeSection === 'images' && getAssetChildren(asset).length > 0 && (
                                   <button
                                     type="button"
                                     className="asset-card__edits-btn"
@@ -1141,7 +1145,7 @@ export default function AssetsPage() {
                                     title="Show edits"
                                   >
                                     <span className="material-symbols-outlined">history</span>
-                                    {asset.editCount}
+                                    {getAssetChildren(asset).length}
                                   </button>
                                 )}
                                 {activeSection === 'meshes' ? (
