@@ -134,3 +134,9 @@ You can then:
 ## Project Vision
 
 `3D Gen Studio` aims to make 3D content creation more accessible by combining generation tools, asset tracking, and workflow organization in a single interface. It is built for creators who want a practical bridge between **AI-generated imagery** and **3D production workflows**.
+
+---
+
+### Thank you for your support
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/visualbruno)
