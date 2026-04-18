@@ -629,6 +629,13 @@ function GraphAssetNode({ data }) {
             className="graph-node__connector graph-node__connector--input"
             style={getConnectorPosition(index, inputConnectors.length)}
           >
+            <Handle
+              type="target"
+              id={connector.id}
+              position={Position.Left}
+              className="graph-node__handle graph-node__handle--input"
+              style={{ borderColor: connectorMeta.color }}
+            />
             <span
               className="graph-node__connector-badge font-label"
               style={{
@@ -640,13 +647,6 @@ function GraphAssetNode({ data }) {
             >
               {connectorMeta.letter}
             </span>
-            <Handle
-              type="target"
-              id={connector.id}
-              position={Position.Left}
-              className="graph-node__handle graph-node__handle--input"
-              style={{ borderColor: connectorMeta.color }}
-            />
           </div>
         )
       })}

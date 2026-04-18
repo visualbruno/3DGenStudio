@@ -259,7 +259,7 @@
 
 .graph-node {
   position: relative;
-  padding: 0.85rem 2rem;
+  padding: 0.85rem 1.4rem;
   border: 1px solid rgba(143, 245, 255, 0.18);
   border-radius: 28px;
   background: linear-gradient(180deg, rgba(23, 25, 29, 0.72), rgba(15, 16, 19, 0.9));
@@ -368,20 +368,22 @@
 
 .graph-node__connector {
   position: absolute;
-  z-index: 3;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.35rem;
   transform: translateY(-50%);
   pointer-events: none;
 }
 
 .graph-node__connector--input {
-  left: 0.55rem;
+  left: 0.15rem;
+  transform: translate(-1.15rem, -50%);
 }
 
 .graph-node__connector--output {
-  right: 0.55rem;
+  right: 0.15rem;
+  transform: translate(1.15rem, -50%);
 }
 
 .graph-node__connector-badge {
@@ -397,6 +399,7 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  backdrop-filter: blur(10px);
   pointer-events: none;
 }
 
@@ -435,5 +438,13 @@
 
   .graph-node {
     padding-inline: 1.6rem;
+  }
+
+  .graph-node__connector--input {
+    transform: translate(-1.05rem, -50%);
+  }
+
+  .graph-node__connector--output {
+    transform: translate(1.05rem, -50%);
   }
 }
