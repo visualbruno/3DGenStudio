@@ -7,6 +7,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  useUpdateNodeInternals,
   useEdgesState,
   useNodesState
 } from '@xyflow/react'
@@ -19,8 +20,9 @@ import '@xyflow/react/dist/style.css'
 import './KanbanPage.css'
 import './GraphPage.css'
 
-const DEFAULT_OUTPUT_ID = 'image-output'
-const DEFAULT_INPUT_ID = 'image-input'
+const DEFAULT_OUTPUT_ID = 'output-0'
+const DEFAULT_INPUT_ID = 'input-0'
+const LEGACY_INPUT_ID = 'image-input'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
@@ -30,6 +32,15 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
 const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Image Edit']
+const CONNECTOR_TYPE_META = {
+  image: { key: 'image', label: 'Image', letter: 'I', color: '#8ff5ff', background: 'rgba(143, 245, 255, 0.14)' },
+  mesh: { key: 'mesh', label: 'Mesh', letter: 'M', color: '#ac89ff', background: 'rgba(172, 137, 255, 0.14)' },
+  video: { key: 'video', label: 'Video', letter: 'V', color: '#ff9a62', background: 'rgba(255, 154, 98, 0.14)' },
+  number: { key: 'number', label: 'Number', letter: 'N', color: '#79e388', background: 'rgba(121, 227, 136, 0.14)' },
+  text: { key: 'text', label: 'Text', letter: 'T', color: '#ffd36e', background: 'rgba(255, 211, 110, 0.16)' },
+  boolean: { key: 'boolean', label: 'Boolean', letter: 'B', color: '#ff7fc8', background: 'rgba(255, 127, 200, 0.16)' },
+  unknown: { key: 'unknown', label: 'Open', letter: '+', color: 'rgba(191, 196, 204, 0.8)', background: 'rgba(191, 196, 204, 0.12)' }
+}
 
 function normalizeCustomApiType(type) {
   return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
@@ -39,6 +50,121 @@ function normalizeCustomApiType(type) {
 
 function getNodeKind(nodeTypeName = '') {
   return String(nodeTypeName).trim().toLowerCase() === 'image edit' ? 'imageEdit' : 'image'
+}
+
+function normalizeConnectorType(type) {
+  const normalizedType = String(type || '').trim().toLowerCase()
+
+  if (['image', 'mesh', 'video', 'number', 'boolean'].includes(normalizedType)) {
+    return normalizedType
+  }
+
+  if (['text', 'string', 'json'].includes(normalizedType)) {
+    return 'text'
+  }
+
+  return null
+}
+
+function getConnectorTypeMeta(type) {
+  return CONNECTOR_TYPE_META[normalizeConnectorType(type) || 'unknown']
+}
+
+function getNodeOutputType(node) {
+  const outputType = normalizeConnectorType(
+    node?.data?.metadata?.outputType
+    || node?.metadata?.outputType
+    || node?.data?.asset?.type
+    || node?.asset?.type
+  )
+
+  if (outputType) {
+    return outputType
+  }
+
+  return ['image', 'imageEdit'].includes(node?.data?.nodeKind || node?.type) ? 'image' : null
+}
+
+function getInputHandleIndex(handleId) {
+  if (handleId === LEGACY_INPUT_ID) {
+    return 0
+  }
+
+  const match = String(handleId || '').match(/(\d+)$/)
+  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER
+}
+
+function compareHandleIds(leftHandleId, rightHandleId) {
+  return getInputHandleIndex(leftHandleId) - getInputHandleIndex(rightHandleId)
+}
+
+function getNextInputHandleId(usedHandleIds) {
+  let nextIndex = 0
+
+  while (usedHandleIds.includes(`input-${nextIndex}`)) {
+    nextIndex += 1
+  }
+
+  return `input-${nextIndex}`
+}
+
+function getConnectorPosition(index, total) {
+  const safeTotal = Math.max(total, 1)
+  return {
+    top: `${((index + 1) / (safeTotal + 1)) * 100}%`
+  }
+}
+
+function buildInputConnectors(nodeId, currentNodes, currentEdges) {
+  const incomingEdges = currentEdges
+    .filter(edge => edge.target === String(nodeId))
+    .sort((leftEdge, rightEdge) => compareHandleIds(leftEdge.targetHandle || DEFAULT_INPUT_ID, rightEdge.targetHandle || DEFAULT_INPUT_ID))
+
+  const usedHandleIds = [...new Set(incomingEdges.map(edge => edge.targetHandle || DEFAULT_INPUT_ID))]
+  const usedConnectors = usedHandleIds.map(handleId => {
+    const matchingEdge = incomingEdges.find(edge => (edge.targetHandle || DEFAULT_INPUT_ID) === handleId)
+    const sourceNode = currentNodes.find(node => node.id === matchingEdge?.source)
+
+    return {
+      id: handleId,
+      type: getNodeOutputType(sourceNode),
+      isConnected: true
+    }
+  })
+
+  return [
+    ...usedConnectors,
+    {
+      id: getNextInputHandleId(usedHandleIds),
+      type: null,
+      isConnected: false
+    }
+  ]
+}
+
+function getInputSource(currentNodes, currentEdges, nodeId, expectedType = null) {
+  const incomingEdges = currentEdges
+    .filter(edge => edge.target === String(nodeId))
+    .sort((leftEdge, rightEdge) => compareHandleIds(leftEdge.targetHandle || DEFAULT_INPUT_ID, rightEdge.targetHandle || DEFAULT_INPUT_ID))
+
+  for (const edge of incomingEdges) {
+    const sourceNode = currentNodes.find(node => node.id === edge.source)
+    const outputType = getNodeOutputType(sourceNode)
+
+    if (!expectedType || outputType === expectedType) {
+      return {
+        edge,
+        sourceNode,
+        asset: sourceNode?.data?.asset || null
+      }
+    }
+  }
+
+  return {
+    edge: null,
+    sourceNode: null,
+    asset: null
+  }
 }
 
 function formatAssetDimensions(width, height) {
@@ -173,7 +299,103 @@ function createWorkflowDraftInputs(workflow, resolver = () => null) {
   }))
 }
 
+function getInputSourceSelectionValue(inputSource) {
+  return inputSource?.connectorId ? `connector:${inputSource.connectorId}` : ''
+}
+
+function buildNodeInputSources(nodeId, currentNodes, currentEdges) {
+  return currentEdges
+    .filter(edge => edge.target === String(nodeId))
+    .sort((leftEdge, rightEdge) => compareHandleIds(leftEdge.targetHandle || DEFAULT_INPUT_ID, rightEdge.targetHandle || DEFAULT_INPUT_ID))
+    .map(edge => {
+      const sourceNode = currentNodes.find(node => node.id === edge.source)
+      const outputType = getNodeOutputType(sourceNode)
+      const sourceAsset = sourceNode?.data?.asset || null
+      const sourceReference = getAssetSourceReference(sourceAsset)
+      const sourceName = sourceAsset?.name || sourceNode?.data?.name || `Node ${edge.source}`
+
+      return {
+        connectorId: edge.targetHandle || DEFAULT_INPUT_ID,
+        sourceNodeId: edge.source,
+        type: outputType,
+        label: sourceName,
+        asset: sourceAsset,
+        sourceReference,
+        value: isFileWorkflowValueType(outputType)
+          ? (sourceReference ? { source: sourceReference } : null)
+          : (sourceNode?.data?.metadata?.outputValue ?? sourceNode?.data?.outputValue ?? null)
+      }
+    })
+}
+
+function getCompatibleInputSources(inputSources, valueType) {
+  const normalizedValueType = normalizeConnectorType(valueType)
+  return (inputSources || []).filter(source => normalizeConnectorType(source.type) === normalizedValueType)
+}
+
+function createWorkflowDraftBindings(workflow, inputSources = [], preferredConnectorTypes = []) {
+  return Object.fromEntries((workflow?.parameters || []).map(parameter => {
+    const valueType = getWorkflowParameterValueType(parameter)
+    const compatibleSources = getCompatibleInputSources(inputSources, valueType)
+    const shouldPreferConnector = compatibleSources.length > 0
+      && (isFileWorkflowValueType(valueType) || preferredConnectorTypes.includes(valueType))
+
+    return [parameter.id, {
+      source: shouldPreferConnector ? getInputSourceSelectionValue(compatibleSources[0]) : 'custom'
+    }]
+  }))
+}
+
+function getWorkflowParameterBinding(draft, parameter) {
+  return draft?.inputBindings?.[parameter.id] || { source: 'custom' }
+}
+
+function resolveSelectedInputSource(sourceSelection, inputSources = []) {
+  if (!String(sourceSelection || '').startsWith('connector:')) {
+    return null
+  }
+
+  const connectorId = String(sourceSelection).slice(10)
+  return (inputSources || []).find(source => source.connectorId === connectorId) || null
+}
+
+function resolveWorkflowParameterValue(parameter, draft, inputSources = []) {
+  const binding = getWorkflowParameterBinding(draft, parameter)
+  if (binding.source && binding.source !== 'custom') {
+    const selectedSource = resolveSelectedInputSource(binding.source, inputSources)
+    return selectedSource?.value ?? null
+  }
+
+  return draft?.inputs?.[parameter.id]
+}
+
+function resolveImageSourceOption(sourceSelection, inputSources = [], libraryOptions = []) {
+  const connectorSource = resolveSelectedInputSource(sourceSelection, inputSources)
+  if (connectorSource) {
+    return {
+      type: 'connector',
+      sourceReference: connectorSource.sourceReference,
+      asset: connectorSource.asset,
+      label: connectorSource.label,
+      connectorId: connectorSource.connectorId
+    }
+  }
+
+  const librarySource = (libraryOptions || []).find(option => option.sourceReference === sourceSelection)
+  if (librarySource) {
+    return {
+      type: 'library',
+      sourceReference: librarySource.sourceReference,
+      asset: null,
+      label: librarySource.name
+    }
+  }
+
+  return null
+}
+
 function GraphAssetNode({ data }) {
+  const updateNodeInternals = useUpdateNodeInternals()
   const isImageEdit = data.nodeKind === 'imageEdit'
   const previewFilename = data.asset?.thumbnail || data.asset?.filename || null
   const previewUrl = getAssetPreviewUrl(previewFilename)
@@ -186,77 +408,156 @@ function GraphAssetNode({ data }) {
   const draft = data.actionDraft
   const selectedWorkflow = (isImageEdit ? data.imageEditWorkflows : data.imageGenerationWorkflows)
     .find(workflow => workflow.id == draft?.workflowId) || null
+  const inputConnectors = data.inputConnectors || [{ id: DEFAULT_INPUT_ID, type: null, isConnected: false }]
+  const inputSources = data.inputSources || []
+  const outputConnector = data.outputConnector || { id: DEFAULT_OUTPUT_ID, type: 'image' }
+  const connectedInputCount = inputConnectors.filter(connector => connector.isConnected).length
+  const outputMeta = getConnectorTypeMeta(outputConnector.type)
+  const imageInputSources = getCompatibleInputSources(inputSources, 'image')
+  const selectedApiImageSource = resolveImageSourceOption(draft?.selectedInputSource, inputSources, data.libraryImageOptions)
+
+  useEffect(() => {
+    updateNodeInternals(String(data.id))
+  }, [data.id, inputConnectors, outputConnector.id, updateNodeInternals])
 
   const renderWorkflowField = (parameter) => {
     const valueType = getWorkflowParameterValueType(parameter)
     const currentValue = draft?.inputs?.[parameter.id]
+    const compatibleSources = getCompatibleInputSources(inputSources, valueType)
+    const binding = getWorkflowParameterBinding(draft, parameter)
+    const selectedSource = resolveSelectedInputSource(binding.source, compatibleSources)
 
-    if (isImageEdit && valueType === 'image') {
-      return (
-        <div className="graph-node__linked-input font-label">
-          {data.connectedInputAsset?.name || 'Connect an input image to use this parameter'}
-        </div>
-      )
-    }
+    const renderCustomValueField = () => {
+      if (isImageEdit && valueType === 'image') {
+        const selectedSourceReference = currentValue?.source || currentValue || ''
 
-    if (isFileWorkflowValueType(valueType)) {
-      return (
-        <label className="image-card__file-input nodrag">
-          <input
-            type="file"
-            accept={getWorkflowFileInputAccept(valueType)}
-            onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.files?.[0] || null)}
-          />
-          <span className="material-symbols-outlined">{getWorkflowFileInputIcon(valueType)}</span>
-          <span>{currentValue?.name || `Select ${valueType} file`}</span>
-        </label>
-      )
-    }
+        if (data.libraryImageOptions.length === 0) {
+          return (
+            <div className="graph-node__linked-input font-label">
+              No custom image sources available in the asset library.
+            </div>
+          )
+        }
 
-    if (valueType === 'boolean') {
-      return (
-        <label className="params-card__checkbox-label nodrag">
-          <div
-            className={`params-card__checkbox ${currentValue ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
-            onClick={() => data.onDraftInputChange?.(data.id, parameter, !currentValue)}
+        return (
+          <select
+            className="params-card__select nodrag"
+            value={selectedSourceReference}
+            onChange={event => data.onDraftInputChange?.(data.id, parameter, { source: event.target.value })}
           >
-            {currentValue && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
-          </div>
-          <span>{parameter.label || 'Toggle value'}</span>
-        </label>
-      )
-    }
+            {data.libraryImageOptions.map(asset => (
+              <option key={asset.id} value={asset.sourceReference || asset.id}>{asset.name}</option>
+            ))}
+          </select>
+        )
+      }
 
-    if (valueType === 'string' || parameter.type === 'json') {
+      if (isFileWorkflowValueType(valueType)) {
+        return (
+          <label className="image-card__file-input nodrag">
+            <input
+              type="file"
+              accept={getWorkflowFileInputAccept(valueType)}
+              onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.files?.[0] || null)}
+            />
+            <span className="material-symbols-outlined">{getWorkflowFileInputIcon(valueType)}</span>
+            <span>{currentValue?.name || `Select ${valueType} file`}</span>
+          </label>
+        )
+      }
+
+      if (valueType === 'boolean') {
+        return (
+          <label className="params-card__checkbox-label nodrag">
+            <div
+              className={`params-card__checkbox ${currentValue ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+              onClick={() => data.onDraftInputChange?.(data.id, parameter, !currentValue)}
+            >
+              {currentValue && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+            </div>
+            <span>{parameter.label || 'Toggle value'}</span>
+          </label>
+        )
+      }
+
+      if (valueType === 'string' || parameter.type === 'json') {
+        return (
+          <textarea
+            className="gen-prompt-input image-card__param-textarea nodrag"
+            value={typeof currentValue === 'string' ? currentValue : JSON.stringify(currentValue ?? '', null, 2)}
+            onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.value)}
+          />
+        )
+      }
+
       return (
-        <textarea
-          className="gen-prompt-input image-card__param-textarea nodrag"
-          value={typeof currentValue === 'string' ? currentValue : JSON.stringify(currentValue ?? '', null, 2)}
+        <input
+          type={valueType === 'number' ? 'number' : 'text'}
+          className="params-card__input nodrag"
+          value={currentValue ?? ''}
           onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.value)}
         />
       )
     }
 
     return (
-      <input
-        type={valueType === 'number' ? 'number' : 'text'}
-        className="params-card__input nodrag"
-        value={currentValue ?? ''}
-        onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.value)}
-      />
+      <>
+        {compatibleSources.length > 0 && (
+          <select
+            className="params-card__select nodrag"
+            value={binding.source || 'custom'}
+            onChange={event => data.onDraftInputSourceChange?.(data.id, parameter, event.target.value)}
+          >
+            {compatibleSources.map(source => (
+              <option key={source.connectorId} value={getInputSourceSelectionValue(source)}>
+                {`${getConnectorTypeMeta(source.type).letter} · ${source.label}`}
+              </option>
+            ))}
+            <option value="custom">Custom value</option>
+          </select>
+        )}
+
+        {selectedSource ? (
+          <div className="graph-node__linked-input font-label">
+            {`Using ${getConnectorTypeMeta(selectedSource.type).label} input · ${selectedSource.label}`}
+          </div>
+        ) : renderCustomValueField()}
+      </>
     )
   }
 
   return (
     <div className={`graph-node graph-node--${data.nodeKind}`}>
-      {isImageEdit && (
-        <Handle
-          type="target"
-          id={DEFAULT_INPUT_ID}
-          position={Position.Left}
-          className="graph-node__handle graph-node__handle--input"
-        />
-      )}
+      {inputConnectors.map((connector, index) => {
+        const connectorMeta = getConnectorTypeMeta(connector.type)
+
+        return (
+          <div
+            key={connector.id}
+            className="graph-node__connector graph-node__connector--input"
+            style={getConnectorPosition(index, inputConnectors.length)}
+          >
+            <span
+              className="graph-node__connector-badge font-label"
+              style={{
+                color: connectorMeta.color,
+                background: connectorMeta.background,
+                borderColor: connectorMeta.color
+              }}
+              title={connector.type ? connectorMeta.label : 'Available input'}
+            >
+              {connectorMeta.letter}
+            </span>
+            <Handle
+              type="target"
+              id={connector.id}
+              position={Position.Left}
+              className="graph-node__handle graph-node__handle--input"
+              style={{ borderColor: connectorMeta.color }}
+            />
+          </div>
+        )
+      })}
 
       <div className={`graph-node__card image-card ${isProcessing ? 'image-card--loading image-card--locked' : ''}`}>
         <div className="image-card__actions">
@@ -324,8 +625,8 @@ function GraphAssetNode({ data }) {
           )}
 
           <div className="graph-node__ports-summary font-label">
-            {isImageEdit && <span className="graph-node__port-label">Input · Image</span>}
-            <span className="graph-node__port-label graph-node__port-label--output">Output · Image</span>
+            <span className="graph-node__port-label">Inputs · {connectedInputCount + 1 > 1 ? `${connectedInputCount} connected` : 'empty'}</span>
+            <span className="graph-node__port-label graph-node__port-label--output">Output · {outputMeta.label}</span>
           </div>
 
           <div className="image-card__attributes graph-node__actions-panel">
@@ -514,10 +815,39 @@ function GraphAssetNode({ data }) {
                     value={draft.prompt || ''}
                     onChange={event => data.onDraftFieldChange?.(data.id, 'prompt', event.target.value)}
                   />
+                  <select
+                    className="params-card__select nodrag"
+                    value={draft.selectedInputSource || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'selectedInputSource', event.target.value)}
+                  >
+                    {imageInputSources.length > 0 && (
+                      <optgroup label="Connected inputs">
+                        {imageInputSources.map(source => (
+                          <option key={source.connectorId} value={getInputSourceSelectionValue(source)}>
+                            {`${getConnectorTypeMeta(source.type).letter} · ${source.label}`}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {data.libraryImageOptions.length > 0 && (
+                      <optgroup label="Asset library">
+                        {data.libraryImageOptions.map(asset => (
+                          <option key={asset.id} value={asset.sourceReference || asset.id}>
+                            {asset.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {imageInputSources.length === 0 && data.libraryImageOptions.length === 0 && (
+                      <option value="">No image sources available</option>
+                    )}
+                  </select>
                   <div className="graph-node__linked-input font-label">
-                    {data.connectedInputAsset ? `Input: ${data.connectedInputAsset.name}` : 'Connect an input image first'}
+                    {selectedApiImageSource?.label
+                      ? `Input: ${selectedApiImageSource.label}`
+                      : 'Select an image source from the graph or asset library'}
                   </div>
-                  <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!data.connectedInputAsset}>
+                  <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.selectedInputSource}>
                     <span className="material-symbols-outlined">auto_fix_high</span>
                     RUN EDIT
                   </button>
@@ -575,9 +905,11 @@ function GraphAssetNode({ data }) {
                         </div>
                       )}
                       <div className="graph-node__linked-input font-label">
-                        {data.connectedInputAsset ? `Input: ${data.connectedInputAsset.name}` : 'Connect an input image first'}
+                        {imageInputSources.length > 0
+                          ? `${imageInputSources.length} compatible image input${imageInputSources.length === 1 ? '' : 's'} available`
+                          : 'Use a connected image or upload a custom file for image parameters'}
                       </div>
-                      <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!data.connectedInputAsset}>
+                      <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW
                       </button>
@@ -601,12 +933,26 @@ function GraphAssetNode({ data }) {
         </div>
       </div>
 
-      <Handle
-        type="source"
-        id={DEFAULT_OUTPUT_ID}
-        position={Position.Right}
-        className="graph-node__handle graph-node__handle--output"
-      />
+      <div className="graph-node__connector graph-node__connector--output" style={getConnectorPosition(0, 1)}>
+        <span
+          className="graph-node__connector-badge font-label"
+          style={{
+            color: outputMeta.color,
+            background: outputMeta.background,
+            borderColor: outputMeta.color
+          }}
+          title={outputMeta.label}
+        >
+          {outputMeta.letter}
+        </span>
+        <Handle
+          type="source"
+          id={outputConnector.id}
+          position={Position.Right}
+          className="graph-node__handle graph-node__handle--output"
+          style={{ borderColor: outputMeta.color }}
+        />
+      </div>
     </div>
   )
 }
@@ -706,41 +1052,53 @@ export default function GraphPage({ project }) {
         filename: child.filename,
         url: child.url || getAssetPreviewUrl(child.filename),
         extension: (child.filename?.split('.').pop() || '').toUpperCase(),
+        sourceReference: child.filePath ? `edit:${child.filePath}` : '',
         isEdit: true
       }))
 
-      return [originalOption, ...childOptions]
+      return [{
+        ...originalOption,
+        sourceReference: `asset:${asset.id}`
+      }, ...childOptions]
     })
   }, [libraryAssets])
 
   const getConnectedInputAssetFrom = useCallback((currentNodes, currentEdges, nodeId) => {
-    const inputEdge = currentEdges.find(edge => edge.target === String(nodeId) && (edge.targetHandle || DEFAULT_INPUT_ID) === DEFAULT_INPUT_ID)
-    const sourceNode = currentNodes.find(node => node.id === inputEdge?.source)
-    return sourceNode?.data?.asset || null
+    return getInputSource(currentNodes, currentEdges, nodeId, 'image').asset
   }, [])
 
-  const createImageNodeDraft = useCallback((mode = 'select') => {
+  const createImageNodeDraft = useCallback((mode = 'select', inputSources = []) => {
     const defaultWorkflow = imageGenerationWorkflows[0] || null
     return {
       mode,
       selectedApi: imageGenerationApis[0]?.id || '',
       prompt: '',
       workflowId: defaultWorkflow?.id || '',
-      inputs: mode === 'comfy' ? createWorkflowDraftInputs(defaultWorkflow, () => null) : {}
+      inputs: mode === 'comfy' ? createWorkflowDraftInputs(defaultWorkflow, () => null) : {},
+      inputBindings: mode === 'comfy' ? createWorkflowDraftBindings(defaultWorkflow, inputSources) : {}
     }
   }, [imageGenerationApis, imageGenerationWorkflows])
 
-  const createImageEditNodeDraft = useCallback((mode = 'select', sourceAsset = null) => {
+  const createImageEditNodeDraft = useCallback((mode = 'select', sourceAsset = null, inputSources = [], libraryOptions = []) => {
     const defaultWorkflow = imageEditWorkflows[0] || null
     const sourceReference = getAssetSourceReference(sourceAsset)
+    const defaultImageInputSource = getCompatibleInputSources(inputSources, 'image')[0] || null
     return {
       mode,
       name: '',
       selectedApi: imageEditApis[0]?.id || '',
       prompt: '',
+      selectedInputSource: mode === 'api'
+        ? (getInputSourceSelectionValue(defaultImageInputSource) || libraryOptions[0]?.sourceReference || sourceReference || '')
+        : '',
       workflowId: defaultWorkflow?.id || '',
       inputs: mode === 'comfy'
-        ? createWorkflowDraftInputs(defaultWorkflow, (_parameter, valueType) => valueType === 'image' ? { source: sourceReference } : null)
+        ? createWorkflowDraftInputs(defaultWorkflow, (_parameter, valueType) => valueType === 'image'
+            ? ({ source: libraryOptions[0]?.sourceReference || sourceReference || '' })
+            : null)
+        : {},
+      inputBindings: mode === 'comfy'
+        ? createWorkflowDraftBindings(defaultWorkflow, inputSources, ['image'])
         : {}
     }
   }, [imageEditApis, imageEditWorkflows])
@@ -864,7 +1222,7 @@ export default function GraphPage({ project }) {
       status: initialData.status ?? null,
       progress: initialData.progress ?? null,
       metadata: {
-        inputType: nodeTypeName === 'Image Edit' ? 'image' : null,
+        inputType: null,
         outputType: 'image',
         ...(initialData.metadata || {})
       }
@@ -904,17 +1262,24 @@ export default function GraphPage({ project }) {
   }, [handleCreateNode, nodePicker])
 
   const openActionDraft = useCallback((nodeId, nodeKind) => {
+    const inputSources = buildNodeInputSources(nodeId, nodes, edges)
     setActionDraftsByNodeId({
       [String(nodeId)]: nodeKind === 'imageEdit'
-        ? createImageEditNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId))
-        : createImageNodeDraft('select')
+        ? createImageEditNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId), inputSources, libraryImageOptions)
+        : createImageNodeDraft('select', inputSources)
     })
-  }, [createImageEditNodeDraft, createImageNodeDraft, edges, getConnectedInputAssetFrom, nodes])
+  }, [createImageEditNodeDraft, createImageNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
     data: {
       ...node.data,
+      inputConnectors: buildInputConnectors(node.id, nodes, edges),
+      inputSources: buildNodeInputSources(node.id, nodes, edges),
+      outputConnector: {
+        id: DEFAULT_OUTPUT_ID,
+        type: getNodeOutputType(node)
+      },
       actionDraft: actionDraftsByNodeId[node.id] || null,
       connectedInputAsset: getConnectedInputAssetFrom(nodes, edges, node.id),
       imageGenerationApis,
@@ -940,19 +1305,28 @@ export default function GraphPage({ project }) {
           await ensureComfyWorkflowsLoaded()
         }
 
+        const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
         setActionDraftsByNodeId({
           [String(targetNodeId)]: mode === 'comfy'
-            ? createImageNodeDraft('comfy')
-            : createImageNodeDraft(mode)
+            ? createImageNodeDraft('comfy', nodeInputSources)
+            : createImageNodeDraft(mode, nodeInputSources)
         })
       },
       onImageEditModeSelect: async (targetNodeId, mode) => {
+        if (mode === 'api') {
+          await ensureLibraryLoaded()
+        }
+
         if (mode === 'comfy') {
+          await ensureLibraryLoaded()
           await ensureComfyWorkflowsLoaded()
         }
 
+        const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
         setActionDraftsByNodeId({
-          [String(targetNodeId)]: createImageEditNodeDraft(mode, getConnectedInputAssetFrom(nodes, edges, targetNodeId))
+          [String(targetNodeId)]: createImageEditNodeDraft(mode, getConnectedInputAssetFrom(nodes, edges, targetNodeId), nodeInputSources, libraryImageOptions)
         })
       },
       onDraftFieldChange: (targetNodeId, field, value) => {
@@ -962,7 +1336,7 @@ export default function GraphPage({ project }) {
             return currentDrafts
           }
 
-          const sourceAsset = getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+          const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
           let nextDraft = {
             ...nodeDraft,
             [field]: value
@@ -975,8 +1349,13 @@ export default function GraphPage({ project }) {
             nextDraft = {
               ...nextDraft,
               inputs: isEditNode
-                ? createWorkflowDraftInputs(selectedWorkflow, (_parameter, valueType) => valueType === 'image' ? { source: getAssetSourceReference(sourceAsset) } : null)
-                : createWorkflowDraftInputs(selectedWorkflow, () => null)
+                ? createWorkflowDraftInputs(selectedWorkflow, (_parameter, valueType) => valueType === 'image'
+                    ? ({ source: libraryImageOptions[0]?.sourceReference || '' })
+                    : null)
+                : createWorkflowDraftInputs(selectedWorkflow, () => null),
+              inputBindings: isEditNode
+                ? createWorkflowDraftBindings(selectedWorkflow, targetInputSources, ['image'])
+                : createWorkflowDraftBindings(selectedWorkflow, targetInputSources)
             }
           }
 
@@ -998,6 +1377,27 @@ export default function GraphPage({ project }) {
               inputs: {
                 ...(nodeDraft.inputs || {}),
                 [parameter.id]: nextValue
+              }
+            }
+          }
+        })
+      },
+      onDraftInputSourceChange: (targetNodeId, parameter, source) => {
+        setActionDraftsByNodeId(currentDrafts => {
+          const nodeDraft = currentDrafts[String(targetNodeId)]
+          if (!nodeDraft) {
+            return currentDrafts
+          }
+
+          return {
+            [String(targetNodeId)]: {
+              ...nodeDraft,
+              inputBindings: {
+                ...(nodeDraft.inputBindings || {}),
+                [parameter.id]: {
+                  ...getWorkflowParameterBinding(nodeDraft, parameter),
+                  source
+                }
               }
             }
           }
@@ -1058,7 +1458,7 @@ export default function GraphPage({ project }) {
         }
 
         const spawnAdditionalResultNodes = async (nodeTypeName, assets) => {
-          const sourceEdge = edges.find(edge => edge.target === String(targetNodeId) && (edge.targetHandle || DEFAULT_INPUT_ID) === DEFAULT_INPUT_ID)
+          const sourceEdge = getInputSource(nodes, edges, targetNodeId, 'image').edge
           const baseX = targetNode.position.x
           const baseY = targetNode.position.y
           for (let index = 0; index < assets.length; index += 1) {
@@ -1114,6 +1514,7 @@ export default function GraphPage({ project }) {
 
           if (targetDraft.mode === 'comfy') {
             const workflow = imageGenerationWorkflows.find(item => item.id == targetDraft.workflowId)
+            const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
             if (!workflow) {
               return
             }
@@ -1121,7 +1522,7 @@ export default function GraphPage({ project }) {
             const inputValues = {}
             for (const parameter of workflow.parameters || []) {
               const valueType = getWorkflowParameterValueType(parameter)
-              const inputValue = targetDraft.inputs?.[parameter.id]
+              const inputValue = resolveWorkflowParameterValue(parameter, targetDraft, targetInputSources)
 
               if (isFileWorkflowValueType(valueType)) {
                 if (!inputValue) {
@@ -1200,13 +1601,16 @@ export default function GraphPage({ project }) {
           return
         }
 
-        const sourceAsset = getConnectedInputAssetFrom(nodes, edges, targetNodeId)
-        const sourceReference = getAssetSourceReference(sourceAsset)
-        if (!sourceReference) {
-          return
-        }
+        const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
 
         if (targetDraft.mode === 'api') {
+          const selectedApiSource = resolveImageSourceOption(targetDraft.selectedInputSource, targetInputSources, libraryImageOptions)
+          const sourceAsset = selectedApiSource?.asset || getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+          const sourceReference = selectedApiSource?.sourceReference || getAssetSourceReference(sourceAsset)
+          if (!sourceReference) {
+            return
+          }
+
           if (!targetDraft.selectedApi || !String(targetDraft.prompt || '').trim() || !String(targetDraft.name || '').trim()) {
             return
           }
@@ -1249,10 +1653,13 @@ export default function GraphPage({ project }) {
           const inputValues = {}
           for (const parameter of workflow.parameters || []) {
             const valueType = getWorkflowParameterValueType(parameter)
-            const inputValue = targetDraft.inputs?.[parameter.id]
+            const inputValue = resolveWorkflowParameterValue(parameter, targetDraft, targetInputSources)
 
-            if (valueType === 'image') {
-              inputValues[parameter.id] = { source: sourceReference }
+            if (isFileWorkflowValueType(valueType)) {
+              if (!inputValue) {
+                return
+              }
+              inputValues[parameter.id] = inputValue
               continue
             }
 
@@ -1298,10 +1705,10 @@ export default function GraphPage({ project }) {
             onError: () => {}
           }))
 
-          await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId, inputSource: sourceReference })
+          await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId })
           try {
             const response = await runImageEditComfy(project.id, {
-              assetId: sourceAsset.id,
+              assetId: getConnectedInputAssetFrom(nodes, edges, targetNodeId)?.id || null,
               workflowId: Number(targetDraft.workflowId),
               name: targetDraft.name.trim(),
               inputValues,
@@ -1315,7 +1722,7 @@ export default function GraphPage({ project }) {
             await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
               lastAction: 'image-edit-comfy',
               promptId,
-              inputSource: sourceReference
+              inputSource: JSON.stringify(inputValues)
             })
             if (savedEdits.length > 1) {
               await spawnAdditionalResultNodes('Image Edit', savedEdits.slice(1).map(edit => ({
@@ -1324,7 +1731,7 @@ export default function GraphPage({ project }) {
               })))
             }
           } catch (err) {
-            await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId, inputSource: sourceReference })
+            await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
           } finally {
             closeNodeProgressSubscription(targetNodeId)
           }
@@ -1373,10 +1780,15 @@ export default function GraphPage({ project }) {
       return
     }
 
+    const targetHandleId = connection.targetHandle || DEFAULT_INPUT_ID
+    if (edges.some(edge => edge.target === String(connection.target) && (edge.targetHandle || DEFAULT_INPUT_ID) === targetHandleId)) {
+      return
+    }
+
     const createdConnection = await createProjectConnection(project.id, {
       sourceNodeId: Number(connection.source),
       targetNodeId: Number(connection.target),
-      inputId: connection.targetHandle || DEFAULT_INPUT_ID,
+      inputId: targetHandleId,
       outputId: connection.sourceHandle || DEFAULT_OUTPUT_ID
     })
 
@@ -1388,7 +1800,7 @@ export default function GraphPage({ project }) {
 
       return addEdge(nextEdge, currentEdges)
     })
-  }, [createProjectConnection, project.id, setEdges])
+  }, [createProjectConnection, edges, project.id, setEdges])
 
   const handlePaneClick = useCallback(() => {
     if (nodePicker) {

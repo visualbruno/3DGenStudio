@@ -199,13 +199,22 @@
 
 .graph-node {
   position: relative;
+  padding: 0.85rem 2rem;
+  border: 1px solid rgba(143, 245, 255, 0.18);
+  border-radius: 28px;
+  background: linear-gradient(180deg, rgba(23, 25, 29, 0.72), rgba(15, 16, 19, 0.9));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+.graph-node--imageEdit {
+  border-color: rgba(172, 137, 255, 0.22);
 }
 
 .graph-node__card.image-card {
   width: 360px;
   cursor: grab;
   border-color: rgba(71, 72, 74, 0.14);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
 }
 
 .graph-node__card.image-card:hover {
@@ -297,11 +306,50 @@
   background: rgba(143, 245, 255, 0.1);
 }
 
+.graph-node__connector {
+  position: absolute;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.graph-node__connector--input {
+  left: 0.55rem;
+}
+
+.graph-node__connector--output {
+  right: 0.55rem;
+}
+
+.graph-node__connector-badge {
+  min-width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.25rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
 .graph-node__handle {
+  position: relative !important;
+  inset: auto !important;
+  transform: none !important;
   width: 12px;
   height: 12px;
   border: 2px solid rgba(143, 245, 255, 0.6);
   background: var(--surface-container-highest);
+  box-shadow: 0 0 0 3px rgba(12, 14, 16, 0.9);
+  pointer-events: all;
 }
 
 .graph-node__handle--input {
@@ -323,5 +371,9 @@
 
   .graph-node__card.image-card {
     width: 300px;
+  }
+
+  .graph-node {
+    padding-inline: 1.6rem;
   }
 }
