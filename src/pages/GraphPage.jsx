@@ -29,6 +29,7 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
+const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Image Edit']
 
 function normalizeCustomApiType(type) {
   return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
@@ -646,12 +647,15 @@ export default function GraphPage({ project }) {
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [comfyWorkflows, setComfyWorkflows] = useState([])
   const [comfyLoading, setComfyLoading] = useState(false)
+  const [nodePicker, setNodePicker] = useState(null)
+  const [reactFlowInstance, setReactFlowInstance] = useState(null)
 
   const fileInputRef = useRef(null)
   const pendingUploadNodeIdRef = useRef(null)
   const progressSubscriptionsRef = useRef(new Map())
   const libraryLoadedRef = useRef(false)
   const workflowsLoadedRef = useRef(false)
+  const graphCanvasRef = useRef(null)
 
   const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
   const imageGenerationApis = useMemo(() => ([
@@ -770,10 +774,7 @@ export default function GraphPage({ project }) {
       node.id === String(updatedNode.id)
         ? {
             ...node,
-            position: {
-              x: Number(updatedNode.xPos) || 0,
-              y: Number(updatedNode.yPos) || 0
-            },
+            position: node.position,
             data: {
               ...node.data,
               ...updatedNode,
@@ -872,6 +873,35 @@ export default function GraphPage({ project }) {
     setNodes(currentNodes => [...currentNodes, toBaseFlowNode(createdNode, handleDeleteNode)])
     return createdNode
   }, [createProjectNode, handleDeleteNode, nodes.length, project.id, setNodes])
+
+  const handlePaneContextMenu = useCallback((event) => {
+    event.preventDefault()
+
+    const canvasBounds = graphCanvasRef.current?.getBoundingClientRect()
+    const flowPosition = reactFlowInstance?.screenToFlowPosition
+      ? reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : { x: 96, y: 96 }
+
+    setNodePicker({
+      menuX: canvasBounds ? event.clientX - canvasBounds.left : event.clientX,
+      menuY: canvasBounds ? event.clientY - canvasBounds.top : event.clientY,
+      flowX: flowPosition.x,
+      flowY: flowPosition.y
+    })
+  }, [reactFlowInstance])
+
+  const handleCreateNodeFromPicker = useCallback(async (nodeTypeName) => {
+    if (!nodePicker) {
+      return
+    }
+
+    await handleCreateNode(nodeTypeName, {
+      xPos: nodePicker.flowX,
+      yPos: nodePicker.flowY
+    })
+
+    setNodePicker(null)
+  }, [handleCreateNode, nodePicker])
 
   const openActionDraft = useCallback((nodeId, nodeKind) => {
     setActionDraftsByNodeId({
@@ -1123,6 +1153,7 @@ export default function GraphPage({ project }) {
 
             const promptId = createComfyExecutionId('graph-image-prompt')
             const clientId = createComfyExecutionId('graph-image-client')
+            setActionDraftsByNodeId({})
             closeNodeProgressSubscription(targetNodeId)
             progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
               onMessage: payload => {
@@ -1158,7 +1189,6 @@ export default function GraphPage({ project }) {
               if (imageAssets.length > 1) {
                 await spawnAdditionalResultNodes('Image', imageAssets.slice(1))
               }
-              setActionDraftsByNodeId({})
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
             } finally {
@@ -1248,6 +1278,7 @@ export default function GraphPage({ project }) {
 
           const promptId = createComfyExecutionId('graph-image-edit-prompt')
           const clientId = createComfyExecutionId('graph-image-edit-client')
+          setActionDraftsByNodeId({})
           closeNodeProgressSubscription(targetNodeId)
           progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
             onMessage: payload => {
@@ -1292,7 +1323,6 @@ export default function GraphPage({ project }) {
                 name: edit.name || targetDraft.name.trim()
               })))
             }
-            setActionDraftsByNodeId({})
           } catch (err) {
             await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId, inputSource: sourceReference })
           } finally {
@@ -1360,6 +1390,12 @@ export default function GraphPage({ project }) {
     })
   }, [createProjectConnection, project.id, setEdges])
 
+  const handlePaneClick = useCallback(() => {
+    if (nodePicker) {
+      setNodePicker(null)
+    }
+  }, [nodePicker])
+
   const handleNodeDragStop = useCallback(async (_event, node) => {
     try {
       await updateProjectNodePosition(project.id, Number(node.id), node.position)
@@ -1400,28 +1436,7 @@ export default function GraphPage({ project }) {
 
       <div className="graph-page__body">
         <main className="graph-page__main" id="graph-main">
-          <div className="graph-page__toolbar">
-            <div className="graph-page__toolbar-chip graph-page__toolbar-chip--primary">
-              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>hub</span>
-              Graph Workspace
-            </div>
-            <div className="graph-page__toolbar-chip">
-              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>tune</span>
-              Preset: {project?.preset || 'Graph'}
-            </div>
-            <div className="graph-page__toolbar-actions">
-              <button type="button" className="graph-page__toolbar-btn" onClick={() => handleCreateNode('Image')}>
-                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>image</span>
-                Add Image Node
-              </button>
-              <button type="button" className="graph-page__toolbar-btn graph-page__toolbar-btn--secondary" onClick={() => handleCreateNode('Image Edit')}>
-                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>photo_filter</span>
-                Add Image Edit Node
-              </button>
-            </div>
-          </div>
-
-          <div className="graph-page__canvas-shell">
+          <div className="graph-page__canvas-shell" ref={graphCanvasRef}>
             {showEmptyState && (
               <div className="graph-page__empty-state">
                 <div className="graph-page__empty-icon">
@@ -1430,7 +1445,7 @@ export default function GraphPage({ project }) {
                 <div className="graph-page__empty-copy">
                   <h2 className="graph-page__empty-title font-headline">Empty workflow graph</h2>
                   <p className="graph-page__empty-text">
-                    Start by adding an Image node or an Image Edit node.
+                    Right-click anywhere on the graph to add a node.
                   </p>
                 </div>
               </div>
@@ -1440,14 +1455,38 @@ export default function GraphPage({ project }) {
               <div className="graph-page__loading font-label">Loading graph…</div>
             )}
 
+            {nodePicker && (
+              <div
+                className="graph-page__node-picker"
+                style={{ left: `${nodePicker.menuX}px`, top: `${nodePicker.menuY}px` }}
+              >
+                <div className="graph-page__node-picker-title font-label">ADD NODE</div>
+                <div className="graph-page__node-picker-options">
+                  {GRAPH_NODE_TYPE_OPTIONS.map(nodeTypeName => (
+                    <button
+                      key={nodeTypeName}
+                      type="button"
+                      className="graph-page__node-picker-option"
+                      onClick={() => handleCreateNodeFromPicker(nodeTypeName)}
+                    >
+                      {nodeTypeName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <ReactFlow
               className="graph-page__canvas"
               nodes={renderedNodes}
               edges={edges}
               nodeTypes={flowNodeTypes}
+              onInit={setReactFlowInstance}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={handleConnect}
+              onPaneClick={handlePaneClick}
+              onPaneContextMenu={handlePaneContextMenu}
               onNodeDragStop={handleNodeDragStop}
               onEdgesDelete={handleEdgesDelete}
               defaultViewport={{ x: 0, y: 0, zoom: 0.9 }}

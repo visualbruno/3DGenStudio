@@ -329,10 +329,15 @@ export function ProjectProvider({ children }) {
   }
 
   const updateProjectNodePosition = async (projectId, nodeId, position) => {
+    const normalizedPosition = {
+      xPos: position?.xPos ?? position?.x ?? 0,
+      yPos: position?.yPos ?? position?.y ?? 0
+    }
+
     const res = await fetch(`${API_BASE}/graph/nodes/${nodeId}/position`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projectId, ...position })
+      body: JSON.stringify({ projectId, ...normalizedPosition })
     })
 
     const data = await res.json()
