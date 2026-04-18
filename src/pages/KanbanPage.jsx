@@ -23,6 +23,7 @@ const IMAGE_CARD_COLUMNS = [
   { id: 'imageedit', dbId: 2, icon: 'photo_filter', title: 'IMAGE EDIT', showAttributes: true, emptyLabel: 'Drag an image card here to edit it' },
   { id: 'meshgen', dbId: 3, icon: 'deployed_code', title: 'MESH GEN', showAttributes: true, emptyLabel: 'Drag an image card here to generate a mesh' },
   { id: 'meshedit', dbId: 4, icon: 'edit_square', title: 'MESH EDIT', showAttributes: true, emptyLabel: 'Drag a mesh card here to edit it' },
+  { id: 'texturing', dbId: 5, icon: 'texture', title: 'TEXTURING', showAttributes: true, emptyLabel: 'Drag a mesh card here to texture it' },
 ]
 
 const DEFAULT_ATTRIBUTE_TYPE_ID = 1
@@ -45,7 +46,7 @@ function getWorkflowFileInputIcon(valueType) {
 }
 
 function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE
 }
@@ -115,6 +116,7 @@ export default function KanbanPage() {
     runImageEditApi,
     runMeshGenerationApi,
     runMeshEditApi,
+    runMeshTexturingApi,
     runImageEditComfy,
     generateImage,
     getComfyWorkflows,
@@ -128,12 +130,6 @@ export default function KanbanPage() {
   const [projectCards, setProjectCards] = useState([])
   const [loading, setLoading] = useState(true)
 
-  const [texResolution, setTexResolution] = useState('2048 x 2048 (2K)')
-  const [texEngine, setTexEngine] = useState('stable')
-  const [pbrEnabled, setPbrEnabled] = useState(true)
-  const [aoEnabled, setAoEnabled] = useState(false)
-
-  // NEW: Settings and Image Creation State
   const [showSettings, setShowSettings] = useState(false)
   const [imageDraft, setImageDraft] = useState(null) // null | { mode: 'select'|'local'|'comfy'|'api' }
   const [pendingImageGeneration, setPendingImageGeneration] = useState(null)
@@ -854,15 +850,22 @@ export default function KanbanPage() {
       .map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ), [customApis])
 
+  const meshTexturingApis = useMemo(() => (
+    customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'mesh-texturing')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ), [customApis])
+
   const getWorkflowsForCard = (card) => {
     if (card?.kanbanColumnId === 3) return meshGenWorkflows
-    if (card?.kanbanColumnId === 4) return meshEditWorkflows
+    if ([4, 5].includes(card?.kanbanColumnId)) return meshEditWorkflows
     return imageEditWorkflows
   }
 
   const getApiOptionsForColumnId = (columnId) => {
     if (columnId === 3) return meshGenerationApis
     if (columnId === 4) return meshEditApis
+    if (columnId === 5) return meshTexturingApis
     return imageEditApis
   }
 
@@ -956,7 +959,7 @@ export default function KanbanPage() {
 
   const getCardPreviewItems = (card, showAttributes = false) => {
     const hasMeshAssets = (card.meshAssets?.length || 0) > 0
-    const useMixedAssetCarousel = showAttributes && [3, 4].includes(card.kanbanColumnId) && hasMeshAssets
+    const useMixedAssetCarousel = showAttributes && [3, 4, 5].includes(card.kanbanColumnId) && hasMeshAssets
 
     if (!useMixedAssetCarousel) {
       return []
@@ -1110,7 +1113,7 @@ export default function KanbanPage() {
       mode,
       name: '',
       selectedApi: getDefaultApiForCard(card),
-      selectedAssetId: card.kanbanColumnId === 4
+      selectedAssetId: [4, 5].includes(card.kanbanColumnId)
         ? (card.meshAssets[0]?.id ? `asset:${card.meshAssets[0].id}` : '')
         : (card.assets[0]?.id ? `asset:${card.assets[0].id}` : ''),
       workflowId: initialWorkflow?.id || '',
@@ -1249,9 +1252,10 @@ export default function KanbanPage() {
     const name = imageEditDraft.name?.trim() || ''
     const isMeshGenCard = card.kanbanColumnId === 3
     const isMeshEditCard = card.kanbanColumnId === 4
-    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard
-    const actionLabel = isMeshGenCard ? 'mesh generation' : isMeshEditCard ? 'mesh edit' : 'image edit'
-    const sourceAssetLabel = isMeshEditCard ? 'mesh' : 'image'
+    const isTexturingCard = card.kanbanColumnId === 5
+    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard
+    const actionLabel = isMeshGenCard ? 'mesh generation' : isMeshEditCard ? 'mesh edit' : isTexturingCard ? 'mesh texturing' : 'image edit'
+    const sourceAssetLabel = isMeshEditCard || isTexturingCard ? 'mesh' : 'image'
 
     try {
       setImageEditPendingCardId(card.id)
@@ -1284,6 +1288,16 @@ export default function KanbanPage() {
           })
 
           await ensureGeneratedMeshThumbnails(editedMesh)
+        } else if (isTexturingCard) {
+          const texturedMesh = await runMeshTexturingApi(projectId, {
+            meshSource: imageEditDraft.selectedAssetId,
+            name,
+            selectedApi: imageEditDraft.selectedApi,
+            prompt,
+            cardId: card.id
+          })
+
+          await ensureGeneratedMeshThumbnails(texturedMesh)
         } else {
           await runImageEditApi(projectId, {
             imageSource: imageEditDraft.selectedAssetId,
@@ -1423,8 +1437,8 @@ export default function KanbanPage() {
                 [card.id]: {
                   ...prev[card.id],
                   progressPercent: 100,
-                  detail: isMeshGenCard ? 'Saving generated mesh' : 'Saving edited mesh',
-                  currentNodeLabel: isMeshGenCard ? 'ComfyUI mesh generation completed' : 'ComfyUI mesh edit completed'
+                  detail: isMeshGenCard ? 'Saving generated mesh' : isTexturingCard ? 'Saving textured mesh' : 'Saving edited mesh',
+                  currentNodeLabel: isMeshGenCard ? 'ComfyUI mesh generation completed' : isTexturingCard ? 'ComfyUI mesh texturing completed' : 'ComfyUI mesh edit completed'
                 }
               }
             : prev)
@@ -1458,6 +1472,8 @@ export default function KanbanPage() {
         ? 'Mesh generation completed successfully.'
         : isMeshEditCard
           ? 'Mesh edit completed successfully.'
+          : isTexturingCard
+            ? 'Mesh texturing completed successfully.'
           : 'Image edit completed successfully.', 'success')
     } catch (err) {
       console.error(`Failed to run ${actionLabel}:`, err)
@@ -1468,6 +1484,8 @@ export default function KanbanPage() {
         ? 'Failed to run mesh generation'
         : isMeshEditCard
           ? 'Failed to run mesh edit'
+          : isTexturingCard
+            ? 'Failed to run mesh texturing'
           : 'Failed to run image edit'), 'error')
     } finally {
       closeImageEditProgressSubscription(card.id)
@@ -1655,7 +1673,8 @@ export default function KanbanPage() {
       : card.metaLabel
     const isMeshGenCard = card.kanbanColumnId === 3
     const isMeshEditCard = card.kanbanColumnId === 4
-    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard
+    const isTexturingCard = card.kanbanColumnId === 5
+    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard
     const carouselItems = getCardPreviewItems(card, showAttributes)
     const useAssetCarousel = carouselItems.length > 0
     const previewAssets = isMeshWorkflowCard && (card.meshAssets?.length || 0) > 0 && !useAssetCarousel
@@ -1674,8 +1693,8 @@ export default function KanbanPage() {
     const availableActionApis = getApiOptionsForCard(card)
     const availableActionWorkflows = getWorkflowsForCard(card)
     const selectedActionWorkflow = availableActionWorkflows.find(workflow => workflow.id == imageEditDraft?.workflowId) || null
-    const apiSourceGroups = isMeshEditCard ? meshSourceGroups : imageSourceGroups
-    const apiSourceValueType = isMeshEditCard ? 'mesh' : 'image'
+    const apiSourceGroups = isMeshEditCard || isTexturingCard ? meshSourceGroups : imageSourceGroups
+    const apiSourceValueType = isMeshEditCard || isTexturingCard ? 'mesh' : 'image'
 
     return (
       <div
@@ -1980,13 +1999,13 @@ export default function KanbanPage() {
                     {imageEditDraft.mode === 'api' ? (
                       <>
                         <div className="params-card__field">
-                          <label className="params-card__label font-label">{isMeshEditCard ? 'Mesh' : 'Image'}</label>
+                          <label className="params-card__label font-label">{isMeshEditCard || isTexturingCard ? 'Mesh' : 'Image'}</label>
                           <select
                             className="image-card__attribute-select"
                             value={imageEditDraft.selectedAssetId}
                             onChange={event => handleImageEditDraftChange(card, 'selectedAssetId', event.target.value)}
                           >
-                            {apiSourceGroups.length === 0 && <option value="">{isMeshEditCard ? 'No meshes available' : 'No images available'}</option>}
+                            {apiSourceGroups.length === 0 && <option value="">{isMeshEditCard || isTexturingCard ? 'No meshes available' : 'No images available'}</option>}
                             {apiSourceGroups.map(group => (
                               <optgroup key={group.asset.id} label={group.asset.name}>
                                 {group.options.map(option => (
@@ -2146,6 +2165,8 @@ export default function KanbanPage() {
                               ? 'No compatible ComfyUI workflow available for mesh generation.'
                               : isMeshEditCard
                                 ? 'No compatible ComfyUI workflow available for mesh edits.'
+                                : isTexturingCard
+                                  ? 'No compatible ComfyUI workflow available for mesh texturing.'
                                 : 'No compatible ComfyUI workflow available for image edits.'}</span>
                           </div>
                         )}
@@ -2551,89 +2572,6 @@ export default function KanbanPage() {
         <main className="kanban-main" id="kanban-main">
           <div className="kanban-columns">
             {IMAGE_CARD_COLUMNS.map(renderImageColumn)}
-
-            {/* ═══ Column 5: Texturing ═══ */}
-            <div className="kanban-col" id="col-texturing">
-              <div className="kanban-col__header">
-                <div className="kanban-col__title-group">
-                  <span className="material-symbols-outlined" style={{ fontSize: '18px', color: 'var(--tertiary)' }}>texture</span>
-                  <h2 className="kanban-col__title font-headline">TEXTURING</h2>
-                </div>
-                <span className="kanban-col__badge font-label">READY</span>
-              </div>
-
-              <div className="kanban-col__content">
-                {/* Texture Params Card */}
-                <div className="params-card params-card--tertiary" id="texturing-params">
-                  <div className="params-card__header">
-                    <span className="material-symbols-outlined" style={{ fontSize: '14px', color: 'var(--tertiary)' }}>palette</span>
-                    <span className="params-card__title font-label">MAP GENERATION</span>
-                  </div>
-
-                  <div className="params-card__body">
-                    <div className="params-card__field">
-                      <label className="params-card__label font-label">Output Resolution</label>
-                      <select
-                        className="params-card__select"
-                        value={texResolution}
-                        onChange={(e) => setTexResolution(e.target.value)}
-                        id="tex-resolution-select"
-                      >
-                        <option>1024 x 1024 (1K)</option>
-                        <option>2048 x 2048 (2K)</option>
-                        <option>4096 x 4096 (4K)</option>
-                      </select>
-                    </div>
-
-                    <div className="params-card__field">
-                      <label className="params-card__label font-label">Engine Configuration</label>
-                      <div className="params-card__engine-grid">
-                        <button
-                          className={`params-card__engine-btn ${texEngine === 'stable' ? 'params-card__engine-btn--active-tertiary' : ''}`}
-                          onClick={() => setTexEngine('stable')}
-                          id="tex-engine-stable"
-                        >STABLE API</button>
-                        <button
-                          className={`params-card__engine-btn ${texEngine === 'comfy' ? 'params-card__engine-btn--active-tertiary' : ''}`}
-                          onClick={() => setTexEngine('comfy')}
-                          id="tex-engine-comfy"
-                        >COMFYUI</button>
-                      </div>
-                    </div>
-
-                    <div className="params-card__checkboxes">
-                      <label className="params-card__checkbox-label">
-                        <div className={`params-card__checkbox ${pbrEnabled ? 'params-card__checkbox--checked' : ''}`} onClick={() => setPbrEnabled(!pbrEnabled)}>
-                          {pbrEnabled && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
-                        </div>
-                        <span>PBR Map Set (Diff, Norm, Rough)</span>
-                      </label>
-                      <label className={`params-card__checkbox-label ${!aoEnabled ? 'params-card__checkbox-label--dim' : ''}`}>
-                        <div className={`params-card__checkbox ${aoEnabled ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => setAoEnabled(!aoEnabled)}>
-                          {aoEnabled && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
-                        </div>
-                        <span>Bake Ambient Occlusion</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  <button className="params-card__action params-card__action--tertiary" id="start-texturing-btn">
-                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>brush</span>
-                    START TEXTURING
-                  </button>
-                </div>
-
-                {/* Recent Presets */}
-                <div className="presets-card" id="recent-presets">
-                  <span className="presets-card__title font-label">RECENT PRESETS</span>
-                  <div className="presets-card__tags">
-                    <div className="presets-card__tag">Cybermetal_01</div>
-                    <div className="presets-card__tag">Procedural_Grip</div>
-                    <div className="presets-card__tag">Organic_Skin_v2</div>
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         </main>
       </div>

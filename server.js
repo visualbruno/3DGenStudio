@@ -1107,7 +1107,7 @@ function getCustomApiConfig(settings, selectedApi, expectedType = null) {
     throw new Error('Selected custom API was not found in settings');
   }
 
-  const normalizedType = ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit'].includes(customApi?.type)
+  const normalizedType = ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(customApi?.type)
     ? customApi.type
     : 'image-generation';
 
@@ -1296,6 +1296,136 @@ function getComfyHistoryFiles(historyRecord, selectedOutputs = []) {
           expectedType,
           ...normalizedFile
         });
+
+app.post('/api/meshes/texture', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
+  try {
+    const { projectId, selectedApi, prompt, name, meshSource, cardId } = req.body;
+    const trimmedName = String(name || '').trim();
+    const trimmedPrompt = String(prompt || '').trim();
+
+    if (!projectId || !selectedApi || !trimmedPrompt || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
+    }
+
+    if (!String(selectedApi).startsWith('custom_')) {
+      return res.status(400).json({ error: 'Mesh texturing currently supports custom APIs only' });
+    }
+
+    const resolvedSource = await resolveProjectMeshSource(Number(projectId), meshSource);
+    const sourceAsset = resolvedSource?.asset;
+    if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'mesh') {
+      return res.status(404).json({ error: 'Source mesh not found' });
+    }
+
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Texturing',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting mesh texturing request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'mesh-texturing',
+      startedAt: processingStartedAt
+    });
+
+    const settings = await getSettings();
+    const customApi = getCustomApiConfig(settings, selectedApi, 'mesh-texturing');
+    const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
+    const sourceBuffer = await fs.readFile(sourceFilePath);
+    const meshMimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
+    const replacements = {
+      prompt: trimmedPrompt,
+      name: trimmedName,
+      projectId: String(projectId),
+      cardId: String(processingCardId || ''),
+      meshBase64: sourceBuffer.toString('base64'),
+      meshMimeType,
+      meshFilename: path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'mesh.glb')
+    };
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...replaceTemplatePlaceholders(parseJsonTemplate(customApi.headers, 'Custom API headers', {}), replacements)
+    };
+    const requestPayload = replaceTemplatePlaceholders(parseJsonTemplate(customApi.body, 'Custom API body template', {}), replacements);
+
+    const response = await fetch(customApi.url, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(requestPayload)
+    });
+
+    let responseBody = null;
+    const responseContentType = response.headers.get('content-type') || '';
+    if (String(responseContentType).toLowerCase().includes('application/json')) {
+      responseBody = await response.json().catch(() => ({}));
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: responseBody?.error?.message || responseBody?.error || 'Mesh texturing request failed'
+      });
+    }
+
+    const meshOutput = await extractMeshOutputFromApiResponse(response, responseBody);
+    const extension = path.extname(meshOutput.filename).replace('.', '') || getExtensionFromContentType(meshOutput.contentType, 'glb');
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+    const storedFilePath = toStoredAssetPath('mesh', filename);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, meshOutput.buffer);
+
+    const savedAsset = await createProjectAsset({
+      projectId: Number(projectId),
+      type: 'mesh',
+      name: trimmedName,
+      filePath: storedFilePath,
+      metadata: {
+        format: extension.toUpperCase(),
+        source: 'API',
+        provider: customApi.name,
+        prompt: trimmedPrompt,
+        cardId: processingCardId
+      },
+      createdAt: Date.now()
+    });
+
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
+    res.status(201).json(savedAsset);
+  } catch (err) {
+    console.error('Mesh texturing API execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Texturing',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run mesh texturing API',
+        currentNodeLabel: 'Mesh texturing failed',
+        source: 'API',
+        operationType: 'mesh-texturing',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist mesh texturing error state:', persistErr.message);
+      });
+    }
+    res.status(500).json({ error: err.message || 'Failed to run mesh texturing API' });
+  }
+});
       }
     }
   }
@@ -2106,6 +2236,136 @@ app.post('/api/meshes/edit', async (req, res) => {
       });
     }
     res.status(500).json({ error: err.message || 'Failed to run mesh edit API' });
+  }
+});
+
+app.post('/api/meshes/texture', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
+  try {
+    const { projectId, selectedApi, prompt, name, meshSource, cardId } = req.body;
+    const trimmedName = String(name || '').trim();
+    const trimmedPrompt = String(prompt || '').trim();
+
+    if (!projectId || !selectedApi || !trimmedPrompt || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
+    }
+
+    if (!String(selectedApi).startsWith('custom_')) {
+      return res.status(400).json({ error: 'Mesh texturing currently supports custom APIs only' });
+    }
+
+    const resolvedSource = await resolveProjectMeshSource(Number(projectId), meshSource);
+    const sourceAsset = resolvedSource?.asset;
+    if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'mesh') {
+      return res.status(404).json({ error: 'Source mesh not found' });
+    }
+
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Texturing',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting mesh texturing request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'mesh-texturing',
+      startedAt: processingStartedAt
+    });
+
+    const settings = await getSettings();
+    const customApi = getCustomApiConfig(settings, selectedApi, 'mesh-texturing');
+    const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
+    const sourceBuffer = await fs.readFile(sourceFilePath);
+    const meshMimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
+    const replacements = {
+      prompt: trimmedPrompt,
+      name: trimmedName,
+      projectId: String(projectId),
+      cardId: String(processingCardId || ''),
+      meshBase64: sourceBuffer.toString('base64'),
+      meshMimeType,
+      meshFilename: path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'mesh.glb')
+    };
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...replaceTemplatePlaceholders(parseJsonTemplate(customApi.headers, 'Custom API headers', {}), replacements)
+    };
+    const requestPayload = replaceTemplatePlaceholders(parseJsonTemplate(customApi.body, 'Custom API body template', {}), replacements);
+
+    const response = await fetch(customApi.url, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(requestPayload)
+    });
+
+    let responseBody = null;
+    const responseContentType = response.headers.get('content-type') || '';
+    if (String(responseContentType).toLowerCase().includes('application/json')) {
+      responseBody = await response.json().catch(() => ({}));
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: responseBody?.error?.message || responseBody?.error || 'Mesh texturing request failed'
+      });
+    }
+
+    const meshOutput = await extractMeshOutputFromApiResponse(response, responseBody);
+    const extension = path.extname(meshOutput.filename).replace('.', '') || getExtensionFromContentType(meshOutput.contentType, 'glb');
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+    const storedFilePath = toStoredAssetPath('mesh', filename);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, meshOutput.buffer);
+
+    const savedAsset = await createProjectAsset({
+      projectId: Number(projectId),
+      type: 'mesh',
+      name: trimmedName,
+      filePath: storedFilePath,
+      metadata: {
+        format: extension.toUpperCase(),
+        source: 'API',
+        provider: customApi.name,
+        prompt: trimmedPrompt,
+        cardId: processingCardId
+      },
+      createdAt: Date.now()
+    });
+
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
+    res.status(201).json(savedAsset);
+  } catch (err) {
+    console.error('Mesh texturing API execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Texturing',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run mesh texturing API',
+        currentNodeLabel: 'Mesh texturing failed',
+        source: 'API',
+        operationType: 'mesh-texturing',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist mesh texturing error state:', persistErr.message);
+      });
+    }
+    res.status(500).json({ error: err.message || 'Failed to run mesh texturing API' });
   }
 });
 

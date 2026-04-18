@@ -55,6 +55,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const runMeshTexturingApi = async (projectId, textureData) => {
+    const res = await fetch(`${API_BASE}/meshes/texture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...textureData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to run mesh texturing API')
+    }
+
+    return data
+  }
+
   const runMeshEditApi = async (projectId, editData) => {
     const res = await fetch(`${API_BASE}/meshes/edit`, {
       method: 'POST',
@@ -576,6 +592,7 @@ export function ProjectProvider({ children }) {
       runImageEditApi,
       runMeshGenerationApi,
       runMeshEditApi,
+      runMeshTexturingApi,
       runImageEditComfy,
       generateImage,
       getComfyWorkflows,

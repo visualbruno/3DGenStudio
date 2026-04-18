@@ -5,7 +5,7 @@ const API_BASE = 'http://localhost:3001/api'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 
 function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE
 }
