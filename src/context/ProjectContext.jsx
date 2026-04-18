@@ -55,6 +55,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const runMeshEditApi = async (projectId, editData) => {
+    const res = await fetch(`${API_BASE}/meshes/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...editData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to run mesh edit API')
+    }
+
+    return data
+  }
+
   const runMeshGenerationApi = async (projectId, generationData) => {
     const res = await fetch(`${API_BASE}/meshes/generate`, {
       method: 'POST',
@@ -559,6 +575,7 @@ export function ProjectProvider({ children }) {
       deleteCardAttribute,
       runImageEditApi,
       runMeshGenerationApi,
+      runMeshEditApi,
       runImageEditComfy,
       generateImage,
       getComfyWorkflows,

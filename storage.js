@@ -135,7 +135,7 @@ export const DEFAULT_SETTINGS = {
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation';
 
 function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE;
 }
@@ -1121,6 +1121,34 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
 
   const asset = await getProjectAssetById(projectId, assetId);
   if (!asset || asset.type !== 'image') {
+    return null;
+  }
+
+  return {
+    asset,
+    inputFilePath: asset.filePath,
+    inputFilename: asset.filename,
+    inputName: asset.name,
+    isEdit: false,
+    editId: null
+  };
+}
+
+export async function resolveProjectMeshSource(projectId, sourceReference) {
+  const parsedReference = typeof sourceReference === 'string'
+    ? sourceReference
+    : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
+
+  const assetId = typeof parsedReference === 'string' && parsedReference.startsWith('asset:')
+    ? Number(parsedReference.slice(6))
+    : Number(parsedReference);
+
+  if (!assetId) {
+    return null;
+  }
+
+  const asset = await getProjectAssetById(projectId, assetId);
+  if (!asset || asset.type !== 'mesh') {
     return null;
   }
 

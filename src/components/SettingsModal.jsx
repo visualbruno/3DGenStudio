@@ -5,7 +5,8 @@ import './SettingsModal.css'
 const CUSTOM_API_TYPE_OPTIONS = [
   { value: 'image-generation', label: 'Image Generation' },
   { value: 'image-edit', label: 'Image Edit' },
-  { value: 'mesh-generation', label: 'Mesh Generation' }
+  { value: 'mesh-generation', label: 'Mesh Generation' },
+  { value: 'mesh-edit', label: 'Mesh Edit' }
 ]
 
 function getCustomApiTypeLabel(type) {
