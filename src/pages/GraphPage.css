@@ -197,6 +197,66 @@
   stroke: var(--secondary);
 }
 
+.graph-page__edge-menu {
+  position: absolute;
+  z-index: 6;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  transform: translate(-50%, -50%);
+  pointer-events: all;
+}
+
+.graph-page__edge-delete {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-full);
+  background: rgba(18, 19, 21, 0.96);
+  color: var(--on-surface-variant);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  cursor: pointer;
+}
+
+.graph-page__edge-delete:hover {
+  color: #ff8a80;
+  border-color: rgba(255, 138, 128, 0.28);
+}
+
+.graph-page__edge-delete .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.graph-page__edge-dropdown {
+  min-width: 96px;
+  padding: 0.35rem;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(18, 19, 21, 0.98);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.32);
+  pointer-events: all;
+}
+
+.graph-page__edge-dropdown-action {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.graph-page__edge-dropdown-action:hover {
+  background: rgba(255, 138, 128, 0.12);
+  color: #ff8a80;
+}
+
 .graph-node {
   position: relative;
   padding: 0.85rem 2rem;

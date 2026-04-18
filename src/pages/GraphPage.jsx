@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addEdge,
+  BaseEdge,
   Background,
   Controls,
+  EdgeLabelRenderer,
   Handle,
   MiniMap,
   Position,
   ReactFlow,
+  getSmoothStepPath,
   useUpdateNodeInternals,
   useEdgesState,
   useNodesState
@@ -194,7 +197,7 @@ function toFlowEdge(connection) {
     target: String(connection.targetNodeId),
     sourceHandle: connection.outputId || DEFAULT_OUTPUT_ID,
     targetHandle: connection.inputId || DEFAULT_INPUT_ID,
-    type: 'smoothstep',
+    type: 'deletable',
     animated: true
   }
 }
@@ -394,6 +397,77 @@ function resolveImageSourceOption(sourceSelection, inputSources = [], libraryOpt
   return null
 }
 
+function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition
+  })
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined
+    }
+
+    const handleDocumentPointerDown = () => {
+      setMenuOpen(false)
+    }
+
+    document.addEventListener('pointerdown', handleDocumentPointerDown)
+    return () => document.removeEventListener('pointerdown', handleDocumentPointerDown)
+  }, [menuOpen])
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} markerEnd={markerEnd} />
+      <EdgeLabelRenderer>
+        <div
+          className="graph-page__edge-menu nodrag nopan"
+          style={{
+            left: `${labelX}px`,
+            top: `${labelY}px`
+          }}
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="graph-page__edge-delete"
+            onClick={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              setMenuOpen(current => !current)
+            }}
+            title="Connection actions"
+          >
+            <span className="material-symbols-outlined">more_horiz</span>
+          </button>
+
+          {menuOpen && (
+            <div className="graph-page__edge-dropdown">
+              <button
+                type="button"
+                className="graph-page__edge-dropdown-action"
+                onClick={event => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setMenuOpen(false)
+                  data?.onDelete?.()
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      </EdgeLabelRenderer>
+    </>
+  )
+}
+
 function GraphAssetNode({ data }) {
   const updateNodeInternals = useUpdateNodeInternals()
   const isImageEdit = data.nodeKind === 'imageEdit'
@@ -411,6 +485,7 @@ function GraphAssetNode({ data }) {
   const inputConnectors = data.inputConnectors || [{ id: DEFAULT_INPUT_ID, type: null, isConnected: false }]
   const inputSources = data.inputSources || []
   const outputConnector = data.outputConnector || { id: DEFAULT_OUTPUT_ID, type: 'image' }
+  const hasOutputAsset = Boolean(data.asset?.id)
   const connectedInputCount = inputConnectors.filter(connector => connector.isConnected).length
   const outputMeta = getConnectorTypeMeta(outputConnector.type)
   const imageInputSources = getCompatibleInputSources(inputSources, 'image')
@@ -933,26 +1008,28 @@ function GraphAssetNode({ data }) {
         </div>
       </div>
 
-      <div className="graph-node__connector graph-node__connector--output" style={getConnectorPosition(0, 1)}>
-        <span
-          className="graph-node__connector-badge font-label"
-          style={{
-            color: outputMeta.color,
-            background: outputMeta.background,
-            borderColor: outputMeta.color
-          }}
-          title={outputMeta.label}
-        >
-          {outputMeta.letter}
-        </span>
-        <Handle
-          type="source"
-          id={outputConnector.id}
-          position={Position.Right}
-          className="graph-node__handle graph-node__handle--output"
-          style={{ borderColor: outputMeta.color }}
-        />
-      </div>
+      {hasOutputAsset && (
+        <div className="graph-node__connector graph-node__connector--output" style={getConnectorPosition(0, 1)}>
+          <span
+            className="graph-node__connector-badge font-label"
+            style={{
+              color: outputMeta.color,
+              background: outputMeta.background,
+              borderColor: outputMeta.color
+            }}
+            title={outputMeta.label}
+          >
+            {outputMeta.letter}
+          </span>
+          <Handle
+            type="source"
+            id={outputConnector.id}
+            position={Position.Right}
+            className="graph-node__handle graph-node__handle--output"
+            style={{ borderColor: outputMeta.color }}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -960,6 +1037,10 @@ function GraphAssetNode({ data }) {
 const flowNodeTypes = {
   image: GraphAssetNode,
   imageEdit: GraphAssetNode
+}
+
+const flowEdgeTypes = {
+  deletable: GraphDeleteEdge
 }
 
 export default function GraphPage({ project }) {
@@ -1002,6 +1083,7 @@ export default function GraphPage({ project }) {
   const libraryLoadedRef = useRef(false)
   const workflowsLoadedRef = useRef(false)
   const graphCanvasRef = useRef(null)
+  const hasAutoFitOnLoadRef = useRef(false)
 
   const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
   const imageGenerationApis = useMemo(() => ([
@@ -1775,6 +1857,25 @@ export default function GraphPage({ project }) {
     }
   }, [project.id, replaceFlowNodeData, updateProjectNode, uploadAsset])
 
+  const handleDeleteConnection = useCallback(async (edgeToDelete) => {
+    if (!edgeToDelete) {
+      return
+    }
+
+    setEdges(currentEdges => currentEdges.filter(edge => edge.id !== edgeToDelete.id))
+
+    try {
+      await deleteProjectConnection(project.id, {
+        sourceNodeId: Number(edgeToDelete.source),
+        targetNodeId: Number(edgeToDelete.target),
+        inputId: edgeToDelete.targetHandle || DEFAULT_INPUT_ID,
+        outputId: edgeToDelete.sourceHandle || DEFAULT_OUTPUT_ID
+      })
+    } catch (err) {
+      console.error('Failed to delete graph connection:', err)
+    }
+  }, [deleteProjectConnection, project.id, setEdges])
+
   const handleConnect = useCallback(async (connection) => {
     if (!connection.source || !connection.target) {
       return
@@ -1818,16 +1919,132 @@ export default function GraphPage({ project }) {
 
   const handleEdgesDelete = useCallback(async (deletedEdges) => {
     await Promise.all(
-      deletedEdges.map(edge => deleteProjectConnection(project.id, {
-        sourceNodeId: Number(edge.source),
-        targetNodeId: Number(edge.target),
-        inputId: edge.targetHandle || DEFAULT_INPUT_ID,
-        outputId: edge.sourceHandle || DEFAULT_OUTPUT_ID
-      }).catch(err => {
-        console.error('Failed to delete graph connection:', err)
-      }))
+      deletedEdges.map(edge => handleDeleteConnection(edge))
     )
-  }, [deleteProjectConnection, project.id])
+  }, [handleDeleteConnection])
+
+  const renderedEdges = useMemo(() => edges.map(edge => ({
+    ...edge,
+    data: {
+      ...(edge.data || {}),
+      onDelete: () => handleDeleteConnection(edge)
+    }
+  })), [edges, handleDeleteConnection])
+
+  useEffect(() => {
+    setActionDraftsByNodeId(currentDrafts => {
+      const nextDrafts = Object.entries(currentDrafts).reduce((accumulator, [nodeId, draft]) => {
+        const node = nodes.find(item => item.id === nodeId)
+        if (!node || !draft) {
+          return accumulator
+        }
+
+        const nodeInputSources = buildNodeInputSources(nodeId, nodes, edges)
+        const isEditNode = node.data.nodeKind === 'imageEdit'
+        let nextDraft = draft
+
+        if (draft.mode === 'api' && isEditNode) {
+          const validImageSelections = [
+            ...getCompatibleInputSources(nodeInputSources, 'image').map(getInputSourceSelectionValue),
+            ...libraryImageOptions.map(option => option.sourceReference).filter(Boolean)
+          ]
+
+          const nextSelectedInputSource = validImageSelections.includes(draft.selectedInputSource)
+            ? draft.selectedInputSource
+            : (validImageSelections[0] || '')
+
+          if (nextSelectedInputSource !== draft.selectedInputSource) {
+            nextDraft = {
+              ...nextDraft,
+              selectedInputSource: nextSelectedInputSource
+            }
+          }
+        }
+
+        if (draft.mode === 'comfy') {
+          const workflowList = isEditNode ? imageEditWorkflows : imageGenerationWorkflows
+          const selectedWorkflow = workflowList.find(workflow => workflow.id == draft.workflowId) || null
+
+          if (selectedWorkflow) {
+            const nextBindings = { ...(nextDraft.inputBindings || {}) }
+            let bindingsChanged = false
+
+            for (const parameter of selectedWorkflow.parameters || []) {
+              const valueType = getWorkflowParameterValueType(parameter)
+              const compatibleSources = getCompatibleInputSources(nodeInputSources, valueType)
+              const currentBinding = getWorkflowParameterBinding(nextDraft, parameter)
+              const currentSource = currentBinding.source || 'custom'
+              let nextSource = currentSource
+
+              if (currentSource !== 'custom' && !resolveSelectedInputSource(currentSource, compatibleSources)) {
+                nextSource = compatibleSources[0]
+                  ? getInputSourceSelectionValue(compatibleSources[0])
+                  : 'custom'
+              }
+
+              if (nextSource !== currentSource) {
+                nextBindings[parameter.id] = {
+                  ...currentBinding,
+                  source: nextSource
+                }
+                bindingsChanged = true
+              }
+            }
+
+            if (bindingsChanged) {
+              nextDraft = {
+                ...nextDraft,
+                inputBindings: nextBindings
+              }
+            }
+          }
+        }
+
+        accumulator[nodeId] = nextDraft
+        return accumulator
+      }, {})
+
+      const currentSerialized = JSON.stringify(currentDrafts)
+      const nextSerialized = JSON.stringify(nextDrafts)
+      return currentSerialized === nextSerialized ? currentDrafts : nextDrafts
+    })
+  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, nodes])
+
+  useEffect(() => {
+    hasAutoFitOnLoadRef.current = false
+  }, [project.id])
+
+  useEffect(() => {
+    if (!reactFlowInstance || loading || nodes.length === 0) {
+      return
+    }
+
+    if (hasAutoFitOnLoadRef.current) {
+      return
+    }
+
+    hasAutoFitOnLoadRef.current = true
+
+    const fitWorkflow = () => {
+      reactFlowInstance.fitView({
+        padding: 0.18,
+        duration: 300,
+        includeHiddenNodes: true
+      })
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      fitWorkflow()
+    })
+    const timeoutId = window.setTimeout(() => {
+      fitWorkflow()
+    }, 220)
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [edges.length, loading, nodes.length, project.id, reactFlowInstance])
 
   const showEmptyState = !loading && nodes.length === 0
   const minimapNodeColor = useCallback(node => node.type === 'imageEdit' ? '#ac89ff' : '#8ff5ff', [])
@@ -1891,8 +2108,9 @@ export default function GraphPage({ project }) {
             <ReactFlow
               className="graph-page__canvas"
               nodes={renderedNodes}
-              edges={edges}
+              edges={renderedEdges}
               nodeTypes={flowNodeTypes}
+              edgeTypes={flowEdgeTypes}
               onInit={setReactFlowInstance}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
