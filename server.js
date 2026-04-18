@@ -54,6 +54,7 @@ import {
   toStoredThumbnailPath,
   updateAssetThumbnail,
   updateCardAttribute,
+  updateProjectNode,
   updateProjectNodePosition,
   updateWorkflowRecord
 } from './storage.js';
@@ -2476,6 +2477,27 @@ app.put('/api/graph/nodes/:id/position', async (req, res) => {
   } catch (err) {
     console.error('Failed to update graph node position:', err);
     res.status(500).json({ error: err.message || 'Failed to update graph node position' });
+  }
+});
+
+app.put('/api/graph/nodes/:id', async (req, res) => {
+  try {
+    const { projectId, name, assetId, status, progress, metadata } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await updateProjectNode(Number(projectId), Number(req.params.id), {
+      name,
+      assetId,
+      status,
+      progress,
+      metadata
+    }));
+  } catch (err) {
+    console.error('Failed to update graph node:', err);
+    res.status(500).json({ error: err.message || 'Failed to update graph node' });
   }
 });
 

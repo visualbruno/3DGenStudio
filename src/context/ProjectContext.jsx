@@ -55,6 +55,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const updateProjectNode = async (projectId, nodeId, nodeData) => {
+    const res = await fetch(`${API_BASE}/graph/nodes/${nodeId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...nodeData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update graph node')
+    }
+
+    return data
+  }
+
   const runMeshTexturingApi = async (projectId, textureData) => {
     const res = await fetch(`${API_BASE}/meshes/texture`, {
       method: 'POST',
@@ -687,6 +703,7 @@ export function ProjectProvider({ children }) {
       getProjectCards,
       getProjectNodes,
       createProjectNode,
+      updateProjectNode,
       updateProjectNodePosition,
       deleteProjectNode,
       getProjectConnections,

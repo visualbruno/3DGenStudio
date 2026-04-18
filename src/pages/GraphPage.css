@@ -223,6 +223,43 @@
   margin-top: 0.6rem;
 }
 
+.graph-node__actions-panel {
+  margin-top: 0.75rem;
+}
+
+.graph-node__panel-title {
+  font-size: 0.62rem;
+  color: var(--primary);
+  letter-spacing: 0.08em;
+}
+
+.graph-node__linked-input {
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-md);
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--on-surface-variant);
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.graph-node__asset-picker {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.graph-node__asset-thumb-placeholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--primary);
+}
+
+.graph-node__asset-kind {
+  font-size: 0.55rem;
+  color: var(--secondary);
+}
+
 .graph-node__ports-summary {
   display: flex;
   flex-wrap: wrap;

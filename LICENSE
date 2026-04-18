@@ -1,0 +1,29 @@
+"3D Gen Studio" Community License
+1. License Grant
+Subject to these terms, the Author grants you a non-exclusive, royalty-free, worldwide license to use, copy, and modify this Software for personal, educational, or internal non-commercial research purposes.
+
+2. Commercial Restrictions
+You are strictly prohibited from the following without prior written consent from the Author:
+
+Selling the Software: You may not sell, rent, or lease the Software or any modified version of it.
+
+Commercial Hosting: You may not host this Software as a public or private paid service (SaaS), or include it as part of a paid subscription model.
+
+Paid Distribution: You may not include this software in a commercial package or "bundle" for sale.
+
+3. Commercial Use of Generated Content (The "Output")
+The restrictions in Section 2 apply only to the Software code and its interface.
+
+Ownership: You own all 3D meshes, textures, and assets generated using this Software ("Output").
+
+Monetization: You are free to use, sell, or license the Output for any commercial purpose (e.g., selling models on marketplaces, using them in commercial games, or freelance work) without any obligation or royalty to the Author.
+
+4. External Services & Keys
+This Software acts as a client for external services (ComfyUI and third-party APIs).
+
+You are responsible for complying with the Terms of Service of any external API providers.
+
+The Author is not responsible for any costs incurred through your use of external API keys.
+
+5. Limitation of Liability
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY.

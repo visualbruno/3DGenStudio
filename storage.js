@@ -161,6 +161,7 @@ function mapGraphNodeRow(row) {
   const metadata = parseJson(row.metadata, {});
   const filename = row.assetFilePath ? toAssetUrlPath(row.assetFilePath) : null;
   const thumbnail = row.assetThumbnail ? toAssetUrlPath(row.assetThumbnail) : null;
+  const assetMetadata = parseJson(row.assetMetadata, {});
 
   return {
     id: row.id,
@@ -184,6 +185,8 @@ function mapGraphNodeRow(row) {
       thumbnailPath: row.assetThumbnail || null,
       thumbnail,
       type: String(row.assetTypeName || '').toLowerCase(),
+      parentId: row.assetParentId ?? null,
+      metadata: assetMetadata,
       createdAt: row.assetCreationDate ?? null
     } : null,
     createdAt: row.creationDate
@@ -1372,6 +1375,7 @@ async function getProjectNodeById(projectId, nodeId) {
     `SELECT n.*, nt.name AS nodeTypeName,
             a.id AS assetId, a.name AS assetName, a.filePath AS assetFilePath, a.thumbnail AS assetThumbnail,
             a.width AS assetWidth, a.height AS assetHeight, a.creationDate AS assetCreationDate,
+            a.parentId AS assetParentId, a.metadata AS assetMetadata,
             at.name AS assetTypeName
      FROM Nodes n
      JOIN NodeTypes nt ON nt.id = n.nodeTypeId
@@ -1392,6 +1396,7 @@ export async function listProjectNodes(projectId) {
     `SELECT n.*, nt.name AS nodeTypeName,
             a.id AS assetId, a.name AS assetName, a.filePath AS assetFilePath, a.thumbnail AS assetThumbnail,
             a.width AS assetWidth, a.height AS assetHeight, a.creationDate AS assetCreationDate,
+            a.parentId AS assetParentId, a.metadata AS assetMetadata,
             at.name AS assetTypeName
      FROM Nodes n
      JOIN NodeTypes nt ON nt.id = n.nodeTypeId
@@ -1458,6 +1463,42 @@ export async function updateProjectNodePosition(projectId, nodeId, { xPos = 0, y
     db,
     'UPDATE Nodes SET xPos = ?, yPos = ? WHERE id = ? AND projectId = ?',
     [Number(xPos) || 0, Number(yPos) || 0, node.id, normalizedProjectId]
+  );
+
+  return await getProjectNodeById(normalizedProjectId, node.id);
+}
+
+export async function updateProjectNode(projectId, nodeId, updates = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const node = await ensureProjectNode(normalizedProjectId, nodeId);
+  const existingNode = await getProjectNodeById(normalizedProjectId, node.id);
+  const db = await getDb();
+
+  if (!existingNode) {
+    throw new Error('Node not found');
+  }
+
+  const nextMetadata = updates.metadata === undefined
+    ? existingNode.metadata
+    : {
+        ...(isPlainObject(existingNode.metadata) ? existingNode.metadata : {}),
+        ...(isPlainObject(updates.metadata) ? updates.metadata : {})
+      };
+
+  await run(
+    db,
+    `UPDATE Nodes
+     SET name = ?, assetId = ?, status = ?, progress = ?, metadata = ?
+     WHERE id = ? AND projectId = ?`,
+    [
+      updates.name ?? existingNode.name ?? null,
+      updates.assetId === undefined ? (existingNode.assetId ?? null) : (updates.assetId ? Number(updates.assetId) : null),
+      updates.status === undefined ? (existingNode.status ?? null) : updates.status,
+      updates.progress === undefined ? (existingNode.progress ?? null) : updates.progress,
+      JSON.stringify(nextMetadata || {}),
+      node.id,
+      normalizedProjectId
+    ]
   );
 
   return await getProjectNodeById(normalizedProjectId, node.id);
