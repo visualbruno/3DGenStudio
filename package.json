@@ -15,6 +15,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@types/three": "^0.183.1",
+    "@xyflow/react": "^12.10.2",
     "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "dexie": "^4.4.2",

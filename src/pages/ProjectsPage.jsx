@@ -7,10 +7,8 @@ import SettingsModal from '../components/SettingsModal'
 import './ProjectsPage.css'
 
 const PRESETS = [
-  'Photorealistic ArchViz',
-  'Stylized Game Asset',
-  'Rapid Concept Sculpt',
-  'Raw Voxel Mesh',
+  'Kanban',
+  'Graph',
 ]
 
 const STATUS_MAP = {
