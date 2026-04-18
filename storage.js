@@ -1511,6 +1511,42 @@ export async function deleteProjectNode(projectId, nodeId) {
 
   await run(db, 'DELETE FROM Nodes WHERE id = ? AND projectId = ?', [node.id, normalizedProjectId]);
 
+  if (node.assetId) {
+    const nodeStillUsesAsset = await get(
+      db,
+      'SELECT id FROM Nodes WHERE projectId = ? AND assetId = ? LIMIT 1',
+      [normalizedProjectId, node.assetId]
+    );
+
+    if (!nodeStillUsesAsset) {
+      const projectAssetLinks = await all(
+        db,
+        `SELECT ca.cardId
+         FROM Cards_Assets ca
+         JOIN Cards c ON c.id = ca.cardId
+         WHERE ca.assetId = ? AND c.projectId = ?`,
+        [node.assetId, normalizedProjectId]
+      );
+
+      if (projectAssetLinks.length > 0) {
+        await run(
+          db,
+          `DELETE FROM Cards_Assets
+           WHERE assetId = ?
+             AND cardId IN (SELECT id FROM Cards WHERE projectId = ?)`,
+          [node.assetId, normalizedProjectId]
+        );
+
+        const affectedCardIds = [...new Set(projectAssetLinks.map(link => link.cardId))];
+        for (const cardId of affectedCardIds) {
+          await normalizeCardAssetPositions(cardId);
+        }
+
+        await deleteCardsIfEmpty(affectedCardIds);
+      }
+    }
+  }
+
   return { status: 'deleted' };
 }
 

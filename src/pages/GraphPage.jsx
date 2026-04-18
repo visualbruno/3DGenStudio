@@ -397,6 +397,23 @@ function resolveImageSourceOption(sourceSelection, inputSources = [], libraryOpt
   return null
 }
 
+function filterImageGenerationWorkflows(workflows = []) {
+  return workflows.filter(workflow => {
+    const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+    return outputValueTypes.includes('image')
+  })
+}
+
+function filterImageEditWorkflows(workflows = []) {
+  return workflows.filter(workflow => {
+    const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
+    const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+    return outputValueTypes.includes('image')
+      && parameterValueTypes.every(valueType => ['image', 'string', 'number', 'boolean'].includes(valueType))
+  })
+}
+
 function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [edgePath, labelX, labelY] = getSmoothStepPath({
@@ -1099,22 +1116,9 @@ export default function GraphPage({ project }) {
       .map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ]), [customApis])
 
-  const imageGenerationWorkflows = useMemo(() => {
-    return comfyWorkflows.filter(workflow => {
-      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
-      return outputValueTypes.includes('image')
-    })
-  }, [comfyWorkflows])
+  const imageGenerationWorkflows = useMemo(() => filterImageGenerationWorkflows(comfyWorkflows), [comfyWorkflows])
 
-  const imageEditWorkflows = useMemo(() => {
-    return comfyWorkflows.filter(workflow => {
-      const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
-      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
-
-      return outputValueTypes.includes('image')
-        && parameterValueTypes.every(valueType => ['image', 'string', 'number', 'boolean'].includes(valueType))
-    })
-  }, [comfyWorkflows])
+  const imageEditWorkflows = useMemo(() => filterImageEditWorkflows(comfyWorkflows), [comfyWorkflows])
 
   const libraryImageOptions = useMemo(() => {
     return (libraryAssets.images || []).flatMap(asset => {
@@ -1149,8 +1153,9 @@ export default function GraphPage({ project }) {
     return getInputSource(currentNodes, currentEdges, nodeId, 'image').asset
   }, [])
 
-  const createImageNodeDraft = useCallback((mode = 'select', inputSources = []) => {
-    const defaultWorkflow = imageGenerationWorkflows[0] || null
+  const createImageNodeDraft = useCallback((mode = 'select', inputSources = [], workflowListOverride = null) => {
+    const workflowList = workflowListOverride || imageGenerationWorkflows
+    const defaultWorkflow = workflowList[0] || null
     return {
       mode,
       selectedApi: imageGenerationApis[0]?.id || '',
@@ -1161,8 +1166,9 @@ export default function GraphPage({ project }) {
     }
   }, [imageGenerationApis, imageGenerationWorkflows])
 
-  const createImageEditNodeDraft = useCallback((mode = 'select', sourceAsset = null, inputSources = [], libraryOptions = []) => {
-    const defaultWorkflow = imageEditWorkflows[0] || null
+  const createImageEditNodeDraft = useCallback((mode = 'select', sourceAsset = null, inputSources = [], libraryOptions = [], workflowListOverride = null) => {
+    const workflowList = workflowListOverride || imageEditWorkflows
+    const defaultWorkflow = workflowList[0] || null
     const sourceReference = getAssetSourceReference(sourceAsset)
     const defaultImageInputSource = getCompatibleInputSources(inputSources, 'image')[0] || null
     return {
@@ -1242,7 +1248,7 @@ export default function GraphPage({ project }) {
 
   const ensureComfyWorkflowsLoaded = useCallback(async () => {
     if (workflowsLoadedRef.current) {
-      return
+      return comfyWorkflows
     }
 
     setComfyLoading(true)
@@ -1250,10 +1256,11 @@ export default function GraphPage({ project }) {
       const workflows = await getComfyWorkflows()
       setComfyWorkflows(workflows)
       workflowsLoadedRef.current = true
+      return workflows
     } finally {
       setComfyLoading(false)
     }
-  }, [getComfyWorkflows])
+  }, [comfyWorkflows, getComfyWorkflows])
 
   useEffect(() => {
     let cancelled = false
@@ -1384,7 +1391,13 @@ export default function GraphPage({ project }) {
         }
 
         if (mode === 'comfy') {
-          await ensureComfyWorkflowsLoaded()
+          const workflows = await ensureComfyWorkflowsLoaded()
+          const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+          setActionDraftsByNodeId({
+            [String(targetNodeId)]: createImageNodeDraft('comfy', nodeInputSources, filterImageGenerationWorkflows(workflows || []))
+          })
+          return
         }
 
         const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
@@ -1402,7 +1415,19 @@ export default function GraphPage({ project }) {
 
         if (mode === 'comfy') {
           await ensureLibraryLoaded()
-          await ensureComfyWorkflowsLoaded()
+          const workflows = await ensureComfyWorkflowsLoaded()
+          const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+          setActionDraftsByNodeId({
+            [String(targetNodeId)]: createImageEditNodeDraft(
+              mode,
+              getConnectedInputAssetFrom(nodes, edges, targetNodeId),
+              nodeInputSources,
+              libraryImageOptions,
+              filterImageEditWorkflows(workflows || [])
+            )
+          })
+          return
         }
 
         const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
