@@ -153,6 +153,7 @@ export default function KanbanPage() {
   const pendingComfyProgressSubscriptionRef = useRef(null)
   const imageEditProgressSubscriptionsRef = useRef(new Map())
   const statusMessageTimeoutRef = useRef(null)
+  const pendingResultFocusRef = useRef(null)
 
   const showStatusMessage = (message, tone = 'info') => {
     if (!message) {
@@ -234,6 +235,10 @@ export default function KanbanPage() {
       fileInputRef.current.value = ''
       fileInputRef.current.click()
     }
+  }
+
+  const queueResultFocus = (payload) => {
+    pendingResultFocusRef.current = payload
   }
 
   const handleFileUpload = async (e) => {
@@ -889,6 +894,103 @@ export default function KanbanPage() {
     ]
   }
 
+  useEffect(() => {
+    const pendingFocus = pendingResultFocusRef.current
+
+    if (!pendingFocus?.cardId) {
+      return
+    }
+
+    const targetCard = imageCards.find(card => card.id === pendingFocus.cardId)
+
+    if (!targetCard) {
+      return
+    }
+
+    let didApplyFocus = false
+
+    if (pendingFocus.type === 'image-generation') {
+      const existingAssetIds = new Set(pendingFocus.existingAssetIds || [])
+      const firstNewAssetIndex = targetCard.assets.findIndex(asset => !existingAssetIds.has(asset.id))
+
+      if (firstNewAssetIndex < 0) {
+        return
+      }
+
+      const nextPage = Math.floor(firstNewAssetIndex / 4)
+
+      setImageCardPages(prev => ({
+        ...prev,
+        [pendingFocus.cardId]: nextPage
+      }))
+      didApplyFocus = true
+    }
+
+    if (pendingFocus.type === 'image-edit') {
+      const sourceAssetIndex = targetCard.assets.findIndex(asset => asset.id === pendingFocus.sourceAssetId)
+
+      if (sourceAssetIndex >= 0) {
+        const sourceAsset = targetCard.assets[sourceAssetIndex]
+        const childCount = getAssetChildren(sourceAsset).length
+
+        if (childCount <= Number(pendingFocus.existingChildCount || 0)) {
+          return
+        }
+
+        const nextPreviewIndex = Math.min(
+          Math.max(1, Number(pendingFocus.existingChildCount || 0) + 1),
+          Math.max(1, childCount)
+        )
+
+        setImageCardPages(prev => ({
+          ...prev,
+          [pendingFocus.cardId]: Math.floor(sourceAssetIndex / 4)
+        }))
+        setImageEditPreviewIndexes(prev => ({
+          ...prev,
+          [sourceAsset.id]: nextPreviewIndex
+        }))
+        didApplyFocus = true
+      } else {
+        return
+      }
+    }
+
+    if (pendingFocus.type === 'mesh-result') {
+      const existingMeshAssetIds = new Set(pendingFocus.existingMeshAssetIds || [])
+      const firstNewMeshIndex = targetCard.meshAssets.findIndex(asset => !existingMeshAssetIds.has(asset.id))
+
+      if (firstNewMeshIndex < 0) {
+        return
+      }
+
+      const meshIndex = firstNewMeshIndex
+      const imageItemCount = (targetCard.assets || []).reduce((count, asset) => count + 1 + getAssetChildren(asset).length, 0)
+
+      setImageCardPages(prev => ({
+        ...prev,
+        [pendingFocus.cardId]: imageItemCount + meshIndex
+      }))
+      didApplyFocus = true
+    }
+
+    if (!didApplyFocus) {
+      return
+    }
+
+    pendingResultFocusRef.current = null
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById(`image-card-${pendingFocus.cardId}`)?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+          inline: 'nearest'
+        })
+      })
+    })
+  }, [imageCards])
+
   const getPromptOptionsForCard = (cardId) => {
     return getAttributeOptionsForCard(cardId, 'Text')
   }
@@ -1256,6 +1358,13 @@ export default function KanbanPage() {
     const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard
     const actionLabel = isMeshGenCard ? 'mesh generation' : isMeshEditCard ? 'mesh edit' : isTexturingCard ? 'mesh texturing' : 'image edit'
     const sourceAssetLabel = isMeshEditCard || isTexturingCard ? 'mesh' : 'image'
+    const existingMeshAssetIds = (card.meshAssets || []).map(asset => asset.id)
+    const existingChildCountByAssetId = Object.fromEntries((card.assets || []).map(asset => [asset.id, getAssetChildren(asset).length]))
+    const selectedImageSourceGroup = !isMeshWorkflowCard
+      ? getCardImageSourceGroups(card).find(group => group.options.some(option => option.value === imageEditDraft.selectedAssetId))
+      : null
+    const selectedSourceAssetId = selectedImageSourceGroup?.asset?.id || null
+    const existingSourceChildCount = selectedImageSourceGroup ? getAssetChildren(selectedImageSourceGroup.asset).length : 0
 
     try {
       setImageEditPendingCardId(card.id)
@@ -1278,6 +1387,11 @@ export default function KanbanPage() {
           })
 
           await ensureGeneratedMeshThumbnails(generatedMesh)
+          queueResultFocus({
+            type: 'mesh-result',
+            cardId: card.id,
+            existingMeshAssetIds
+          })
         } else if (isMeshEditCard) {
           const editedMesh = await runMeshEditApi(projectId, {
             meshSource: imageEditDraft.selectedAssetId,
@@ -1288,6 +1402,11 @@ export default function KanbanPage() {
           })
 
           await ensureGeneratedMeshThumbnails(editedMesh)
+          queueResultFocus({
+            type: 'mesh-result',
+            cardId: card.id,
+            existingMeshAssetIds
+          })
         } else if (isTexturingCard) {
           const texturedMesh = await runMeshTexturingApi(projectId, {
             meshSource: imageEditDraft.selectedAssetId,
@@ -1298,12 +1417,23 @@ export default function KanbanPage() {
           })
 
           await ensureGeneratedMeshThumbnails(texturedMesh)
+          queueResultFocus({
+            type: 'mesh-result',
+            cardId: card.id,
+            existingMeshAssetIds
+          })
         } else {
           await runImageEditApi(projectId, {
             imageSource: imageEditDraft.selectedAssetId,
             name,
             selectedApi: imageEditDraft.selectedApi,
             prompt
+          })
+          queueResultFocus({
+            type: 'image-edit',
+            cardId: card.id,
+            sourceAssetId: selectedSourceAssetId,
+            existingChildCount: existingSourceChildCount
           })
         }
       } else if (imageEditDraft.mode === 'comfy') {
@@ -1430,6 +1560,11 @@ export default function KanbanPage() {
           })
 
           await ensureGeneratedMeshThumbnails(generatedMeshes)
+          queueResultFocus({
+            type: 'mesh-result',
+            cardId: card.id,
+            existingMeshAssetIds
+          })
 
           setImageEditProgressByCardId(prev => prev[card.id]
             ? {
@@ -1450,6 +1585,12 @@ export default function KanbanPage() {
             inputValues,
             promptId,
             clientId
+          })
+          queueResultFocus({
+            type: 'image-edit',
+            cardId: card.id,
+            sourceAssetId: primaryAssetId,
+            existingChildCount: existingChildCountByAssetId[primaryAssetId] || 0
           })
 
           setImageEditProgressByCardId(prev => prev[card.id]
