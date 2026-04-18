@@ -22,13 +22,17 @@ import {
   deleteCardAttribute,
   deleteAssetEditByFilePath,
   deleteAssetById,
+  deleteProjectConnection,
+  deleteProjectNode,
   deleteLibraryAssetByFilePath,
   deleteProjectById,
   findLibraryAssetByFilePath,
   getAssetDirectory,
   listAttributeTypes,
+  listProjectConnections,
   listProjectCards,
   listProjectCardAttributes,
+  listProjectNodes,
   getProjectById,
   getSettings,
   getWorkflowRecordById,
@@ -39,6 +43,8 @@ import {
   listProjects,
   listWorkflowRecords,
   moveCard,
+  createProjectConnection,
+  createProjectNode,
   renameLibraryAssetByFilePath,
   renameAssetEditByFilePath,
   saveSettings,
@@ -48,6 +54,7 @@ import {
   toStoredThumbnailPath,
   updateAssetThumbnail,
   updateCardAttribute,
+  updateProjectNodePosition,
   updateWorkflowRecord
 } from './storage.js';
 
@@ -2413,6 +2420,139 @@ app.get('/api/cards', async (req, res) => {
   } catch (err) {
     console.error('Failed to list project cards:', err);
     res.status(500).json({ error: 'Failed to list project cards' });
+  }
+});
+
+app.get('/api/graph/nodes', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await listProjectNodes(Number(projectId)));
+  } catch (err) {
+    console.error('Failed to list graph nodes:', err);
+    res.status(500).json({ error: err.message || 'Failed to list graph nodes' });
+  }
+});
+
+app.post('/api/graph/nodes', async (req, res) => {
+  try {
+    const { projectId, nodeTypeId, nodeTypeName, name, xPos, yPos, assetId, status, progress, metadata } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.status(201).json(await createProjectNode({
+      projectId: Number(projectId),
+      nodeTypeId: nodeTypeId ? Number(nodeTypeId) : null,
+      nodeTypeName,
+      name,
+      xPos,
+      yPos,
+      assetId,
+      status,
+      progress,
+      metadata
+    }));
+  } catch (err) {
+    console.error('Failed to create graph node:', err);
+    res.status(500).json({ error: err.message || 'Failed to create graph node' });
+  }
+});
+
+app.put('/api/graph/nodes/:id/position', async (req, res) => {
+  try {
+    const { projectId, xPos, yPos } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await updateProjectNodePosition(Number(projectId), Number(req.params.id), { xPos, yPos }));
+  } catch (err) {
+    console.error('Failed to update graph node position:', err);
+    res.status(500).json({ error: err.message || 'Failed to update graph node position' });
+  }
+});
+
+app.delete('/api/graph/nodes/:id', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    await deleteProjectNode(Number(projectId), Number(req.params.id));
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete graph node:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete graph node' });
+  }
+});
+
+app.get('/api/graph/connections', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await listProjectConnections(Number(projectId)));
+  } catch (err) {
+    console.error('Failed to list graph connections:', err);
+    res.status(500).json({ error: err.message || 'Failed to list graph connections' });
+  }
+});
+
+app.post('/api/graph/connections', async (req, res) => {
+  try {
+    const { projectId, sourceNodeId, targetNodeId, inputId, outputId } = req.body;
+
+    if (!projectId || !sourceNodeId || !targetNodeId) {
+      return res.status(400).json({ error: 'projectId, sourceNodeId, and targetNodeId are required' });
+    }
+
+    res.status(201).json(await createProjectConnection(Number(projectId), {
+      sourceNodeId,
+      targetNodeId,
+      inputId,
+      outputId
+    }));
+  } catch (err) {
+    console.error('Failed to create graph connection:', err);
+    res.status(500).json({ error: err.message || 'Failed to create graph connection' });
+  }
+});
+
+app.delete('/api/graph/connections', async (req, res) => {
+  try {
+    const { projectId, sourceNodeId, targetNodeId, inputId, outputId } = req.query;
+
+    if (!projectId || !sourceNodeId || !targetNodeId) {
+      return res.status(400).json({ error: 'projectId, sourceNodeId, and targetNodeId are required' });
+    }
+
+    const result = await deleteProjectConnection(Number(projectId), {
+      sourceNodeId,
+      targetNodeId,
+      inputId,
+      outputId
+    });
+
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete graph connection:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete graph connection' });
   }
 });
 

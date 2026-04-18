@@ -28,6 +28,10 @@ const ATTRIBUTE_TYPES = [
   { id: 1, name: 'Text' },
   { id: 2, name: 'Number' }
 ];
+const NODE_TYPES = [
+  { id: 1, name: 'Image' },
+  { id: 2, name: 'Image Edit' }
+];
 
 export const DEFAULT_SETTINGS = {
   profile: {
@@ -150,6 +154,48 @@ function normalizeSettingsValue(settings = DEFAULT_SETTINGS) {
         type: normalizeCustomApiType(api?.type)
       }))
     }
+  };
+}
+
+function mapGraphNodeRow(row) {
+  const metadata = parseJson(row.metadata, {});
+  const filename = row.assetFilePath ? toAssetUrlPath(row.assetFilePath) : null;
+  const thumbnail = row.assetThumbnail ? toAssetUrlPath(row.assetThumbnail) : null;
+
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    nodeTypeId: row.nodeTypeId,
+    nodeTypeName: row.nodeTypeName || '',
+    name: row.name || '',
+    xPos: row.xPos ?? 0,
+    yPos: row.yPos ?? 0,
+    status: row.status || null,
+    progress: row.progress ?? null,
+    metadata,
+    assetId: row.assetId ?? null,
+    asset: row.assetId ? {
+      id: row.assetId,
+      name: row.assetName || '',
+      filePath: row.assetFilePath,
+      filename,
+      width: row.assetWidth ?? 0,
+      height: row.assetHeight ?? 0,
+      thumbnailPath: row.assetThumbnail || null,
+      thumbnail,
+      type: String(row.assetTypeName || '').toLowerCase(),
+      createdAt: row.assetCreationDate ?? null
+    } : null,
+    createdAt: row.creationDate
+  };
+}
+
+function mapGraphConnectionRow(row) {
+  return {
+    sourceNodeId: row.sourceNodeId,
+    targetNodeId: row.targetNodeId,
+    inputId: row.inputId || 'image-input',
+    outputId: row.outputId || 'image-output'
   };
 }
 
@@ -541,6 +587,16 @@ async function seedReferenceTables(db) {
     );
   }
 
+  for (const nodeType of NODE_TYPES) {
+    await run(
+      db,
+      `INSERT INTO NodeTypes (id, name)
+       VALUES (?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name`,
+      [nodeType.id, nodeType.name]
+    );
+  }
+
   await run(
     db,
     'INSERT OR IGNORE INTO Settings (id, json) VALUES (1, ?)',
@@ -650,6 +706,38 @@ export async function initializeStorage() {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       json TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS NodeTypes (
+      id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE
+    );
+
+    CREATE TABLE IF NOT EXISTS Nodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      projectId INTEGER NOT NULL,
+      nodeTypeId INTEGER NOT NULL,
+      name TEXT,
+      xPos REAL NOT NULL DEFAULT 0,
+      yPos REAL NOT NULL DEFAULT 0,
+      assetId INTEGER,
+      creationDate INTEGER NOT NULL,
+      status TEXT,
+      progress INTEGER,
+      metadata TEXT,
+      FOREIGN KEY(projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+      FOREIGN KEY(nodeTypeId) REFERENCES NodeTypes(id),
+      FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS Connections (
+      sourceNodeId INTEGER NOT NULL,
+      targetNodeId INTEGER NOT NULL,
+      inputId TEXT NOT NULL,
+      outputId TEXT NOT NULL,
+      PRIMARY KEY(sourceNodeId, targetNodeId, inputId, outputId),
+      FOREIGN KEY(sourceNodeId) REFERENCES Nodes(id) ON DELETE CASCADE,
+      FOREIGN KEY(targetNodeId) REFERENCES Nodes(id) ON DELETE CASCADE
+    );
     `
   );
 
@@ -669,6 +757,9 @@ export async function initializeStorage() {
   }
 
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_parentId ON Assets(parentId)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_nodes_projectId ON Nodes(projectId)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_connections_sourceNodeId ON Connections(sourceNodeId)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_connections_targetNodeId ON Connections(targetNodeId)');
 
   await migrateLegacyAssetEditsToAssets(db);
 
@@ -770,6 +861,43 @@ async function ensureProjectExists(projectId) {
 async function getAttributeTypeById(attributeTypeId) {
   const db = await getDb();
   return await get(db, 'SELECT id, name FROM Attributes WHERE id = ?', [attributeTypeId]);
+}
+
+async function getNodeTypeById(nodeTypeId) {
+  const db = await getDb();
+  return await get(db, 'SELECT id, name FROM NodeTypes WHERE id = ?', [Number(nodeTypeId)]);
+}
+
+async function getNodeTypeIdByName(name) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT id FROM NodeTypes WHERE lower(name) = lower(?)', [String(name || '').trim()]);
+  if (!row) {
+    throw new Error(`Unknown node type: ${name}`);
+  }
+
+  return row.id;
+}
+
+async function ensureProjectNode(projectId, nodeId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const normalizedNodeId = Number(nodeId);
+
+  if (!Number.isInteger(normalizedNodeId) || normalizedNodeId <= 0) {
+    throw new Error('A valid nodeId is required');
+  }
+
+  const db = await getDb();
+  const node = await get(
+    db,
+    'SELECT id, projectId, nodeTypeId, assetId FROM Nodes WHERE id = ? AND projectId = ?',
+    [normalizedNodeId, normalizedProjectId]
+  );
+
+  if (!node) {
+    throw new Error(`Node not found: ${normalizedNodeId}`);
+  }
+
+  return node;
 }
 
 async function getAssetTypeIdByName(name) {
@@ -1233,6 +1361,191 @@ export async function listProjectCards(projectId) {
   );
 
   return rows.map(mapProjectCardRow);
+}
+
+async function getProjectNodeById(projectId, nodeId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const normalizedNodeId = Number(nodeId);
+  const db = await getDb();
+  const row = await get(
+    db,
+    `SELECT n.*, nt.name AS nodeTypeName,
+            a.id AS assetId, a.name AS assetName, a.filePath AS assetFilePath, a.thumbnail AS assetThumbnail,
+            a.width AS assetWidth, a.height AS assetHeight, a.creationDate AS assetCreationDate,
+            at.name AS assetTypeName
+     FROM Nodes n
+     JOIN NodeTypes nt ON nt.id = n.nodeTypeId
+     LEFT JOIN Assets a ON a.id = n.assetId
+     LEFT JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE n.projectId = ? AND n.id = ?`,
+    [normalizedProjectId, normalizedNodeId]
+  );
+
+  return row ? mapGraphNodeRow(row) : null;
+}
+
+export async function listProjectNodes(projectId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const rows = await all(
+    db,
+    `SELECT n.*, nt.name AS nodeTypeName,
+            a.id AS assetId, a.name AS assetName, a.filePath AS assetFilePath, a.thumbnail AS assetThumbnail,
+            a.width AS assetWidth, a.height AS assetHeight, a.creationDate AS assetCreationDate,
+            at.name AS assetTypeName
+     FROM Nodes n
+     JOIN NodeTypes nt ON nt.id = n.nodeTypeId
+     LEFT JOIN Assets a ON a.id = n.assetId
+     LEFT JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE n.projectId = ?
+     ORDER BY n.creationDate ASC, n.id ASC`,
+    [normalizedProjectId]
+  );
+
+  return rows.map(mapGraphNodeRow);
+}
+
+export async function createProjectNode({
+  projectId,
+  nodeTypeId = null,
+  nodeTypeName = '',
+  name = '',
+  xPos = 0,
+  yPos = 0,
+  assetId = null,
+  status = null,
+  progress = null,
+  metadata = {},
+  createdAt = Date.now()
+} = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const resolvedNodeTypeId = nodeTypeId
+    ? (await getNodeTypeById(nodeTypeId))?.id
+    : await getNodeTypeIdByName(nodeTypeName);
+
+  if (!resolvedNodeTypeId) {
+    throw new Error('A valid nodeTypeId or nodeTypeName is required');
+  }
+
+  const db = await getDb();
+  const result = await run(
+    db,
+    `INSERT INTO Nodes (projectId, nodeTypeId, name, xPos, yPos, assetId, creationDate, status, progress, metadata)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      normalizedProjectId,
+      resolvedNodeTypeId,
+      String(name || '').trim() || null,
+      Number(xPos) || 0,
+      Number(yPos) || 0,
+      assetId ? Number(assetId) : null,
+      createdAt,
+      status || null,
+      progress ?? null,
+      JSON.stringify(metadata || {})
+    ]
+  );
+
+  return await getProjectNodeById(normalizedProjectId, result.lastID);
+}
+
+export async function updateProjectNodePosition(projectId, nodeId, { xPos = 0, yPos = 0 } = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const node = await ensureProjectNode(normalizedProjectId, nodeId);
+  const db = await getDb();
+
+  await run(
+    db,
+    'UPDATE Nodes SET xPos = ?, yPos = ? WHERE id = ? AND projectId = ?',
+    [Number(xPos) || 0, Number(yPos) || 0, node.id, normalizedProjectId]
+  );
+
+  return await getProjectNodeById(normalizedProjectId, node.id);
+}
+
+export async function deleteProjectNode(projectId, nodeId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const node = await ensureProjectNode(normalizedProjectId, nodeId);
+  const db = await getDb();
+
+  await run(db, 'DELETE FROM Nodes WHERE id = ? AND projectId = ?', [node.id, normalizedProjectId]);
+
+  return { status: 'deleted' };
+}
+
+export async function listProjectConnections(projectId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const rows = await all(
+    db,
+    `SELECT c.sourceNodeId, c.targetNodeId, c.inputId, c.outputId
+     FROM Connections c
+     JOIN Nodes sourceNode ON sourceNode.id = c.sourceNodeId
+     JOIN Nodes targetNode ON targetNode.id = c.targetNodeId
+     WHERE sourceNode.projectId = ? AND targetNode.projectId = ?
+     ORDER BY c.sourceNodeId ASC, c.targetNodeId ASC, c.inputId ASC, c.outputId ASC`,
+    [normalizedProjectId, normalizedProjectId]
+  );
+
+  return rows.map(mapGraphConnectionRow);
+}
+
+export async function createProjectConnection(projectId, {
+  sourceNodeId,
+  targetNodeId,
+  inputId = 'image-input',
+  outputId = 'image-output'
+} = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const sourceNode = await ensureProjectNode(normalizedProjectId, sourceNodeId);
+  const targetNode = await ensureProjectNode(normalizedProjectId, targetNodeId);
+
+  if (sourceNode.id === targetNode.id) {
+    throw new Error('A node cannot connect to itself');
+  }
+
+  const db = await getDb();
+  await run(
+    db,
+    `INSERT INTO Connections (sourceNodeId, targetNodeId, inputId, outputId)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(sourceNodeId, targetNodeId, inputId, outputId) DO NOTHING`,
+    [sourceNode.id, targetNode.id, String(inputId || 'image-input'), String(outputId || 'image-output')]
+  );
+
+  return {
+    sourceNodeId: sourceNode.id,
+    targetNodeId: targetNode.id,
+    inputId: String(inputId || 'image-input'),
+    outputId: String(outputId || 'image-output')
+  };
+}
+
+export async function deleteProjectConnection(projectId, {
+  sourceNodeId,
+  targetNodeId,
+  inputId = 'image-input',
+  outputId = 'image-output'
+} = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const result = await run(
+    db,
+    `DELETE FROM Connections
+     WHERE sourceNodeId = ? AND targetNodeId = ? AND inputId = ? AND outputId = ?
+       AND sourceNodeId IN (SELECT id FROM Nodes WHERE projectId = ?)
+       AND targetNodeId IN (SELECT id FROM Nodes WHERE projectId = ?)`,
+    [
+      Number(sourceNodeId),
+      Number(targetNodeId),
+      String(inputId || 'image-input'),
+      String(outputId || 'image-output'),
+      normalizedProjectId,
+      normalizedProjectId
+    ]
+  );
+
+  return { status: result.changes > 0 ? 'deleted' : 'not-found' };
 }
 
 export async function setCardProcessingState(projectId, externalCardId, {

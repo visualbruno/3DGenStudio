@@ -27,7 +27,43 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.75rem;
+  align-items: center;
   z-index: 2;
+}
+
+.graph-page__toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+.graph-page__toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid rgba(143, 245, 255, 0.2);
+  background: rgba(143, 245, 255, 0.08);
+  color: var(--primary);
+  border-radius: var(--radius-md);
+  padding: 0.7rem 0.95rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+  transition: all var(--transition-base);
+}
+
+.graph-page__toolbar-btn:hover {
+  background: rgba(143, 245, 255, 0.14);
+}
+
+.graph-page__toolbar-btn--secondary {
+  border-color: rgba(172, 137, 255, 0.22);
+  background: rgba(172, 137, 255, 0.08);
+  color: var(--secondary);
+}
+
+.graph-page__toolbar-btn--secondary:hover {
+  background: rgba(172, 137, 255, 0.14);
 }
 
 .graph-page__toolbar-chip {
@@ -65,6 +101,18 @@
 .graph-page__canvas {
   width: 100%;
   height: 100%;
+}
+
+.graph-page__loading {
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+  z-index: 4;
+  padding: 0.65rem 0.85rem;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(71, 72, 74, 0.16);
+  background: rgba(18, 19, 21, 0.88);
+  color: var(--on-surface-variant);
 }
 
 .graph-page__empty-state {
@@ -133,6 +181,88 @@
   background: var(--surface-container-high);
 }
 
+.graph-page__canvas .react-flow__node {
+  background: transparent;
+  border: none;
+}
+
+.graph-page__canvas .react-flow__edge-path {
+  stroke: rgba(143, 245, 255, 0.6);
+  stroke-width: 2;
+}
+
+.graph-page__canvas .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--secondary);
+}
+
+.graph-node {
+  position: relative;
+}
+
+.graph-node__card.image-card {
+  width: 300px;
+  cursor: grab;
+  border-color: rgba(71, 72, 74, 0.14);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+}
+
+.graph-node__card.image-card:hover {
+  transform: none;
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+}
+
+.graph-node__card .image-card__action-btn {
+  opacity: 1;
+}
+
+.graph-node__thumb {
+  aspect-ratio: 16 / 10;
+}
+
+.graph-node__progress {
+  margin-top: 0.6rem;
+}
+
+.graph-node__ports-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.graph-node__port-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: var(--radius-full);
+  background: rgba(71, 72, 74, 0.2);
+  color: var(--on-surface-variant);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.graph-node__port-label--output {
+  color: var(--primary);
+  background: rgba(143, 245, 255, 0.1);
+}
+
+.graph-node__handle {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(143, 245, 255, 0.6);
+  background: var(--surface-container-highest);
+}
+
+.graph-node__handle--input {
+  border-color: rgba(172, 137, 255, 0.65);
+}
+
+.graph-node__handle--output {
+  border-color: rgba(143, 245, 255, 0.7);
+}
+
 @media (max-width: 900px) {
   .graph-page__main {
     padding: 1rem;
@@ -140,5 +270,14 @@
 
   .graph-page__empty-state {
     max-width: calc(100% - 2rem);
+  }
+
+  .graph-page__toolbar-actions {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .graph-node__card.image-card {
+    width: 260px;
   }
 }

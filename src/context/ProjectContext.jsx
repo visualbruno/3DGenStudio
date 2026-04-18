@@ -285,6 +285,120 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const getProjectNodes = async (projectId) => {
+    const res = await fetch(`${API_BASE}/graph/nodes?projectId=${projectId}`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load graph nodes')
+    }
+
+    return data
+  }
+
+  const createProjectNode = async (projectId, nodeData) => {
+    const res = await fetch(`${API_BASE}/graph/nodes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...nodeData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to create graph node')
+    }
+
+    return data
+  }
+
+  const updateProjectNodePosition = async (projectId, nodeId, position) => {
+    const res = await fetch(`${API_BASE}/graph/nodes/${nodeId}/position`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...position })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update graph node position')
+    }
+
+    return data
+  }
+
+  const deleteProjectNode = async (projectId, nodeId) => {
+    const res = await fetch(`${API_BASE}/graph/nodes/${nodeId}?projectId=${projectId}`, {
+      method: 'DELETE'
+    })
+
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete graph node')
+    }
+
+    return data
+  }
+
+  const getProjectConnections = async (projectId) => {
+    const res = await fetch(`${API_BASE}/graph/connections?projectId=${projectId}`)
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load graph connections')
+    }
+
+    return data
+  }
+
+  const createProjectConnection = async (projectId, connectionData) => {
+    const res = await fetch(`${API_BASE}/graph/connections`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...connectionData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to create graph connection')
+    }
+
+    return data
+  }
+
+  const deleteProjectConnection = async (projectId, connectionData) => {
+    const params = new URLSearchParams({
+      projectId,
+      sourceNodeId: connectionData.sourceNodeId,
+      targetNodeId: connectionData.targetNodeId,
+      inputId: connectionData.inputId,
+      outputId: connectionData.outputId
+    })
+
+    const res = await fetch(`${API_BASE}/graph/connections?${params.toString()}`, {
+      method: 'DELETE'
+    })
+
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete graph connection')
+    }
+
+    return data
+  }
+
   const getProjectTasks = async (projectId) => {
     const res = await fetch(`${API_BASE}/tasks?projectId=${projectId}`)
     return await res.json()
@@ -571,6 +685,13 @@ export function ProjectProvider({ children }) {
       deleteProject,
       getProjectAssets,
       getProjectCards,
+      getProjectNodes,
+      createProjectNode,
+      updateProjectNodePosition,
+      deleteProjectNode,
+      getProjectConnections,
+      createProjectConnection,
+      deleteProjectConnection,
       getProjectTasks,
       createTask,
       uploadAsset,
