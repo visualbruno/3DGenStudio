@@ -75,65 +75,62 @@
   align-items: stretch;
 }
 
-.mesh-preview-dialog__sidebar {
-  width: 132px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: flex-start;
-  justify-content: flex-start;
-  padding: 1rem;
-  background: rgba(13, 14, 16, 0.5);
-  border-right: 1px solid rgba(71, 72, 74, 0.18);
-}
-
 .mesh-preview-dialog__viewer {
+  position: relative;
   flex: 1;
   min-width: 0;
 }
 
-.mesh-preview-dialog__toggle {
+.mesh-preview-dialog__toolbar {
+  position: absolute;
+  top: 1rem;
+  left: 1rem;
+  z-index: 3;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  width: 100%;
+  gap: 0.45rem;
 }
 
-.mesh-preview-dialog__toggle-label {
-  color: var(--on-surface);
-  font-size: 0.8rem;
-  font-weight: 600;
-}
-
-.mesh-preview-dialog__toggle-switch {
-  position: relative;
-  width: 54px;
-  height: 30px;
+.mesh-preview-dialog__tool {
+  min-width: 28px;
+  height: 28px;
   display: inline-flex;
   align-items: center;
-  padding: 3px;
-  border: 1px solid rgba(71, 72, 74, 0.24);
-  border-radius: 999px;
-  background: rgba(71, 72, 74, 0.18);
+  justify-content: center;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(71, 72, 74, 0.22);
+  border-radius: var(--radius-full);
+  background: rgba(18, 19, 21, 0.88);
+  color: var(--on-surface-variant);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   cursor: pointer;
+  backdrop-filter: blur(12px);
   transition: all var(--transition-base);
 }
 
-.mesh-preview-dialog__toggle-switch--active {
-  background: rgba(143, 245, 255, 0.18);
-  border-color: rgba(143, 245, 255, 0.4);
+.mesh-preview-dialog__tool:hover,
+.mesh-preview-dialog__tool--active {
+  color: var(--primary);
+  border-color: rgba(143, 245, 255, 0.32);
+  background: rgba(143, 245, 255, 0.14);
 }
 
-.mesh-preview-dialog__toggle-thumb {
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: var(--on-surface);
-  transition: transform var(--transition-base), background var(--transition-base);
+.mesh-preview-dialog__light-panel {
+  width: 40px;
+  padding: 0.55rem 0.35rem;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-lg);
+  background: rgba(18, 19, 21, 0.92);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
 }
 
-.mesh-preview-dialog__toggle-switch--active .mesh-preview-dialog__toggle-thumb {
-  transform: translateX(24px);
-  background: var(--primary);
+.mesh-preview-dialog__light-panel input[type='range'] {
+  width: 110px;
+  margin: 0;
+  transform: rotate(-90deg);
+  transform-origin: center;
 }
 
 .mesh-preview-dialog__btn {

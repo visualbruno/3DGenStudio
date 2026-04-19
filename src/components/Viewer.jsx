@@ -256,7 +256,7 @@ export default function Viewer({
       className="nodrag nopan nowheel"
       style={{ width: '100%', height, background: '#0D0E10', borderRadius: '8px', overflow: 'hidden', touchAction: 'none' }}
     >
-      <Canvas key={modelUrl || 'placeholder'} shadows>
+      <Canvas key={modelUrl || 'placeholder'} shadows={{ type: THREE.PCFShadowMap }}>
         <PerspectiveCamera makeDefault position={[3, 3, 5]} />
           <ambientLight intensity={Math.max(lightIntensity * 0.55, 0.35)} />
           <directionalLight position={[4, 6, 8]} intensity={lightIntensity} castShadow />

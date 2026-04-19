@@ -4,6 +4,9 @@ import './MeshPreviewDialog.css'
 
 export default function MeshPreviewDialog({ asset, titleId = 'mesh-preview-dialog-title', onClose }) {
   const [showNormals, setShowNormals] = useState(false)
+  const [showGrid, setShowGrid] = useState(true)
+  const [showLightSlider, setShowLightSlider] = useState(false)
+  const [lightIntensity, setLightIntensity] = useState(2.2)
 
   if (!asset) {
     return null
@@ -19,22 +22,56 @@ export default function MeshPreviewDialog({ asset, titleId = 'mesh-preview-dialo
           </button>
         </div>
         <div className="mesh-preview-dialog__body mesh-preview-dialog__body--viewer">
-          <aside className="mesh-preview-dialog__sidebar">
-            <label className="mesh-preview-dialog__toggle">
-              <span className="mesh-preview-dialog__toggle-label">Normal</span>
+          <div className="mesh-preview-dialog__viewer">
+            <div className="mesh-preview-dialog__toolbar nodrag">
               <button
                 type="button"
-                className={`mesh-preview-dialog__toggle-switch ${showNormals ? 'mesh-preview-dialog__toggle-switch--active' : ''}`}
-                onClick={() => setShowNormals(prev => !prev)}
+                className={`mesh-preview-dialog__tool ${showNormals ? 'mesh-preview-dialog__tool--active' : ''}`}
+                onClick={() => setShowNormals(current => !current)}
                 aria-pressed={showNormals}
-                aria-label="Toggle normal material preview"
+                title="Toggle normal material"
               >
-                <span className="mesh-preview-dialog__toggle-thumb" />
+                N
               </button>
-            </label>
-          </aside>
-          <div className="mesh-preview-dialog__viewer">
-            <Viewer height="100%" modelUrl={asset.url} showNormals={showNormals} />
+              <button
+                type="button"
+                className={`mesh-preview-dialog__tool ${showGrid ? 'mesh-preview-dialog__tool--active' : ''}`}
+                onClick={() => setShowGrid(current => !current)}
+                aria-pressed={showGrid}
+                title="Toggle grid"
+              >
+                G
+              </button>
+              <button
+                type="button"
+                className={`mesh-preview-dialog__tool ${showLightSlider ? 'mesh-preview-dialog__tool--active' : ''}`}
+                onClick={() => setShowLightSlider(current => !current)}
+                aria-pressed={showLightSlider}
+                title="Adjust light"
+              >
+                L
+              </button>
+              {showLightSlider && (
+                <div className="mesh-preview-dialog__light-panel">
+                  <input
+                    type="range"
+                    min="0.4"
+                    max="4"
+                    step="0.1"
+                    value={lightIntensity}
+                    onChange={event => setLightIntensity(Number(event.target.value))}
+                  />
+                </div>
+              )}
+            </div>
+            <Viewer
+              height="100%"
+              modelUrl={asset.url}
+              showNormals={showNormals}
+              showGrid={showGrid}
+              lightIntensity={lightIntensity}
+              fitMode="center"
+            />
           </div>
         </div>
         <div className="mesh-preview-dialog__actions">
