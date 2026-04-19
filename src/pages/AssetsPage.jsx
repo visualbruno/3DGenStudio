@@ -136,6 +136,19 @@ function getAssetChildren(asset) {
   return asset?.children || asset?.edits || []
 }
 
+function buildMeshEditorPath(asset, returnTo = '/assets') {
+  const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
+  const query = new URLSearchParams({
+    assetId: assetIdMatch?.[1] || '',
+    filePath: asset.filePath || asset.filename || '',
+    url: asset.url || '',
+    name: asset.name || 'Mesh',
+    returnTo
+  })
+
+  return `/mesh-editor?${query.toString()}`
+}
+
 function WorkflowOptionSelector({
   title,
   items,
@@ -267,6 +280,7 @@ export default function AssetsPage() {
   const [deletingAssetKey, setDeletingAssetKey] = useState(null)
   const [linkedAssetDialog, setLinkedAssetDialog] = useState(null)
   const [meshPreviewAsset, setMeshPreviewAsset] = useState(null)
+  const [meshVersionsAsset, setMeshVersionsAsset] = useState(null)
   const [editPreviewAsset, setEditPreviewAsset] = useState(null)
   const [renamingAsset, setRenamingAsset] = useState(null)
   const [renamingAssetName, setRenamingAssetName] = useState('')
@@ -831,6 +845,56 @@ export default function AssetsPage() {
         </div>
       )}
 
+      {meshVersionsAsset && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={() => setMeshVersionsAsset(null)}>
+          <div className="assets-dialog assets-dialog--viewer" role="dialog" aria-modal="true" aria-labelledby="mesh-versions-dialog-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header">
+              <h2 id="mesh-versions-dialog-title" className="assets-dialog__title font-headline">{meshVersionsAsset.name} versions</h2>
+              <button type="button" className="assets-dialog__close" onClick={() => setMeshVersionsAsset(null)}>
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+            <div className="assets-dialog__body">
+              {getAssetChildren(meshVersionsAsset).length > 0 ? (
+                <div className="asset-edits-grid">
+                  {getAssetChildren(meshVersionsAsset).map((version, index) => (
+                    <article key={`${version.filePath}-${index}`} className="asset-edit-card">
+                      <div className="asset-edit-card__preview asset-card__preview--mesh">
+                        <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
+                        <span className="asset-card__mesh-label font-label">VERSION</span>
+                      </div>
+                      <div className="asset-edit-card__body">
+                        <div className="asset-edit-card__details">
+                          <span className="asset-edit-card__title">{version.name?.trim() || `Version ${index + 1}`}</span>
+                        </div>
+                        <div className="asset-card__actions">
+                          <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(version)}>
+                            OPEN
+                          </button>
+                          <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => navigate(buildMeshEditorPath(version))}>
+                            EDIT
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="library-empty-state">
+                  <span className="material-symbols-outlined">deployed_code</span>
+                  <span>No mesh versions available for this asset.</span>
+                </div>
+              )}
+            </div>
+            <div className="assets-dialog__actions">
+              <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setMeshVersionsAsset(null)}>
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {renamingAsset && (
         <div className="assets-dialog-overlay" role="presentation" onClick={() => setRenamingAsset(null)}>
           <div className="assets-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-asset-dialog-title" onClick={event => event.stopPropagation()}>
@@ -1310,10 +1374,30 @@ export default function AssetsPage() {
                                     {getAssetChildren(asset).length}
                                   </button>
                                 )}
-                                {activeSection === 'meshes' ? (
-                                  <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
-                                    OPEN
+                                {activeSection === 'meshes' && getAssetChildren(asset).length > 0 && (
+                                  <button
+                                    type="button"
+                                    className="asset-card__edits-btn"
+                                    onClick={() => setMeshVersionsAsset(asset)}
+                                    title="Show mesh versions"
+                                  >
+                                    <span className="material-symbols-outlined">history</span>
+                                    {getAssetChildren(asset).length}
                                   </button>
+                                )}
+                                {activeSection === 'meshes' ? (
+                                  <>
+                                    <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
+                                      OPEN
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="asset-card__link asset-card__link-btn"
+                                      onClick={() => navigate(buildMeshEditorPath(asset))}
+                                    >
+                                      EDIT
+                                    </button>
+                                  </>
                                 ) : (
                                   <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
                                 )}

@@ -1205,6 +1205,109 @@ async function getAssetViewById(assetId) {
   return row ? mapAssetRow(row) : null;
 }
 
+export async function getAssetRecordById(assetId) {
+  const db = await getDb();
+  return await get(
+    db,
+    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
+            a.width, a.height, a.parentId,
+            at.name AS assetTypeName
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE a.id = ?
+     LIMIT 1`,
+    [Number(assetId)]
+  );
+}
+
+export async function findAssetByFilePath(type, filePath) {
+  const db = await getDb();
+  return await get(
+    db,
+    `SELECT a.id, a.name, a.filePath, a.creationDate, a.metadata, a.thumbnail,
+            a.width, a.height, a.parentId,
+            at.name AS assetTypeName
+     FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE at.name = ?
+       AND a.filePath = ?
+     ORDER BY a.creationDate DESC, a.id DESC
+     LIMIT 1`,
+    [normalizeAssetTypeName(type), toStoredAssetPath(type, filePath)]
+  );
+}
+
+export async function createAssetVersion({ assetId, name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
+  const sourceAsset = await getAssetRecordById(assetId);
+
+  if (!sourceAsset) {
+    throw new Error('Source asset not found');
+  }
+
+  const rootAsset = await getRootAssetById(sourceAsset.id);
+
+  if (!rootAsset) {
+    throw new Error('Source asset not found');
+  }
+
+  const nextAssetId = await insertAsset({
+    name: String(name || '').trim() || sourceAsset.name,
+    type: type || String(sourceAsset.assetTypeName || '').toLowerCase(),
+    filePath,
+    thumbnailPath: thumbnailPath ?? sourceAsset.thumbnail ?? null,
+    width: Number(width) || sourceAsset.width || 0,
+    height: Number(height) || sourceAsset.height || 0,
+    metadata: {
+      ...parseJson(sourceAsset.metadata, {}),
+      ...metadata
+    },
+    createdAt,
+    parentId: rootAsset.id
+  });
+
+  return await getAssetViewById(nextAssetId);
+}
+
+export async function replaceAssetFileById(assetId, { name, type, filePath, thumbnailPath, width, height, metadata = {} }) {
+  const existingAsset = await getAssetRecordById(assetId);
+
+  if (!existingAsset) {
+    throw new Error('Asset not found');
+  }
+
+  const nextType = type || String(existingAsset.assetTypeName || '').toLowerCase();
+  const nextMetadata = {
+    ...parseJson(existingAsset.metadata, {}),
+    ...metadata
+  };
+
+  const db = await getDb();
+  await run(
+    db,
+    `UPDATE Assets
+     SET name = ?,
+         filePath = ?,
+         metadata = ?,
+         thumbnail = ?,
+         width = ?,
+         height = ?
+     WHERE id = ?`,
+    [
+      String(name || '').trim() || existingAsset.name,
+      toStoredAssetPath(nextType, filePath),
+      JSON.stringify(nextMetadata),
+      thumbnailPath === undefined
+        ? existingAsset.thumbnail || null
+        : (thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null),
+      Number(width) || 0,
+      Number(height) || 0,
+      Number(assetId)
+    ]
+  );
+
+  return await getAssetViewById(Number(assetId));
+}
+
 export async function getProjectAssetById(projectId, assetId) {
   const asset = await getAssetViewById(assetId);
   if (!asset || Number(asset.projectId) !== Number(projectId)) {
@@ -2546,9 +2649,7 @@ export async function listLibraryAssetsByType(type, port) {
     return accumulator;
   }, {});
 
-  const childAssetRows = type === 'image'
-    ? await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type))
-    : [];
+  const childAssetRows = await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type));
 
   const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, port);
 

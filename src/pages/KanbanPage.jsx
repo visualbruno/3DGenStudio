@@ -2689,8 +2689,6 @@ export default function KanbanPage() {
   return (
     <div className="kanban-layout">
       <Header
-        showSearch
-        showCreateNew
         onSettingsClick={() => setShowSettings(true)}
         title={project?.name || 'Workspace'}
         centerTitle

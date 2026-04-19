@@ -14,6 +14,7 @@ import {
   useEdgesState,
   useNodesState
 } from '@xyflow/react'
+import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
@@ -259,6 +260,20 @@ function getAssetPreviewUrl(filename) {
   }
 
   return `http://localhost:3001/assets/${encodeURI(filename)}`
+}
+
+function buildMeshEditorPath({ asset, projectId, nodeId, returnTo }) {
+  const query = new URLSearchParams({
+    assetId: String(asset?.id || ''),
+    filePath: asset?.filePath || asset?.filename || '',
+    url: asset?.filename ? getAssetPreviewUrl(asset.filename) : '',
+    name: asset?.name || 'Mesh',
+    projectId: String(projectId || ''),
+    nodeId: String(nodeId || ''),
+    returnTo
+  })
+
+  return `/mesh-editor?${query.toString()}`
 }
 
 function buildEdgeId(connection) {
@@ -573,8 +588,10 @@ function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
 }
 
 function GraphAssetNode({ data }) {
+  const navigate = useNavigate()
   const updateNodeInternals = useUpdateNodeInternals()
   const isMeshGen = data.nodeKind === 'meshGen'
+  const libraryAssetOptions = isMeshGen ? (data.libraryMeshOptions || []) : (data.libraryImageOptions || [])
   const previewFilename = data.asset?.thumbnail || data.asset?.filename || null
   const previewUrl = getAssetPreviewUrl(previewFilename)
   const meshModelUrl = isMeshGen && data.asset?.filename ? getAssetPreviewUrl(data.asset.filename) : null
@@ -609,6 +626,14 @@ function GraphAssetNode({ data }) {
   const imageInputSources = getCompatibleInputSources(inputSources, 'image')
   const selectedApiImageSource = resolveImageSourceOption(draft?.selectedInputSource, inputSources, data.libraryImageOptions)
   const nodeDisplayName = data.name || data.asset?.name || sourceLabel
+  const meshEditorPath = isMeshGen && data.asset?.id
+    ? buildMeshEditorPath({
+        asset: data.asset,
+        projectId: data.projectId,
+        nodeId: data.id,
+        returnTo: `/projects/${data.projectId}`
+      })
+    : ''
 
   useEffect(() => {
     updateNodeInternals(String(data.id))
@@ -902,6 +927,12 @@ function GraphAssetNode({ data }) {
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>play_arrow</span>
                 Action
               </button>
+              {meshEditorPath && (
+                <button className="image-card__edit-action-btn nodrag" onClick={() => navigate(meshEditorPath)}>
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>edit_square</span>
+                  Edit
+                </button>
+              )}
 
               {draft?.mode === 'select' && (
                 <div className="image-card__edit-action-menu">
@@ -929,6 +960,9 @@ function GraphAssetNode({ data }) {
                   )}
                   {isMeshGen ? (
                     <>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'assets')}>
+                        Assets
+                      </button>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'api')}>
                         API
                       </button>
@@ -946,32 +980,32 @@ function GraphAssetNode({ data }) {
                   {data.libraryLoading ? (
                     <div className="image-card__asset-picker-empty">
                       <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                      <span>Loading images...</span>
+                      <span>{`Loading ${isMeshGen ? 'meshes' : 'images'}...`}</span>
                     </div>
-                  ) : data.libraryImageOptions.length > 0 ? (
+                  ) : libraryAssetOptions.length > 0 ? (
                     <div className="image-card__asset-picker graph-node__asset-picker">
-                      {data.libraryImageOptions.map(asset => (
+                      {libraryAssetOptions.map(asset => (
                         <button
                           key={asset.id}
                           className="image-card__asset-option nodrag"
                           onClick={() => data.onAttachLibraryAsset?.(data.id, asset)}
                         >
-                          {asset.url ? (
-                            <img src={asset.url} alt={asset.name} className="image-card__asset-thumb" />
+                          {asset.thumbnailUrl || (!isMeshGen && asset.url) ? (
+                            <img src={asset.thumbnailUrl || asset.url} alt={asset.name} className="image-card__asset-thumb" />
                           ) : (
                             <div className="image-card__asset-thumb graph-node__asset-thumb-placeholder">
-                              <span className="material-symbols-outlined">image</span>
+                              <span className="material-symbols-outlined">{isMeshGen ? 'deployed_code' : 'image'}</span>
                             </div>
                           )}
                           <span className="image-card__asset-name">{asset.name}</span>
-                          {asset.isEdit && <span className="graph-node__asset-kind font-label">IMAGE EDIT</span>}
+                          {asset.isEdit && <span className="graph-node__asset-kind font-label">{isMeshGen ? 'MESH EDIT' : 'IMAGE EDIT'}</span>}
                         </button>
                       ))}
                     </div>
                   ) : (
                     <div className="image-card__asset-picker-empty">
                       <span className="material-symbols-outlined">perm_media</span>
-                      <span>No images available in Assets.</span>
+                      <span>{`No ${isMeshGen ? 'meshes' : 'images'} available in Assets.`}</span>
                     </div>
                   )}
                   <button className="kanban-sidebar__nav-item nodrag" onClick={() => data.onToggleAction?.(data.id, data.nodeKind)} style={{ justifyContent: 'center' }}>BACK</button>
@@ -1415,7 +1449,8 @@ function GraphValueNode({ data }) {
 
           <button
             type="button"
-            className="image-card__action-btn image-card__delete nodrag"
+            className="image-card__action-btn image-card__delete graph-node__value-delete nodrag"
+            style={{ opacity: 1, flexShrink: 0 }}
             onClick={() => data.onDelete?.(data.id)}
             title="Delete node"
           >
@@ -1590,6 +1625,39 @@ export default function GraphPage({ project }) {
         url: child.url || getAssetPreviewUrl(child.filename),
         extension: (child.filename?.split('.').pop() || '').toUpperCase(),
         sourceReference: child.filePath ? `edit:${child.filePath}` : '',
+        isEdit: true
+      }))
+
+      return [{
+        ...originalOption,
+        sourceReference: `asset:${asset.id}`
+      }, ...childOptions]
+    })
+  }, [libraryAssets])
+
+  const libraryMeshOptions = useMemo(() => {
+    return (libraryAssets.meshes || []).flatMap(asset => {
+      const children = asset.children || asset.edits || []
+      const originalOption = {
+        id: `asset:${asset.id}`,
+        name: asset.name,
+        filename: asset.filename,
+        url: asset.url,
+        thumbnailUrl: asset.thumbnailUrl || null,
+        extension: asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase(),
+        type: 'mesh',
+        isEdit: false
+      }
+
+      const childOptions = children.map(child => ({
+        id: `edit:${child.id}`,
+        name: child.name || `${asset.name} Edit`,
+        filename: child.filename,
+        url: child.url || getAssetPreviewUrl(child.filename),
+        thumbnailUrl: child.thumbnailUrl || null,
+        extension: (child.filename?.split('.').pop() || '').toUpperCase(),
+        sourceReference: child.filePath ? `edit:${child.filePath}` : '',
+        type: 'mesh',
         isEdit: true
       }))
 
@@ -2008,6 +2076,7 @@ export default function GraphPage({ project }) {
       imageEditWorkflows,
       meshGenerationWorkflows,
       libraryImageOptions,
+      libraryMeshOptions,
       libraryLoading,
       comfyLoading,
       onNodeNameChange: handleNodeNameChange,
@@ -2073,7 +2142,7 @@ export default function GraphPage({ project }) {
         })
       },
       onMeshGenModeSelect: async (targetNodeId, mode) => {
-        if (mode === 'api') {
+        if (mode === 'api' || mode === 'assets') {
           await ensureLibraryLoaded()
         }
 
@@ -2184,12 +2253,13 @@ export default function GraphPage({ project }) {
         fileInputRef.current?.click()
       },
       onAttachLibraryAsset: async (targetNodeId, libraryAsset) => {
+        const assetType = libraryAsset.type || (node.data.nodeKind === 'meshGen' ? 'mesh' : 'image')
         const attachedAsset = await attachExistingAsset(project.id, {
           filename: libraryAsset.filename,
-          type: 'image',
+          type: assetType,
           name: libraryAsset.name,
           metadata: {
-            resolution: 'Unknown',
+            ...(assetType === 'image' ? { resolution: 'Unknown' } : {}),
             format: libraryAsset.extension,
             source: 'ASSET LIB'
           }
@@ -3073,8 +3143,6 @@ export default function GraphPage({ project }) {
   return (
     <div className="graph-layout">
       <Header
-        showSearch
-        showCreateNew
         onSettingsClick={() => setShowSettings(true)}
         title={project?.name || 'Workspace'}
         centerTitle

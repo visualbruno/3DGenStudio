@@ -44,7 +44,7 @@ export default function ProjectsPage() {
 
   return (
     <div className="projects-layout">
-      <Header showSearch showCreateNew onSettingsClick={() => setShowSettings(true)} />
+      <Header onSettingsClick={() => setShowSettings(true)} />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 

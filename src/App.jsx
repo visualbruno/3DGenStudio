@@ -4,6 +4,7 @@ import { SettingsProvider } from './context/SettingsContext'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectWorkspacePage from './pages/ProjectWorkspacePage'
 import AssetsPage from './pages/AssetsPage'
+import MeshEditorPage from './pages/MeshEditorPage'
 
 function AppRoutes() {
   return (
@@ -12,6 +13,7 @@ function AppRoutes() {
       <Route path="/projects" element={<ProjectsPage />} />
       <Route path="/projects/new" element={<ProjectsPage />} />
       <Route path="/assets" element={<AssetsPage />} />
+      <Route path="/mesh-editor" element={<MeshEditorPage />} />
       <Route path="/library" element={<Navigate to="/assets" replace />} />
       <Route path="/projects/:projectId" element={<ProjectWorkspacePage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

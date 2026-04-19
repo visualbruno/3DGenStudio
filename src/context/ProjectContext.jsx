@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 
 const ProjectContext = createContext(null)
@@ -452,6 +453,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const saveMeshEdit = async (payload) => {
+    const res = await fetch(`${API_BASE}/meshes/editor/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to save mesh edit')
+    }
+
+    return data
+  }
+
   const uploadAsset = async (projectId, file, type = 'image', metadata = {}) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -718,6 +735,7 @@ export function ProjectProvider({ children }) {
       createTask,
       uploadAsset,
       uploadAssetThumbnail,
+      saveMeshEdit,
       attachExistingAsset,
       deleteAsset,
       moveKanbanCard,

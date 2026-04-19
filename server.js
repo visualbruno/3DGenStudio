@@ -45,7 +45,11 @@ import {
   moveCard,
   createProjectConnection,
   createProjectNode,
+  createAssetVersion,
+  findAssetByFilePath,
+  getAssetRecordById,
   renameLibraryAssetByFilePath,
+  replaceAssetFileById,
   renameAssetEditByFilePath,
   saveSettings,
   setCardProcessingState,
@@ -394,6 +398,35 @@ function sanitizeDisplayName(value = '', fallback = 'Workflow') {
     .replace(/\s+/g, ' ');
 
   return normalized || fallback;
+}
+
+function sanitizeFileSegment(value = '', fallback = 'mesh') {
+  const normalized = String(value)
+    .trim()
+    .toLowerCase()
+    .replace(/\.[^/.]+$/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return normalized || fallback;
+}
+
+function createMeshEditorFilePath(name = 'mesh') {
+  return `assets/meshes/edited/${sanitizeFileSegment(name)}-${Date.now()}.obj`;
+}
+
+async function resolveEditableMeshAsset({ assetId, filePath }) {
+  const numericAssetId = Number(assetId)
+
+  if (Number.isFinite(numericAssetId) && numericAssetId > 0) {
+    return await getAssetRecordById(numericAssetId);
+  }
+
+  if (!filePath) {
+    return null;
+  }
+
+  return await findAssetByFilePath('mesh', filePath);
 }
 
 function inferComfyParameterType(value) {
@@ -2796,6 +2829,74 @@ app.post('/api/assets/:id/thumbnail', thumbnailUpload.single('thumbnail'), async
   } catch (err) {
     console.error('Failed to upload asset thumbnail:', err);
     res.status(500).json({ error: 'Failed to upload asset thumbnail' });
+  }
+});
+
+app.post('/api/meshes/editor/save', async (req, res) => {
+  try {
+    const { assetId, filePath, name, saveMode = 'replace', objText } = req.body;
+
+    if (!objText || !String(objText).trim()) {
+      return res.status(400).json({ error: 'objText is required' });
+    }
+
+    if (!['replace', 'version'].includes(saveMode)) {
+      return res.status(400).json({ error: 'saveMode must be replace or version' });
+    }
+
+    const sourceAsset = await resolveEditableMeshAsset({ assetId, filePath });
+
+    if (!sourceAsset) {
+      return res.status(404).json({ error: 'Mesh asset not found' });
+    }
+
+    if (String(sourceAsset.assetTypeName || '').toLowerCase() !== 'mesh') {
+      return res.status(400).json({ error: 'Selected asset is not a mesh' });
+    }
+
+    const nextName = sanitizeDisplayName(name || sourceAsset.name, sourceAsset.name || 'Mesh');
+    const nextFilePath = createMeshEditorFilePath(nextName);
+    const absoluteMeshPath = toAbsoluteStoragePath(nextFilePath);
+
+    await fs.mkdir(path.dirname(absoluteMeshPath), { recursive: true });
+    await fs.writeFile(absoluteMeshPath, String(objText), 'utf8');
+
+    const metadata = {
+      ...JSON.parse(sourceAsset.metadata || '{}'),
+      source: 'MESH EDITOR',
+      editedAt: Date.now(),
+      savedFromAssetId: sourceAsset.id,
+      saveMode
+    };
+
+    const savedAsset = saveMode === 'version'
+      ? await createAssetVersion({
+          assetId: sourceAsset.id,
+          name: nextName,
+          type: 'mesh',
+          filePath: nextFilePath,
+          width: 0,
+          height: 0,
+          metadata,
+          createdAt: Date.now()
+        })
+      : await replaceAssetFileById(sourceAsset.id, {
+          name: nextName,
+          type: 'mesh',
+          filePath: nextFilePath,
+          width: 0,
+          height: 0,
+          metadata
+        });
+
+    if (saveMode === 'replace' && sourceAsset.filePath && sourceAsset.filePath !== savedAsset.filePath) {
+      await fs.rm(toAbsoluteStoragePath(sourceAsset.filePath), { force: true }).catch(() => null);
+    }
+
+    res.status(saveMode === 'version' ? 201 : 200).json(savedAsset);
+  } catch (err) {
+    console.error('Failed to save mesh editor result:', err);
+    res.status(500).json({ error: err.message || 'Failed to save mesh editor result' });
   }
 });
 
