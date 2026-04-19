@@ -3561,7 +3561,7 @@ app.post('/api/images/generate', async (req, res) => {
     const newAsset = await createProjectAsset({
       projectId: Number(projectId),
       type: 'image',
-      name: createGeneratedImageName(trimmedPrompt, extension),
+      name: trimmedName,
       filePath: storedFilePath,
       width: dimensions.width,
       height: dimensions.height,

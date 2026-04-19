@@ -30,8 +30,7 @@ const ATTRIBUTE_TYPES = [
 ];
 const NODE_TYPES = [
   { id: 1, name: 'Image' },
-  { id: 2, name: 'Image Edit' },
-  { id: 3, name: 'Mesh Gen' }
+  { id: 3, name: 'Mesh' }
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -608,6 +607,23 @@ async function seedReferenceTables(db) {
   );
 }
 
+async function migrateGraphNodeTypes(db) {
+  if (!(await tableExists(db, 'NodeTypes')) || !(await tableExists(db, 'Nodes'))) {
+    return;
+  }
+
+  const imageEditNodeType = await get(db, 'SELECT id FROM NodeTypes WHERE lower(name) = lower(?)', ['Image Edit']);
+  if (imageEditNodeType?.id) {
+    await run(db, 'UPDATE Nodes SET nodeTypeId = ? WHERE nodeTypeId = ?', [1, imageEditNodeType.id]);
+    await run(db, 'DELETE FROM NodeTypes WHERE id = ?', [imageEditNodeType.id]);
+  }
+
+  const meshGenNodeType = await get(db, 'SELECT id FROM NodeTypes WHERE lower(name) = lower(?)', ['Mesh Gen']);
+  if (meshGenNodeType?.id) {
+    await run(db, 'UPDATE NodeTypes SET name = ? WHERE id = ?', ['Mesh', meshGenNodeType.id]);
+  }
+}
+
 export async function initializeStorage() {
   await fs.mkdir(DATA_DIR, { recursive: true });
   await fs.mkdir(ASSETS_DIR, { recursive: true });
@@ -772,6 +788,7 @@ export async function initializeStorage() {
   }
 
   await seedReferenceTables(db);
+  await migrateGraphNodeTypes(db);
   return db;
 }
 

@@ -36,7 +36,7 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
-const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Image Edit', 'Mesh Gen']
+const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh']
 const CONNECTOR_TYPE_META = {
   image: { key: 'image', label: 'Image', letter: 'I', color: '#8ff5ff', background: 'rgba(143, 245, 255, 0.14)' },
   mesh: { key: 'mesh', label: 'Mesh', letter: 'M', color: '#ac89ff', background: 'rgba(172, 137, 255, 0.14)' },
@@ -56,11 +56,7 @@ function normalizeCustomApiType(type) {
 function getNodeKind(nodeTypeName = '') {
   const normalizedNodeType = String(nodeTypeName).trim().toLowerCase()
 
-  if (normalizedNodeType === 'image edit') {
-    return 'imageEdit'
-  }
-
-  if (normalizedNodeType === 'mesh gen') {
+  if (['mesh', 'mesh gen'].includes(normalizedNodeType)) {
     return 'meshGen'
   }
 
@@ -105,7 +101,7 @@ function getNodeOutputType(node) {
     return 'mesh'
   }
 
-  return ['image', 'imageEdit'].includes(node?.data?.nodeKind || node?.type) ? 'image' : null
+  return (node?.data?.nodeKind || node?.type) === 'image' ? 'image' : null
 }
 
 function getInputHandleIndex(handleId) {
@@ -519,7 +515,6 @@ function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
 
 function GraphAssetNode({ data }) {
   const updateNodeInternals = useUpdateNodeInternals()
-  const isImageEdit = data.nodeKind === 'imageEdit'
   const isMeshGen = data.nodeKind === 'meshGen'
   const previewFilename = data.asset?.thumbnail || data.asset?.filename || null
   const previewUrl = getAssetPreviewUrl(previewFilename)
@@ -532,18 +527,17 @@ function GraphAssetNode({ data }) {
   const [showGrid, setShowGrid] = useState(true)
   const [showLightSlider, setShowLightSlider] = useState(false)
   const [lightIntensity, setLightIntensity] = useState(2.2)
-  const sourceLabel = isMeshGen ? 'MESH GEN' : isImageEdit ? 'IMAGE EDIT' : 'IMAGE'
+  const draft = data.actionDraft
+  const isImageEditMode = ['edit-api', 'edit-comfy'].includes(draft?.mode)
+  const sourceLabel = isMeshGen ? 'MESH' : 'IMAGE'
   const metaLabel = isProcessing
     ? (Number.isFinite(data.progress) ? `${data.progress}%` : 'Processing…')
     : (dimensions || (isMeshGen
         ? 'Connect an input image and generate a 3D mesh.'
-        : isImageEdit
-          ? 'Connect an input image and generate a result.'
-          : 'Attach or generate a single image.'))
-  const draft = data.actionDraft
+        : 'Attach, generate, or edit a single image.'))
   const selectedWorkflow = (isMeshGen
     ? data.meshGenerationWorkflows
-    : isImageEdit
+    : isImageEditMode
       ? data.imageEditWorkflows
       : data.imageGenerationWorkflows)
     .find(workflow => workflow.id == draft?.workflowId) || null
@@ -568,7 +562,7 @@ function GraphAssetNode({ data }) {
     const selectedSource = resolveSelectedInputSource(binding.source, compatibleSources)
 
     const renderCustomValueField = () => {
-      if ((isImageEdit || isMeshGen) && valueType === 'image') {
+      if ((isImageEditMode || isMeshGen) && valueType === 'image') {
         const selectedSourceReference = currentValue?.source || currentValue || ''
 
         if (data.libraryImageOptions.length === 0) {
@@ -776,7 +770,7 @@ function GraphAssetNode({ data }) {
             </div>
           )}
 
-          {(isImageEdit || isMeshGen) && (
+          {(isImageEditMode || isMeshGen) && (
             <div className="image-card__edit-preview-indicator font-label">
               {data.connectedInputAsset ? `INPUT • ${data.connectedInputAsset.name}` : 'INPUT • IMAGE'}
             </div>
@@ -838,13 +832,25 @@ function GraphAssetNode({ data }) {
 
               {draft?.mode === 'select' && (
                 <div className="image-card__edit-action-menu">
-                  {!isImageEdit && !isMeshGen && (
+                  {!isMeshGen && (
                     <>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'local')}>
                         Local Computer
                       </button>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'assets')}>
                         From Assets
+                      </button>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'comfy')}>
+                        Generate · ComfyUI Workflow
+                      </button>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'api')}>
+                        Generate · Remote API
+                      </button>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'edit-api')}>
+                        Edit · API
+                      </button>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'edit-comfy')}>
+                        Edit · ComfyUI Workflow
                       </button>
                     </>
                   )}
@@ -857,25 +863,7 @@ function GraphAssetNode({ data }) {
                         ComfyUI Workflow
                       </button>
                     </>
-                  ) : isImageEdit ? (
-                    <>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'api')}>
-                        API
-                      </button>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'comfy')}>
-                        ComfyUI Workflow
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'comfy')}>
-                        ComfyUI Workflow
-                      </button>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'api')}>
-                        Remote API
-                      </button>
-                    </>
-                  )}
+                  ) : null}
                 </div>
               )}
 
@@ -917,9 +905,16 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'api' && !isImageEdit && !isMeshGen && (
+              {draft?.mode === 'api' && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">REMOTE API</span>
+                  <input
+                    type="text"
+                    className="params-card__input nodrag"
+                    placeholder="Result name"
+                    value={draft.name || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'name', event.target.value)}
+                  />
                   <select
                     className="api-select nodrag"
                     value={draft.selectedApi || ''}
@@ -935,14 +930,14 @@ function GraphAssetNode({ data }) {
                     value={draft.prompt || ''}
                     onChange={event => data.onDraftFieldChange?.(data.id, 'prompt', event.target.value)}
                   />
-                  <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)}>
+                  <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.name?.trim() || !draft.prompt?.trim()}>
                     <span className="material-symbols-outlined">auto_awesome</span>
                     GENERATE
                   </button>
                 </div>
               )}
 
-              {draft?.mode === 'comfy' && !isImageEdit && !isMeshGen && (
+              {draft?.mode === 'comfy' && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">COMFYUI WORKFLOW</span>
                   {data.comfyLoading ? (
@@ -952,6 +947,13 @@ function GraphAssetNode({ data }) {
                     </div>
                   ) : data.imageGenerationWorkflows.length > 0 ? (
                     <>
+                      <input
+                        type="text"
+                        className="params-card__input nodrag"
+                        placeholder="Result name"
+                        value={draft.name || ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'name', event.target.value)}
+                      />
                       <select
                         className="params-card__select nodrag"
                         value={draft.workflowId || ''}
@@ -1118,7 +1120,7 @@ function GraphAssetNode({ data }) {
                           ? `${imageInputSources.length} compatible image input${imageInputSources.length === 1 ? '' : 's'} available`
                           : 'Use a connected image or upload a custom file for image parameters'}
                       </div>
-                      <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)}>
+                      <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.name?.trim()}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW
                       </button>
@@ -1132,7 +1134,7 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'api' && isImageEdit && (
+              {draft?.mode === 'edit-api' && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">IMAGE EDIT API</span>
                   <input
@@ -1196,7 +1198,7 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'comfy' && isImageEdit && (
+              {draft?.mode === 'edit-comfy' && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">COMFYUI IMAGE EDIT</span>
                   {data.comfyLoading ? (
@@ -1419,6 +1421,7 @@ export default function GraphPage({ project }) {
     const defaultWorkflow = workflowList[0] || null
     return {
       mode,
+      name: '',
       selectedApi: imageGenerationApis[0]?.id || '',
       prompt: '',
       workflowId: defaultWorkflow?.id || '',
@@ -1432,21 +1435,23 @@ export default function GraphPage({ project }) {
     const defaultWorkflow = workflowList[0] || null
     const sourceReference = getAssetSourceReference(sourceAsset)
     const defaultImageInputSource = getCompatibleInputSources(inputSources, 'image')[0] || null
+    const isApiMode = mode === 'edit-api' || mode === 'api'
+    const isComfyMode = mode === 'edit-comfy' || mode === 'comfy'
     return {
       mode,
       name: '',
       selectedApi: imageEditApis[0]?.id || '',
       prompt: '',
-      selectedInputSource: mode === 'api'
+      selectedInputSource: isApiMode
         ? (getInputSourceSelectionValue(defaultImageInputSource) || libraryOptions[0]?.sourceReference || sourceReference || '')
         : '',
       workflowId: defaultWorkflow?.id || '',
-      inputs: mode === 'comfy'
+      inputs: isComfyMode
         ? createWorkflowDraftInputs(defaultWorkflow, (_parameter, valueType) => valueType === 'image'
             ? ({ source: libraryOptions[0]?.sourceReference || sourceReference || '' })
             : null)
         : {},
-      inputBindings: mode === 'comfy'
+      inputBindings: isComfyMode
         ? createWorkflowDraftBindings(defaultWorkflow, inputSources, ['image'])
         : {}
     }
@@ -1751,11 +1756,11 @@ export default function GraphPage({ project }) {
         })
       },
       onImageEditModeSelect: async (targetNodeId, mode) => {
-        if (mode === 'api') {
+        if (mode === 'edit-api' || mode === 'api') {
           await ensureLibraryLoaded()
         }
 
-        if (mode === 'comfy') {
+        if (mode === 'edit-comfy' || mode === 'comfy') {
           await ensureLibraryLoaded()
           const workflows = await ensureComfyWorkflowsLoaded()
           const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
@@ -1820,7 +1825,7 @@ export default function GraphPage({ project }) {
           }
 
           if (field === 'workflowId') {
-            const isEditNode = node.data.nodeKind === 'imageEdit'
+            const isEditNode = ['edit-api', 'edit-comfy'].includes(nodeDraft.mode)
             const isMeshGenNode = node.data.nodeKind === 'meshGen'
             const workflowList = isMeshGenNode
               ? meshGenerationWorkflows
@@ -1983,8 +1988,10 @@ export default function GraphPage({ project }) {
         }
 
         if (targetNode.data.nodeKind === 'image') {
+          const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
           if (targetDraft.mode === 'api') {
-            if (!targetDraft.selectedApi || !String(targetDraft.prompt || '').trim()) {
+            if (!targetDraft.selectedApi || !String(targetDraft.prompt || '').trim() || !String(targetDraft.name || '').trim()) {
               return
             }
 
@@ -1992,7 +1999,8 @@ export default function GraphPage({ project }) {
             try {
               const generatedAsset = await generateImage(project.id, {
                 selectedApi: targetDraft.selectedApi,
-                prompt: targetDraft.prompt.trim()
+                prompt: targetDraft.prompt.trim(),
+                name: targetDraft.name.trim()
               })
               await applyNodeResult(generatedAsset, { lastAction: 'image-api' })
               setActionDraftsByNodeId({})
@@ -2004,8 +2012,7 @@ export default function GraphPage({ project }) {
 
           if (targetDraft.mode === 'comfy') {
             const workflow = imageGenerationWorkflows.find(item => item.id == targetDraft.workflowId)
-            const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
-            if (!workflow) {
+            if (!workflow || !String(targetDraft.name || '').trim()) {
               return
             }
 
@@ -2073,6 +2080,7 @@ export default function GraphPage({ project }) {
             try {
               const generatedAssets = await runComfyWorkflow(project.id, {
                 workflowId: Number(targetDraft.workflowId),
+                name: targetDraft.name.trim(),
                 inputs: inputValues,
                 promptId,
                 clientId
@@ -2093,6 +2101,152 @@ export default function GraphPage({ project }) {
               }
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
+            } finally {
+              closeNodeProgressSubscription(targetNodeId)
+            }
+            return
+          }
+
+          if (targetDraft.mode === 'edit-api') {
+            const selectedApiSource = resolveImageSourceOption(targetDraft.selectedInputSource, targetInputSources, libraryImageOptions)
+            const sourceAsset = selectedApiSource?.asset || getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+            const sourceReference = selectedApiSource?.sourceReference || getAssetSourceReference(sourceAsset)
+            if (!sourceReference) {
+              return
+            }
+
+            if (!targetDraft.selectedApi || !String(targetDraft.prompt || '').trim() || !String(targetDraft.name || '').trim()) {
+              return
+            }
+
+            await setProcessingState('processing', null, { processingSource: 'API', inputSource: sourceReference })
+            try {
+              const response = await runImageEditApi(project.id, {
+                imageSource: sourceReference,
+                name: targetDraft.name.trim(),
+                selectedApi: targetDraft.selectedApi,
+                prompt: targetDraft.prompt.trim()
+              })
+              const savedEdits = response?.savedEdits || []
+              if (savedEdits.length === 0) {
+                throw new Error('Image edit did not return any saved image')
+              }
+              await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
+                lastAction: 'image-edit-api',
+                inputSource: sourceReference
+              })
+              if (savedEdits.length > 1) {
+                await spawnAdditionalResultNodes('Image', savedEdits.slice(1).map(edit => ({
+                  id: edit.id,
+                  name: edit.name || targetDraft.name.trim()
+                })))
+              }
+              setActionDraftsByNodeId({})
+            } catch (err) {
+              await setProcessingState('error', null, { error: err.message || 'Image edit failed', inputSource: sourceReference })
+            }
+            return
+          }
+
+          if (targetDraft.mode === 'edit-comfy') {
+            const workflow = imageEditWorkflows.find(item => item.id == targetDraft.workflowId)
+            if (!workflow || !String(targetDraft.name || '').trim()) {
+              return
+            }
+
+            const inputValues = {}
+            for (const parameter of workflow.parameters || []) {
+              const valueType = getWorkflowParameterValueType(parameter)
+              const inputValue = resolveWorkflowParameterValue(parameter, targetDraft, targetInputSources)
+
+              if (isFileWorkflowValueType(valueType)) {
+                if (!inputValue) {
+                  return
+                }
+                inputValues[parameter.id] = inputValue
+                continue
+              }
+
+              if (valueType === 'number') {
+                if (String(inputValue ?? '').trim() === '' || Number.isNaN(Number(inputValue))) {
+                  return
+                }
+                inputValues[parameter.id] = inputValue
+                continue
+              }
+
+              if (valueType === 'boolean') {
+                inputValues[parameter.id] = Boolean(inputValue)
+                continue
+              }
+
+              if (!String(inputValue ?? '').trim()) {
+                return
+              }
+
+              inputValues[parameter.id] = inputValue
+            }
+
+            const promptId = createComfyExecutionId('graph-image-edit-prompt')
+            const clientId = createComfyExecutionId('graph-image-edit-client')
+            setActionDraftsByNodeId({})
+            closeNodeProgressSubscription(targetNodeId)
+            progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
+              onMessage: payload => {
+                setNodes(current => current.map(item => (
+                  item.id === String(targetNodeId)
+                    ? {
+                        ...item,
+                        data: {
+                          ...item.data,
+                          status: payload?.status === 'error' ? 'error' : 'processing',
+                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
+                          progressDetail: payload?.detail || item.data.progressDetail || null,
+                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
+                        }
+                      }
+                    : item
+                )))
+              },
+              onError: () => {}
+            }))
+
+            await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
+              progressDetail: 'Preparing ComfyUI image edit',
+              currentNodeLabel: 'Waiting for ComfyUI execution to start'
+            })
+            try {
+              const response = await runImageEditComfy(project.id, {
+                assetId: getConnectedInputAssetFrom(nodes, edges, targetNodeId)?.id || null,
+                workflowId: Number(targetDraft.workflowId),
+                name: targetDraft.name.trim(),
+                inputValues,
+                promptId,
+                clientId
+              })
+              const savedEdits = response?.savedEdits || []
+              if (savedEdits.length === 0) {
+                throw new Error('ComfyUI image edit did not return any saved image')
+              }
+              setNodeTransientData(targetNodeId, {
+                status: 'processing',
+                progress: 100,
+                progressDetail: 'Saving edited image',
+                currentNodeLabel: 'ComfyUI image edit completed'
+              })
+              await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
+                lastAction: 'image-edit-comfy',
+                promptId,
+                inputSource: JSON.stringify(inputValues)
+              })
+              if (savedEdits.length > 1) {
+                await spawnAdditionalResultNodes('Image', savedEdits.slice(1).map(edit => ({
+                  id: edit.id,
+                  name: edit.name || targetDraft.name.trim()
+                })))
+              }
+            } catch (err) {
+              await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
             } finally {
               closeNodeProgressSubscription(targetNodeId)
             }
