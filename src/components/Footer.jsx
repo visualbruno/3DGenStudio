@@ -1,6 +1,6 @@
 import './Footer.css'
 
-export default function Footer({ variant = 'default' }) {
+export default function Footer({ variant = 'default', onChangeLogClick }) {
   if (variant === 'kanban') {
     return (
       <footer className="footer footer--kanban" id="status-bar">
@@ -38,8 +38,13 @@ export default function Footer({ variant = 'default' }) {
         <span className="footer__text">Latency: 14ms</span>
       </div>
       <div className="footer__right">
-        <a href="#" className="footer__link">Documentation</a>
-        <a href="#" className="footer__link">Terms of Service</a>
+        {onChangeLogClick && (
+          <button type="button" className="footer__link footer__link-btn" onClick={onChangeLogClick}>
+            Change Log
+          </button>
+        )}
+        <a href="https://github.com/visualbruno/3DGenStudio/tree/main/docs" target="_blank" className="footer__link">Documentation</a>
+        <a href="https://www.3dgenstudio.com/terms-and-conditions.html" target="_blank" className="footer__link">Terms of Service</a>
       </div>
     </footer>
   )

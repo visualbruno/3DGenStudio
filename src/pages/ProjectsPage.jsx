@@ -17,10 +17,29 @@ const STATUS_MAP = {
   complete: { label: 'Complete', className: 'project-card__status--complete' },
 }
 
+const CHANGE_LOG_ENTRIES = [
+  {
+    version: 'v0.1.0',
+    date: '2026-04-19',
+    items: [
+      'Improved import for ComfyUI workflows',
+      'Added a draft version of Mesh Editor',
+    ],
+  },
+  {
+    version: 'v0.1.0',
+    date: '2026-04-19',
+    items: [
+      'First release',
+    ],
+  },
+]
+
 export default function ProjectsPage() {
   const { projects, createProject, deleteProject } = useProjects()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
+  const [showChangeLog, setShowChangeLog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
@@ -145,6 +164,45 @@ export default function ProjectsPage() {
           </div>
         )}
 
+        {showChangeLog && (
+          <div className="projects-page__modal-overlay" onClick={() => setShowChangeLog(false)}>
+            <div className="projects-page__modal projects-page__modal--changelog" onClick={(e) => e.stopPropagation()}>
+              <div className="projects-page__modal-glow" />
+
+              <div className="projects-page__modal-header projects-page__modal-header--split">
+                <div>
+                  <h1 className="projects-page__modal-title font-headline">Change Log</h1>
+                  <p className="projects-page__modal-desc">Latest updates across the project workspace.</p>
+                </div>
+                <button
+                  type="button"
+                  className="projects-page__icon-btn"
+                  onClick={() => setShowChangeLog(false)}
+                  aria-label="Close change log"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+
+              <div className="projects-page__changelog">
+                {CHANGE_LOG_ENTRIES.map((entry) => (
+                  <section key={entry.version} className="projects-page__changelog-entry">
+                    <div className="projects-page__changelog-meta">
+                      <span className="projects-page__changelog-version font-label">{entry.version}</span>
+                      <span className="projects-page__changelog-date">{entry.date}</span>
+                    </div>
+                    <ul className="projects-page__changelog-list">
+                      {entry.items.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Projects Grid */}
         <div className="projects-page__container">
           <div className="projects-page__header">
@@ -229,7 +287,7 @@ export default function ProjectsPage() {
         </div>
       </main>
 
-      <Footer />
+      <Footer onChangeLogClick={() => setShowChangeLog(true)} />
     </div>
   )
 }

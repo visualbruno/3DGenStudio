@@ -18,6 +18,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-04-19** | Improve the way to import ComfyUI workflows<br>Added a draft version of Mesh Editor<br>Added Change Log in Projects page |
 | **2026-04-19** | First release |
 
 ---
