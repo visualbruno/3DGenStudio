@@ -492,6 +492,8 @@ function GraphAssetNode({ data }) {
   const previewUrl = getAssetPreviewUrl(previewFilename)
   const dimensions = formatAssetDimensions(data.asset?.width, data.asset?.height)
   const isProcessing = data.status === 'processing'
+  const progressDetail = data.progressDetail || data.metadata?.detail || ''
+  const currentNodeLabel = data.currentNodeLabel || data.metadata?.currentNodeLabel || ''
   const sourceLabel = isImageEdit ? 'IMAGE EDIT' : 'IMAGE'
   const metaLabel = isProcessing
     ? (Number.isFinite(data.progress) ? `${data.progress}%` : 'Processing…')
@@ -706,6 +708,14 @@ function GraphAssetNode({ data }) {
           </div>
 
           <p className="image-card__meta font-label">{metaLabel}</p>
+
+          {isProcessing && progressDetail && (
+            <p className="image-card__meta font-label">{progressDetail}</p>
+          )}
+
+          {isProcessing && currentNodeLabel && (
+            <p className="image-card__meta font-label image-card__meta--loading-node">{currentNodeLabel}</p>
+          )}
 
           {isProcessing && Number.isFinite(data.progress) && (
             <div className="image-card__progress graph-node__progress" aria-hidden="true">
@@ -1231,6 +1241,20 @@ export default function GraphPage({ project }) {
     )))
   }, [setNodes])
 
+  const setNodeTransientData = useCallback((nodeId, updates) => {
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(nodeId)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              ...updates
+            }
+          }
+        : node
+    )))
+  }, [setNodes])
+
   const ensureLibraryLoaded = useCallback(async () => {
     if (libraryLoadedRef.current) {
       return
@@ -1544,13 +1568,17 @@ export default function GraphPage({ project }) {
           return
         }
 
-        const setProcessingState = async (status, progress = null, metadata = {}) => {
+        const setProcessingState = async (status, progress = null, metadata = {}, transientData = {}) => {
           const updatedNode = await updateProjectNode(project.id, Number(targetNodeId), {
             status,
             progress,
             metadata
           })
           replaceFlowNodeData(updatedNode)
+          setNodeTransientData(targetNodeId, {
+            progressDetail: transientData.progressDetail ?? null,
+            currentNodeLabel: transientData.currentNodeLabel ?? null
+          })
         }
 
         const applyNodeResult = async (asset, metadata = {}) => {
@@ -1562,6 +1590,10 @@ export default function GraphPage({ project }) {
             metadata
           })
           replaceFlowNodeData(updatedNode)
+          setNodeTransientData(targetNodeId, {
+            progressDetail: null,
+            currentNodeLabel: null
+          })
         }
 
         const spawnAdditionalResultNodes = async (nodeTypeName, assets) => {
@@ -1671,8 +1703,10 @@ export default function GraphPage({ project }) {
                         ...item,
                         data: {
                           ...item.data,
-                          status: payload?.status === 'error' ? 'error' : payload?.status === 'completed' ? null : 'processing',
-                          progress: Number(payload?.progressPercent) || item.data.progress || 0
+                          status: payload?.status === 'error' ? 'error' : 'processing',
+                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
+                          progressDetail: payload?.detail || item.data.progressDetail || null,
+                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
                         }
                       }
                     : item
@@ -1681,7 +1715,10 @@ export default function GraphPage({ project }) {
               onError: () => {}
             }))
 
-            await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId })
+            await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
+              progressDetail: 'Preparing ComfyUI workflow',
+              currentNodeLabel: 'Waiting for ComfyUI execution to start'
+            })
             try {
               const generatedAssets = await runComfyWorkflow(project.id, {
                 workflowId: Number(targetDraft.workflowId),
@@ -1693,6 +1730,12 @@ export default function GraphPage({ project }) {
               if (imageAssets.length === 0) {
                 throw new Error('The workflow did not return any image output')
               }
+              setNodeTransientData(targetNodeId, {
+                status: 'processing',
+                progress: 100,
+                progressDetail: 'Saving generated image',
+                currentNodeLabel: 'ComfyUI workflow completed'
+              })
               await applyNodeResult(imageAssets[0], { lastAction: 'comfy-workflow', promptId })
               if (imageAssets.length > 1) {
                 await spawnAdditionalResultNodes('Image', imageAssets.slice(1))
@@ -1802,8 +1845,10 @@ export default function GraphPage({ project }) {
                       ...item,
                       data: {
                         ...item.data,
-                        status: payload?.status === 'error' ? 'error' : payload?.status === 'completed' ? null : 'processing',
-                        progress: Number(payload?.progressPercent) || item.data.progress || 0
+                        status: payload?.status === 'error' ? 'error' : 'processing',
+                        progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
+                        progressDetail: payload?.detail || item.data.progressDetail || null,
+                        currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
                       }
                     }
                   : item
@@ -1812,7 +1857,10 @@ export default function GraphPage({ project }) {
             onError: () => {}
           }))
 
-          await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId })
+          await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
+            progressDetail: 'Preparing ComfyUI image edit',
+            currentNodeLabel: 'Waiting for ComfyUI execution to start'
+          })
           try {
             const response = await runImageEditComfy(project.id, {
               assetId: getConnectedInputAssetFrom(nodes, edges, targetNodeId)?.id || null,
@@ -1826,6 +1874,12 @@ export default function GraphPage({ project }) {
             if (savedEdits.length === 0) {
               throw new Error('ComfyUI image edit did not return any saved image')
             }
+            setNodeTransientData(targetNodeId, {
+              status: 'processing',
+              progress: 100,
+              progressDetail: 'Saving edited image',
+              currentNodeLabel: 'ComfyUI image edit completed'
+            })
             await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
               lastAction: 'image-edit-comfy',
               promptId,
@@ -1846,7 +1900,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, setEdges, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]
