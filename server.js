@@ -3409,17 +3409,18 @@ app.post('/api/images/generate', async (req, res) => {
   let processingStartedAt = Date.now();
 
   try {
-    const { projectId, selectedApi, prompt, cardId } = req.body;
+    const { projectId, selectedApi, prompt, name, cardId } = req.body;
+    const trimmedName = String(name || '').trim();
 
-    if (!projectId || !selectedApi || !prompt?.trim()) {
-      return res.status(400).json({ error: 'projectId, selectedApi and prompt are required' });
+    if (!projectId || !selectedApi || !prompt?.trim() || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
     }
 
     const settings = await getSettings();
     const trimmedPrompt = prompt.trim();
     processingProjectId = Number(projectId);
     processingCardId = cardId || randomUUID();
-    processingCardName = trimmedPrompt;
+    processingCardName = trimmedName;
     processingStartedAt = Date.now();
 
     await updateCardProcessingSnapshot(processingProjectId, processingCardId, {

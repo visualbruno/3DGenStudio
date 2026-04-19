@@ -765,7 +765,7 @@ function GraphAssetNode({ data }) {
           ) : (
             <div className="image-card__thumb-placeholder">
               <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.12)' }}>
-                {isMeshGen ? 'deployed_code' : isImageEdit ? 'photo_filter' : 'image'}
+                {isMeshGen ? 'deployed_code' : isImageEditMode ? 'photo_filter' : 'image'}
               </span>
             </div>
           )}
@@ -1706,6 +1706,7 @@ export default function GraphPage({ project }) {
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
+    dragHandle: '.graph-node__card',
     data: {
       ...node.data,
       inputConnectors: buildInputConnectors(node.id, nodes, edges),

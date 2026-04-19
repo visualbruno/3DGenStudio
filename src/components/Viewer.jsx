@@ -252,7 +252,10 @@ export default function Viewer({
   const cameraPosition = modelState?.modelUrl === modelUrl ? modelState.cameraPosition : new THREE.Vector3(3, 3, 5)
 
   return (
-    <div style={{ width: '100%', height, background: '#0D0E10', borderRadius: '8px', overflow: 'hidden' }}>
+    <div
+      className="nodrag nopan nowheel"
+      style={{ width: '100%', height, background: '#0D0E10', borderRadius: '8px', overflow: 'hidden', touchAction: 'none' }}
+    >
       <Canvas key={modelUrl || 'placeholder'} shadows>
         <PerspectiveCamera makeDefault position={[3, 3, 5]} />
           <ambientLight intensity={Math.max(lightIntensity * 0.55, 0.35)} />

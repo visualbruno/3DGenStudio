@@ -1,4 +1,5 @@
 import path from 'path';
+import process from 'process';
 import fs from 'fs/promises';
 import sqlite3 from 'sqlite3';
 
@@ -987,7 +988,7 @@ async function getNextCardAssetPosition(cardId) {
   return row?.nextPosition ?? 0;
 }
 
-async function resolveCard(projectId, kanbanColumnId, externalCardId = null) {
+async function _resolveCard(projectId, kanbanColumnId, externalCardId = null) {
   if (!externalCardId) return null;
 
   const db = await getDb();

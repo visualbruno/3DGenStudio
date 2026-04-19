@@ -277,6 +277,10 @@
   box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
 }
 
+.graph-node__card.image-card:active {
+  cursor: grabbing;
+}
+
 .graph-node__card.image-card:hover {
   transform: none;
   box-shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
@@ -303,8 +307,8 @@
 
 .graph-node__mesh-toolbar {
   position: absolute;
-  top: 0.75rem;
-  left: 0.75rem;
+  top: 1.7rem;
+  left: 0.5rem;
   z-index: 3;
   display: flex;
   flex-direction: column;
