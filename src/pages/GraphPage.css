@@ -290,6 +290,68 @@
   aspect-ratio: 1 / 1;
 }
 
+.graph-node__mesh-preview {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.graph-node__mesh-preview > div:last-child {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-node__mesh-toolbar {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.graph-node__mesh-tool {
+  min-width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(71, 72, 74, 0.22);
+  border-radius: var(--radius-full);
+  background: rgba(18, 19, 21, 0.88);
+  color: var(--on-surface-variant);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+
+.graph-node__mesh-tool:hover,
+.graph-node__mesh-tool--active {
+  color: var(--primary);
+  border-color: rgba(143, 245, 255, 0.32);
+  background: rgba(143, 245, 255, 0.14);
+}
+
+.graph-node__mesh-light-panel {
+  width: 40px;
+  padding: 0.55rem 0.35rem;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-lg);
+  background: rgba(18, 19, 21, 0.92);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.25);
+}
+
+.graph-node__mesh-light-panel input[type='range'] {
+  width: 110px;
+  margin: 0;
+  transform: rotate(-90deg);
+  transform-origin: center;
+}
+
 .graph-node__thumb .image-card__thumb-item {
   align-items: center;
   justify-content: center;

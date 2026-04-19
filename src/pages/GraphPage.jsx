@@ -17,8 +17,10 @@ import {
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
+import Viewer from '../components/Viewer'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
+import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import '@xyflow/react/dist/style.css'
 import './KanbanPage.css'
 import './GraphPage.css'
@@ -34,7 +36,7 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
-const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Image Edit']
+const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Image Edit', 'Mesh Gen']
 const CONNECTOR_TYPE_META = {
   image: { key: 'image', label: 'Image', letter: 'I', color: '#8ff5ff', background: 'rgba(143, 245, 255, 0.14)' },
   mesh: { key: 'mesh', label: 'Mesh', letter: 'M', color: '#ac89ff', background: 'rgba(172, 137, 255, 0.14)' },
@@ -52,7 +54,21 @@ function normalizeCustomApiType(type) {
 }
 
 function getNodeKind(nodeTypeName = '') {
-  return String(nodeTypeName).trim().toLowerCase() === 'image edit' ? 'imageEdit' : 'image'
+  const normalizedNodeType = String(nodeTypeName).trim().toLowerCase()
+
+  if (normalizedNodeType === 'image edit') {
+    return 'imageEdit'
+  }
+
+  if (normalizedNodeType === 'mesh gen') {
+    return 'meshGen'
+  }
+
+  return 'image'
+}
+
+function getDefaultNodeOutputType(nodeTypeName = '') {
+  return getNodeKind(nodeTypeName) === 'meshGen' ? 'mesh' : 'image'
 }
 
 function normalizeConnectorType(type) {
@@ -83,6 +99,10 @@ function getNodeOutputType(node) {
 
   if (outputType) {
     return outputType
+  }
+
+  if ((node?.data?.nodeKind || node?.type) === 'meshGen') {
+    return 'mesh'
   }
 
   return ['image', 'imageEdit'].includes(node?.data?.nodeKind || node?.type) ? 'image' : null
@@ -225,9 +245,12 @@ function toBaseFlowNode(node, onDelete) {
       libraryImageOptions: [],
       libraryLoading: false,
       comfyLoading: false,
+      meshGenerationApis: [],
+      meshGenerationWorkflows: [],
       onToggleAction: null,
       onImageModeSelect: null,
       onImageEditModeSelect: null,
+      onMeshGenModeSelect: null,
       onDraftFieldChange: null,
       onDraftInputChange: null,
       onRequestLocalFile: null,
@@ -329,6 +352,15 @@ function buildNodeInputSources(nodeId, currentNodes, currentEdges) {
           : (sourceNode?.data?.metadata?.outputValue ?? sourceNode?.data?.outputValue ?? null)
       }
     })
+}
+
+function filterMeshGenerationWorkflows(workflows = []) {
+  return workflows.filter(workflow => {
+    const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
+    const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+    return parameterValueTypes.includes('image') && outputValueTypes.includes('mesh')
+  })
 }
 
 function getCompatibleInputSources(inputSources, valueType) {
@@ -488,22 +520,36 @@ function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
 function GraphAssetNode({ data }) {
   const updateNodeInternals = useUpdateNodeInternals()
   const isImageEdit = data.nodeKind === 'imageEdit'
+  const isMeshGen = data.nodeKind === 'meshGen'
   const previewFilename = data.asset?.thumbnail || data.asset?.filename || null
   const previewUrl = getAssetPreviewUrl(previewFilename)
+  const meshModelUrl = isMeshGen && data.asset?.filename ? getAssetPreviewUrl(data.asset.filename) : null
   const dimensions = formatAssetDimensions(data.asset?.width, data.asset?.height)
   const isProcessing = data.status === 'processing'
   const progressDetail = data.progressDetail || data.metadata?.detail || ''
   const currentNodeLabel = data.currentNodeLabel || data.metadata?.currentNodeLabel || ''
-  const sourceLabel = isImageEdit ? 'IMAGE EDIT' : 'IMAGE'
+  const [showNormals, setShowNormals] = useState(false)
+  const [showGrid, setShowGrid] = useState(true)
+  const [showLightSlider, setShowLightSlider] = useState(false)
+  const [lightIntensity, setLightIntensity] = useState(2.2)
+  const sourceLabel = isMeshGen ? 'MESH GEN' : isImageEdit ? 'IMAGE EDIT' : 'IMAGE'
   const metaLabel = isProcessing
     ? (Number.isFinite(data.progress) ? `${data.progress}%` : 'Processing…')
-    : (dimensions || (isImageEdit ? 'Connect an input image and generate a result.' : 'Attach or generate a single image.'))
+    : (dimensions || (isMeshGen
+        ? 'Connect an input image and generate a 3D mesh.'
+        : isImageEdit
+          ? 'Connect an input image and generate a result.'
+          : 'Attach or generate a single image.'))
   const draft = data.actionDraft
-  const selectedWorkflow = (isImageEdit ? data.imageEditWorkflows : data.imageGenerationWorkflows)
+  const selectedWorkflow = (isMeshGen
+    ? data.meshGenerationWorkflows
+    : isImageEdit
+      ? data.imageEditWorkflows
+      : data.imageGenerationWorkflows)
     .find(workflow => workflow.id == draft?.workflowId) || null
   const inputConnectors = data.inputConnectors || [{ id: DEFAULT_INPUT_ID, type: null, isConnected: false }]
   const inputSources = data.inputSources || []
-  const outputConnector = data.outputConnector || { id: DEFAULT_OUTPUT_ID, type: 'image' }
+  const outputConnector = data.outputConnector || { id: DEFAULT_OUTPUT_ID, type: isMeshGen ? 'mesh' : 'image' }
   const hasOutputAsset = Boolean(data.asset?.id)
   const connectedInputCount = inputConnectors.filter(connector => connector.isConnected).length
   const outputMeta = getConnectorTypeMeta(outputConnector.type)
@@ -522,7 +568,7 @@ function GraphAssetNode({ data }) {
     const selectedSource = resolveSelectedInputSource(binding.source, compatibleSources)
 
     const renderCustomValueField = () => {
-      if (isImageEdit && valueType === 'image') {
+      if ((isImageEdit || isMeshGen) && valueType === 'image') {
         const selectedSourceReference = currentValue?.source || currentValue || ''
 
         if (data.libraryImageOptions.length === 0) {
@@ -666,19 +712,71 @@ function GraphAssetNode({ data }) {
         </div>
 
         <div className="image-card__thumb graph-node__thumb">
-          {previewUrl ? (
+          {meshModelUrl ? (
+            <div className="graph-node__mesh-preview">
+              <div className="graph-node__mesh-toolbar nodrag">
+                <button
+                  type="button"
+                  className={`graph-node__mesh-tool ${showNormals ? 'graph-node__mesh-tool--active' : ''}`}
+                  onClick={() => setShowNormals(current => !current)}
+                  aria-pressed={showNormals}
+                  title="Toggle normal material"
+                >
+                  N
+                </button>
+                <button
+                  type="button"
+                  className={`graph-node__mesh-tool ${showGrid ? 'graph-node__mesh-tool--active' : ''}`}
+                  onClick={() => setShowGrid(current => !current)}
+                  aria-pressed={showGrid}
+                  title="Toggle grid"
+                >
+                  G
+                </button>
+                <button
+                  type="button"
+                  className={`graph-node__mesh-tool ${showLightSlider ? 'graph-node__mesh-tool--active' : ''}`}
+                  onClick={() => setShowLightSlider(current => !current)}
+                  aria-pressed={showLightSlider}
+                  title="Adjust light"
+                >
+                  L
+                </button>
+                {showLightSlider && (
+                  <div className="graph-node__mesh-light-panel">
+                    <input
+                      type="range"
+                      min="0.4"
+                      max="4"
+                      step="0.1"
+                      value={lightIntensity}
+                      onChange={event => setLightIntensity(Number(event.target.value))}
+                    />
+                  </div>
+                )}
+              </div>
+              <Viewer
+                height="100%"
+                modelUrl={meshModelUrl}
+                showNormals={showNormals}
+                showGrid={showGrid}
+                lightIntensity={lightIntensity}
+                fitMode="center"
+              />
+            </div>
+          ) : previewUrl ? (
             <div className="image-card__thumb-item">
               <img src={previewUrl} alt={data.asset?.name || data.name || sourceLabel} className="image-card__thumb-image" />
             </div>
           ) : (
             <div className="image-card__thumb-placeholder">
               <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(143,245,255,0.12)' }}>
-                {isImageEdit ? 'photo_filter' : 'image'}
+                {isMeshGen ? 'deployed_code' : isImageEdit ? 'photo_filter' : 'image'}
               </span>
             </div>
           )}
 
-          {isImageEdit && (
+          {(isImageEdit || isMeshGen) && (
             <div className="image-card__edit-preview-indicator font-label">
               {data.connectedInputAsset ? `INPUT • ${data.connectedInputAsset.name}` : 'INPUT • IMAGE'}
             </div>
@@ -740,7 +838,7 @@ function GraphAssetNode({ data }) {
 
               {draft?.mode === 'select' && (
                 <div className="image-card__edit-action-menu">
-                  {!isImageEdit && (
+                  {!isImageEdit && !isMeshGen && (
                     <>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'local')}>
                         Local Computer
@@ -750,7 +848,16 @@ function GraphAssetNode({ data }) {
                       </button>
                     </>
                   )}
-                  {isImageEdit ? (
+                  {isMeshGen ? (
+                    <>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'api')}>
+                        API
+                      </button>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'comfy')}>
+                        ComfyUI Workflow
+                      </button>
+                    </>
+                  ) : isImageEdit ? (
                     <>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'api')}>
                         API
@@ -810,7 +917,7 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'api' && !isImageEdit && (
+              {draft?.mode === 'api' && !isImageEdit && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">REMOTE API</span>
                   <select
@@ -835,7 +942,7 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'comfy' && !isImageEdit && (
+              {draft?.mode === 'comfy' && !isImageEdit && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
                   <span className="graph-node__panel-title font-label">COMFYUI WORKFLOW</span>
                   {data.comfyLoading ? (
@@ -878,6 +985,139 @@ function GraphAssetNode({ data }) {
                           <span>This workflow has no exposed parameters. Start it directly.</span>
                         </div>
                       )}
+                      <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.name?.trim()}>
+                        <span className="material-symbols-outlined">bolt</span>
+                        START WORKFLOW
+                      </button>
+                    </>
+                  ) : (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined">account_tree</span>
+                      <span>No imported workflows available.</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {draft?.mode === 'api' && isMeshGen && (
+                <div className="image-card__edit-panel nodrag">
+                  <span className="graph-node__panel-title font-label">MESH GEN API</span>
+                  <input
+                    type="text"
+                    className="params-card__input nodrag"
+                    placeholder="Result name"
+                    value={draft.name || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'name', event.target.value)}
+                  />
+                  <select
+                    className="api-select nodrag"
+                    value={draft.selectedApi || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'selectedApi', event.target.value)}
+                  >
+                    {data.meshGenerationApis.map(api => (
+                      <option key={api.id} value={api.id}>{api.name}</option>
+                    ))}
+                  </select>
+                  <textarea
+                    className="gen-prompt-input nodrag"
+                    placeholder="Describe the mesh to generate"
+                    value={draft.prompt || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'prompt', event.target.value)}
+                  />
+                  <select
+                    className="params-card__select nodrag"
+                    value={draft.selectedInputSource || ''}
+                    onChange={event => data.onDraftFieldChange?.(data.id, 'selectedInputSource', event.target.value)}
+                  >
+                    {imageInputSources.length > 0 && (
+                      <optgroup label="Connected inputs">
+                        {imageInputSources.map(source => (
+                          <option key={source.connectorId} value={getInputSourceSelectionValue(source)}>
+                            {`${getConnectorTypeMeta(source.type).letter} · ${source.label}`}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {data.libraryImageOptions.length > 0 && (
+                      <optgroup label="Asset library">
+                        {data.libraryImageOptions.map(asset => (
+                          <option key={asset.id} value={asset.sourceReference || asset.id}>
+                            {asset.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {imageInputSources.length === 0 && data.libraryImageOptions.length === 0 && (
+                      <option value="">No image sources available</option>
+                    )}
+                  </select>
+                  <div className="graph-node__linked-input font-label">
+                    {selectedApiImageSource?.label
+                      ? `Input: ${selectedApiImageSource.label}`
+                      : 'Select an image source from the graph or asset library'}
+                  </div>
+                  <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.selectedInputSource}>
+                    <span className="material-symbols-outlined">deployed_code</span>
+                    RUN GENERATION
+                  </button>
+                </div>
+              )}
+
+              {draft?.mode === 'comfy' && isMeshGen && (
+                <div className="image-card__edit-panel nodrag">
+                  <span className="graph-node__panel-title font-label">COMFYUI MESH GEN</span>
+                  {data.comfyLoading ? (
+                    <div className="image-card__asset-picker-empty">
+                      <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                      <span>Loading workflows...</span>
+                    </div>
+                  ) : data.meshGenerationWorkflows.length > 0 ? (
+                    <>
+                      <input
+                        type="text"
+                        className="params-card__input nodrag"
+                        placeholder="Result name"
+                        value={draft.name || ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'name', event.target.value)}
+                      />
+                      <select
+                        className="params-card__select nodrag"
+                        value={draft.workflowId || ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'workflowId', event.target.value)}
+                      >
+                        {data.meshGenerationWorkflows.map(workflow => (
+                          <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                        ))}
+                      </select>
+                      <div className="image-card__workflow-meta">
+                        <span>{selectedWorkflow?.parameters?.length || 0} input parameters configured</span>
+                        <span>{selectedWorkflow?.outputs?.length || 0} outputs selected</span>
+                      </div>
+                      {(selectedWorkflow?.parameters || []).length > 0 ? (
+                        <div className="image-card__workflow-params">
+                          {selectedWorkflow.parameters.map(parameter => (
+                            <div key={parameter.id} className="params-card__field">
+                              <label className="params-card__label font-label">
+                                {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
+                              </label>
+                              {renderWorkflowField(parameter)}
+                              <span className="image-card__param-hint">
+                                {parameter.label} • default: {formatWorkflowDefaultValue(parameter.defaultValue)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
+                          <span className="material-symbols-outlined">tune</span>
+                          <span>This workflow has no exposed parameters. Start it directly.</span>
+                        </div>
+                      )}
+                      <div className="graph-node__linked-input font-label">
+                        {imageInputSources.length > 0
+                          ? `${imageInputSources.length} compatible image input${imageInputSources.length === 1 ? '' : 's'} available`
+                          : 'Use a connected image or upload a custom file for image parameters'}
+                      </div>
                       <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW
@@ -1063,7 +1303,8 @@ function GraphAssetNode({ data }) {
 
 const flowNodeTypes = {
   image: GraphAssetNode,
-  imageEdit: GraphAssetNode
+  imageEdit: GraphAssetNode,
+  meshGen: GraphAssetNode
 }
 
 const flowEdgeTypes = {
@@ -1081,6 +1322,7 @@ export default function GraphPage({ project }) {
     createProjectConnection,
     deleteProjectConnection,
     uploadAsset,
+    uploadAssetThumbnail,
     attachExistingAsset,
     getLibraryAssets,
     generateImage,
@@ -1088,7 +1330,8 @@ export default function GraphPage({ project }) {
     runComfyWorkflow,
     subscribeToComfyWorkflowProgress,
     runImageEditApi,
-    runImageEditComfy
+    runImageEditComfy,
+    runMeshGenerationApi
   } = useProjects()
   const { settings } = useSettings()
 
@@ -1126,9 +1369,17 @@ export default function GraphPage({ project }) {
       .map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ]), [customApis])
 
+  const meshGenerationApis = useMemo(() => (
+    customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'mesh-generation')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ), [customApis])
+
   const imageGenerationWorkflows = useMemo(() => filterImageGenerationWorkflows(comfyWorkflows), [comfyWorkflows])
 
   const imageEditWorkflows = useMemo(() => filterImageEditWorkflows(comfyWorkflows), [comfyWorkflows])
+
+  const meshGenerationWorkflows = useMemo(() => filterMeshGenerationWorkflows(comfyWorkflows), [comfyWorkflows])
 
   const libraryImageOptions = useMemo(() => {
     return (libraryAssets.images || []).flatMap(asset => {
@@ -1201,6 +1452,32 @@ export default function GraphPage({ project }) {
     }
   }, [imageEditApis, imageEditWorkflows])
 
+  const createMeshGenNodeDraft = useCallback((mode = 'select', sourceAsset = null, inputSources = [], libraryOptions = [], workflowListOverride = null) => {
+    const workflowList = workflowListOverride || meshGenerationWorkflows
+    const defaultWorkflow = workflowList[0] || null
+    const sourceReference = getAssetSourceReference(sourceAsset)
+    const defaultImageInputSource = getCompatibleInputSources(inputSources, 'image')[0] || null
+
+    return {
+      mode,
+      name: '',
+      selectedApi: meshGenerationApis[0]?.id || '',
+      prompt: '',
+      selectedInputSource: mode === 'api'
+        ? (getInputSourceSelectionValue(defaultImageInputSource) || libraryOptions[0]?.sourceReference || sourceReference || '')
+        : '',
+      workflowId: defaultWorkflow?.id || '',
+      inputs: mode === 'comfy'
+        ? createWorkflowDraftInputs(defaultWorkflow, (_parameter, valueType) => valueType === 'image'
+            ? ({ source: libraryOptions[0]?.sourceReference || sourceReference || '' })
+            : null)
+        : {},
+      inputBindings: mode === 'comfy'
+        ? createWorkflowDraftBindings(defaultWorkflow, inputSources, ['image'])
+        : {}
+    }
+  }, [meshGenerationApis, meshGenerationWorkflows])
+
   const closeNodeProgressSubscription = useCallback((nodeId) => {
     progressSubscriptionsRef.current.get(String(nodeId))?.()
     progressSubscriptionsRef.current.delete(String(nodeId))
@@ -1240,6 +1517,43 @@ export default function GraphPage({ project }) {
         : node
     )))
   }, [setNodes])
+
+  const ensureGeneratedMeshThumbnail = useCallback(async (asset) => {
+    if (!asset || asset.type !== 'mesh' || asset.thumbnail) {
+      return asset
+    }
+
+    const assetUrl = getAssetPreviewUrl(asset.filename)
+    const response = await fetch(assetUrl)
+
+    if (!response.ok) {
+      throw new Error(`Failed to download generated mesh ${asset.name || asset.filename}`)
+    }
+
+    const blob = await response.blob()
+    const file = new File([blob], asset.filename?.split('/').pop() || `${asset.name || 'mesh'}.glb`, {
+      type: blob.type || 'application/octet-stream'
+    })
+    const thumbnailFile = await createMeshThumbnailFile(file)
+
+    if (!thumbnailFile) {
+      return asset
+    }
+
+    return await uploadAssetThumbnail(asset.id, thumbnailFile)
+  }, [uploadAssetThumbnail])
+
+  const ensureGeneratedMeshThumbnails = useCallback(async (generatedAssets) => {
+    const meshAssets = (Array.isArray(generatedAssets) ? generatedAssets : [generatedAssets]).filter(asset => asset?.type === 'mesh')
+
+    for (const meshAsset of meshAssets) {
+      try {
+        await ensureGeneratedMeshThumbnail(meshAsset)
+      } catch (err) {
+        console.warn(`Failed to generate thumbnail for mesh ${meshAsset?.name || meshAsset?.id}:`, err)
+      }
+    }
+  }, [ensureGeneratedMeshThumbnail])
 
   const setNodeTransientData = useCallback((nodeId, updates) => {
     setNodes(currentNodes => currentNodes.map(node => (
@@ -1336,7 +1650,7 @@ export default function GraphPage({ project }) {
       progress: initialData.progress ?? null,
       metadata: {
         inputType: null,
-        outputType: 'image',
+        outputType: getDefaultNodeOutputType(nodeTypeName),
         ...(initialData.metadata || {})
       }
     })
@@ -1377,11 +1691,13 @@ export default function GraphPage({ project }) {
   const openActionDraft = useCallback((nodeId, nodeKind) => {
     const inputSources = buildNodeInputSources(nodeId, nodes, edges)
     setActionDraftsByNodeId({
-      [String(nodeId)]: nodeKind === 'imageEdit'
+      [String(nodeId)]: nodeKind === 'meshGen'
+        ? createMeshGenNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId), inputSources, libraryImageOptions)
+        : nodeKind === 'imageEdit'
         ? createImageEditNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId), inputSources, libraryImageOptions)
         : createImageNodeDraft('select', inputSources)
     })
-  }, [createImageEditNodeDraft, createImageNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
+  }, [createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
@@ -1397,8 +1713,10 @@ export default function GraphPage({ project }) {
       connectedInputAsset: getConnectedInputAssetFrom(nodes, edges, node.id),
       imageGenerationApis,
       imageEditApis,
+      meshGenerationApis,
       imageGenerationWorkflows,
       imageEditWorkflows,
+      meshGenerationWorkflows,
       libraryImageOptions,
       libraryLoading,
       comfyLoading,
@@ -1460,6 +1778,34 @@ export default function GraphPage({ project }) {
           [String(targetNodeId)]: createImageEditNodeDraft(mode, getConnectedInputAssetFrom(nodes, edges, targetNodeId), nodeInputSources, libraryImageOptions)
         })
       },
+      onMeshGenModeSelect: async (targetNodeId, mode) => {
+        if (mode === 'api') {
+          await ensureLibraryLoaded()
+        }
+
+        if (mode === 'comfy') {
+          await ensureLibraryLoaded()
+          const workflows = await ensureComfyWorkflowsLoaded()
+          const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+          setActionDraftsByNodeId({
+            [String(targetNodeId)]: createMeshGenNodeDraft(
+              mode,
+              getConnectedInputAssetFrom(nodes, edges, targetNodeId),
+              nodeInputSources,
+              libraryImageOptions,
+              filterMeshGenerationWorkflows(workflows || [])
+            )
+          })
+          return
+        }
+
+        const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+        setActionDraftsByNodeId({
+          [String(targetNodeId)]: createMeshGenNodeDraft(mode, getConnectedInputAssetFrom(nodes, edges, targetNodeId), nodeInputSources, libraryImageOptions)
+        })
+      },
       onDraftFieldChange: (targetNodeId, field, value) => {
         setActionDraftsByNodeId(currentDrafts => {
           const nodeDraft = currentDrafts[String(targetNodeId)]
@@ -1475,16 +1821,21 @@ export default function GraphPage({ project }) {
 
           if (field === 'workflowId') {
             const isEditNode = node.data.nodeKind === 'imageEdit'
-            const workflowList = isEditNode ? imageEditWorkflows : imageGenerationWorkflows
+            const isMeshGenNode = node.data.nodeKind === 'meshGen'
+            const workflowList = isMeshGenNode
+              ? meshGenerationWorkflows
+              : isEditNode
+                ? imageEditWorkflows
+                : imageGenerationWorkflows
             const selectedWorkflow = workflowList.find(workflow => workflow.id == value) || null
             nextDraft = {
               ...nextDraft,
-              inputs: isEditNode
+              inputs: (isEditNode || isMeshGenNode)
                 ? createWorkflowDraftInputs(selectedWorkflow, (_parameter, valueType) => valueType === 'image'
                     ? ({ source: libraryImageOptions[0]?.sourceReference || '' })
                     : null)
                 : createWorkflowDraftInputs(selectedWorkflow, () => null),
-              inputBindings: isEditNode
+              inputBindings: (isEditNode || isMeshGenNode)
                 ? createWorkflowDraftBindings(selectedWorkflow, targetInputSources, ['image'])
                 : createWorkflowDraftBindings(selectedWorkflow, targetInputSources)
             }
@@ -1612,7 +1963,7 @@ export default function GraphPage({ project }) {
               }
             })
 
-            if (nodeTypeName === 'Image Edit' && sourceEdge) {
+            if ((nodeTypeName === 'Image Edit' || nodeTypeName === 'Mesh Gen') && sourceEdge) {
               const newConnection = await createProjectConnection(project.id, {
                 sourceNodeId: Number(sourceEdge.source),
                 targetNodeId: createdNode.id,
@@ -1752,6 +2103,146 @@ export default function GraphPage({ project }) {
         }
 
         const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+        if (targetNode.data.nodeKind === 'meshGen') {
+          if (targetDraft.mode === 'api') {
+            const selectedApiSource = resolveImageSourceOption(targetDraft.selectedInputSource, targetInputSources, libraryImageOptions)
+            const sourceAsset = selectedApiSource?.asset || getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+            const sourceReference = selectedApiSource?.sourceReference || getAssetSourceReference(sourceAsset)
+
+            if (!sourceReference) {
+              return
+            }
+
+            if (!targetDraft.selectedApi || !String(targetDraft.prompt || '').trim() || !String(targetDraft.name || '').trim()) {
+              return
+            }
+
+            await setProcessingState('processing', null, { processingSource: 'API', inputSource: sourceReference })
+            try {
+              const response = await runMeshGenerationApi(project.id, {
+                imageSource: sourceReference,
+                name: targetDraft.name.trim(),
+                selectedApi: targetDraft.selectedApi,
+                prompt: targetDraft.prompt.trim()
+              })
+              const savedMeshes = (Array.isArray(response) ? response : [response]).filter(asset => asset?.type === 'mesh')
+              if (savedMeshes.length === 0) {
+                throw new Error('Mesh generation did not return any saved mesh')
+              }
+              await ensureGeneratedMeshThumbnails(savedMeshes)
+              await applyNodeResult(savedMeshes[0], {
+                lastAction: 'mesh-generation-api',
+                inputSource: sourceReference
+              })
+              if (savedMeshes.length > 1) {
+                await spawnAdditionalResultNodes('Mesh Gen', savedMeshes.slice(1))
+              }
+              setActionDraftsByNodeId({})
+            } catch (err) {
+              await setProcessingState('error', null, { error: err.message || 'Mesh generation failed', inputSource: sourceReference })
+            }
+            return
+          }
+
+          if (targetDraft.mode === 'comfy') {
+            const workflow = meshGenerationWorkflows.find(item => item.id == targetDraft.workflowId)
+            if (!workflow || !String(targetDraft.name || '').trim()) {
+              return
+            }
+
+            const inputValues = {}
+            for (const parameter of workflow.parameters || []) {
+              const valueType = getWorkflowParameterValueType(parameter)
+              const inputValue = resolveWorkflowParameterValue(parameter, targetDraft, targetInputSources)
+
+              if (isFileWorkflowValueType(valueType)) {
+                if (!inputValue) {
+                  return
+                }
+                inputValues[parameter.id] = inputValue
+                continue
+              }
+
+              if (valueType === 'number') {
+                if (String(inputValue ?? '').trim() === '' || Number.isNaN(Number(inputValue))) {
+                  return
+                }
+                inputValues[parameter.id] = inputValue
+                continue
+              }
+
+              if (valueType === 'boolean') {
+                inputValues[parameter.id] = Boolean(inputValue)
+                continue
+              }
+
+              if (!String(inputValue ?? '').trim()) {
+                return
+              }
+
+              inputValues[parameter.id] = inputValue
+            }
+
+            const promptId = createComfyExecutionId('graph-mesh-gen-prompt')
+            const clientId = createComfyExecutionId('graph-mesh-gen-client')
+            setActionDraftsByNodeId({})
+            closeNodeProgressSubscription(targetNodeId)
+            progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
+              onMessage: payload => {
+                setNodes(current => current.map(item => (
+                  item.id === String(targetNodeId)
+                    ? {
+                        ...item,
+                        data: {
+                          ...item.data,
+                          status: payload?.status === 'error' ? 'error' : 'processing',
+                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
+                          progressDetail: payload?.detail || item.data.progressDetail || null,
+                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
+                        }
+                      }
+                    : item
+                )))
+              },
+              onError: () => {}
+            }))
+
+            await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
+              progressDetail: 'Preparing ComfyUI mesh generation',
+              currentNodeLabel: 'Waiting for ComfyUI execution to start'
+            })
+            try {
+              const generatedAssets = await runComfyWorkflow(project.id, {
+                workflowId: Number(targetDraft.workflowId),
+                name: targetDraft.name.trim(),
+                inputs: inputValues,
+                promptId,
+                clientId
+              })
+              const meshAssets = (Array.isArray(generatedAssets) ? generatedAssets : [generatedAssets]).filter(asset => asset?.type === 'mesh')
+              if (meshAssets.length === 0) {
+                throw new Error('The workflow did not return any mesh output')
+              }
+              await ensureGeneratedMeshThumbnails(meshAssets)
+              setNodeTransientData(targetNodeId, {
+                status: 'processing',
+                progress: 100,
+                progressDetail: 'Saving generated mesh',
+                currentNodeLabel: 'ComfyUI mesh generation completed'
+              })
+              await applyNodeResult(meshAssets[0], { lastAction: 'mesh-generation-comfy', promptId })
+              if (meshAssets.length > 1) {
+                await spawnAdditionalResultNodes('Mesh Gen', meshAssets.slice(1))
+              }
+            } catch (err) {
+              await setProcessingState('error', null, { error: err.message || 'ComfyUI mesh generation failed', promptId })
+            } finally {
+              closeNodeProgressSubscription(targetNodeId)
+            }
+            return
+          }
+        }
 
         if (targetDraft.mode === 'api') {
           const selectedApiSource = resolveImageSourceOption(targetDraft.selectedInputSource, targetInputSources, libraryImageOptions)
@@ -1900,7 +2391,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]
@@ -2020,9 +2511,10 @@ export default function GraphPage({ project }) {
 
         const nodeInputSources = buildNodeInputSources(nodeId, nodes, edges)
         const isEditNode = node.data.nodeKind === 'imageEdit'
+        const isMeshGenNode = node.data.nodeKind === 'meshGen'
         let nextDraft = draft
 
-        if (draft.mode === 'api' && isEditNode) {
+        if (draft.mode === 'api' && (isEditNode || isMeshGenNode)) {
           const validImageSelections = [
             ...getCompatibleInputSources(nodeInputSources, 'image').map(getInputSourceSelectionValue),
             ...libraryImageOptions.map(option => option.sourceReference).filter(Boolean)
@@ -2041,7 +2533,7 @@ export default function GraphPage({ project }) {
         }
 
         if (draft.mode === 'comfy') {
-          const workflowList = isEditNode ? imageEditWorkflows : imageGenerationWorkflows
+          const workflowList = isMeshGenNode ? meshGenerationWorkflows : isEditNode ? imageEditWorkflows : imageGenerationWorkflows
           const selectedWorkflow = workflowList.find(workflow => workflow.id == draft.workflowId) || null
 
           if (selectedWorkflow) {
@@ -2087,7 +2579,7 @@ export default function GraphPage({ project }) {
       const nextSerialized = JSON.stringify(nextDrafts)
       return currentSerialized === nextSerialized ? currentDrafts : nextDrafts
     })
-  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, nodes])
+  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, meshGenerationWorkflows, nodes])
 
   useEffect(() => {
     hasAutoFitOnLoadRef.current = false
@@ -2126,7 +2618,7 @@ export default function GraphPage({ project }) {
   }, [edges.length, loading, nodes.length, project.id, reactFlowInstance])
 
   const showEmptyState = !loading && nodes.length === 0
-  const minimapNodeColor = useCallback(node => node.type === 'imageEdit' ? '#ac89ff' : '#8ff5ff', [])
+  const minimapNodeColor = useCallback(node => node.type === 'meshGen' ? '#79e388' : node.type === 'imageEdit' ? '#ac89ff' : '#8ff5ff', [])
 
   return (
     <div className="graph-layout">

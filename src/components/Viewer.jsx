@@ -37,7 +37,7 @@ function getExtensionFromUrl(url = '') {
   return match?.[0] || ''
 }
 
-function normalizeLoadedModel(asset) {
+function normalizeLoadedModel(asset, fitMode = 'ground') {
   const root = asset?.scene || asset
 
   if (!root) {
@@ -77,19 +77,34 @@ function normalizeLoadedModel(asset) {
     const scale = 2 / maxDimension
 
     root.scale.setScalar(scale)
-    root.position.set(
-      -center.x * scale,
-      -bounds.min.y * scale,
-      -center.z * scale
-    )
+
+    if (fitMode === 'center') {
+      root.position.set(
+        -center.x * scale,
+        -center.y * scale,
+        -center.z * scale
+      )
+    } else {
+      root.position.set(
+        -center.x * scale,
+        -bounds.min.y * scale,
+        -center.z * scale
+      )
+    }
+
     root.updateMatrixWorld(true)
 
     const scaledHeight = size.y * scale
     const maxScaledDimension = Math.max(size.x, size.y, size.z) * scale
     const distance = Math.max(maxScaledDimension * 1.5, 2)
 
-    target.set(0, scaledHeight / 2, 0)
-    cameraPosition.set(distance, Math.max(scaledHeight * 0.8, distance * 0.55), distance)
+    if (fitMode === 'center') {
+      target.set(0, 0, 0)
+      cameraPosition.set(distance, Math.max(distance * 0.7, 1.75), distance)
+    } else {
+      target.set(0, scaledHeight / 2, 0)
+      cameraPosition.set(distance, Math.max(scaledHeight * 0.8, distance * 0.55), distance)
+    }
   }
 
   return {
@@ -130,24 +145,24 @@ function applyDisplayMaterial(object, showNormals) {
   })
 }
 
-async function loadModelFromUrl(url) {
+async function loadModelFromUrl(url, fitMode = 'ground') {
   const extension = getExtensionFromUrl(url)
 
   if (extension === '.glb' || extension === '.gltf') {
-    return normalizeLoadedModel(await loadWithLoader(new GLTFLoader(), url))
+    return normalizeLoadedModel(await loadWithLoader(new GLTFLoader(), url), fitMode)
   }
 
   if (extension === '.obj') {
-    return normalizeLoadedModel(await loadWithLoader(new OBJLoader(), url))
+    return normalizeLoadedModel(await loadWithLoader(new OBJLoader(), url), fitMode)
   }
 
   if (extension === '.fbx') {
-    return normalizeLoadedModel(await loadWithLoader(new FBXLoader(), url))
+    return normalizeLoadedModel(await loadWithLoader(new FBXLoader(), url), fitMode)
   }
 
   if (extension === '.stl') {
     const geometry = await loadWithLoader(new STLLoader(), url)
-    return normalizeLoadedModel(new THREE.Mesh(geometry, createDefaultMaterial()))
+    return normalizeLoadedModel(new THREE.Mesh(geometry, createDefaultMaterial()), fitMode)
   }
 
   if (extension === '.ply') {
@@ -156,7 +171,7 @@ async function loadModelFromUrl(url) {
       geometry.computeVertexNormals()
     }
 
-    return normalizeLoadedModel(new THREE.Mesh(geometry, createDefaultMaterial()))
+    return normalizeLoadedModel(new THREE.Mesh(geometry, createDefaultMaterial()), fitMode)
   }
 
   throw new Error('Unsupported mesh format')
@@ -188,7 +203,14 @@ function CameraController({ autoRotate, target, cameraPosition }) {
   )
 }
 
-export default function Viewer({ height = '100%', modelUrl = null, showNormals = false }) {
+export default function Viewer({
+  height = '100%',
+  modelUrl = null,
+  showNormals = false,
+  showGrid = true,
+  lightIntensity = 2.2,
+  fitMode = 'ground'
+}) {
   const [modelState, setModelState] = useState(null)
 
   useEffect(() => {
@@ -198,7 +220,7 @@ export default function Viewer({ height = '100%', modelUrl = null, showNormals =
       return undefined
     }
 
-    loadModelFromUrl(modelUrl)
+    loadModelFromUrl(modelUrl, fitMode)
       .then(loadedModelState => {
         if (active) {
           setModelState({
@@ -214,7 +236,7 @@ export default function Viewer({ height = '100%', modelUrl = null, showNormals =
     return () => {
       active = false
     }
-  }, [modelUrl])
+  }, [fitMode, modelUrl])
 
   const renderedModel = useMemo(() => {
     if (!modelState?.object || modelState.modelUrl !== modelUrl) {
@@ -233,19 +255,21 @@ export default function Viewer({ height = '100%', modelUrl = null, showNormals =
     <div style={{ width: '100%', height, background: '#0D0E10', borderRadius: '8px', overflow: 'hidden' }}>
       <Canvas key={modelUrl || 'placeholder'} shadows>
         <PerspectiveCamera makeDefault position={[3, 3, 5]} />
-        <ambientLight intensity={1.4} />
-        <directionalLight position={[4, 6, 8]} intensity={2.2} castShadow />
-        <directionalLight position={[-5, 3, -4]} intensity={0.9} color="#8ff5ff" />
+          <ambientLight intensity={Math.max(lightIntensity * 0.55, 0.35)} />
+          <directionalLight position={[4, 6, 8]} intensity={lightIntensity} castShadow />
+          <directionalLight position={[-5, 3, -4]} intensity={Math.max(lightIntensity * 0.4, 0.15)} color="#8ff5ff" />
         <Suspense fallback={null}>
           {renderedModel ? <primitive object={renderedModel} /> : <PlaceholderMesh />}
-          <Grid 
-            infiniteGrid 
-            fadeDistance={30} 
-            cellColor="#47484A" 
-            sectionColor="#AC89FF" 
-            sectionThickness={1.5}
-            sectionSize={10}
-          />
+            {showGrid && (
+              <Grid
+                infiniteGrid
+                fadeDistance={30}
+                cellColor="#47484A"
+                sectionColor="#AC89FF"
+                sectionThickness={1.5}
+                sectionSize={10}
+              />
+            )}
         </Suspense>
         <Environment preset="night" />
         <CameraController autoRotate={!modelUrl} target={cameraTarget} cameraPosition={cameraPosition} />

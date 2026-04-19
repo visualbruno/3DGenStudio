@@ -30,7 +30,8 @@ const ATTRIBUTE_TYPES = [
 ];
 const NODE_TYPES = [
   { id: 1, name: 'Image' },
-  { id: 2, name: 'Image Edit' }
+  { id: 2, name: 'Image Edit' },
+  { id: 3, name: 'Mesh Gen' }
 ];
 
 export const DEFAULT_SETTINGS = {
