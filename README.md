@@ -138,7 +138,6 @@ Have a question or an idea? Whether you want to report a bug, suggest a feature,
 - 🐛 [Open an issue on GitHub](https://github.com/visualbruno/3DGenStudio/issues)
 - 💬 [Start a Discussion](https://github.com/visualbruno/3DGenStudio/discussions)
 
-*We typically reply within 48h!*
 
 ### Support the Project!
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-ffdd00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/visualbruno)
