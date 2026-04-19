@@ -270,6 +270,18 @@
   border-color: rgba(172, 137, 255, 0.22);
 }
 
+.graph-node--number {
+  border-color: rgba(121, 227, 136, 0.24);
+}
+
+.graph-node--text {
+  border-color: rgba(255, 211, 110, 0.24);
+}
+
+.graph-node--boolean {
+  border-color: rgba(255, 127, 200, 0.26);
+}
+
 .graph-node__card.image-card {
   width: 360px;
   cursor: grab;
@@ -364,6 +376,108 @@
 .graph-node__thumb .image-card__thumb-image {
   object-fit: contain;
   background: rgba(12, 14, 16, 0.92);
+}
+
+.graph-node__name-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+}
+
+.graph-node__name-input:focus {
+  outline: none;
+}
+
+.graph-node__name-input::placeholder {
+  color: var(--on-surface-variant);
+}
+
+.graph-node__name-input--value {
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.graph-node__value-card {
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  cursor: grab;
+}
+
+.graph-node__value-card:active {
+  cursor: grabbing;
+}
+
+.graph-node__value-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: grab;
+}
+
+.graph-node__value-header:active {
+  cursor: grabbing;
+}
+
+.graph-node__value-title-group {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.graph-node__value-type {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  padding: 0.22rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-full);
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graph-node__value-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.graph-node__value-input {
+  width: 100%;
+}
+
+.graph-node__value-input--textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.graph-node__boolean-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 42px;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.graph-node__boolean-toggle:hover,
+.graph-node__boolean-toggle--active {
+  border-color: rgba(255, 127, 200, 0.3);
+  background: rgba(255, 127, 200, 0.12);
+  color: #ff9bd3;
 }
 
 .graph-node__progress {
@@ -500,6 +614,10 @@
 
   .graph-node__card.image-card {
     width: 300px;
+  }
+
+  .graph-node__value-card {
+    width: 240px;
   }
 
   .graph-node {

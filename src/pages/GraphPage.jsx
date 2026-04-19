@@ -36,7 +36,7 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
-const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh']
+const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh', 'Number', 'Text', 'Boolean']
 const CONNECTOR_TYPE_META = {
   image: { key: 'image', label: 'Image', letter: 'I', color: '#8ff5ff', background: 'rgba(143, 245, 255, 0.14)' },
   mesh: { key: 'mesh', label: 'Mesh', letter: 'M', color: '#ac89ff', background: 'rgba(172, 137, 255, 0.14)' },
@@ -60,11 +60,60 @@ function getNodeKind(nodeTypeName = '') {
     return 'meshGen'
   }
 
+  if (['number', 'text', 'boolean'].includes(normalizedNodeType)) {
+    return normalizedNodeType
+  }
+
   return 'image'
 }
 
 function getDefaultNodeOutputType(nodeTypeName = '') {
-  return getNodeKind(nodeTypeName) === 'meshGen' ? 'mesh' : 'image'
+  const nodeKind = getNodeKind(nodeTypeName)
+
+  if (nodeKind === 'meshGen') {
+    return 'mesh'
+  }
+
+  if (['number', 'text', 'boolean'].includes(nodeKind)) {
+    return nodeKind
+  }
+
+  return 'image'
+}
+
+function getDefaultNodeOutputValue(nodeTypeName = '') {
+  const nodeKind = getNodeKind(nodeTypeName)
+
+  if (nodeKind === 'number') {
+    return 0
+  }
+
+  if (nodeKind === 'boolean') {
+    return false
+  }
+
+  return ''
+}
+
+function isValueNodeKind(nodeKind = '') {
+  return ['number', 'text', 'boolean'].includes(String(nodeKind || '').trim().toLowerCase())
+}
+
+function normalizeNodeOutputValue(nodeKind = '', value = null) {
+  if (nodeKind === 'number') {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+
+    const normalizedNumber = Number(String(value ?? '').trim())
+    return Number.isFinite(normalizedNumber) ? normalizedNumber : 0
+  }
+
+  if (nodeKind === 'boolean') {
+    return Boolean(value)
+  }
+
+  return String(value ?? '')
 }
 
 function normalizeConnectorType(type) {
@@ -97,11 +146,21 @@ function getNodeOutputType(node) {
     return outputType
   }
 
-  if ((node?.data?.nodeKind || node?.type) === 'meshGen') {
+  const nodeKind = node?.data?.nodeKind || node?.type
+
+  if (nodeKind === 'meshGen') {
     return 'mesh'
   }
 
-  return (node?.data?.nodeKind || node?.type) === 'image' ? 'image' : null
+  if (nodeKind === 'image') {
+    return 'image'
+  }
+
+  if (isValueNodeKind(nodeKind)) {
+    return nodeKind
+  }
+
+  return null
 }
 
 function getInputHandleIndex(handleId) {
@@ -549,6 +608,7 @@ function GraphAssetNode({ data }) {
   const outputMeta = getConnectorTypeMeta(outputConnector.type)
   const imageInputSources = getCompatibleInputSources(inputSources, 'image')
   const selectedApiImageSource = resolveImageSourceOption(draft?.selectedInputSource, inputSources, data.libraryImageOptions)
+  const nodeDisplayName = data.name || data.asset?.name || sourceLabel
 
   useEffect(() => {
     updateNodeInternals(String(data.id))
@@ -785,7 +845,20 @@ function GraphAssetNode({ data }) {
 
         <div className="image-card__info">
           <div className="image-card__row">
-            <h3 className="image-card__name">{data.asset?.name || data.name || sourceLabel}</h3>
+            <input
+              type="text"
+              className="image-card__name graph-node__name-input nodrag"
+              value={nodeDisplayName}
+              placeholder={sourceLabel}
+              onChange={event => data.onNodeNameChange?.(data.id, event.target.value)}
+              onBlur={event => data.onNodeNameCommit?.(data.id, event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  event.currentTarget.blur()
+                }
+              }}
+            />
             <div className="image-card__badges">
               <span
                 className="image-card__source"
@@ -1303,10 +1376,125 @@ function GraphAssetNode({ data }) {
   )
 }
 
+function GraphValueNode({ data }) {
+  const nodeKind = data.nodeKind
+  const outputMeta = getConnectorTypeMeta(nodeKind)
+  const outputValue = data.metadata?.outputValue ?? getDefaultNodeOutputValue(data.nodeTypeName || nodeKind)
+  const nodeDisplayName = data.name || data.nodeTypeName || outputMeta.label
+
+  return (
+    <div className={`graph-node graph-node--value graph-node--${nodeKind}`}>
+      <div className="graph-node__value-card">
+        <div className="graph-node__value-header graph-node__drag-handle">
+          <div className="graph-node__value-title-group">
+            <input
+              type="text"
+              className="graph-node__name-input graph-node__name-input--value nodrag"
+              value={nodeDisplayName}
+              placeholder={outputMeta.label}
+              onChange={event => data.onNodeNameChange?.(data.id, event.target.value)}
+              onBlur={event => data.onNodeNameCommit?.(data.id, event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  event.currentTarget.blur()
+                }
+              }}
+            />
+            <span
+              className="graph-node__value-type font-label"
+              style={{
+                color: outputMeta.color,
+                background: outputMeta.background,
+                borderColor: outputMeta.color
+              }}
+            >
+              {outputMeta.label}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            className="image-card__action-btn image-card__delete nodrag"
+            onClick={() => data.onDelete?.(data.id)}
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+          </button>
+        </div>
+
+        <div className="graph-node__value-body">
+          <span className="graph-node__panel-title font-label">VALUE</span>
+
+          {nodeKind === 'text' ? (
+            <textarea
+              className="gen-prompt-input graph-node__value-input graph-node__value-input--textarea nodrag"
+              value={String(outputValue ?? '')}
+              placeholder="Type text"
+              onChange={event => data.onNodeOutputValueChange?.(data.id, event.target.value)}
+              onBlur={event => data.onNodeOutputValueCommit?.(data.id, event.target.value)}
+            />
+          ) : nodeKind === 'boolean' ? (
+            <button
+              type="button"
+              className={`graph-node__boolean-toggle nodrag ${outputValue ? 'graph-node__boolean-toggle--active' : ''}`}
+              onClick={() => {
+                const nextValue = !outputValue
+                data.onNodeOutputValueChange?.(data.id, nextValue)
+                data.onNodeOutputValueCommit?.(data.id, nextValue)
+              }}
+              aria-pressed={outputValue}
+            >
+              <span className="material-symbols-outlined">{outputValue ? 'check_circle' : 'radio_button_unchecked'}</span>
+              <span>{outputValue ? 'True' : 'False'}</span>
+            </button>
+          ) : (
+            <input
+              type="number"
+              className="params-card__input graph-node__value-input nodrag"
+              value={outputValue ?? ''}
+              onChange={event => data.onNodeOutputValueChange?.(data.id, event.target.value)}
+              onBlur={event => data.onNodeOutputValueCommit?.(data.id, event.target.value)}
+            />
+          )}
+
+          <div className="graph-node__ports-summary font-label">
+            <span className="graph-node__port-label graph-node__port-label--output">Output · {outputMeta.label}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="graph-node__connector graph-node__connector--output" style={getConnectorPosition(0, 1)}>
+        <span
+          className="graph-node__connector-badge font-label"
+          style={{
+            color: outputMeta.color,
+            background: outputMeta.background,
+            borderColor: outputMeta.color
+          }}
+          title={outputMeta.label}
+        >
+          {outputMeta.letter}
+        </span>
+        <Handle
+          type="source"
+          id={DEFAULT_OUTPUT_ID}
+          position={Position.Right}
+          className="graph-node__handle graph-node__handle--output"
+          style={{ borderColor: outputMeta.color }}
+        />
+      </div>
+    </div>
+  )
+}
+
 const flowNodeTypes = {
   image: GraphAssetNode,
   imageEdit: GraphAssetNode,
-  meshGen: GraphAssetNode
+  meshGen: GraphAssetNode,
+  number: GraphValueNode,
+  text: GraphValueNode,
+  boolean: GraphValueNode
 }
 
 const flowEdgeTypes = {
@@ -1488,6 +1676,116 @@ export default function GraphPage({ project }) {
     progressSubscriptionsRef.current.delete(String(nodeId))
   }, [])
 
+  const replaceFlowNodeData = useCallback((updatedNode) => {
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(updatedNode.id)
+        ? {
+            ...node,
+            position: node.position,
+            data: {
+              ...node.data,
+              ...updatedNode,
+              nodeKind: getNodeKind(updatedNode.nodeTypeName)
+            }
+          }
+        : node
+    )))
+  }, [setNodes])
+
+  const handleNodeNameChange = useCallback((nodeId, name) => {
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(nodeId)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              name
+            }
+          }
+        : node
+    )))
+  }, [setNodes])
+
+  const handleNodeNameCommit = useCallback(async (nodeId, name) => {
+    const existingNode = nodes.find(node => node.id === String(nodeId))
+    if (!existingNode) {
+      return
+    }
+
+    const nextName = String(name || '').trim() || existingNode.data.asset?.name || existingNode.data.nodeTypeName || 'Node'
+
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(nodeId)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              name: nextName
+            }
+          }
+        : node
+    )))
+
+    try {
+      const updatedNode = await updateProjectNode(project.id, Number(nodeId), { name: nextName })
+      replaceFlowNodeData(updatedNode)
+    } catch (err) {
+      console.error('Failed to rename graph node:', err)
+    }
+  }, [nodes, project.id, replaceFlowNodeData, setNodes, updateProjectNode])
+
+  const handleNodeOutputValueChange = useCallback((nodeId, outputValue) => {
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(nodeId)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              metadata: {
+                ...(node.data.metadata || {}),
+                outputValue
+              }
+            }
+          }
+        : node
+    )))
+  }, [setNodes])
+
+  const handleNodeOutputValueCommit = useCallback(async (nodeId, outputValue) => {
+    const existingNode = nodes.find(node => node.id === String(nodeId))
+    if (!existingNode) {
+      return
+    }
+
+    const normalizedValue = normalizeNodeOutputValue(existingNode.data.nodeKind, outputValue)
+
+    setNodes(currentNodes => currentNodes.map(node => (
+      node.id === String(nodeId)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              metadata: {
+                ...(node.data.metadata || {}),
+                outputValue: normalizedValue
+              }
+            }
+          }
+        : node
+    )))
+
+    try {
+      const updatedNode = await updateProjectNode(project.id, Number(nodeId), {
+        metadata: {
+          outputValue: normalizedValue
+        }
+      })
+      replaceFlowNodeData(updatedNode)
+    } catch (err) {
+      console.error('Failed to persist graph node value:', err)
+    }
+  }, [nodes, project.id, replaceFlowNodeData, setNodes, updateProjectNode])
+
   useEffect(() => {
     return () => {
       progressSubscriptionsRef.current.forEach(unsubscribe => unsubscribe?.())
@@ -1506,22 +1804,6 @@ export default function GraphPage({ project }) {
       return nextDrafts
     })
   }, [closeNodeProgressSubscription, deleteProjectNode, project.id, setEdges, setNodes])
-
-  const replaceFlowNodeData = useCallback((updatedNode) => {
-    setNodes(currentNodes => currentNodes.map(node => (
-      node.id === String(updatedNode.id)
-        ? {
-            ...node,
-            position: node.position,
-            data: {
-              ...node.data,
-              ...updatedNode,
-              nodeKind: getNodeKind(updatedNode.nodeTypeName)
-            }
-          }
-        : node
-    )))
-  }, [setNodes])
 
   const ensureGeneratedMeshThumbnail = useCallback(async (asset) => {
     if (!asset || asset.type !== 'mesh' || asset.thumbnail) {
@@ -1645,6 +1927,7 @@ export default function GraphPage({ project }) {
 
   const handleCreateNode = useCallback(async (nodeTypeName, initialData = {}) => {
     const nextIndex = nodes.length
+    const defaultOutputType = getDefaultNodeOutputType(nodeTypeName)
     const createdNode = await createProjectNode(project.id, {
       nodeTypeName,
       name: initialData.name || nodeTypeName,
@@ -1655,7 +1938,8 @@ export default function GraphPage({ project }) {
       progress: initialData.progress ?? null,
       metadata: {
         inputType: null,
-        outputType: getDefaultNodeOutputType(nodeTypeName),
+        outputType: defaultOutputType,
+        ...(isValueNodeKind(defaultOutputType) ? { outputValue: getDefaultNodeOutputValue(nodeTypeName) } : {}),
         ...(initialData.metadata || {})
       }
     })
@@ -1706,7 +1990,7 @@ export default function GraphPage({ project }) {
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
-    dragHandle: '.graph-node__card',
+    dragHandle: isValueNodeKind(node.data.nodeKind) ? '.graph-node__value-card' : '.graph-node__card',
     data: {
       ...node.data,
       inputConnectors: buildInputConnectors(node.id, nodes, edges),
@@ -1726,6 +2010,10 @@ export default function GraphPage({ project }) {
       libraryImageOptions,
       libraryLoading,
       comfyLoading,
+      onNodeNameChange: handleNodeNameChange,
+      onNodeNameCommit: handleNodeNameCommit,
+      onNodeOutputValueChange: handleNodeOutputValueChange,
+      onNodeOutputValueCommit: handleNodeOutputValueCommit,
       onToggleAction: openActionDraft,
       onImageModeSelect: async (targetNodeId, mode) => {
         if (mode === 'local') {
@@ -2546,7 +2834,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]
@@ -2773,7 +3061,14 @@ export default function GraphPage({ project }) {
   }, [edges.length, loading, nodes.length, project.id, reactFlowInstance])
 
   const showEmptyState = !loading && nodes.length === 0
-  const minimapNodeColor = useCallback(node => node.type === 'meshGen' ? '#79e388' : node.type === 'imageEdit' ? '#ac89ff' : '#8ff5ff', [])
+  const minimapNodeColor = useCallback((node) => {
+    if (node.type === 'meshGen') return '#79e388'
+    if (node.type === 'text') return '#ffd36e'
+    if (node.type === 'boolean') return '#ff7fc8'
+    if (node.type === 'number') return '#79e388'
+    if (node.type === 'imageEdit') return '#ac89ff'
+    return '#8ff5ff'
+  }, [])
 
   return (
     <div className="graph-layout">
