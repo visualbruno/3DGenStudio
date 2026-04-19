@@ -52,12 +52,12 @@ function getDefaultValueType(item, isOutput = false) {
   return item?.type === 'number' ? 'number' : 'string'
 }
 
-function createSelectionMap(items, getLabel, isOutput = false) {
+function createSelectionMap(items, getLabel, isOutput = false, selected = false) {
   return Object.fromEntries(
     items.map(item => [
       item.id || item.nodeId,
       {
-        selected: true,
+        selected,
         name: getLabel(item),
         valueType: getDefaultValueType(item, isOutput)
       }
@@ -106,6 +106,27 @@ function formatDefaultValue(value) {
   return String(value)
 }
 
+function selectWorkflowItem(setter, key, name, valueType) {
+  setter(prev => ({
+    ...prev,
+    [key]: {
+      selected: true,
+      name: prev[key]?.name || name,
+      valueType: prev[key]?.valueType || valueType
+    }
+  }))
+}
+
+function deselectWorkflowItem(setter, key) {
+  setter(prev => ({
+    ...prev,
+    [key]: {
+      ...prev[key],
+      selected: false
+    }
+  }))
+}
+
 function formatDimensions(width, height) {
   if (!width || !height) return null
   return `${width} × ${height}`
@@ -113,6 +134,101 @@ function formatDimensions(width, height) {
 
 function getAssetChildren(asset) {
   return asset?.children || asset?.edits || []
+}
+
+function WorkflowOptionSelector({
+  title,
+  items,
+  selectedMap,
+  getKey,
+  getPrimaryText,
+  getSecondaryText,
+  onSelect,
+  emptyMessage,
+  searchPlaceholder
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [searchValue, setSearchValue] = useState('')
+  const containerRef = useRef(null)
+
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const handleClickOutside = event => {
+      if (!containerRef.current?.contains(event.target)) {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [isOpen])
+
+  const availableItems = useMemo(
+    () => items.filter(item => !selectedMap[getKey(item)]?.selected),
+    [getKey, items, selectedMap]
+  )
+
+  const filteredItems = useMemo(() => {
+    const query = searchValue.trim().toLowerCase()
+    if (!query) return availableItems
+
+    return availableItems.filter(item => {
+      const haystack = `${getPrimaryText(item)} ${getSecondaryText(item)}`.toLowerCase()
+      return haystack.includes(query)
+    })
+  }, [availableItems, getPrimaryText, getSecondaryText, searchValue])
+
+  const handleSelect = item => {
+    onSelect(item)
+    setSearchValue('')
+    setIsOpen(false)
+  }
+
+  return (
+    <div ref={containerRef} className="library-selector">
+      <button
+        type="button"
+        className="library-selector__trigger"
+        onClick={() => setIsOpen(prev => !prev)}
+        aria-expanded={isOpen}
+      >
+        <span>{title}</span>
+        <span className="material-symbols-outlined">{isOpen ? 'expand_less' : 'expand_more'}</span>
+      </button>
+
+      {isOpen && (
+        <div className="library-selector__menu">
+          <div className="library-selector__search">
+            <span className="material-symbols-outlined">search</span>
+            <input
+              className="library-selector__search-input"
+              value={searchValue}
+              onChange={event => setSearchValue(event.target.value)}
+              placeholder={searchPlaceholder}
+              autoFocus
+            />
+          </div>
+
+          <div className="library-selector__options">
+            {filteredItems.length > 0 ? filteredItems.map(item => (
+              <button
+                key={getKey(item)}
+                type="button"
+                className="library-selector__option"
+                onClick={() => handleSelect(item)}
+              >
+                <strong>{getPrimaryText(item)}</strong>
+                <span>{getSecondaryText(item)}</span>
+              </button>
+            )) : (
+              <div className="library-selector__empty">{availableItems.length === 0 ? emptyMessage : 'No matches found.'}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default function AssetsPage() {
@@ -203,6 +319,16 @@ export default function AssetsPage() {
   const selectedOutputCount = useMemo(
     () => Object.values(selectedOutputs).filter(item => item.selected).length,
     [selectedOutputs]
+  )
+
+  const selectedInputItems = useMemo(
+    () => (inspectedWorkflow?.inputs || []).filter(input => selectedInputs[input.id]?.selected),
+    [inspectedWorkflow, selectedInputs]
+  )
+
+  const selectedOutputItems = useMemo(
+    () => (inspectedWorkflow?.outputs || []).filter(output => selectedOutputs[output.nodeId]?.selected),
+    [inspectedWorkflow, selectedOutputs]
   )
 
   const activeConfig = ASSET_SECTIONS.find(section => section.key === activeSection) || ASSET_SECTIONS[0]
@@ -898,61 +1024,78 @@ export default function AssetsPage() {
                                   </div>
                                 </div>
 
-                                <div className="library-config-list">
-                                  {inspectedWorkflow.inputs.length > 0 ? inspectedWorkflow.inputs.map(input => (
-                                    <div key={input.id} className="library-config-item">
-                                      <label className="library-checkbox-row">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedInputs[input.id]?.selected || false}
-                                          onChange={event => setSelectedInputs(prev => ({
-                                            ...prev,
-                                            [input.id]: {
-                                              ...prev[input.id],
-                                              selected: event.target.checked
-                                            }
-                                          }))}
-                                        />
-                                        <div>
-                                          <strong>{input.label}</strong>
-                                          <span>{input.type} • default: {formatDefaultValue(input.defaultValue)}</span>
-                                        </div>
-                                      </label>
+                                {inspectedWorkflow.inputs.length > 0 ? (
+                                  <div className="library-config-list">
+                                    <WorkflowOptionSelector
+                                      title="Add input"
+                                      items={inspectedWorkflow.inputs}
+                                      selectedMap={selectedInputs}
+                                      getKey={input => input.id}
+                                      getPrimaryText={input => input.label || input.name}
+                                      getSecondaryText={input => `${input.type} • default: ${formatDefaultValue(input.defaultValue)}`}
+                                      onSelect={input => selectWorkflowItem(setSelectedInputs, input.id, input.name, getDefaultValueType(input))}
+                                      emptyMessage="All inputs have already been selected."
+                                      searchPlaceholder="Search inputs"
+                                    />
 
-                                      <div className="library-config-fields">
-                                        <input
-                                          className="library-input"
-                                          value={selectedInputs[input.id]?.name || ''}
-                                          onChange={event => setSelectedInputs(prev => ({
-                                            ...prev,
-                                            [input.id]: {
-                                              ...prev[input.id],
-                                              name: event.target.value
-                                            }
-                                          }))}
-                                          placeholder="Parameter label"
-                                        />
-                                        <select
-                                          className="library-input"
-                                          value={selectedInputs[input.id]?.valueType || getDefaultValueType(input)}
-                                          onChange={event => setSelectedInputs(prev => ({
-                                            ...prev,
-                                            [input.id]: {
-                                              ...prev[input.id],
-                                              valueType: event.target.value
-                                            }
-                                          }))}
-                                        >
-                                          {COMFY_VALUE_TYPES.map(option => (
-                                            <option key={option.value} value={option.value}>{option.label}</option>
-                                          ))}
-                                        </select>
+                                    {selectedInputItems.length > 0 ? (
+                                      <div className="library-selected-list">
+                                        {selectedInputItems.map(input => (
+                                          <div key={input.id} className="library-selected-item">
+                                            <div className="library-selected-item__header">
+                                              <div>
+                                                <strong>{input.label || input.name}</strong>
+                                                <span>{input.type} • default: {formatDefaultValue(input.defaultValue)}</span>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                className="library-icon-btn"
+                                                onClick={() => deselectWorkflowItem(setSelectedInputs, input.id)}
+                                                title="Remove input"
+                                              >
+                                                <span className="material-symbols-outlined">delete</span>
+                                              </button>
+                                            </div>
+
+                                            <div className="library-config-fields">
+                                              <input
+                                                className="library-input"
+                                                value={selectedInputs[input.id]?.name || ''}
+                                                onChange={event => setSelectedInputs(prev => ({
+                                                  ...prev,
+                                                  [input.id]: {
+                                                    ...prev[input.id],
+                                                    name: event.target.value
+                                                  }
+                                                }))}
+                                                placeholder="Parameter label"
+                                              />
+                                              <select
+                                                className="library-input"
+                                                value={selectedInputs[input.id]?.valueType || getDefaultValueType(input)}
+                                                onChange={event => setSelectedInputs(prev => ({
+                                                  ...prev,
+                                                  [input.id]: {
+                                                    ...prev[input.id],
+                                                    valueType: event.target.value
+                                                  }
+                                                }))}
+                                              >
+                                                {COMFY_VALUE_TYPES.map(option => (
+                                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          </div>
+                                        ))}
                                       </div>
-                                    </div>
-                                  )) : (
-                                    <p className="library-empty-inline">No editable workflow inputs were detected.</p>
-                                  )}
-                                </div>
+                                    ) : (
+                                      <p className="library-empty-inline">No inputs selected yet.</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="library-empty-inline">No editable workflow inputs were detected.</p>
+                                )}
                               </section>
 
                               <section className="library-config-card">
@@ -967,61 +1110,78 @@ export default function AssetsPage() {
                                   </div>
                                 </div>
 
-                                <div className="library-config-list">
-                                  {inspectedWorkflow.outputs.length > 0 ? inspectedWorkflow.outputs.map(output => (
-                                    <div key={output.nodeId} className="library-config-item">
-                                      <label className="library-checkbox-row">
-                                        <input
-                                          type="checkbox"
-                                          checked={selectedOutputs[output.nodeId]?.selected || false}
-                                          onChange={event => setSelectedOutputs(prev => ({
-                                            ...prev,
-                                            [output.nodeId]: {
-                                              ...prev[output.nodeId],
-                                              selected: event.target.checked
-                                            }
-                                          }))}
-                                        />
-                                        <div>
-                                          <strong>{output.label}</strong>
-                                          <span>{output.classType}</span>
-                                        </div>
-                                      </label>
+                                {inspectedWorkflow.outputs.length > 0 ? (
+                                  <div className="library-config-list">
+                                    <WorkflowOptionSelector
+                                      title="Add output"
+                                      items={inspectedWorkflow.outputs}
+                                      selectedMap={selectedOutputs}
+                                      getKey={output => output.nodeId}
+                                      getPrimaryText={output => output.label || output.nodeTitle}
+                                      getSecondaryText={output => output.classType}
+                                      onSelect={output => selectWorkflowItem(setSelectedOutputs, output.nodeId, output.nodeTitle, getDefaultValueType(output, true))}
+                                      emptyMessage="All outputs have already been selected."
+                                      searchPlaceholder="Search outputs"
+                                    />
 
-                                      <div className="library-config-fields">
-                                        <input
-                                          className="library-input"
-                                          value={selectedOutputs[output.nodeId]?.name || ''}
-                                          onChange={event => setSelectedOutputs(prev => ({
-                                            ...prev,
-                                            [output.nodeId]: {
-                                              ...prev[output.nodeId],
-                                              name: event.target.value
-                                            }
-                                          }))}
-                                          placeholder="Output label"
-                                        />
-                                        <select
-                                          className="library-input"
-                                          value={selectedOutputs[output.nodeId]?.valueType || getDefaultValueType(output, true)}
-                                          onChange={event => setSelectedOutputs(prev => ({
-                                            ...prev,
-                                            [output.nodeId]: {
-                                              ...prev[output.nodeId],
-                                              valueType: event.target.value
-                                            }
-                                          }))}
-                                        >
-                                          {COMFY_VALUE_TYPES.map(option => (
-                                            <option key={option.value} value={option.value}>{option.label}</option>
-                                          ))}
-                                        </select>
+                                    {selectedOutputItems.length > 0 ? (
+                                      <div className="library-selected-list">
+                                        {selectedOutputItems.map(output => (
+                                          <div key={output.nodeId} className="library-selected-item">
+                                            <div className="library-selected-item__header">
+                                              <div>
+                                                <strong>{output.label || output.nodeTitle}</strong>
+                                                <span>{output.classType}</span>
+                                              </div>
+                                              <button
+                                                type="button"
+                                                className="library-icon-btn"
+                                                onClick={() => deselectWorkflowItem(setSelectedOutputs, output.nodeId)}
+                                                title="Remove output"
+                                              >
+                                                <span className="material-symbols-outlined">delete</span>
+                                              </button>
+                                            </div>
+
+                                            <div className="library-config-fields">
+                                              <input
+                                                className="library-input"
+                                                value={selectedOutputs[output.nodeId]?.name || ''}
+                                                onChange={event => setSelectedOutputs(prev => ({
+                                                  ...prev,
+                                                  [output.nodeId]: {
+                                                    ...prev[output.nodeId],
+                                                    name: event.target.value
+                                                  }
+                                                }))}
+                                                placeholder="Output label"
+                                              />
+                                              <select
+                                                className="library-input"
+                                                value={selectedOutputs[output.nodeId]?.valueType || getDefaultValueType(output, true)}
+                                                onChange={event => setSelectedOutputs(prev => ({
+                                                  ...prev,
+                                                  [output.nodeId]: {
+                                                    ...prev[output.nodeId],
+                                                    valueType: event.target.value
+                                                  }
+                                                }))}
+                                              >
+                                                {COMFY_VALUE_TYPES.map(option => (
+                                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          </div>
+                                        ))}
                                       </div>
-                                    </div>
-                                  )) : (
-                                    <p className="library-empty-inline">No output nodes were detected.</p>
-                                  )}
-                                </div>
+                                    ) : (
+                                      <p className="library-empty-inline">No outputs selected yet.</p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <p className="library-empty-inline">No output nodes were detected.</p>
+                                )}
                               </section>
                             </div>
 

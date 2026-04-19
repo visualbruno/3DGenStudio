@@ -14,6 +14,14 @@
 
 ---
 
+## 📋 Changelog
+
+| Date | Description |
+| --- | --- |
+| **2026-04-19** | First release |
+
+---
+
 ## ✨ Features
 
 Switch between **Kanban** and **Graph** views to manage and visualize your entire 3D production pipeline in the way that suits your style.

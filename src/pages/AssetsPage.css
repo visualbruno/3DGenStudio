@@ -225,6 +225,7 @@
 .library-field,
 .library-config-list,
 .library-config-item,
+.library-selected-list,
 .library-workflow-list,
 .library-workflow-card,
 .library-workflow-card__section {
@@ -292,6 +293,108 @@
 .library-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.library-selector {
+  position: relative;
+}
+
+.library-selector__trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.875rem;
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  cursor: pointer;
+}
+
+.library-selector__menu {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  padding: 0.75rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(71, 72, 74, 0.2);
+  background: var(--surface-container-high);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.22);
+}
+
+.library-selector__search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(71, 72, 74, 0.16);
+}
+
+.library-selector__search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  outline: none;
+}
+
+.library-selector__options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.library-selector__option,
+.library-selector__empty,
+.library-selected-item {
+  padding: 0.85rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-lowest);
+  border: 1px solid rgba(71, 72, 74, 0.15);
+}
+
+.library-selector__option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: 100%;
+  color: var(--on-surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.library-selector__option span,
+.library-selector__empty,
+.library-selected-item__header span {
+  color: var(--on-surface-variant);
+}
+
+.library-selected-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.library-selected-item__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.library-selected-item__header div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .library-input {
