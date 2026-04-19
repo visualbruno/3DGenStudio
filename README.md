@@ -132,6 +132,12 @@ Open the application and configure your services in the settings area:
 
 ---
 
+## Documentation
+
+You will find some documentation here: https://github.com/visualbruno/3DGenStudio/tree/main/docs
+
+---
+
 ## 🤝 Contributing & Support
 
 Have a question or an idea? Whether you want to report a bug, suggest a feature, or just say hello:
