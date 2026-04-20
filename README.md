@@ -6,10 +6,11 @@
 
 [![Website](https://img.shields.io/badge/website-3dgenstudio.com-purple.svg)](https://www.3dgenstudio.com)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/visualbruno/3DGenStudio/pulls)
+[![Discord](https://img.shields.io/badge/Discord-5865F2?logo=discord&logoColor=white)](https://discord.gg/hNeV887f)
 
 *Orchestrate complete 3D generation pipelines — from text-to-image, image editing, mesh generation, UV unwrapping, to texturing — all in a single visual workspace powered by ComfyUI and external APIs.*
 
-[**Website**](https://www.3dgenstudio.com) • [**Report Bug**](https://github.com/visualbruno/3DGenStudio/issues)
+[**Website**](https://www.3dgenstudio.com) • [**Report Bug**](https://github.com/visualbruno/3DGenStudio/issues) • [**Discord**](https://discord.gg/hNeV887f)
 </div>
 
 ---
