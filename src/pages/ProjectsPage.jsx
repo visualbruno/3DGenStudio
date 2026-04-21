@@ -19,6 +19,14 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.1.1',
+    date: '2026-04-21',
+    items: [
+      'Added Graph Node "Image Compare"',
+      'Improved a bit the Mesh Editor (not good yet)',
+    ],
+  },
+  {
     version: 'v0.1.0',
     date: '2026-04-19',
     items: [

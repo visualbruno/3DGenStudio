@@ -17,6 +17,7 @@
 
 .mesh-editor-shell {
   flex: 1;
+  min-height: 0;
   width: 100%;
   max-width: 1440px;
   margin: 0 auto;
@@ -64,6 +65,21 @@
   gap: 0.45rem;
 }
 
+.mesh-editor-toolbar__save-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 220px;
+}
+
+.mesh-editor-toolbar__save-actions {
+  flex-wrap: nowrap;
+}
+
+.mesh-editor-toolbar__save-actions .mesh-editor-btn {
+  flex: 1;
+}
+
 .mesh-editor-toolbar__stats {
   display: inline-flex;
   gap: 0.75rem;
@@ -109,12 +125,14 @@
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 1rem;
+  align-items: start;
 }
 
 .mesh-editor-sidebar {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  min-height: 0;
 }
 
 .mesh-editor-panel {
@@ -155,6 +173,26 @@
 
 .mesh-editor-actions--column {
   flex-direction: column;
+}
+
+.mesh-editor-panel--actions {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-height: calc(100vh - 320px);
+  min-height: 0;
+}
+
+.mesh-editor-panel__scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 0.25rem;
+}
+
+.mesh-editor-panel--actions .mesh-editor-actions--column {
+  flex-wrap: nowrap;
+  align-content: flex-start;
 }
 
 .mesh-editor-toggle,
@@ -201,7 +239,6 @@
 
 .mesh-editor-canvas-shell {
   position: relative;
-  flex: 1;
   min-height: 760px;
   height: clamp(760px, calc(100vh - 210px), 1400px);
   overflow: hidden;
@@ -252,6 +289,10 @@
     flex-wrap: wrap;
   }
 
+  .mesh-editor-toolbar__save-panel {
+    min-width: 260px;
+  }
+
   .mesh-editor-toolbar__stats {
     justify-content: flex-start;
   }
@@ -282,8 +323,22 @@
     min-width: 0;
   }
 
+  .mesh-editor-toolbar__save-panel {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mesh-editor-toolbar__save-actions {
+    flex-wrap: wrap;
+  }
+
   .mesh-editor-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .mesh-editor-panel--actions,
+  .mesh-editor-panel__scroll {
+    max-height: none;
   }
 
   .mesh-editor-canvas-shell {

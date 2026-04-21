@@ -34,7 +34,8 @@ const NODE_TYPES = [
   { id: 3, name: 'Mesh' },
   { id: 4, name: 'Number' },
   { id: 5, name: 'Text' },
-  { id: 6, name: 'Boolean' }
+  { id: 6, name: 'Boolean' },
+  { id: 7, name: 'Image Compare' }
 ];
 
 export const DEFAULT_SETTINGS = {

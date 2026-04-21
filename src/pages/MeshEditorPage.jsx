@@ -9,6 +9,8 @@ import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import {
+  bridgeSelectedHoleSegments,
+  bridgeAndFillSelectedHole,
   deleteSelectedFaces,
   deleteSelectedVertices,
   exportGeometryToObj,
@@ -141,6 +143,7 @@ export default function MeshEditorPage() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [geometry, setGeometry] = useState(null)
+  const [geometryRevision, setGeometryRevision] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -148,7 +151,7 @@ export default function MeshEditorPage() {
   const [selectionMode, setSelectionMode] = useState('face')
   const [selectedFaceIndices, setSelectedFaceIndices] = useState([])
   const [selectedVertexIndices, setSelectedVertexIndices] = useState([])
-  const [holeLoops, setHoleLoops] = useState([])
+  const [_holeLoops, setHoleLoops] = useState([])
   const [meshName, setMeshName] = useState(searchParams.get('name') || 'Mesh')
   const [selectionBox, setSelectionBox] = useState(null)
 
@@ -162,6 +165,8 @@ export default function MeshEditorPage() {
   const canvasShellRef = useRef(null)
   const cameraRef = useRef(null)
   const dragStateRef = useRef(null)
+
+  useEffect(() => () => geometry?.dispose?.(), [geometry])
 
   useEffect(() => {
     let cancelled = false
@@ -180,6 +185,7 @@ export default function MeshEditorPage() {
 
         if (!cancelled) {
           setGeometry(loadedGeometry)
+          setGeometryRevision(0)
           setSelectedFaceIndices([])
           setSelectedVertexIndices([])
           setHoleLoops([])
@@ -205,7 +211,7 @@ export default function MeshEditorPage() {
   const stats = useMemo(() => ({
     vertices: geometry?.attributes?.position?.count || 0,
     faces: geometryFaceCount(geometry)
-  }), [geometry])
+  }), [geometry, geometryRevision])
   const availableHoleLoops = useMemo(() => {
     if (!geometry) {
       return []
@@ -216,7 +222,16 @@ export default function MeshEditorPage() {
       selectedFaceIndices,
       selectedVertexIndices
     })
-  }, [geometry, selectedFaceIndices, selectedVertexIndices, selectionMode])
+  }, [geometry, geometryRevision, selectedFaceIndices, selectedVertexIndices, selectionMode])
+  const selectionMesh = useMemo(() => {
+    if (!geometry) {
+      return null
+    }
+
+    const mesh = new THREE.Mesh(geometry)
+    mesh.updateMatrixWorld(true)
+    return mesh
+  }, [geometry])
 
   const resetSelection = useCallback(() => {
     setSelectedFaceIndices([])
@@ -266,12 +281,6 @@ export default function MeshEditorPage() {
     })
   }, [])
 
-  const createSelectionMesh = useCallback(() => {
-    const mesh = new THREE.Mesh(geometry)
-    mesh.updateMatrixWorld(true)
-    return mesh
-  }, [geometry])
-
   const createRectangleSamplePoints = useCallback((bounds) => {
     const width = Math.max(1, bounds.right - bounds.left)
     const height = Math.max(1, bounds.bottom - bounds.top)
@@ -307,15 +316,15 @@ export default function MeshEditorPage() {
     }
 
     const raycaster = new THREE.Raycaster()
+    raycaster.firstHitOnly = true
     const pointer = new THREE.Vector2(
       (point.x / rect.width) * 2 - 1,
       -((point.y / rect.height) * 2 - 1)
     )
 
     raycaster.setFromCamera(pointer, cameraRef.current)
-
-    const mesh = createSelectionMesh()
-    const [intersection] = raycaster.intersectObject(mesh, false)
+    selectionMesh.updateMatrixWorld(true)
+    const [intersection] = raycaster.intersectObject(selectionMesh, false)
 
     if (!intersection) {
       if (!isMultiSelect) {
@@ -335,7 +344,7 @@ export default function MeshEditorPage() {
     if (intersection.faceIndex !== undefined && intersection.faceIndex !== null) {
       applySelection('face', [intersection.faceIndex], isMultiSelect)
     }
-  }, [applySelection, createSelectionMesh, geometry, resetSelection, selectionMode])
+  }, [applySelection, geometry, resetSelection, selectionMesh, selectionMode])
 
   const selectWithinRectangle = useCallback((startPoint, endPoint, isMultiSelect) => {
     if (!geometry || !cameraRef.current || !canvasShellRef.current) {
@@ -345,8 +354,9 @@ export default function MeshEditorPage() {
     const rect = canvasShellRef.current.getBoundingClientRect()
     const bounds = getRectangleBounds(startPoint, endPoint)
     const raycaster = new THREE.Raycaster()
-    const mesh = createSelectionMesh()
+    raycaster.firstHitOnly = true
     const samplePoints = createRectangleSamplePoints(bounds)
+    selectionMesh.updateMatrixWorld(true)
 
     if (selectionMode === 'vertex') {
       const nextVertices = new Set()
@@ -358,7 +368,7 @@ export default function MeshEditorPage() {
         )
 
         raycaster.setFromCamera(pointer, cameraRef.current)
-        const [intersection] = raycaster.intersectObject(mesh, false)
+        const [intersection] = raycaster.intersectObject(selectionMesh, false)
 
         if (!intersection) {
           return
@@ -383,7 +393,7 @@ export default function MeshEditorPage() {
       )
 
       raycaster.setFromCamera(pointer, cameraRef.current)
-      const [intersection] = raycaster.intersectObject(mesh, false)
+      const [intersection] = raycaster.intersectObject(selectionMesh, false)
 
       if (intersection?.faceIndex !== undefined && intersection.faceIndex !== null) {
         nextFaces.add(intersection.faceIndex)
@@ -391,7 +401,7 @@ export default function MeshEditorPage() {
     })
 
     applySelection('face', [...nextFaces].sort((left, right) => left - right), isMultiSelect)
-  }, [applySelection, createRectangleSamplePoints, createSelectionMesh, geometry, selectionMode])
+  }, [applySelection, createRectangleSamplePoints, geometry, selectionMesh, selectionMode])
 
   const getPointerPosition = useCallback((event) => {
     const rect = canvasShellRef.current?.getBoundingClientRect()
@@ -481,6 +491,7 @@ export default function MeshEditorPage() {
 
   const applyGeometryUpdate = useCallback((nextGeometry, nextHoleLoops = []) => {
     setGeometry(nextGeometry)
+    setGeometryRevision(current => current + 1)
     setHoleLoops(nextHoleLoops)
     setSelectedFaceIndices([])
     setSelectedVertexIndices([])
@@ -526,13 +537,35 @@ export default function MeshEditorPage() {
     applyGeometryUpdate(subdivideSelectedFaces(geometry, selectedFaceIndices), [])
   }, [applyGeometryUpdate, geometry, selectedFaceIndices])
 
+  const handleBridge = useCallback(() => {
+    if (!geometry || selectionMode !== 'vertex') {
+      return
+    }
+
+    const result = bridgeSelectedHoleSegments(geometry, selectedVertexIndices)
+    if (!result.applied) {
+      setFeedback('Select two boundary vertex segments on the same hole to bridge them.')
+      return
+    }
+
+    applyGeometryUpdate(result.geometry, result.holeLoops)
+  }, [applyGeometryUpdate, geometry, selectedVertexIndices, selectionMode])
+
   const handleFillHole = useCallback(() => {
     if (!geometry || availableHoleLoops.length === 0) {
       return
     }
 
+    if (selectionMode === 'vertex') {
+      const result = bridgeAndFillSelectedHole(geometry, selectedVertexIndices)
+      if (result.applied) {
+        applyGeometryUpdate(result.geometry, [])
+        return
+      }
+    }
+
     applyGeometryUpdate(fillHoleLoops(geometry, availableHoleLoops), [])
-  }, [applyGeometryUpdate, availableHoleLoops, geometry])
+  }, [applyGeometryUpdate, availableHoleLoops, geometry, selectedVertexIndices, selectionMode])
 
   const handleSave = useCallback(async (saveMode) => {
     if (!geometry || saving) {
@@ -603,6 +636,7 @@ export default function MeshEditorPage() {
   const smoothDisabled = selectedVertexIndices.length === 0
   const mergeDisabled = selectedVertexIndices.length < 2
   const subdivideDisabled = selectedFaceIndices.length === 0
+  const bridgeDisabled = selectionMode !== 'vertex' || selectedVertexIndices.length < 4
   const fillDisabled = availableHoleLoops.length === 0
 
   return (
@@ -625,6 +659,13 @@ export default function MeshEditorPage() {
               <div className="mesh-editor-toolbar__name-field">
                 <label className="mesh-editor-panel__label">Mesh name</label>
                 <input className="mesh-editor-panel__input" value={meshName} onChange={event => setMeshName(event.target.value)} />
+              </div>
+              <div className="mesh-editor-toolbar__save-panel">
+                <span className="mesh-editor-panel__label">Save</span>
+                <div className="mesh-editor-actions mesh-editor-toolbar__save-actions">
+                  <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={() => handleSave('replace')} disabled={saving || !geometry}>Save mesh</button>
+                  <button type="button" className="mesh-editor-btn mesh-editor-btn--secondary" onClick={() => handleSave('version')} disabled={saving || !geometry}>Save as version</button>
+                </div>
               </div>
             </div>
             <div className="mesh-editor-toolbar__stats">
@@ -667,25 +708,21 @@ export default function MeshEditorPage() {
                   </button>
                 </div>
                 <span className="mesh-editor-panel__hint">Left mouse drag selects with a rectangle. Shift+drag adds or removes items.</span>
+                <span className="mesh-editor-panel__hint">For difficult holes, switch to Vertices and select two boundary segments on the same hole, then use Bridge or Fill hole.</span>
                 <span className="mesh-editor-panel__hint">Middle mouse drag rotates the mesh.</span>
               </div>
 
               <div className="mesh-editor-panel mesh-editor-panel--actions">
                 <span className="mesh-editor-panel__label">Actions</span>
-                <div className="mesh-editor-actions mesh-editor-actions--column">
-                  <button type="button" className="mesh-editor-btn" onClick={handleDelete} disabled={deleteDisabled}>Delete</button>
-                  <button type="button" className="mesh-editor-btn" onClick={handleSmooth} disabled={smoothDisabled}>Smooth</button>
-                  <button type="button" className="mesh-editor-btn" onClick={handleMerge} disabled={mergeDisabled}>Merge</button>
-                  <button type="button" className="mesh-editor-btn" onClick={handleSubdivide} disabled={subdivideDisabled}>Subdivide</button>
-                  <button type="button" className="mesh-editor-btn" onClick={handleFillHole} disabled={fillDisabled}>Fill hole</button>
-                </div>
-              </div>
-
-              <div className="mesh-editor-panel mesh-editor-panel--save">
-                <span className="mesh-editor-panel__label">Save</span>
-                <div className="mesh-editor-actions mesh-editor-actions--column">
-                  <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={() => handleSave('replace')} disabled={saving || !geometry}>Save mesh</button>
-                  <button type="button" className="mesh-editor-btn mesh-editor-btn--secondary" onClick={() => handleSave('version')} disabled={saving || !geometry}>Save as version</button>
+                <div className="mesh-editor-panel__scroll">
+                  <div className="mesh-editor-actions mesh-editor-actions--column">
+                    <button type="button" className="mesh-editor-btn" onClick={handleDelete} disabled={deleteDisabled}>Delete</button>
+                    <button type="button" className="mesh-editor-btn" onClick={handleSmooth} disabled={smoothDisabled}>Smooth</button>
+                    <button type="button" className="mesh-editor-btn" onClick={handleMerge} disabled={mergeDisabled}>Merge</button>
+                    <button type="button" className="mesh-editor-btn" onClick={handleSubdivide} disabled={subdivideDisabled}>Subdivide</button>
+                    <button type="button" className="mesh-editor-btn" onClick={handleBridge} disabled={bridgeDisabled}>Bridge</button>
+                    <button type="button" className="mesh-editor-btn" onClick={handleFillHole} disabled={fillDisabled}>Fill hole</button>
+                  </div>
                 </div>
               </div>
             </aside>

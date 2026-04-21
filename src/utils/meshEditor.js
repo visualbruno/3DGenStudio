@@ -5,6 +5,199 @@ import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { mergeGeometries, mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+import { acceleratedRaycast, computeBoundsTree, disposeBoundsTree } from 'three-mesh-bvh'
+
+if (THREE.BufferGeometry.prototype.computeBoundsTree !== computeBoundsTree) {
+  THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
+}
+
+if (THREE.BufferGeometry.prototype.disposeBoundsTree !== disposeBoundsTree) {
+  THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree
+}
+
+if (THREE.Mesh.prototype.raycast !== acceleratedRaycast) {
+  THREE.Mesh.prototype.raycast = acceleratedRaycast
+}
+
+function invalidateGeometryAnalysis(geometry) {
+  if (!geometry?.userData) {
+    return
+  }
+
+  delete geometry.userData.meshEditorBoundaryCache
+}
+
+function finalizeGeometry(geometry, { rebuildBoundsTree = true } = {}) {
+  if (!geometry) {
+    return geometry
+  }
+
+  if (!geometry.attributes.normal) {
+    geometry.computeVertexNormals()
+  }
+
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  invalidateGeometryAnalysis(geometry)
+
+  if (rebuildBoundsTree && geometry.computeBoundsTree) {
+    geometry.disposeBoundsTree?.()
+    geometry.computeBoundsTree()
+  }
+
+  return geometry
+}
+
+function markAttributeUpdateRange(attribute, startComponent, componentCount) {
+  if (!attribute || componentCount <= 0) {
+    return
+  }
+
+  if (typeof attribute.clearUpdateRanges === 'function') {
+    attribute.clearUpdateRanges()
+  }
+
+  if (typeof attribute.addUpdateRange === 'function') {
+    attribute.addUpdateRange(startComponent, componentCount)
+  } else if (attribute.updateRange) {
+    attribute.updateRange.offset = startComponent
+    attribute.updateRange.count = componentCount
+  }
+
+  attribute.needsUpdate = true
+}
+
+function buildVertexFaceMap(indices = []) {
+  const vertexFaces = new Map()
+
+  const addFace = (vertexIndex, faceIndex) => {
+    if (!vertexFaces.has(vertexIndex)) {
+      vertexFaces.set(vertexIndex, [])
+    }
+
+    vertexFaces.get(vertexIndex).push(faceIndex)
+  }
+
+  for (let faceIndex = 0; faceIndex < indices.length / 3; faceIndex += 1) {
+    addFace(indices[faceIndex * 3], faceIndex)
+    addFace(indices[faceIndex * 3 + 1], faceIndex)
+    addFace(indices[faceIndex * 3 + 2], faceIndex)
+  }
+
+  return vertexFaces
+}
+
+function recomputeVertexNormalsLocally(geometry, changedVertexIndices = []) {
+  if (!geometry?.index || changedVertexIndices.length === 0) {
+    return
+  }
+
+  const positionAttribute = geometry.attributes.position
+  let normalAttribute = geometry.attributes.normal
+
+  if (!positionAttribute) {
+    return
+  }
+
+  if (!normalAttribute || normalAttribute.count !== positionAttribute.count) {
+    normalAttribute = new THREE.BufferAttribute(new Float32Array(positionAttribute.count * 3), 3)
+    geometry.setAttribute('normal', normalAttribute)
+    geometry.computeVertexNormals()
+    return
+  }
+
+  const indices = geometry.index.array
+  const positions = positionAttribute.array
+  const normals = normalAttribute.array
+  const vertexFaces = buildVertexFaceMap(indices)
+  const affectedFaces = new Set()
+  const affectedVertices = new Set()
+
+  changedVertexIndices.forEach(vertexIndex => {
+    ;(vertexFaces.get(vertexIndex) || []).forEach(faceIndex => {
+      affectedFaces.add(faceIndex)
+      affectedVertices.add(indices[faceIndex * 3])
+      affectedVertices.add(indices[faceIndex * 3 + 1])
+      affectedVertices.add(indices[faceIndex * 3 + 2])
+    })
+  })
+
+  affectedVertices.forEach(vertexIndex => {
+    const offset = vertexIndex * 3
+    normals[offset] = 0
+    normals[offset + 1] = 0
+    normals[offset + 2] = 0
+  })
+
+  const ab = new THREE.Vector3()
+  const ac = new THREE.Vector3()
+  const faceNormal = new THREE.Vector3()
+
+  affectedFaces.forEach(faceIndex => {
+    const a = indices[faceIndex * 3]
+    const b = indices[faceIndex * 3 + 1]
+    const c = indices[faceIndex * 3 + 2]
+    const aOffset = a * 3
+    const bOffset = b * 3
+    const cOffset = c * 3
+
+    ab.set(
+      positions[bOffset] - positions[aOffset],
+      positions[bOffset + 1] - positions[aOffset + 1],
+      positions[bOffset + 2] - positions[aOffset + 2]
+    )
+    ac.set(
+      positions[cOffset] - positions[aOffset],
+      positions[cOffset + 1] - positions[aOffset + 1],
+      positions[cOffset + 2] - positions[aOffset + 2]
+    )
+
+    faceNormal.crossVectors(ab, ac)
+
+    normals[aOffset] += faceNormal.x
+    normals[aOffset + 1] += faceNormal.y
+    normals[aOffset + 2] += faceNormal.z
+    normals[bOffset] += faceNormal.x
+    normals[bOffset + 1] += faceNormal.y
+    normals[bOffset + 2] += faceNormal.z
+    normals[cOffset] += faceNormal.x
+    normals[cOffset + 1] += faceNormal.y
+    normals[cOffset + 2] += faceNormal.z
+  })
+
+  const vertexNormal = new THREE.Vector3()
+  let minVertexIndex = Number.POSITIVE_INFINITY
+  let maxVertexIndex = Number.NEGATIVE_INFINITY
+
+  affectedVertices.forEach(vertexIndex => {
+    const offset = vertexIndex * 3
+    vertexNormal.set(normals[offset], normals[offset + 1], normals[offset + 2]).normalize()
+    normals[offset] = Number.isFinite(vertexNormal.x) ? vertexNormal.x : 0
+    normals[offset + 1] = Number.isFinite(vertexNormal.y) ? vertexNormal.y : 0
+    normals[offset + 2] = Number.isFinite(vertexNormal.z) ? vertexNormal.z : 0
+    minVertexIndex = Math.min(minVertexIndex, vertexIndex)
+    maxVertexIndex = Math.max(maxVertexIndex, vertexIndex)
+  })
+
+  if (Number.isFinite(minVertexIndex) && Number.isFinite(maxVertexIndex)) {
+    markAttributeUpdateRange(normalAttribute, minVertexIndex * 3, (maxVertexIndex - minVertexIndex + 1) * 3)
+  } else {
+    normalAttribute.needsUpdate = true
+  }
+}
+
+function refitSpatialIndex(geometry) {
+  if (!geometry) {
+    return
+  }
+
+  if (geometry.boundsTree?.refit) {
+    geometry.boundsTree.refit()
+    return
+  }
+
+  geometry.computeBoundsTree?.()
+}
 
 function getExtensionFromUrl(url = '') {
   const sanitizedUrl = String(url).split('?')[0].toLowerCase()
@@ -49,9 +242,7 @@ function createMergedGeometryFromObject(object) {
     weldedGeometry.computeVertexNormals()
   }
 
-  weldedGeometry.computeBoundingBox()
-  weldedGeometry.computeBoundingSphere()
-  return weldedGeometry
+  return finalizeGeometry(weldedGeometry)
 }
 
 async function loadGeometryFromUrl(url) {
@@ -85,9 +276,264 @@ function createIndexedGeometry(positions = [], indices = []) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-  return geometry
+  return finalizeGeometry(geometry)
+}
+
+function createIndexBuffer(indices = [], vertexCount = 0) {
+  const IndexArray = vertexCount > 65535 ? Uint32Array : Uint16Array
+  return new THREE.BufferAttribute(new IndexArray(indices), 1)
+}
+
+function replaceGeometryData(geometry, positions = [], indices = []) {
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
+  geometry.setIndex(createIndexBuffer(indices, positions.length / 3))
+  geometry.deleteAttribute('normal')
+  geometry.computeVertexNormals()
+  return finalizeGeometry(geometry)
+}
+
+function computeLoopNormal(loop = [], positions = []) {
+  const normal = new THREE.Vector3()
+
+  for (let index = 0; index < loop.length; index += 1) {
+    const currentOffset = loop[index] * 3
+    const nextOffset = loop[(index + 1) % loop.length] * 3
+    const currentX = positions[currentOffset]
+    const currentY = positions[currentOffset + 1]
+    const currentZ = positions[currentOffset + 2]
+    const nextX = positions[nextOffset]
+    const nextY = positions[nextOffset + 1]
+    const nextZ = positions[nextOffset + 2]
+
+    normal.x += (currentY - nextY) * (currentZ + nextZ)
+    normal.y += (currentZ - nextZ) * (currentX + nextX)
+    normal.z += (currentX - nextX) * (currentY + nextY)
+  }
+
+  return normal.normalize()
+}
+
+function projectLoopToPlane(loop = [], positions = [], dominantAxis = 'z') {
+  return loop.map(vertexIndex => {
+    const offset = vertexIndex * 3
+    const x = positions[offset]
+    const y = positions[offset + 1]
+    const z = positions[offset + 2]
+
+    if (dominantAxis === 'x') {
+      return new THREE.Vector2(y, z)
+    }
+
+    if (dominantAxis === 'y') {
+      return new THREE.Vector2(x, z)
+    }
+
+    return new THREE.Vector2(x, y)
+  })
+}
+
+function getTriangleOrientation(indices, positions, expectedNormal) {
+  const aOffset = indices[0] * 3
+  const bOffset = indices[1] * 3
+  const cOffset = indices[2] * 3
+  const ab = new THREE.Vector3(
+    positions[bOffset] - positions[aOffset],
+    positions[bOffset + 1] - positions[aOffset + 1],
+    positions[bOffset + 2] - positions[aOffset + 2]
+  )
+  const ac = new THREE.Vector3(
+    positions[cOffset] - positions[aOffset],
+    positions[cOffset + 1] - positions[aOffset + 1],
+    positions[cOffset + 2] - positions[aOffset + 2]
+  )
+
+  return ab.cross(ac).dot(expectedNormal)
+}
+
+function triangulateHoleLoop(loop = [], positions = []) {
+  if (loop.length < 3) {
+    return []
+  }
+
+  const loopNormal = computeLoopNormal(loop, positions)
+
+  if (!Number.isFinite(loopNormal.lengthSq()) || loopNormal.lengthSq() === 0) {
+    return []
+  }
+
+  const absNormal = {
+    x: Math.abs(loopNormal.x),
+    y: Math.abs(loopNormal.y),
+    z: Math.abs(loopNormal.z)
+  }
+
+  const dominantAxis = absNormal.x > absNormal.y && absNormal.x > absNormal.z
+    ? 'x'
+    : absNormal.y > absNormal.z
+      ? 'y'
+      : 'z'
+
+  const projectedLoop = projectLoopToPlane(loop, positions, dominantAxis)
+  const triangles = THREE.ShapeUtils.triangulateShape(projectedLoop, [])
+
+  if (!Array.isArray(triangles) || triangles.length === 0) {
+    return []
+  }
+
+  return triangles
+    .map(([aIndex, bIndex, cIndex]) => {
+      const triangle = [loop[aIndex], loop[bIndex], loop[cIndex]]
+
+      if (triangle[0] === triangle[1] || triangle[1] === triangle[2] || triangle[2] === triangle[0]) {
+        return null
+      }
+
+      if (getTriangleOrientation(triangle, positions, loopNormal) < 0) {
+        return [triangle[0], triangle[2], triangle[1]]
+      }
+
+      return triangle
+    })
+    .filter(Boolean)
+}
+
+function triangulateHoleLoopFallback(loop = []) {
+  const triangles = []
+
+  for (let index = 1; index < loop.length - 1; index += 1) {
+    triangles.push([loop[0], loop[index], loop[index + 1]])
+  }
+
+  return triangles
+}
+
+function getVertexDistanceSquared(positions = [], leftVertexIndex, rightVertexIndex) {
+  const leftOffset = leftVertexIndex * 3
+  const rightOffset = rightVertexIndex * 3
+  const dx = positions[leftOffset] - positions[rightOffset]
+  const dy = positions[leftOffset + 1] - positions[rightOffset + 1]
+  const dz = positions[leftOffset + 2] - positions[rightOffset + 2]
+  return dx * dx + dy * dy + dz * dz
+}
+
+function orientTriangleToNormal(triangle = [], positions = [], normal = new THREE.Vector3(0, 0, 1)) {
+  if (triangle.length !== 3) {
+    return triangle
+  }
+
+  return getTriangleOrientation(triangle, positions, normal) < 0
+    ? [triangle[0], triangle[2], triangle[1]]
+    : triangle
+}
+
+function getSelectedBoundaryGroups(loop = [], selectedVertexSet = new Set()) {
+  if (loop.length === 0) {
+    return []
+  }
+
+  const groups = []
+
+  for (let index = 0; index < loop.length; index += 1) {
+    const vertexIndex = loop[index]
+    if (!selectedVertexSet.has(vertexIndex)) {
+      continue
+    }
+
+    const previousVertex = loop[(index - 1 + loop.length) % loop.length]
+    if (selectedVertexSet.has(previousVertex)) {
+      continue
+    }
+
+    const group = []
+    let cursor = index
+
+    while (selectedVertexSet.has(loop[cursor])) {
+      group.push(loop[cursor])
+      cursor = (cursor + 1) % loop.length
+      if (cursor === index) {
+        break
+      }
+    }
+
+    groups.push(group)
+  }
+
+  return groups
+}
+
+function alignBridgeChains(chainA = [], chainB = [], positions = []) {
+  const directScore = getVertexDistanceSquared(positions, chainA[0], chainB[0])
+    + getVertexDistanceSquared(positions, chainA[chainA.length - 1], chainB[chainB.length - 1])
+  const reversed = [...chainB].reverse()
+  const reversedScore = getVertexDistanceSquared(positions, chainA[0], reversed[0])
+    + getVertexDistanceSquared(positions, chainA[chainA.length - 1], reversed[reversed.length - 1])
+
+  return reversedScore < directScore ? reversed : chainB
+}
+
+function buildBridgeTriangles(chainA = [], chainB = [], positions = [], normal = new THREE.Vector3(0, 0, 1)) {
+  const triangles = []
+  let leftIndex = 0
+  let rightIndex = 0
+
+  while (leftIndex < chainA.length - 1 || rightIndex < chainB.length - 1) {
+    let triangle = null
+
+    if (leftIndex === chainA.length - 1) {
+      triangle = [chainA[leftIndex], chainB[rightIndex], chainB[rightIndex + 1]]
+      rightIndex += 1
+    } else if (rightIndex === chainB.length - 1) {
+      triangle = [chainA[leftIndex], chainA[leftIndex + 1], chainB[rightIndex]]
+      leftIndex += 1
+    } else {
+      const advanceLeftScore = getVertexDistanceSquared(positions, chainA[leftIndex + 1], chainB[rightIndex])
+      const advanceRightScore = getVertexDistanceSquared(positions, chainA[leftIndex], chainB[rightIndex + 1])
+
+      if (advanceLeftScore <= advanceRightScore) {
+        triangle = [chainA[leftIndex], chainA[leftIndex + 1], chainB[rightIndex]]
+        leftIndex += 1
+      } else {
+        triangle = [chainA[leftIndex], chainB[rightIndex], chainB[rightIndex + 1]]
+        rightIndex += 1
+      }
+    }
+
+    if (triangle[0] !== triangle[1] && triangle[1] !== triangle[2] && triangle[2] !== triangle[0]) {
+      triangles.push(orientTriangleToNormal(triangle, positions, normal))
+    }
+  }
+
+  return triangles
+}
+
+function getBridgeAndFillCandidate(geometry, selectedVertexIndices = []) {
+  if (!geometry?.index || selectedVertexIndices.length < 4) {
+    return null
+  }
+
+  const selectedVertexSet = new Set(selectedVertexIndices)
+  const { loops } = getOrCreateBoundaryCache(geometry)
+  let bestCandidate = null
+
+  loops.forEach(loop => {
+    const groups = getSelectedBoundaryGroups(loop, selectedVertexSet)
+      .filter(group => group.length >= 2)
+
+    if (groups.length !== 2) {
+      return
+    }
+
+    const score = groups[0].length + groups[1].length
+    if (!bestCandidate || score > bestCandidate.score) {
+      bestCandidate = {
+        loop,
+        groups,
+        score
+      }
+    }
+  })
+
+  return bestCandidate
 }
 
 function geometryToMeshData(geometry) {
@@ -229,11 +675,13 @@ function buildHoleLoops(meshData, removedFaceIndices = []) {
   return loops
 }
 
-function getBoundaryEdgeRecords(meshData) {
+function getBoundaryEdgeRecords(indices = []) {
   const edgeRecords = new Map()
 
-  for (let faceIndex = 0; faceIndex < meshData.indices.length / 3; faceIndex += 1) {
-    const [a, b, c] = getFace(meshData, faceIndex)
+  for (let faceIndex = 0; faceIndex < indices.length / 3; faceIndex += 1) {
+    const a = indices[faceIndex * 3]
+    const b = indices[faceIndex * 3 + 1]
+    const c = indices[faceIndex * 3 + 2]
 
     ;[[a, b], [b, c], [c, a]].forEach(([start, end]) => {
       const key = start < end ? `${start}:${end}` : `${end}:${start}`
@@ -255,6 +703,26 @@ function getBoundaryEdgeRecords(meshData) {
   }
 
   return [...edgeRecords.values()].filter(record => record.count === 1)
+}
+
+function getOrCreateBoundaryCache(geometry) {
+  if (!geometry?.index) {
+    return { boundaryEdges: [], loops: [], boundaryEdgeMap: new Map() }
+  }
+
+  if (geometry.userData?.meshEditorBoundaryCache) {
+    return geometry.userData.meshEditorBoundaryCache
+  }
+
+  const boundaryEdges = getBoundaryEdgeRecords(geometry.index.array)
+  const cache = {
+    boundaryEdges,
+    loops: buildLoopsFromBoundaryEdges(boundaryEdges),
+    boundaryEdgeMap: new Map(boundaryEdges.map(edge => [edge.key, edge]))
+  }
+
+  geometry.userData.meshEditorBoundaryCache = cache
+  return cache
 }
 
 function buildLoopsFromBoundaryEdges(boundaryEdges = []) {
@@ -333,31 +801,25 @@ function buildLoopsFromBoundaryEdges(boundaryEdges = []) {
 }
 
 export function getGeometryHoleLoops(geometry) {
-  const meshData = geometryToMeshData(geometry)
-
-  if (meshData.indices.length === 0) {
+  if (!geometry?.index?.count) {
     return []
   }
 
-  return buildLoopsFromBoundaryEdges(getBoundaryEdgeRecords(meshData))
+  return getOrCreateBoundaryCache(geometry).loops
 }
 
 export function getSelectedHoleLoops(geometry, { selectionMode = 'face', selectedFaceIndices = [], selectedVertexIndices = [] } = {}) {
-  const meshData = geometryToMeshData(geometry)
-
-  if (meshData.indices.length === 0) {
+  if (!geometry?.index?.count) {
     return []
   }
 
-  const boundaryEdges = getBoundaryEdgeRecords(meshData)
-  const loops = buildLoopsFromBoundaryEdges(boundaryEdges)
+  const { boundaryEdgeMap, loops } = getOrCreateBoundaryCache(geometry)
 
   if (selectionMode === 'vertex') {
     const selectedVertexSet = new Set(selectedVertexIndices)
     return loops.filter(loop => loop.some(vertexIndex => selectedVertexSet.has(vertexIndex)))
   }
 
-  const boundaryEdgeMap = new Map(boundaryEdges.map(edge => [edge.key, edge]))
   const selectedFaceSet = new Set(selectedFaceIndices)
 
   return loops.filter(loop => loop.some((vertexIndex, index) => {
@@ -417,9 +879,16 @@ export function deleteSelectedVertices(geometry, selectedVertexIndices = []) {
 }
 
 export function smoothSelectedVertices(geometry, selectedVertexIndices = [], strength = 0.45) {
-  const meshData = geometryToMeshData(geometry)
-  const nextPositions = [...meshData.positions]
-  const neighbors = buildNeighborMap(meshData.indices)
+  if (!geometry?.attributes?.position || !geometry?.index || selectedVertexIndices.length === 0) {
+    return geometry?.clone?.() || geometry
+  }
+
+  const positionAttribute = geometry.attributes.position
+  const positions = positionAttribute.array
+  const indices = geometry.index.array
+  const neighbors = buildNeighborMap(indices)
+  let minVertexIndex = Number.POSITIVE_INFINITY
+  let maxVertexIndex = Number.NEGATIVE_INFINITY
 
   selectedVertexIndices.forEach(vertexIndex => {
     const adjacent = [...(neighbors.get(vertexIndex) || [])]
@@ -430,25 +899,37 @@ export function smoothSelectedVertices(geometry, selectedVertexIndices = [], str
     const average = new THREE.Vector3()
     adjacent.forEach(neighborIndex => {
       average.add(new THREE.Vector3(
-        meshData.positions[neighborIndex * 3],
-        meshData.positions[neighborIndex * 3 + 1],
-        meshData.positions[neighborIndex * 3 + 2]
+        positions[neighborIndex * 3],
+        positions[neighborIndex * 3 + 1],
+        positions[neighborIndex * 3 + 2]
       ))
     })
     average.multiplyScalar(1 / adjacent.length)
 
     const current = new THREE.Vector3(
-      meshData.positions[vertexIndex * 3],
-      meshData.positions[vertexIndex * 3 + 1],
-      meshData.positions[vertexIndex * 3 + 2]
+      positions[vertexIndex * 3],
+      positions[vertexIndex * 3 + 1],
+      positions[vertexIndex * 3 + 2]
     ).lerp(average, strength)
 
-    nextPositions[vertexIndex * 3] = current.x
-    nextPositions[vertexIndex * 3 + 1] = current.y
-    nextPositions[vertexIndex * 3 + 2] = current.z
+    positions[vertexIndex * 3] = current.x
+    positions[vertexIndex * 3 + 1] = current.y
+    positions[vertexIndex * 3 + 2] = current.z
+    minVertexIndex = Math.min(minVertexIndex, vertexIndex)
+    maxVertexIndex = Math.max(maxVertexIndex, vertexIndex)
   })
 
-  return createIndexedGeometry(nextPositions, meshData.indices)
+  if (Number.isFinite(minVertexIndex) && Number.isFinite(maxVertexIndex)) {
+    markAttributeUpdateRange(positionAttribute, minVertexIndex * 3, (maxVertexIndex - minVertexIndex + 1) * 3)
+  } else {
+    positionAttribute.needsUpdate = true
+  }
+
+  recomputeVertexNormalsLocally(geometry, selectedVertexIndices)
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  refitSpatialIndex(geometry)
+  return geometry
 }
 
 export function mergeSelectedVertices(geometry, selectedVertexIndices = []) {
@@ -532,7 +1013,6 @@ export function fillHoleLoops(geometry, holeLoops = []) {
   }
 
   const meshData = geometryToMeshData(geometry)
-  const nextPositions = [...meshData.positions]
   const nextIndices = [...meshData.indices]
 
   holeLoops.forEach(loop => {
@@ -540,45 +1020,97 @@ export function fillHoleLoops(geometry, holeLoops = []) {
       return
     }
 
-    const centroid = new THREE.Vector3()
-    loop.forEach(vertexIndex => {
-      centroid.add(new THREE.Vector3(
-        meshData.positions[vertexIndex * 3],
-        meshData.positions[vertexIndex * 3 + 1],
-        meshData.positions[vertexIndex * 3 + 2]
-      ))
-    })
-    centroid.multiplyScalar(1 / loop.length)
-
-    const centerIndex = nextPositions.length / 3
-    nextPositions.push(centroid.x, centroid.y, centroid.z)
-
-    for (let index = 0; index < loop.length; index += 1) {
-      const current = loop[index]
-      const next = loop[(index + 1) % loop.length]
-      nextIndices.push(current, next, centerIndex)
-    }
+    const triangles = triangulateHoleLoop(loop, meshData.positions)
+    const safeTriangles = triangles.length > 0 ? triangles : triangulateHoleLoopFallback(loop)
+    safeTriangles.forEach(triangle => nextIndices.push(...triangle))
   })
 
-  return createIndexedGeometry(nextPositions, nextIndices)
+  return replaceGeometryData(geometry, meshData.positions, nextIndices)
+}
+
+export function bridgeSelectedHoleSegments(geometry, selectedVertexIndices = []) {
+  const candidate = getBridgeAndFillCandidate(geometry, selectedVertexIndices)
+  if (!candidate) {
+    return {
+      geometry,
+      applied: false,
+      holeLoops: []
+    }
+  }
+
+  const meshData = geometryToMeshData(geometry)
+  const loopNormal = computeLoopNormal(candidate.loop, meshData.positions)
+  const chainA = candidate.groups[0]
+  const chainB = alignBridgeChains(candidate.groups[0], candidate.groups[1], meshData.positions)
+  const bridgeTriangles = buildBridgeTriangles(chainA, chainB, meshData.positions, loopNormal)
+
+  if (bridgeTriangles.length === 0) {
+    return {
+      geometry,
+      applied: false,
+      holeLoops: []
+    }
+  }
+
+  const nextIndices = [...meshData.indices]
+  bridgeTriangles.forEach(triangle => nextIndices.push(...triangle))
+  replaceGeometryData(geometry, meshData.positions, nextIndices)
+
+  return {
+    geometry,
+    applied: true,
+    holeLoops: getSelectedHoleLoops(geometry, {
+      selectionMode: 'vertex',
+      selectedVertexIndices
+    })
+  }
+}
+
+export function bridgeAndFillSelectedHole(geometry, selectedVertexIndices = []) {
+  const bridgeResult = bridgeSelectedHoleSegments(geometry, selectedVertexIndices)
+  if (!bridgeResult.applied) {
+    return {
+      geometry,
+      applied: false
+    }
+  }
+
+  const reducedLoops = bridgeResult.holeLoops
+
+  if (reducedLoops.length > 0) {
+    fillHoleLoops(geometry, reducedLoops)
+  }
+
+  return {
+    geometry,
+    applied: true
+  }
 }
 
 export function getFaceSelectionGeometry(geometry, selectedFaceIndices = []) {
-  const meshData = geometryToMeshData(geometry)
-  const positions = []
+  if (!geometry?.attributes?.position || !geometry?.index || selectedFaceIndices.length === 0) {
+    return new THREE.BufferGeometry()
+  }
+
+  const sourcePositions = geometry.attributes.position.array
+  const indices = geometry.index.array
+  const positions = new Float32Array(selectedFaceIndices.length * 9)
+  let writeOffset = 0
 
   selectedFaceIndices.forEach(faceIndex => {
-    getFace(meshData, faceIndex).forEach(vertexIndex => {
-      positions.push(
-        meshData.positions[vertexIndex * 3],
-        meshData.positions[vertexIndex * 3 + 1],
-        meshData.positions[vertexIndex * 3 + 2]
-      )
-    })
+    const faceOffset = faceIndex * 3
+
+    for (let cornerIndex = 0; cornerIndex < 3; cornerIndex += 1) {
+      const vertexIndex = indices[faceOffset + cornerIndex] * 3
+      positions[writeOffset] = sourcePositions[vertexIndex]
+      positions[writeOffset + 1] = sourcePositions[vertexIndex + 1]
+      positions[writeOffset + 2] = sourcePositions[vertexIndex + 2]
+      writeOffset += 3
+    }
   })
 
   const selectionGeometry = new THREE.BufferGeometry()
-  selectionGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  selectionGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   selectionGeometry.computeVertexNormals()
   return selectionGeometry
 }
@@ -589,11 +1121,18 @@ export function getVertexSelectionPositions(geometry, selectedVertexIndices = []
     return []
   }
 
-  return selectedVertexIndices.flatMap(vertexIndex => [
-    positionAttribute.getX(vertexIndex),
-    positionAttribute.getY(vertexIndex),
-    positionAttribute.getZ(vertexIndex)
-  ])
+  const sourcePositions = positionAttribute.array
+  const positions = new Float32Array(selectedVertexIndices.length * 3)
+
+  selectedVertexIndices.forEach((vertexIndex, selectionIndex) => {
+    const sourceOffset = vertexIndex * 3
+    const targetOffset = selectionIndex * 3
+    positions[targetOffset] = sourcePositions[sourceOffset]
+    positions[targetOffset + 1] = sourcePositions[sourceOffset + 1]
+    positions[targetOffset + 2] = sourcePositions[sourceOffset + 2]
+  })
+
+  return positions
 }
 
 export function getClosestVertexIndex(geometry, faceIndex, point) {
@@ -611,12 +1150,10 @@ export function getClosestVertexIndex(geometry, faceIndex, point) {
   let closestDistance = Number.POSITIVE_INFINITY
 
   candidates.forEach(vertexIndex => {
-    const vertex = new THREE.Vector3(
-      positionAttribute.getX(vertexIndex),
-      positionAttribute.getY(vertexIndex),
-      positionAttribute.getZ(vertexIndex)
-    )
-    const distance = vertex.distanceTo(point)
+    const dx = positionAttribute.getX(vertexIndex) - point.x
+    const dy = positionAttribute.getY(vertexIndex) - point.y
+    const dz = positionAttribute.getZ(vertexIndex) - point.z
+    const distance = dx * dx + dy * dy + dz * dz
     if (distance < closestDistance) {
       closestDistance = distance
       closestVertex = vertexIndex

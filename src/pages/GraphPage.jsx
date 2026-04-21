@@ -28,6 +28,8 @@ import './GraphPage.css'
 
 const DEFAULT_OUTPUT_ID = 'output-0'
 const DEFAULT_INPUT_ID = 'input-0'
+const IMAGE_COMPARE_NODE_TYPE_NAME = 'Image Compare'
+const IMAGE_COMPARE_INPUT_IDS = ['input-0', 'input-1']
 const LEGACY_INPUT_ID = 'image-input'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 const IMAGE_API_LIST = [
@@ -37,7 +39,7 @@ const IMAGE_API_LIST = [
   { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
   { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' }
 ]
-const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh', 'Number', 'Text', 'Boolean']
+const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh', IMAGE_COMPARE_NODE_TYPE_NAME, 'Number', 'Text', 'Boolean']
 const CONNECTOR_TYPE_META = {
   image: { key: 'image', label: 'Image', letter: 'I', color: '#8ff5ff', background: 'rgba(143, 245, 255, 0.14)' },
   mesh: { key: 'mesh', label: 'Mesh', letter: 'M', color: '#ac89ff', background: 'rgba(172, 137, 255, 0.14)' },
@@ -57,6 +59,10 @@ function normalizeCustomApiType(type) {
 function getNodeKind(nodeTypeName = '') {
   const normalizedNodeType = String(nodeTypeName).trim().toLowerCase()
 
+  if (normalizedNodeType === 'image compare') {
+    return 'imageCompare'
+  }
+
   if (['mesh', 'mesh gen'].includes(normalizedNodeType)) {
     return 'meshGen'
   }
@@ -70,6 +76,10 @@ function getNodeKind(nodeTypeName = '') {
 
 function getDefaultNodeOutputType(nodeTypeName = '') {
   const nodeKind = getNodeKind(nodeTypeName)
+
+  if (nodeKind === 'imageCompare') {
+    return null
+  }
 
   if (nodeKind === 'meshGen') {
     return 'mesh'
@@ -195,6 +205,16 @@ function getConnectorPosition(index, total) {
 }
 
 function buildInputConnectors(nodeId, currentNodes, currentEdges) {
+  const targetNode = currentNodes.find(node => node.id === String(nodeId))
+
+  if (targetNode?.data?.nodeKind === 'imageCompare') {
+    return IMAGE_COMPARE_INPUT_IDS.map(handleId => ({
+      id: handleId,
+      type: 'image',
+      isConnected: currentEdges.some(edge => edge.target === String(nodeId) && (edge.targetHandle || DEFAULT_INPUT_ID) === handleId)
+    }))
+  }
+
   const incomingEdges = currentEdges
     .filter(edge => edge.target === String(nodeId))
     .sort((leftEdge, rightEdge) => compareHandleIds(leftEdge.targetHandle || DEFAULT_INPUT_ID, rightEdge.targetHandle || DEFAULT_INPUT_ID))
@@ -260,6 +280,14 @@ function getAssetPreviewUrl(filename) {
   }
 
   return `http://localhost:3001/assets/${encodeURI(filename)}`
+}
+
+function appendCacheBust(url, cacheKey) {
+  if (!url) {
+    return null
+  }
+
+  return `${url}${url.includes('?') ? '&' : '?'}refresh=${encodeURIComponent(String(cacheKey))}`
 }
 
 function buildMeshEditorPath({ asset, projectId, nodeId, returnTo }) {
@@ -1410,6 +1438,163 @@ function GraphAssetNode({ data }) {
   )
 }
 
+function GraphImageCompareNode({ data }) {
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [comparePosition, setComparePosition] = useState(50)
+  const inputConnectors = data.inputConnectors || IMAGE_COMPARE_INPUT_IDS.map(id => ({ id, type: 'image', isConnected: false }))
+  const leftSource = (data.inputSources || []).find(source => source.connectorId === IMAGE_COMPARE_INPUT_IDS[0]) || null
+  const rightSource = (data.inputSources || []).find(source => source.connectorId === IMAGE_COMPARE_INPUT_IDS[1]) || null
+  const leftAsset = leftSource?.asset || null
+  const rightAsset = rightSource?.asset || null
+  const leftPreviewUrl = appendCacheBust(getAssetPreviewUrl(leftAsset?.thumbnail || leftAsset?.filename), refreshKey)
+  const rightPreviewUrl = appendCacheBust(getAssetPreviewUrl(rightAsset?.thumbnail || rightAsset?.filename), refreshKey)
+  const hasBothImages = Boolean(leftPreviewUrl && rightPreviewUrl)
+  const nodeDisplayName = data.name || data.nodeTypeName || IMAGE_COMPARE_NODE_TYPE_NAME
+  const connectedInputCount = inputConnectors.filter(connector => connector.isConnected).length
+
+  useEffect(() => {
+    setComparePosition(50)
+  }, [leftPreviewUrl, rightPreviewUrl])
+
+  const handlePointerMove = useCallback((event) => {
+    if (!hasBothImages) {
+      return
+    }
+
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (!bounds.width) {
+      return
+    }
+
+    const nextPosition = ((event.clientX - bounds.left) / bounds.width) * 100
+    setComparePosition(Math.max(0, Math.min(100, nextPosition)))
+  }, [hasBothImages])
+
+  return (
+    <div className="graph-node graph-node--imageCompare">
+      {inputConnectors.map((connector, index) => {
+        const connectorMeta = getConnectorTypeMeta(connector.type)
+
+        return (
+          <div
+            key={connector.id}
+            className="graph-node__connector graph-node__connector--input"
+            style={getConnectorPosition(index, inputConnectors.length)}
+          >
+            <Handle
+              type="target"
+              id={connector.id}
+              position={Position.Left}
+              className="graph-node__handle graph-node__handle--input"
+              style={{ borderColor: connectorMeta.color }}
+            />
+            <span
+              className="graph-node__connector-badge font-label"
+              style={{
+                color: connectorMeta.color,
+                background: connectorMeta.background,
+                borderColor: connectorMeta.color
+              }}
+              title={connectorMeta.label}
+            >
+              {connectorMeta.letter}
+            </span>
+          </div>
+        )
+      })}
+
+      <div className="graph-node__compare-card">
+        <div className="graph-node__compare-header">
+          <div className="graph-node__compare-title-group">
+            <input
+              type="text"
+              className="graph-node__name-input nodrag"
+              value={nodeDisplayName}
+              placeholder={IMAGE_COMPARE_NODE_TYPE_NAME}
+              onChange={event => data.onNodeNameChange?.(data.id, event.target.value)}
+              onBlur={event => data.onNodeNameCommit?.(data.id, event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  event.currentTarget.blur()
+                }
+              }}
+            />
+            <span className="graph-node__compare-type font-label">COMPARE</span>
+          </div>
+
+          <button
+            type="button"
+            className="image-card__action-btn image-card__delete nodrag"
+            style={{ opacity: 1, flexShrink: 0 }}
+            onClick={() => data.onDelete?.(data.id)}
+            title="Delete node"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
+          </button>
+        </div>
+
+        <div className="graph-node__compare-body">
+          <div
+            className={`graph-node__compare-stage nodrag ${hasBothImages ? 'graph-node__compare-stage--active' : ''}`}
+            onPointerMove={handlePointerMove}
+          >
+            {hasBothImages ? (
+              <>
+                <img src={rightPreviewUrl} alt={rightAsset?.name || 'Right comparison image'} className="graph-node__compare-image" draggable={false} />
+                <img
+                  src={leftPreviewUrl}
+                  alt={leftAsset?.name || 'Left comparison image'}
+                  className="graph-node__compare-image graph-node__compare-image--overlay"
+                  style={{ clipPath: `inset(0 ${100 - comparePosition}% 0 0)` }}
+                  draggable={false}
+                />
+                <div className="graph-node__compare-divider" style={{ left: `${comparePosition}%` }}>
+                  <span className="material-symbols-outlined">compare_arrows</span>
+                </div>
+              </>
+            ) : (
+              <div className="graph-node__compare-placeholder">
+                {[leftSource, rightSource].map((source, index) => (
+                  <div key={IMAGE_COMPARE_INPUT_IDS[index]} className="graph-node__compare-slot">
+                    <span className="material-symbols-outlined">image</span>
+                    <span>{source?.label || `Connect image ${index + 1}`}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="graph-node__compare-caption font-label">
+              <span>{leftSource?.label || 'Left image'}</span>
+              <span>{rightSource?.label || 'Right image'}</span>
+            </div>
+          </div>
+
+          <p className="image-card__meta font-label">
+            {hasBothImages
+              ? 'Move across the preview to inspect the differences between both inputs.'
+              : 'Connect two image outputs to enable the comparer.'}
+          </p>
+
+          <div className="graph-node__ports-summary font-label">
+            <span className="graph-node__port-label">Inputs · {connectedInputCount}/2 connected</span>
+          </div>
+
+          <button
+            type="button"
+            className="image-card__edit-action-btn graph-node__compare-refresh nodrag"
+            onClick={() => setRefreshKey(current => current + 1)}
+            disabled={!hasBothImages}
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>refresh</span>
+            Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function GraphValueNode({ data }) {
   const nodeKind = data.nodeKind
   const outputMeta = getConnectorTypeMeta(nodeKind)
@@ -1526,6 +1711,7 @@ function GraphValueNode({ data }) {
 const flowNodeTypes = {
   image: GraphAssetNode,
   imageEdit: GraphAssetNode,
+  imageCompare: GraphImageCompareNode,
   meshGen: GraphAssetNode,
   number: GraphValueNode,
   text: GraphValueNode,
@@ -2058,7 +2244,11 @@ export default function GraphPage({ project }) {
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
-    dragHandle: isValueNodeKind(node.data.nodeKind) ? '.graph-node__value-card' : '.graph-node__card',
+    dragHandle: isValueNodeKind(node.data.nodeKind)
+      ? '.graph-node__value-card'
+      : node.data.nodeKind === 'imageCompare'
+        ? '.graph-node__compare-header'
+        : '.graph-node__card',
     data: {
       ...node.data,
       inputConnectors: buildInputConnectors(node.id, nodes, edges),
@@ -2964,7 +3154,20 @@ export default function GraphPage({ project }) {
       return
     }
 
+    const sourceNode = nodes.find(node => node.id === String(connection.source))
+    const targetNode = nodes.find(node => node.id === String(connection.target))
+
+    if (!sourceNode || !targetNode) {
+      return
+    }
+
     const targetHandleId = connection.targetHandle || DEFAULT_INPUT_ID
+    if (targetNode.data.nodeKind === 'imageCompare') {
+      if (!IMAGE_COMPARE_INPUT_IDS.includes(targetHandleId) || getNodeOutputType(sourceNode) !== 'image') {
+        return
+      }
+    }
+
     if (edges.some(edge => edge.target === String(connection.target) && (edge.targetHandle || DEFAULT_INPUT_ID) === targetHandleId)) {
       return
     }
@@ -2984,7 +3187,31 @@ export default function GraphPage({ project }) {
 
       return addEdge(nextEdge, currentEdges)
     })
-  }, [createProjectConnection, edges, project.id, setEdges])
+  }, [createProjectConnection, edges, nodes, project.id, setEdges])
+
+  const isValidConnection = useCallback((connection) => {
+    if (!connection.source || !connection.target) {
+      return false
+    }
+
+    const sourceNode = nodes.find(node => node.id === String(connection.source))
+    const targetNode = nodes.find(node => node.id === String(connection.target))
+
+    if (!sourceNode || !targetNode || sourceNode.id === targetNode.id) {
+      return false
+    }
+
+    const targetHandleId = connection.targetHandle || DEFAULT_INPUT_ID
+    if (edges.some(edge => edge.target === String(connection.target) && (edge.targetHandle || DEFAULT_INPUT_ID) === targetHandleId)) {
+      return false
+    }
+
+    if (targetNode.data.nodeKind === 'imageCompare') {
+      return IMAGE_COMPARE_INPUT_IDS.includes(targetHandleId) && getNodeOutputType(sourceNode) === 'image'
+    }
+
+    return true
+  }, [edges, nodes])
 
   const handlePaneClick = useCallback(() => {
     if (nodePicker) {
@@ -3133,6 +3360,7 @@ export default function GraphPage({ project }) {
   const showEmptyState = !loading && nodes.length === 0
   const minimapNodeColor = useCallback((node) => {
     if (node.type === 'meshGen') return '#79e388'
+    if (node.type === 'imageCompare') return '#ff9a62'
     if (node.type === 'text') return '#ffd36e'
     if (node.type === 'boolean') return '#ff7fc8'
     if (node.type === 'number') return '#79e388'
@@ -3204,6 +3432,7 @@ export default function GraphPage({ project }) {
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               onConnect={handleConnect}
+              isValidConnection={isValidConnection}
               onPaneClick={handlePaneClick}
               onPaneContextMenu={handlePaneContextMenu}
               onNodeDragStop={handleNodeDragStop}
