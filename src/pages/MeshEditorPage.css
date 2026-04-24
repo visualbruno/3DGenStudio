@@ -145,6 +145,9 @@
 .mesh-editor-panel--compact {
     gap: 0.9rem;
     padding: 0.9rem;
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
+    min-height: 0;
 }
 
 .mesh-editor-panel__label {
@@ -478,6 +481,11 @@
   .mesh-editor-panel--actions,
   .mesh-editor-panel__scroll {
     max-height: none;
+  }
+
+  .mesh-editor-panel--compact {
+    max-height: none;
+    overflow-y: visible;
   }
 
   .mesh-editor-canvas-shell {

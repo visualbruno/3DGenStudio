@@ -191,7 +191,7 @@ function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices }) {
   )
 }
 
-function TexturedMesh({ root, textureKey, displayTexture, maskTexture }) {
+function TexturedMesh({ root, textureKey, displayTexture }) {
   const baseObject = useMemo(() => {
     if (!root || !displayTexture) {
       return null
@@ -238,63 +238,13 @@ function TexturedMesh({ root, textureKey, displayTexture, maskTexture }) {
     return object
   }, [displayTexture, root, textureKey])
 
-  const overlayObject = useMemo(() => {
-    if (!root || !maskTexture || !textureKey) {
-      return null
-    }
-
-    const object = root.clone(true)
-    const materials = []
-
-    object.traverse(child => {
-      if (!child.isMesh) {
-        return
-      }
-
-      const sourceMaterials = Array.isArray(child.material)
-        ? child.material
-        : [child.material]
-      const shouldShowOverlay = sourceMaterials.some(material => getTextureKeyFromMaterial(material) === textureKey)
-
-      child.visible = shouldShowOverlay
-
-      if (!shouldShowOverlay) {
-        return
-      }
-
-      const overlayMaterial = new THREE.MeshBasicMaterial({
-        color: '#66efff',
-        transparent: true,
-        opacity: 0.56,
-        alphaMap: maskTexture,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1,
-        side: THREE.DoubleSide,
-        toneMapped: false
-      })
-
-      child.material = overlayMaterial
-      materials.push(overlayMaterial)
-    })
-
-    object.userData.meshEditorMaterials = materials
-    return object
-  }, [maskTexture, root, textureKey])
-
   useEffect(() => () => {
     baseObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())
   }, [baseObject])
 
-  useEffect(() => () => {
-    overlayObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())
-  }, [overlayObject])
-
   return (
     <group>
       {baseObject && <primitive object={baseObject} />}
-      {overlayObject && <primitive object={overlayObject} />}
     </group>
   )
 }
@@ -613,6 +563,28 @@ export default function MeshEditorPage() {
     setSelectedVertexIndices([])
   }, [])
 
+  useEffect(() => {
+    if (activeMenu !== 'texturing') {
+      return
+    }
+
+    dragStateRef.current = null
+    resetSelection()
+    setSelectionBox(null)
+  }, [activeMenu, resetSelection])
+
+  useEffect(() => {
+    if (activeMenu !== 'texturing') {
+      return
+    }
+
+    if (selectedFaceIndices.length === 0 && selectedVertexIndices.length === 0) {
+      return
+    }
+
+    resetSelection()
+  }, [activeMenu, resetSelection, selectedFaceIndices, selectedVertexIndices])
+
   const applySelection = useCallback((type, nextSelection, isMultiSelect) => {
     setFeedback('')
 
@@ -681,7 +653,7 @@ export default function MeshEditorPage() {
   }, [])
 
   const selectAtPoint = useCallback((point, isMultiSelect) => {
-    if (!geometry || !cameraRef.current || !canvasShellRef.current) {
+    if (activeMenu === 'texturing' || !geometry || !cameraRef.current || !canvasShellRef.current) {
       return
     }
 
@@ -719,7 +691,7 @@ export default function MeshEditorPage() {
     if (intersection.faceIndex !== undefined && intersection.faceIndex !== null) {
       applySelection('face', [intersection.faceIndex], isMultiSelect)
     }
-  }, [applySelection, geometry, resetSelection, selectionMesh, selectionMode])
+  }, [activeMenu, applySelection, geometry, resetSelection, selectionMesh, selectionMode])
 
   const getMeshIntersection = useCallback((point, targetObject) => {
     if (!targetObject || !cameraRef.current || !canvasShellRef.current) {
@@ -745,7 +717,7 @@ export default function MeshEditorPage() {
   }, [])
 
   const selectWithinRectangle = useCallback((startPoint, endPoint, isMultiSelect) => {
-    if (!geometry || !cameraRef.current || !canvasShellRef.current) {
+    if (activeMenu === 'texturing' || !geometry || !cameraRef.current || !canvasShellRef.current) {
       return
     }
 
@@ -799,7 +771,7 @@ export default function MeshEditorPage() {
     })
 
     applySelection('face', [...nextFaces].sort((left, right) => left - right), isMultiSelect)
-  }, [applySelection, createRectangleSamplePoints, geometry, selectionMesh, selectionMode])
+  }, [activeMenu, applySelection, createRectangleSamplePoints, geometry, selectionMesh, selectionMode])
 
   const getPointerPosition = useCallback((event) => {
     const rect = canvasShellRef.current?.getBoundingClientRect()
@@ -828,6 +800,10 @@ export default function MeshEditorPage() {
       if (!texturingReady || !texturableMesh?.root || !texturableMesh?.maskCanvas) {
         return
       }
+
+      dragStateRef.current = null
+      resetSelection()
+      setSelectionBox(null)
 
       const intersection = getMeshIntersection(nextPoint, texturableMesh.root)
       if (!intersection?.uv) {
@@ -879,7 +855,7 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, resetSelection, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
     if (activeMenu === 'texturing') {
@@ -988,8 +964,9 @@ export default function MeshEditorPage() {
     }
 
     dragStateRef.current = null
+    resetSelection()
     setSelectionBox(null)
-  }, [])
+  }, [resetSelection])
 
   const handleTextureWorkflowInputChange = useCallback((parameter, rawValue) => {
     const valueType = getWorkflowValueType(parameter)
@@ -1560,7 +1537,6 @@ export default function MeshEditorPage() {
                         root={texturableMesh.root}
                         textureKey={texturableMesh.textureKey}
                         displayTexture={displayTextureRef.current}
-                        maskTexture={maskTextureRef.current}
                       />
                     ) : (
                       <EditorMesh
