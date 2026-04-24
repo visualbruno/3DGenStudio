@@ -1,0 +1,98 @@
+{
+  "59": {
+    "inputs": {
+      "filename_prefix": [
+        "62",
+        0
+      ],
+      "images": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "60": {
+    "inputs": {
+      "model": "RMBG-2.0",
+      "sensitivity": 1,
+      "process_res": 1024,
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": false,
+      "background": "Alpha",
+      "background_color": "#000000",
+      "image": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "RMBG",
+    "_meta": {
+      "title": "Remove Background (RMBG)"
+    }
+  },
+  "61": {
+    "inputs": {
+      "string": "NoBg/Image_"
+    },
+    "class_type": "StringConstant",
+    "_meta": {
+      "title": "String Constant"
+    }
+  },
+  "62": {
+    "inputs": {
+      "delimiter": "",
+      "string1": [
+        "61",
+        0
+      ],
+      "string2": [
+        "66",
+        0
+      ]
+    },
+    "class_type": "JoinStrings",
+    "_meta": {
+      "title": "Join Strings"
+    }
+  },
+  "63": {
+    "inputs": {
+      "image": [
+        "71",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "66": {
+    "inputs": {
+      "input1": [
+        "63",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2String",
+    "_meta": {
+      "title": "Convert to String"
+    }
+  },
+  "71": {
+    "inputs": {
+      "image": "Image_00001_.png"
+    },
+    "class_type": "Trellis2LoadImageWithTransparency",
+    "_meta": {
+      "title": "Source Image"
+    }
+  }
+}

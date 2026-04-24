@@ -13,7 +13,7 @@ import {
   bridgeAndFillSelectedHole,
   deleteSelectedFaces,
   deleteSelectedVertices,
-  exportGeometryToObj,
+  exportGeometryToGlb,
   fillHoleLoops,
   geometryFaceCount,
   getClosestVertexIndex,
@@ -25,6 +25,27 @@ import {
   smoothSelectedVertices,
   subdivideSelectedFaces
 } from '../utils/meshEditor'
+import {
+  applyProjectedTexturePatch,
+  buildAssetUrl,
+  canvasToFile,
+  captureTexturedMeshView,
+  clearCanvas,
+  createCanvasTexture,
+  createExecutionId,
+  createTexturePaintWorkflowDraft,
+  cropCanvas,
+  drawCanvasStroke,
+  drawUvStroke,
+  exportTexturedMeshToGlb,
+  getDefaultTextureWorkflowParameterIds,
+  getMaskBoundingBox,
+  getTextureKeyFromMaterial,
+  getUvIslandHitInfo,
+  getWorkflowValueType,
+  loadTexturableMeshFromUrl,
+  updateCanvasTexture
+} from '../utils/meshTexturing'
 import './MeshEditorPage.css'
 
 function getRectangleBounds(startPoint, endPoint) {
@@ -36,10 +57,40 @@ function getRectangleBounds(startPoint, endPoint) {
   }
 }
 
-function CameraRig({ geometry, onCameraReady }) {
+function loadImageElement(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.crossOrigin = 'anonymous'
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('Failed to load the generated texture result.'))
+    image.src = url
+  })
+}
+
+function pickGeneratedTextureAsset(generatedAssets = []) {
+  if (!Array.isArray(generatedAssets) || generatedAssets.length === 0) {
+    return null
+  }
+
+  const preferredAsset = generatedAssets.find(asset => {
+    const descriptor = [
+      asset?.outputKey,
+      asset?.name,
+      asset?.filename,
+      asset?.filePath,
+      asset?.metadata?.outputFilename
+    ].join(' ').toLowerCase()
+
+    return !/\b(mask|alpha|matte|preview|depth|normal)\b/.test(descriptor)
+  })
+
+  return preferredAsset || generatedAssets[0]
+}
+
+function CameraRig({ geometry, onCameraReady, controlsEnabled = true }) {
   const { camera } = useThree()
   const controlsRef = useRef(null)
-  const boundsRef = useRef({ minDistance: 0.001, maxDistance: 100 })
+  const [distanceBounds, setDistanceBounds] = useState({ minDistance: 0.001, maxDistance: 100 })
 
   useEffect(() => {
     onCameraReady?.(camera)
@@ -58,11 +109,14 @@ function CameraRig({ geometry, onCameraReady }) {
     const minDistance = Math.max(radius * 0.0025, 0.0005)
     const maxDistance = Math.max(radius * 24, 24)
 
-    boundsRef.current = { minDistance, maxDistance }
+    setDistanceBounds({ minDistance, maxDistance })
 
     camera.position.set(center.x + distance, center.y + distance * 0.65, center.z + distance)
-    camera.near = Math.max(radius * 0.00005, 0.0001)
-    camera.far = Math.max(radius * 80, 4000)
+    // eslint-disable-next-line react-hooks/immutability
+    Object.assign(camera, {
+      near: Math.max(radius * 0.00005, 0.0001),
+      far: Math.max(radius * 80, 4000)
+    })
     camera.lookAt(center)
     camera.updateProjectionMatrix()
 
@@ -78,9 +132,10 @@ function CameraRig({ geometry, onCameraReady }) {
     <OrbitControls
       ref={controlsRef}
       makeDefault
+      enabled={controlsEnabled}
       enableDamping
-      minDistance={boundsRef.current.minDistance}
-      maxDistance={boundsRef.current.maxDistance}
+      minDistance={distanceBounds.minDistance}
+      maxDistance={distanceBounds.maxDistance}
       mouseButtons={{
         LEFT: null,
         MIDDLE: THREE.MOUSE.ROTATE,
@@ -136,16 +191,142 @@ function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices }) {
   )
 }
 
+function TexturedMesh({ root, textureKey, displayTexture, maskTexture }) {
+  const baseObject = useMemo(() => {
+    if (!root || !displayTexture) {
+      return null
+    }
+
+    const object = root.clone(true)
+    const materials = []
+
+    object.traverse(child => {
+      if (!child.isMesh) {
+        return
+      }
+
+      child.castShadow = true
+      child.receiveShadow = true
+
+      if (Array.isArray(child.material)) {
+        child.material = child.material.map(material => {
+          const nextMaterial = material?.clone?.() || material
+          if (nextMaterial && getTextureKeyFromMaterial(material) === textureKey) {
+            nextMaterial.map = displayTexture
+            nextMaterial.needsUpdate = true
+          }
+          if (nextMaterial) {
+            materials.push(nextMaterial)
+          }
+          return nextMaterial
+        })
+        return
+      }
+
+      const nextMaterial = child.material?.clone?.() || child.material
+      if (nextMaterial && getTextureKeyFromMaterial(child.material) === textureKey) {
+        nextMaterial.map = displayTexture
+        nextMaterial.needsUpdate = true
+      }
+      child.material = nextMaterial
+      if (nextMaterial) {
+        materials.push(nextMaterial)
+      }
+    })
+
+    object.userData.meshEditorMaterials = materials
+    return object
+  }, [displayTexture, root, textureKey])
+
+  const overlayObject = useMemo(() => {
+    if (!root || !maskTexture || !textureKey) {
+      return null
+    }
+
+    const object = root.clone(true)
+    const materials = []
+
+    object.traverse(child => {
+      if (!child.isMesh) {
+        return
+      }
+
+      const sourceMaterials = Array.isArray(child.material)
+        ? child.material
+        : [child.material]
+      const shouldShowOverlay = sourceMaterials.some(material => getTextureKeyFromMaterial(material) === textureKey)
+
+      child.visible = shouldShowOverlay
+
+      if (!shouldShowOverlay) {
+        return
+      }
+
+      const overlayMaterial = new THREE.MeshBasicMaterial({
+        color: '#66efff',
+        transparent: true,
+        opacity: 0.56,
+        alphaMap: maskTexture,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1,
+        side: THREE.DoubleSide,
+        toneMapped: false
+      })
+
+      child.material = overlayMaterial
+      materials.push(overlayMaterial)
+    })
+
+    object.userData.meshEditorMaterials = materials
+    return object
+  }, [maskTexture, root, textureKey])
+
+  useEffect(() => () => {
+    baseObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())
+  }, [baseObject])
+
+  useEffect(() => () => {
+    overlayObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())
+  }, [overlayObject])
+
+  return (
+    <group>
+      {baseObject && <primitive object={baseObject} />}
+      {overlayObject && <primitive object={overlayObject} />}
+    </group>
+  )
+}
+
 export default function MeshEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { saveMeshEdit, uploadAssetThumbnail, updateProjectNode } = useProjects()
+  const {
+    getComfyWorkflows,
+    runComfyWorkflow,
+    saveMeshEdit,
+    subscribeToComfyWorkflowProgress,
+    updateProjectNode,
+    uploadAssetThumbnail
+  } = useProjects()
 
   const [showSettings, setShowSettings] = useState(false)
+  const [activeMenu, setActiveMenu] = useState('modeling')
   const [geometry, setGeometry] = useState(null)
+  const [texturableMesh, setTexturableMesh] = useState(null)
+  const [textureRevision, setTextureRevision] = useState(0)
+  const [comfyLoading, setComfyLoading] = useState(false)
+  const [comfyWorkflows, setComfyWorkflows] = useState([])
+  const [textureWorkflowId, setTextureWorkflowId] = useState('')
+  const [textureWorkflowInputs, setTextureWorkflowInputs] = useState({})
+  const [brushSize, setBrushSize] = useState(20)
+  const [cropPadding, setCropPadding] = useState(36)
+  const [featherRadius, setFeatherRadius] = useState(12)
   const [geometryRevision, setGeometryRevision] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [texturing, setTexturing] = useState(false)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
   const [selectionMode, setSelectionMode] = useState('face')
@@ -165,8 +346,109 @@ export default function MeshEditorPage() {
   const canvasShellRef = useRef(null)
   const cameraRef = useRef(null)
   const dragStateRef = useRef(null)
+  const paintStateRef = useRef(null)
+  const displayTextureRef = useRef(null)
+  const maskTextureRef = useRef(null)
+  const projectionMaskCanvasRef = useRef(null)
+  const projectionCameraRef = useRef(null)
+  const [hasProjectionMask, setHasProjectionMask] = useState(false)
 
   useEffect(() => () => geometry?.dispose?.(), [geometry])
+
+  useEffect(() => () => displayTextureRef.current?.dispose?.(), [])
+
+  useEffect(() => () => maskTextureRef.current?.dispose?.(), [])
+
+  const syncProjectionMaskCanvasSize = useCallback(() => {
+    const shell = canvasShellRef.current
+    const projectionMaskCanvas = projectionMaskCanvasRef.current
+
+    if (!shell || !projectionMaskCanvas) {
+      return
+    }
+
+    const rect = shell.getBoundingClientRect()
+    const width = Math.max(1, Math.round(rect.width))
+    const height = Math.max(1, Math.round(rect.height))
+
+    if (projectionMaskCanvas.width === width && projectionMaskCanvas.height === height) {
+      return
+    }
+
+    const previousCanvas = projectionMaskCanvas.width > 0 && projectionMaskCanvas.height > 0
+      ? Object.assign(document.createElement('canvas'), {
+          width: projectionMaskCanvas.width,
+          height: projectionMaskCanvas.height
+        })
+      : null
+
+    if (previousCanvas) {
+      previousCanvas.getContext('2d').drawImage(projectionMaskCanvas, 0, 0)
+    }
+
+    projectionMaskCanvas.width = width
+    projectionMaskCanvas.height = height
+
+    if (previousCanvas) {
+      projectionMaskCanvas.getContext('2d').drawImage(previousCanvas, 0, 0, width, height)
+    }
+
+    if (projectionCameraRef.current && 'aspect' in projectionCameraRef.current) {
+      projectionCameraRef.current.aspect = width / height
+      projectionCameraRef.current.updateProjectionMatrix?.()
+      projectionCameraRef.current.updateMatrixWorld?.(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    syncProjectionMaskCanvasSize()
+
+    if (typeof ResizeObserver === 'undefined' || !canvasShellRef.current) {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      syncProjectionMaskCanvasSize()
+    })
+
+    observer.observe(canvasShellRef.current)
+    return () => observer.disconnect()
+  }, [syncProjectionMaskCanvasSize])
+
+  useEffect(() => {
+    clearCanvas(projectionMaskCanvasRef.current)
+    projectionCameraRef.current = null
+    setHasProjectionMask(false)
+  }, [texturableMesh])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadWorkflows() {
+      try {
+        setComfyLoading(true)
+        const workflows = await getComfyWorkflows()
+
+        if (!cancelled) {
+          setComfyWorkflows(workflows)
+        }
+      } catch (workflowError) {
+        if (!cancelled) {
+          console.error('Failed to load ComfyUI workflows:', workflowError)
+        }
+      } finally {
+        if (!cancelled) {
+          setComfyLoading(false)
+        }
+      }
+    }
+
+    loadWorkflows()
+
+    return () => {
+      cancelled = true
+    }
+  }, [getComfyWorkflows])
 
   useEffect(() => {
     let cancelled = false
@@ -181,11 +463,30 @@ export default function MeshEditorPage() {
       try {
         setLoading(true)
         setError('')
-        const loadedGeometry = await loadEditableGeometryFromUrl(modelUrl)
+        const [loadedGeometry, loadedTexturableMesh] = await Promise.all([
+          loadEditableGeometryFromUrl(modelUrl),
+          loadTexturableMeshFromUrl(modelUrl).catch(textureError => ({
+            root: null,
+            textureCanvas: null,
+            textureKey: '',
+            textureConfig: null,
+            supportError: textureError.message || 'Texture editing is unavailable for this mesh.'
+          }))
+        ])
 
         if (!cancelled) {
           setGeometry(loadedGeometry)
+          setTexturableMesh(loadedTexturableMesh?.textureCanvas
+            ? {
+                ...loadedTexturableMesh,
+                maskCanvas: Object.assign(document.createElement('canvas'), {
+                  width: loadedTexturableMesh.textureCanvas.width,
+                  height: loadedTexturableMesh.textureCanvas.height
+                })
+              }
+            : loadedTexturableMesh)
           setGeometryRevision(0)
+          setTextureRevision(0)
           setSelectedFaceIndices([])
           setSelectedVertexIndices([])
           setHoleLoops([])
@@ -207,6 +508,76 @@ export default function MeshEditorPage() {
       cancelled = true
     }
   }, [modelUrl])
+
+  useEffect(() => {
+    displayTextureRef.current?.dispose?.()
+    maskTextureRef.current?.dispose?.()
+    displayTextureRef.current = null
+    maskTextureRef.current = null
+
+    if (!texturableMesh?.textureCanvas || !texturableMesh?.maskCanvas) {
+      return
+    }
+
+    displayTextureRef.current = createCanvasTexture(texturableMesh.textureCanvas, texturableMesh.textureConfig)
+    maskTextureRef.current = createCanvasTexture(texturableMesh.maskCanvas, texturableMesh.textureConfig)
+    setTextureRevision(current => current + 1)
+  }, [texturableMesh])
+
+  const texturingWorkflows = useMemo(() => {
+    return comfyWorkflows.filter(workflow => {
+      const valueTypes = (workflow.parameters || []).map(parameter => getWorkflowValueType(parameter))
+      const imageInputCount = valueTypes.filter(valueType => valueType === 'image').length
+      const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+
+      return imageInputCount === 2
+        && outputValueTypes.includes('image')
+        && valueTypes.every(valueType => ['image', 'string', 'number', 'boolean'].includes(valueType))
+    })
+  }, [comfyWorkflows])
+
+  useEffect(() => {
+    if (texturingWorkflows.length === 0) {
+      setTextureWorkflowId('')
+      return
+    }
+
+    setTextureWorkflowId(current => (
+      texturingWorkflows.some(workflow => String(workflow.id) === String(current))
+        ? current
+        : String(texturingWorkflows[0].id)
+    ))
+  }, [texturingWorkflows])
+
+  const selectedTextureWorkflow = useMemo(() => {
+    return texturingWorkflows.find(workflow => String(workflow.id) === String(textureWorkflowId)) || null
+  }, [textureWorkflowId, texturingWorkflows])
+
+  useEffect(() => {
+    setTextureWorkflowInputs(createTexturePaintWorkflowDraft(selectedTextureWorkflow))
+  }, [selectedTextureWorkflow])
+
+  const textureWorkflowParameterIds = useMemo(() => {
+    return getDefaultTextureWorkflowParameterIds(selectedTextureWorkflow)
+  }, [selectedTextureWorkflow])
+
+  const texturingUnavailableReason = useMemo(() => {
+    if (geometryRevision > 0) {
+      return 'Texture painting works on the original UV mesh. Save and reopen the mesh after topology edits to paint accurately.'
+    }
+
+    if (texturableMesh?.supportError) {
+      return texturableMesh.supportError
+    }
+
+    if (!texturableMesh?.textureCanvas || !texturableMesh?.maskCanvas) {
+      return 'Texture painting is unavailable for this mesh.'
+    }
+
+    return ''
+  }, [geometryRevision, texturableMesh])
+
+  const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
 
   const stats = useMemo(() => ({
     vertices: geometry?.attributes?.position?.count || 0,
@@ -232,6 +603,10 @@ export default function MeshEditorPage() {
     mesh.updateMatrixWorld(true)
     return mesh
   }, [geometry])
+
+  const textureWorkflowParameters = useMemo(() => {
+    return (selectedTextureWorkflow?.parameters || []).filter(parameter => getWorkflowValueType(parameter) !== 'image')
+  }, [selectedTextureWorkflow])
 
   const resetSelection = useCallback(() => {
     setSelectedFaceIndices([])
@@ -346,6 +721,29 @@ export default function MeshEditorPage() {
     }
   }, [applySelection, geometry, resetSelection, selectionMesh, selectionMode])
 
+  const getMeshIntersection = useCallback((point, targetObject) => {
+    if (!targetObject || !cameraRef.current || !canvasShellRef.current) {
+      return null
+    }
+
+    const rect = canvasShellRef.current.getBoundingClientRect()
+    if (!rect.width || !rect.height) {
+      return null
+    }
+
+    const raycaster = new THREE.Raycaster()
+    raycaster.firstHitOnly = true
+    const pointer = new THREE.Vector2(
+      (point.x / rect.width) * 2 - 1,
+      -((point.y / rect.height) * 2 - 1)
+    )
+
+    raycaster.setFromCamera(pointer, cameraRef.current)
+    targetObject.updateMatrixWorld?.(true)
+    const [intersection] = raycaster.intersectObject(targetObject, true)
+    return intersection || null
+  }, [])
+
   const selectWithinRectangle = useCallback((startPoint, endPoint, isMultiSelect) => {
     if (!geometry || !cameraRef.current || !canvasShellRef.current) {
       return
@@ -426,6 +824,51 @@ export default function MeshEditorPage() {
       return
     }
 
+    if (activeMenu === 'texturing') {
+      if (!texturingReady || !texturableMesh?.root || !texturableMesh?.maskCanvas) {
+        return
+      }
+
+      const intersection = getMeshIntersection(nextPoint, texturableMesh.root)
+      if (!intersection?.uv) {
+        return
+      }
+
+      event.preventDefault()
+      syncProjectionMaskCanvasSize()
+
+      if (!projectionCameraRef.current && cameraRef.current?.clone) {
+        projectionCameraRef.current = cameraRef.current.clone()
+        projectionCameraRef.current.updateProjectionMatrix?.()
+        projectionCameraRef.current.updateMatrixWorld?.(true)
+      }
+
+      const uvPoint = intersection.uv.clone()
+      const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
+      drawCanvasStroke(projectionMaskCanvasRef.current, nextPoint, nextPoint, brushSize)
+      drawUvStroke(
+        texturableMesh.maskCanvas,
+        uvPoint,
+        uvPoint,
+        brushSize,
+        islandHit?.path || null,
+        texturableMesh.textureConfig
+      )
+      updateCanvasTexture(maskTextureRef.current)
+      setTextureRevision(current => current + 1)
+      setHasProjectionMask(true)
+
+      paintStateRef.current = {
+        pointerId: event.pointerId,
+        lastUv: uvPoint,
+        lastIslandKey: islandHit?.key || '',
+        lastScreenPoint: nextPoint
+      }
+
+      canvasShellRef.current?.setPointerCapture?.(event.pointerId)
+      return
+    }
+
     event.preventDefault()
 
     dragStateRef.current = {
@@ -436,9 +879,53 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [getPointerPosition])
+  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
+    if (activeMenu === 'texturing') {
+      if (!paintStateRef.current || !texturableMesh?.root || !texturableMesh?.maskCanvas) {
+        return
+      }
+
+      const nextPoint = getPointerPosition(event)
+      if (!nextPoint) {
+        return
+      }
+
+      const intersection = getMeshIntersection(nextPoint, texturableMesh.root)
+      if (!intersection?.uv) {
+        return
+      }
+
+      const nextUv = intersection.uv.clone()
+      const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
+      const previousUv = paintStateRef.current.lastIslandKey && paintStateRef.current.lastIslandKey === islandHit?.key
+        ? paintStateRef.current.lastUv
+        : nextUv
+
+      drawCanvasStroke(
+        projectionMaskCanvasRef.current,
+        paintStateRef.current.lastScreenPoint || nextPoint,
+        nextPoint,
+        brushSize
+      )
+      drawUvStroke(
+        texturableMesh.maskCanvas,
+        previousUv,
+        nextUv,
+        brushSize,
+        islandHit?.path || null,
+        texturableMesh.textureConfig
+      )
+      paintStateRef.current.lastUv = nextUv
+      paintStateRef.current.lastIslandKey = islandHit?.key || ''
+      paintStateRef.current.lastScreenPoint = nextPoint
+      updateCanvasTexture(maskTextureRef.current)
+      setTextureRevision(current => current + 1)
+      setHasProjectionMask(true)
+      return
+    }
+
     if (!dragStateRef.current) {
       return
     }
@@ -463,9 +950,19 @@ export default function MeshEditorPage() {
       startPoint: dragStateRef.current.startPoint,
       endPoint: nextPoint
     })
-  }, [getPointerPosition])
+  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, texturableMesh])
 
   const handleCanvasPointerUp = useCallback((event) => {
+    if (activeMenu === 'texturing') {
+      if (!paintStateRef.current || event.button !== 0) {
+        return
+      }
+
+      canvasShellRef.current?.releasePointerCapture?.(paintStateRef.current.pointerId)
+      paintStateRef.current = null
+      return
+    }
+
     if (!dragStateRef.current || event.button !== 0) {
       return
     }
@@ -482,12 +979,42 @@ export default function MeshEditorPage() {
     canvasShellRef.current?.releasePointerCapture?.(dragStateRef.current.pointerId)
     dragStateRef.current = null
     setSelectionBox(null)
-  }, [getPointerPosition, selectAtPoint, selectWithinRectangle])
+  }, [activeMenu, getPointerPosition, selectAtPoint, selectWithinRectangle])
 
   const handleCanvasPointerCancel = useCallback(() => {
+    if (paintStateRef.current) {
+      canvasShellRef.current?.releasePointerCapture?.(paintStateRef.current.pointerId)
+      paintStateRef.current = null
+    }
+
     dragStateRef.current = null
     setSelectionBox(null)
   }, [])
+
+  const handleTextureWorkflowInputChange = useCallback((parameter, rawValue) => {
+    const valueType = getWorkflowValueType(parameter)
+
+    setTextureWorkflowInputs(current => ({
+      ...current,
+      [parameter.id]: valueType === 'number'
+        ? (rawValue === '' ? '' : Number(rawValue))
+        : rawValue
+    }))
+  }, [])
+
+  const handleClearTextureMask = useCallback(() => {
+    if (!texturableMesh?.maskCanvas) {
+      return
+    }
+
+    clearCanvas(texturableMesh.maskCanvas)
+    clearCanvas(projectionMaskCanvasRef.current)
+    projectionCameraRef.current = null
+    setHasProjectionMask(false)
+    updateCanvasTexture(maskTextureRef.current)
+    setTextureRevision(current => current + 1)
+    setFeedback('Texture mask cleared.')
+  }, [texturableMesh])
 
   const applyGeometryUpdate = useCallback((nextGeometry, nextHoleLoops = []) => {
     setGeometry(nextGeometry)
@@ -576,13 +1103,26 @@ export default function MeshEditorPage() {
       setSaving(true)
       setError('')
       setFeedback('Saving mesh...')
+      const meshBinary = geometryRevision === 0 && texturableMesh?.root && texturableMesh?.textureCanvas
+        ? await exportTexturedMeshToGlb({
+            root: texturableMesh.root,
+            textureKey: texturableMesh.textureKey,
+            textureCanvas: texturableMesh.textureCanvas,
+            textureConfig: texturableMesh.textureConfig
+          })
+        : await exportGeometryToGlb(geometry)
+      const meshFile = new File(
+        [meshBinary],
+        `${(meshName || 'mesh').trim() || 'mesh'}.glb`,
+        { type: 'model/gltf-binary' }
+      )
 
       const savedAsset = await saveMeshEdit({
         assetId: Number.isFinite(numericAssetId) && numericAssetId > 0 ? numericAssetId : null,
         filePath,
         name: meshName,
         saveMode,
-        objText: exportGeometryToObj(geometry)
+        meshFile
       })
 
       try {
@@ -590,7 +1130,7 @@ export default function MeshEditorPage() {
         const response = assetUrl ? await fetch(assetUrl) : null
         if (response?.ok) {
           const blob = await response.blob()
-          const meshFile = new File([blob], savedAsset.filename?.split('/').pop() || `${savedAsset.name || 'mesh'}.obj`, {
+          const meshFile = new File([blob], savedAsset.filename?.split('/').pop() || `${savedAsset.name || 'mesh'}.glb`, {
             type: blob.type || 'application/octet-stream'
           })
           const thumbnailFile = await createMeshThumbnailFile(meshFile)
@@ -602,16 +1142,17 @@ export default function MeshEditorPage() {
         console.warn('Failed to refresh mesh thumbnail:', thumbnailError)
       }
 
-      if (projectId && nodeId) {
-        await updateProjectNode(Number(projectId), Number(nodeId), {
-          assetId: savedAsset.id,
-          name: savedAsset.name,
-          status: null,
-          progress: null,
-          metadata: {
-            lastAction: saveMode === 'version' ? 'mesh-editor-version' : 'mesh-editor-save'
-          }
-        })
+      if (saveMode === 'version' && savedAsset?.id) {
+        const nextSearchParams = new URLSearchParams(searchParams)
+        const savedFilename = savedAsset.filename || (savedAsset.filePath ? savedAsset.filePath.replace(/^data\/assets\//, '') : '')
+        const savedUrl = savedFilename ? `http://localhost:3001/assets/${encodeURI(savedFilename)}` : modelUrl
+
+        nextSearchParams.set('assetId', String(savedAsset.id))
+        nextSearchParams.set('filePath', savedAsset.filePath || '')
+        nextSearchParams.set('url', savedUrl)
+        nextSearchParams.set('name', savedAsset.name || meshName)
+
+        navigate(`/mesh-editor?${nextSearchParams.toString()}`, { replace: true })
       }
 
       setFeedback(saveMode === 'version' ? 'New mesh version saved.' : 'Mesh saved.')
@@ -621,7 +1162,7 @@ export default function MeshEditorPage() {
     } finally {
       setSaving(false)
     }
-  }, [filePath, geometry, meshName, nodeId, numericAssetId, projectId, saveMeshEdit, saving, updateProjectNode, uploadAssetThumbnail])
+  }, [filePath, geometry, geometryRevision, meshName, modelUrl, navigate, numericAssetId, saveMeshEdit, saving, searchParams, texturableMesh, uploadAssetThumbnail])
 
   const handleBack = useCallback(() => {
     if (returnTo) {
@@ -631,6 +1172,122 @@ export default function MeshEditorPage() {
 
     navigate(-1)
   }, [navigate, returnTo])
+
+  const handleRunTextureWorkflow = useCallback(async () => {
+    if (texturing || !selectedTextureWorkflow || !texturableMesh?.textureCanvas || !texturableMesh?.maskCanvas) {
+      return
+    }
+
+    const projectionMaskCanvas = projectionMaskCanvasRef.current
+    const projectionCamera = projectionCameraRef.current
+    const bbox = getMaskBoundingBox(projectionMaskCanvas, cropPadding)
+    if (!bbox) {
+      setFeedback('Paint a zone on the mesh first.')
+      return
+    }
+
+    if (!projectionMaskCanvas || !projectionCamera) {
+      setFeedback('Paint a zone on the mesh first.')
+      return
+    }
+
+    const { sourceParameterId, maskParameterId } = textureWorkflowParameterIds
+    if (!sourceParameterId || !maskParameterId) {
+      setError('The selected workflow must expose one image input and one mask input.')
+      setFeedback('')
+      return
+    }
+
+    const promptId = createExecutionId('mesh-texture-prompt')
+    const clientId = createExecutionId('mesh-texture-client')
+    const stopProgress = subscribeToComfyWorkflowProgress(promptId, {
+      onMessage: payload => {
+        const detail = payload?.detail || payload?.currentNodeLabel
+        if (detail) {
+          setFeedback(detail)
+        }
+      },
+      onError: () => {}
+    })
+
+    try {
+      setTexturing(true)
+      setError('')
+      setFeedback('Rendering projection view...')
+
+      const sourceViewCanvas = captureTexturedMeshView({
+        root: texturableMesh.root,
+        textureKey: texturableMesh.textureKey,
+        displayTexture: displayTextureRef.current,
+        camera: projectionCamera,
+        width: projectionMaskCanvas.width,
+        height: projectionMaskCanvas.height
+      })
+      const sourceCanvas = cropCanvas(sourceViewCanvas, bbox)
+      const maskCanvas = cropCanvas(projectionMaskCanvas, bbox)
+      const workflowInputs = {
+        ...textureWorkflowInputs,
+        [sourceParameterId]: await canvasToFile(sourceCanvas, `${meshName || 'mesh'}-source.png`),
+        [maskParameterId]: await canvasToFile(maskCanvas, `${meshName || 'mesh'}-mask.png`)
+      }
+
+      const generatedAssets = await runComfyWorkflow(projectId ? Number(projectId) : null, {
+        workflowId: Number(selectedTextureWorkflow.id),
+        name: `${meshName || 'Mesh'} Texture`,
+        promptId,
+        clientId,
+        persistProcessingCard: false,
+        persistGeneratedAssets: false,
+        inputs: workflowInputs
+      })
+
+      const generatedPatchAsset = pickGeneratedTextureAsset(generatedAssets)
+      if (!generatedPatchAsset) {
+        throw new Error('The texture workflow did not return any image.')
+      }
+
+      const patchImage = await loadImageElement(buildAssetUrl(generatedPatchAsset))
+      setFeedback('Reprojecting generated texture...')
+      const projectionStats = await applyProjectedTexturePatch({
+        root: texturableMesh.root,
+        textureKey: texturableMesh.textureKey,
+        textureCanvas: texturableMesh.textureCanvas,
+        textureConfig: texturableMesh.textureConfig,
+        camera: projectionCamera,
+        maskCanvas: projectionMaskCanvas,
+        bbox,
+        patchImage,
+        featherRadius,
+        onProgress: progress => {
+          setFeedback(`Reprojecting generated texture... ${Math.round(progress * 100)}%`)
+        }
+      })
+      clearCanvas(texturableMesh.maskCanvas)
+      clearCanvas(projectionMaskCanvas)
+      projectionCameraRef.current = null
+      setHasProjectionMask(false)
+      updateCanvasTexture(displayTextureRef.current)
+      updateCanvasTexture(maskTextureRef.current)
+      setTextureRevision(current => current + 1)
+
+      if (projectId && nodeId) {
+        await updateProjectNode(Number(projectId), Number(nodeId), {
+          metadata: {
+            lastAction: 'mesh-editor-texture'
+          }
+        })
+      }
+
+      console.info('Projected texture patch profile', projectionStats)
+      setFeedback('Projected texture patch applied.')
+    } catch (textureError) {
+      setError(textureError.message || 'Failed to regenerate the mesh texture.')
+      setFeedback('')
+    } finally {
+      stopProgress()
+      setTexturing(false)
+    }
+  }, [cropPadding, featherRadius, meshName, nodeId, projectId, runComfyWorkflow, selectedTextureWorkflow, subscribeToComfyWorkflowProgress, texturableMesh, textureWorkflowParameterIds, textureWorkflowInputs, texturing, updateProjectNode])
 
   const deleteDisabled = selectionMode === 'face' ? selectedFaceIndices.length === 0 : selectedVertexIndices.length === 0
   const smoothDisabled = selectedVertexIndices.length === 0
@@ -654,7 +1311,6 @@ export default function MeshEditorPage() {
               </button>
               <div className="mesh-editor-toolbar__title-group">
                 <h1 className="mesh-editor-page__title font-headline">Mesh Editor</h1>
-                <p className="mesh-editor-page__desc">Wireframe selection for vertices and faces with basic topology actions.</p>
               </div>
               <div className="mesh-editor-toolbar__name-field">
                 <label className="mesh-editor-panel__label">Mesh name</label>
@@ -683,58 +1339,209 @@ export default function MeshEditorPage() {
 
           <div className="mesh-editor-workspace">
             <aside className="mesh-editor-sidebar">
-              <div className="mesh-editor-panel">
-                <span className="mesh-editor-panel__label">Selection</span>
-                <div className="mesh-editor-toggle-group">
+              <div className="mesh-editor-panel mesh-editor-panel--compact">
+                <span className="mesh-editor-panel__label">Tools</span>
+                <div className="mesh-editor-mode-menu">
                   <button
                     type="button"
-                    className={`mesh-editor-toggle ${selectionMode === 'face' ? 'mesh-editor-toggle--active' : ''}`}
-                    onClick={() => {
-                      setSelectionMode('face')
-                      resetSelection()
-                    }}
+                    className={`mesh-editor-mode-btn ${activeMenu === 'modeling' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('modeling')}
                   >
-                    Faces
+                    <span className="material-symbols-outlined">deployed_code</span>
+                    <span>Modeling</span>
                   </button>
                   <button
                     type="button"
-                    className={`mesh-editor-toggle ${selectionMode === 'vertex' ? 'mesh-editor-toggle--active' : ''}`}
-                    onClick={() => {
-                      setSelectionMode('vertex')
-                      resetSelection()
-                    }}
+                    className={`mesh-editor-mode-btn ${activeMenu === 'texturing' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('texturing')}
                   >
-                    Vertices
+                    <span className="material-symbols-outlined">texture</span>
+                    <span>Texturing</span>
                   </button>
                 </div>
-                <span className="mesh-editor-panel__hint">Left mouse drag selects with a rectangle. Shift+drag adds or removes items.</span>
-                <span className="mesh-editor-panel__hint">For difficult holes, switch to Vertices and select two boundary segments on the same hole, then use Bridge or Fill hole.</span>
-                <span className="mesh-editor-panel__hint">Middle mouse drag rotates the mesh.</span>
-              </div>
 
-              <div className="mesh-editor-panel mesh-editor-panel--actions">
-                <span className="mesh-editor-panel__label">Actions</span>
-                <div className="mesh-editor-panel__scroll">
-                  <div className="mesh-editor-actions mesh-editor-actions--column">
-                    <button type="button" className="mesh-editor-btn" onClick={handleDelete} disabled={deleteDisabled}>Delete</button>
-                    <button type="button" className="mesh-editor-btn" onClick={handleSmooth} disabled={smoothDisabled}>Smooth</button>
-                    <button type="button" className="mesh-editor-btn" onClick={handleMerge} disabled={mergeDisabled}>Merge</button>
-                    <button type="button" className="mesh-editor-btn" onClick={handleSubdivide} disabled={subdivideDisabled}>Subdivide</button>
-                    <button type="button" className="mesh-editor-btn" onClick={handleBridge} disabled={bridgeDisabled}>Bridge</button>
-                    <button type="button" className="mesh-editor-btn" onClick={handleFillHole} disabled={fillDisabled}>Fill hole</button>
-                  </div>
-                </div>
+                {activeMenu === 'modeling' ? (
+                  <>
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">Selection</span>
+                      <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
+                        <button
+                          type="button"
+                          className={`mesh-editor-icon-btn ${selectionMode === 'face' ? 'mesh-editor-icon-btn--active' : ''}`}
+                          onClick={() => {
+                            setSelectionMode('face')
+                            resetSelection()
+                          }}
+                          title="Face selection"
+                        >
+                          <span className="material-symbols-outlined">crop_square</span>
+                          <span>Faces</span>
+                        </button>
+                        <button
+                          type="button"
+                          className={`mesh-editor-icon-btn ${selectionMode === 'vertex' ? 'mesh-editor-icon-btn--active' : ''}`}
+                          onClick={() => {
+                            setSelectionMode('vertex')
+                            resetSelection()
+                          }}
+                          title="Vertex selection"
+                        >
+                          <span className="material-symbols-outlined">scatter_plot</span>
+                          <span>Vertices</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">Actions</span>
+                      <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleDelete} disabled={deleteDisabled} title="Delete selection">
+                          <span className="material-symbols-outlined">delete</span>
+                          <span>Delete</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleSmooth} disabled={smoothDisabled} title="Smooth selected vertices">
+                          <span className="material-symbols-outlined">auto_fix_high</span>
+                          <span>Smooth</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleMerge} disabled={mergeDisabled} title="Merge selected vertices">
+                          <span className="material-symbols-outlined">merge_type</span>
+                          <span>Merge</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleSubdivide} disabled={subdivideDisabled} title="Subdivide selected faces">
+                          <span className="material-symbols-outlined">grid_view</span>
+                          <span>Subdivide</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleBridge} disabled={bridgeDisabled} title="Bridge selected hole segments">
+                          <span className="material-symbols-outlined">alt_route</span>
+                          <span>Bridge</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleFillHole} disabled={fillDisabled} title="Fill selected hole">
+                          <span className="material-symbols-outlined">layers_clear</span>
+                          <span>Fill hole</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mesh-editor-panel__notes">
+                      <span className="mesh-editor-panel__hint">Left mouse drag selects with a rectangle. Shift+drag adds or removes items.</span>
+                      <span className="mesh-editor-panel__hint">Middle mouse drag rotates the mesh.</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">Brush</span>
+                      <label className="mesh-editor-range-field">
+                        <span>Size</span>
+                        <input type="range" min="4" max="96" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <strong>{brushSize}px</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Crop margin</span>
+                        <input type="range" min="0" max="128" value={cropPadding} onChange={event => setCropPadding(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <strong>{cropPadding}px</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Feather</span>
+                        <input type="range" min="0" max="32" value={featherRadius} onChange={event => setFeatherRadius(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <strong>{featherRadius}px</strong>
+                      </label>
+                      <button type="button" className="mesh-editor-btn mesh-editor-btn--ghost" onClick={handleClearTextureMask} disabled={!!texturingUnavailableReason}>Clear mask</button>
+                    </div>
+
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">AI workflow</span>
+                      <select
+                        className="mesh-editor-panel__input mesh-editor-panel__select"
+                        value={textureWorkflowId}
+                        onChange={event => setTextureWorkflowId(event.target.value)}
+                        disabled={comfyLoading || texturingWorkflows.length === 0 || !!texturingUnavailableReason}
+                      >
+                        {texturingWorkflows.length === 0 ? (
+                          <option value="">No 2-image ComfyUI workflow found</option>
+                        ) : (
+                          texturingWorkflows.map(workflow => (
+                            <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                          ))
+                        )}
+                      </select>
+
+                      {selectedTextureWorkflow && (
+                        <div className="mesh-editor-texture-workflow-meta">
+                          <span>Image input: {(selectedTextureWorkflow.parameters || []).find(parameter => parameter.id === textureWorkflowParameterIds.sourceParameterId)?.name || 'Source image'}</span>
+                          <span>Mask input: {(selectedTextureWorkflow.parameters || []).find(parameter => parameter.id === textureWorkflowParameterIds.maskParameterId)?.name || 'Mask image'}</span>
+                        </div>
+                      )}
+
+                      {textureWorkflowParameters.map(parameter => {
+                        const valueType = getWorkflowValueType(parameter)
+                        const currentValue = textureWorkflowInputs?.[parameter.id]
+
+                        return (
+                          <label key={parameter.id} className="mesh-editor-workflow-field">
+                            <span>{parameter.name}</span>
+                            {valueType === 'boolean' ? (
+                              <button
+                                type="button"
+                                className={`mesh-editor-toggle ${currentValue ? 'mesh-editor-toggle--active' : ''}`}
+                                onClick={() => handleTextureWorkflowInputChange(parameter, !currentValue)}
+                                disabled={!!texturingUnavailableReason}
+                              >
+                                {currentValue ? 'Enabled' : 'Disabled'}
+                              </button>
+                            ) : valueType === 'string' ? (
+                              <textarea
+                                className="mesh-editor-panel__input mesh-editor-panel__textarea"
+                                value={currentValue ?? ''}
+                                onChange={event => handleTextureWorkflowInputChange(parameter, event.target.value)}
+                                disabled={!!texturingUnavailableReason}
+                              />
+                            ) : (
+                              <input
+                                type="number"
+                                className="mesh-editor-panel__input"
+                                value={currentValue ?? ''}
+                                onChange={event => handleTextureWorkflowInputChange(parameter, event.target.value)}
+                                disabled={!!texturingUnavailableReason}
+                              />
+                            )}
+                          </label>
+                        )
+                      })}
+
+                      <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
+                        {texturing ? 'Regenerating…' : 'Regenerate zone'}
+                      </button>
+                    </div>
+
+                    <div className="mesh-editor-panel__notes">
+                      {texturingUnavailableReason ? (
+                        <span className="mesh-editor-panel__hint">{texturingUnavailableReason}</span>
+                      ) : (
+                        <>
+                          <span className="mesh-editor-panel__hint">Paint directly on the mesh view, then run a 2-image ComfyUI inpaint workflow.</span>
+                          <span className="mesh-editor-panel__hint">The editor now sends a camera-view mask to AI and reprojects the generated patch back onto the texture.</span>
+                          <span className="mesh-editor-panel__hint">The camera stays locked while a paint mask exists. Clear the mask to orbit again.</span>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </aside>
 
             <div
               ref={canvasShellRef}
-              className="mesh-editor-canvas-shell"
+              className={`mesh-editor-canvas-shell ${activeMenu === 'texturing' ? 'mesh-editor-canvas-shell--texturing' : ''}`}
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
             >
+              <canvas
+                ref={projectionMaskCanvasRef}
+                className={`mesh-editor-projection-mask ${activeMenu === 'texturing' && hasProjectionMask ? 'mesh-editor-projection-mask--active' : ''}`}
+              />
               {loading ? (
                 <div className="mesh-editor-empty-state">
                   <span className="material-symbols-outlined mesh-editor-empty-state__icon">progress_activity</span>
@@ -747,11 +1554,21 @@ export default function MeshEditorPage() {
                     <ambientLight intensity={1.25} />
                     <directionalLight position={[5, 7, 9]} intensity={2} castShadow />
                     <directionalLight position={[-5, 3, -4]} intensity={0.6} color="#8ff5ff" />
-                    <EditorMesh
-                      geometry={geometry}
-                      selectedFaceIndices={selectedFaceIndices}
-                      selectedVertexIndices={selectedVertexIndices}
-                    />
+                    {activeMenu === 'texturing' && texturableMesh?.root && displayTextureRef.current && maskTextureRef.current && !texturingUnavailableReason ? (
+                      <TexturedMesh
+                        key={textureRevision}
+                        root={texturableMesh.root}
+                        textureKey={texturableMesh.textureKey}
+                        displayTexture={displayTextureRef.current}
+                        maskTexture={maskTextureRef.current}
+                      />
+                    ) : (
+                      <EditorMesh
+                        geometry={geometry}
+                        selectedFaceIndices={selectedFaceIndices}
+                        selectedVertexIndices={selectedVertexIndices}
+                      />
+                    )}
                     <Grid
                       infiniteGrid
                       fadeDistance={60}
@@ -760,9 +1577,13 @@ export default function MeshEditorPage() {
                       sectionThickness={1.5}
                       sectionSize={10}
                     />
-                    <CameraRig geometry={geometry} onCameraReady={camera => { cameraRef.current = camera }} />
+                    <CameraRig
+                      geometry={geometry}
+                      onCameraReady={camera => { cameraRef.current = camera }}
+                      controlsEnabled={activeMenu !== 'texturing' || !hasProjectionMask}
+                    />
                   </Canvas>
-                  {selectionBox && (
+                  {selectionBox && activeMenu === 'modeling' && (
                     <div
                       className="mesh-editor-selection-box"
                       style={{

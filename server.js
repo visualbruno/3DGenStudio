@@ -52,6 +52,7 @@ import {
   replaceAssetFileById,
   renameAssetEditByFilePath,
   saveSettings,
+  toAssetUrlPath,
   setCardProcessingState,
   toAbsoluteStoragePath,
   toStoredAssetPath,
@@ -75,6 +76,7 @@ console.log('DEBUG: DB_FILE is', path.join(DATA_DIR, 'app.db'));
 
 // Middleware
 app.use(cors());
+app.use('/api/meshes/editor/save', express.json({ limit: '50mb' }));
 app.use(express.json({ limit: '10mb' }));
 app.use('/assets', express.static(ASSETS_DIR));
 
@@ -276,6 +278,7 @@ const upload = multer({ storage });
 const workflowExecutionUpload = multer({ storage: multer.memoryStorage() });
 const libraryImportUpload = multer({ storage: multer.memoryStorage() });
 const thumbnailUpload = multer({ storage: multer.memoryStorage() });
+const meshEditorSaveUpload = multer({ storage: multer.memoryStorage() });
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -412,7 +415,7 @@ function sanitizeFileSegment(value = '', fallback = 'mesh') {
 }
 
 function createMeshEditorFilePath(name = 'mesh') {
-  return `assets/meshes/edited/${sanitizeFileSegment(name)}-${Date.now()}.obj`;
+  return `data/assets/meshes/${sanitizeFileSegment(name)}-${Date.now()}.glb`;
 }
 
 async function resolveEditableMeshAsset({ assetId, filePath }) {
@@ -1803,11 +1806,19 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 
   try {
     const { projectId, workflowId, cardId, name } = req.body;
+    const normalizedProjectId = Number(projectId);
+    const hasProjectId = Number.isFinite(normalizedProjectId) && normalizedProjectId > 0;
     const trimmedName = String(name || '').trim();
     const inputValues = JSON.parse(req.body.inputValues || '{}');
+    const persistProcessingCard = String(req.body.persistProcessingCard || '').toLowerCase() !== 'false';
+    const persistGeneratedAssets = String(req.body.persistGeneratedAssets || '').toLowerCase() !== 'false';
 
-    if (!projectId || !workflowId) {
-      return res.status(400).json({ error: 'projectId and workflowId are required' });
+    if (!workflowId) {
+      return res.status(400).json({ error: 'workflowId is required' });
+    }
+
+    if (!hasProjectId && (persistProcessingCard || persistGeneratedAssets)) {
+      return res.status(400).json({ error: 'projectId is required when persisting workflow results' });
     }
 
     const workflowRecord = await getWorkflowRecordById(Number(workflowId));
@@ -1817,8 +1828,8 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       return res.status(404).json({ error: 'ComfyUI workflow not found in library' });
     }
 
-    processingProjectId = Number(projectId);
-    processingCardId = cardId || randomUUID();
+    processingProjectId = hasProjectId ? normalizedProjectId : null;
+    processingCardId = persistProcessingCard ? (cardId || randomUUID()) : null;
     processingCardName = trimmedName || workflow.name;
     processingWorkflowId = workflow.id;
     processingWorkflowName = workflow.name;
@@ -1842,12 +1853,16 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       }
 
       if (['image', 'mesh'].includes(parameterValueType)) {
+        if (!hasProjectId) {
+          throw new Error(`A project-linked reference is required for ${parameter.name}`);
+        }
+
         const sourceReference = isPlainObject(fileMarker)
           ? (fileMarker.source || fileMarker.filePath || fileMarker.assetId)
           : fileMarker;
         const resolvedSource = parameterValueType === 'mesh'
-          ? await resolveProjectMeshSource(Number(projectId), sourceReference)
-          : await resolveProjectImageSource(Number(projectId), sourceReference);
+            ? await resolveProjectMeshSource(normalizedProjectId, sourceReference)
+            : await resolveProjectImageSource(normalizedProjectId, sourceReference);
 
         if (!resolvedSource?.asset || resolvedSource.asset.type !== parameterValueType) {
           throw new Error(`A reference file is required for ${parameter.name}`);
@@ -1870,20 +1885,22 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     executionPromptId = String(req.body.promptId || '').trim() || randomUUID();
     processingStartedAt = Date.now();
 
-    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
-      columnName: 'Images',
-      name: processingCardName,
-      status: 'processing',
-      progressPercent: 0,
-      detail: 'Preparing ComfyUI workflow',
-      currentNodeLabel: 'Waiting for ComfyUI execution to start',
-      promptId: executionPromptId,
-      source: 'ComfyUI',
-      operationType: 'workflow',
-      workflowId: processingWorkflowId,
-      workflowName: processingWorkflowName,
-      startedAt: processingStartedAt
-    });
+    if (persistProcessingCard) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Images',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: 0,
+        detail: 'Preparing ComfyUI workflow',
+        currentNodeLabel: 'Waiting for ComfyUI execution to start',
+        promptId: executionPromptId,
+        source: 'ComfyUI',
+        operationType: 'workflow',
+        workflowId: processingWorkflowId,
+        workflowName: processingWorkflowName,
+        startedAt: processingStartedAt
+      });
+    }
 
     executionMonitor = createComfyExecutionMonitor(baseUrl, {
       clientId: executionClientId,
@@ -1891,6 +1908,10 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       workflowJson: promptWorkflow,
       selectedOutputs: workflow.outputs,
       onProgress: (payload) => {
+        if (!persistProcessingCard) {
+          return;
+        }
+
         updateCardProcessingSnapshot(processingProjectId, processingCardId, {
           columnName: 'Images',
           name: processingCardName,
@@ -1930,7 +1951,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       return res.status(502).json({ error: 'The ComfyUI workflow finished but no compatible files were returned' });
     }
 
-    const imageCardId = processingCardId;
+    const imageCardId = persistProcessingCard ? processingCardId : null;
     const baseTimestamp = Date.now();
     const generatedAssets = [];
 
@@ -1949,13 +1970,9 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         : { width: 0, height: 0 };
       const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
       const storedFilePath = toStoredAssetPath(inferredAssetType, filename);
-      const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
 
-      await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
-      await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
-
-      generatedAssets.push(await createProjectAsset({
-        projectId: Number(projectId),
+      const generatedAssetPayload = {
+        projectId: normalizedProjectId,
         type: inferredAssetType,
         name: inferredAssetType === 'mesh'
           ? processingCardName
@@ -1974,15 +1991,51 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           outputNodeId: workflowFile.nodeId,
           outputFilename: workflowFile.filename,
           savedOutputs: workflowFiles.length,
-          cardId: imageCardId
+          ...(imageCardId ? { cardId: imageCardId } : {})
         },
         createdAt: baseTimestamp + index
-      }));
+      };
+
+      if (persistGeneratedAssets) {
+        const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+
+        await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+        await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
+
+        const persistedAsset = await createProjectAsset(generatedAssetPayload);
+        generatedAssets.push({
+          ...persistedAsset,
+          url: `http://localhost:${PORT}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,
+          outputKey: workflowFile.outputKey,
+          outputNodeId: workflowFile.nodeId,
+          expectedType: workflowFile.expectedType,
+          temporary: false
+        });
+        continue;
+      }
+
+      generatedAssets.push({
+        type: generatedAssetPayload.type,
+        name: generatedAssetPayload.name,
+        filename: workflowFile.filename,
+        filePath: workflowFile.filename,
+        url: `data:${downloadedFile.contentType};base64,${downloadedFile.buffer.toString('base64')}`,
+        width: generatedAssetPayload.width,
+        height: generatedAssetPayload.height,
+        metadata: generatedAssetPayload.metadata,
+        createdAt: generatedAssetPayload.createdAt,
+        outputKey: workflowFile.outputKey,
+        outputNodeId: workflowFile.nodeId,
+        expectedType: workflowFile.expectedType,
+        temporary: true
+      });
     }
 
-    await clearCardProcessingState(processingProjectId, processingCardId, {
-      name: processingCardName
-    });
+    if (persistProcessingCard) {
+      await clearCardProcessingState(processingProjectId, processingCardId, {
+        name: processingCardName
+      });
+    }
 
     res.status(201).json(generatedAssets);
   } catch (err) {
@@ -2626,13 +2679,15 @@ app.get('/api/assets/library', async (req, res) => {
 
 app.delete('/api/assets/library', async (req, res) => {
   try {
-    const { type, filename } = req.query;
+    const { type, filename, force } = req.query;
 
     if (!type || !filename) {
       return res.status(400).json({ error: 'type and filename are required' });
     }
 
-    const result = await deleteLibraryAssetByFilePath(String(type), String(filename));
+    const result = await deleteLibraryAssetByFilePath(String(type), String(filename), {
+      force: String(force || '').toLowerCase() === 'true'
+    });
 
     if (result.status === 'linked') {
       return res.status(409).json({
@@ -2832,12 +2887,17 @@ app.post('/api/assets/:id/thumbnail', thumbnailUpload.single('thumbnail'), async
   }
 });
 
-app.post('/api/meshes/editor/save', async (req, res) => {
+app.post('/api/meshes/editor/save', meshEditorSaveUpload.single('meshFile'), async (req, res) => {
   try {
-    const { assetId, filePath, name, saveMode = 'replace', objText } = req.body;
+    const { assetId, filePath, name, saveMode = 'replace' } = req.body || {};
+    const meshFile = req.file;
 
-    if (!objText || !String(objText).trim()) {
-      return res.status(400).json({ error: 'objText is required' });
+    if (!meshFile?.buffer?.length) {
+      return res.status(400).json({ error: 'meshFile is required' });
+    }
+
+    if (!assetId && !filePath) {
+      return res.status(400).json({ error: 'assetId or filePath is required' });
     }
 
     if (!['replace', 'version'].includes(saveMode)) {
@@ -2855,11 +2915,16 @@ app.post('/api/meshes/editor/save', async (req, res) => {
     }
 
     const nextName = sanitizeDisplayName(name || sourceAsset.name, sourceAsset.name || 'Mesh');
-    const nextFilePath = createMeshEditorFilePath(nextName);
-    const absoluteMeshPath = toAbsoluteStoragePath(nextFilePath);
+    const sourceExtension = path.extname(String(sourceAsset.filePath || '')).toLowerCase();
+    const storedMeshPath = saveMode === 'version'
+      ? toStoredAssetPath('mesh', createMeshEditorFilePath(nextName))
+      : (sourceExtension === '.glb'
+          ? toStoredAssetPath('mesh', sourceAsset.filePath)
+          : toStoredAssetPath('mesh', createMeshEditorFilePath(nextName)));
+    const absoluteMeshPath = toAbsoluteStoragePath(storedMeshPath);
 
     await fs.mkdir(path.dirname(absoluteMeshPath), { recursive: true });
-    await fs.writeFile(absoluteMeshPath, String(objText), 'utf8');
+    await fs.writeFile(absoluteMeshPath, meshFile.buffer);
 
     const metadata = {
       ...JSON.parse(sourceAsset.metadata || '{}'),
@@ -2874,7 +2939,7 @@ app.post('/api/meshes/editor/save', async (req, res) => {
           assetId: sourceAsset.id,
           name: nextName,
           type: 'mesh',
-          filePath: nextFilePath,
+          filePath: storedMeshPath,
           width: 0,
           height: 0,
           metadata,
@@ -2883,13 +2948,13 @@ app.post('/api/meshes/editor/save', async (req, res) => {
       : await replaceAssetFileById(sourceAsset.id, {
           name: nextName,
           type: 'mesh',
-          filePath: nextFilePath,
+          filePath: storedMeshPath,
           width: 0,
           height: 0,
           metadata
         });
 
-    if (saveMode === 'replace' && sourceAsset.filePath && sourceAsset.filePath !== savedAsset.filePath) {
+    if (saveMode === 'replace' && sourceAsset.filePath && sourceAsset.filePath !== storedMeshPath) {
       await fs.rm(toAbsoluteStoragePath(sourceAsset.filePath), { force: true }).catch(() => null);
     }
 

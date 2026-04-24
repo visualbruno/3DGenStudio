@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-04-24** | Added Inpainting function in Mesh Editor<br>Added ComfyUI workflow examples |
 | **2026-04-21** | Added Graph Node "Image Compare"<br>Improved a bit the "Mesh Editor" (not good yet) |
 | **2026-04-19** | Improve the way to import ComfyUI workflows<br>Added a draft version of Mesh Editor<br>Added Change Log in Projects page |
 | **2026-04-19** | First release |

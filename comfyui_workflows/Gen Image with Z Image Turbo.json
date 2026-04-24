@@ -1,0 +1,127 @@
+{
+  "43": {
+    "inputs": {
+      "filename_prefix": "z-image",
+      "images": [
+        "34:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "34:29": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "34:33": {
+    "inputs": {
+      "conditioning": [
+        "34:27",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "34:8": {
+    "inputs": {
+      "samples": [
+        "34:3",
+        0
+      ],
+      "vae": [
+        "34:29",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "34:27": {
+    "inputs": {
+      "text": "A highly detailed elf sorcerer in A-Pose, front view, gray background",
+      "clip": [
+        "34:30",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "34:13": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "34:30": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "34:46": {
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "34:3": {
+    "inputs": {
+      "seed": 91319876217533,
+      "steps": 10,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "linear_quadratic",
+      "denoise": 1,
+      "model": [
+        "34:46",
+        0
+      ],
+      "positive": [
+        "34:27",
+        0
+      ],
+      "negative": [
+        "34:33",
+        0
+      ],
+      "latent_image": [
+        "34:13",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  }
+}

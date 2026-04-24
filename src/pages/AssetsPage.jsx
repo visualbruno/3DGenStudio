@@ -138,11 +138,13 @@ function getAssetChildren(asset) {
 
 function buildMeshEditorPath(asset, returnTo = '/assets') {
   const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
+  const inheritedProjectId = asset.projectId || asset.parentProjectId || null
   const query = new URLSearchParams({
     assetId: assetIdMatch?.[1] || '',
     filePath: asset.filePath || asset.filename || '',
     url: asset.url || '',
     name: asset.name || 'Mesh',
+    projectId: inheritedProjectId ? String(inheritedProjectId) : '',
     returnTo
   })
 
@@ -586,6 +588,7 @@ export default function AssetsPage() {
     } catch (err) {
       if (err.status === 409) {
         setLinkedAssetDialog({
+          asset,
           assetName: asset.name,
           projectId: err.details?.projectId,
           projectName: err.details?.projectName || null
@@ -608,6 +611,39 @@ export default function AssetsPage() {
 
     navigate(`/projects/${linkedAssetDialog.projectId}`)
     setLinkedAssetDialog(null)
+  }
+
+  const handleForceDeleteLinkedAsset = async () => {
+    if (!linkedAssetDialog?.asset) {
+      return
+    }
+
+    const asset = linkedAssetDialog.asset
+    const assetKey = `${asset.type}:${asset.filename}`
+    setDeletingAssetKey(assetKey)
+    setImportFeedback(null)
+
+    try {
+      await deleteLibraryAsset({
+        type: asset.type,
+        filename: asset.filename,
+        force: true
+      })
+
+      await loadLibrary()
+      setLinkedAssetDialog(null)
+      setImportFeedback({
+        type: 'success',
+        message: `${asset.name} deleted.`
+      })
+    } catch (err) {
+      setImportFeedback({
+        type: 'error',
+        message: err.message || 'Failed to delete asset.'
+      })
+    } finally {
+      setDeletingAssetKey(null)
+    }
   }
 
   const handleDeleteWorkflow = async (workflow) => {
@@ -772,6 +808,14 @@ export default function AssetsPage() {
               <button type="button" className="assets-dialog__btn assets-dialog__btn--secondary" onClick={() => setLinkedAssetDialog(null)}>
                 Close
               </button>
+              <button
+                type="button"
+                className="assets-dialog__btn assets-dialog__btn--danger"
+                onClick={handleForceDeleteLinkedAsset}
+                disabled={deletingAssetKey === `${linkedAssetDialog.asset?.type}:${linkedAssetDialog.asset?.filename}`}
+              >
+                Delete Anyway
+              </button>
               <button type="button" className="assets-dialog__btn assets-dialog__btn--primary" onClick={handleGoToProject} disabled={!linkedAssetDialog.projectId}>
                 Go to project
               </button>
@@ -859,9 +903,18 @@ export default function AssetsPage() {
                 <div className="asset-edits-grid">
                   {getAssetChildren(meshVersionsAsset).map((version, index) => (
                     <article key={`${version.filePath}-${index}`} className="asset-edit-card">
-                      <div className="asset-edit-card__preview asset-card__preview--mesh">
-                        <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
-                        <span className="asset-card__mesh-label font-label">VERSION</span>
+                      <div className={`asset-edit-card__preview asset-card__preview--mesh ${version.thumbnailUrl ? 'asset-card__preview--mesh-thumbnail' : ''}`}>
+                        {version.thumbnailUrl ? (
+                          <>
+                            <img src={version.thumbnailUrl} alt={`${version.name?.trim() || `Version ${index + 1}`} thumbnail`} className="asset-card__image" />
+                            <span className="asset-card__mesh-tag font-label">VERSION</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
+                            <span className="asset-card__mesh-label font-label">VERSION</span>
+                          </>
+                        )}
                       </div>
                       <div className="asset-edit-card__body">
                         <div className="asset-edit-card__details">

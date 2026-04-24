@@ -1,0 +1,102 @@
+{
+  "1": {
+    "inputs": {
+      "image": "Image_312_00001_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "2": {
+    "inputs": {
+      "model_name": "4x_foolhardy_Remacri.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "3": {
+    "inputs": {
+      "upscale_model": [
+        "2",
+        0
+      ],
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": [
+        "6",
+        0
+      ],
+      "images": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "string": "Images/Image_"
+    },
+    "class_type": "StringConstant",
+    "_meta": {
+      "title": "String Constant"
+    }
+  },
+  "6": {
+    "inputs": {
+      "delimiter": "",
+      "string1": [
+        "5",
+        0
+      ],
+      "string2": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "JoinStrings",
+    "_meta": {
+      "title": "Join Strings"
+    }
+  },
+  "7": {
+    "inputs": {
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "9": {
+    "inputs": {
+      "input1": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2String",
+    "_meta": {
+      "title": "Convert to String"
+    }
+  }
+}

@@ -515,7 +515,7 @@
 }
 
 .assets-grid--meshes {
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
 }
 
 .asset-card {
@@ -841,6 +841,11 @@
 .assets-dialog__btn--primary {
   background: var(--primary);
   color: var(--on-primary);
+}
+
+.assets-dialog__btn--danger {
+  background: #a93232;
+  color: #fff;
 }
 
 .assets-dialog__btn:disabled {

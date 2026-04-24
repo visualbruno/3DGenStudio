@@ -1,0 +1,112 @@
+{
+  "1": {
+    "inputs": {
+      "sd_model": "stabilityai/sd-turbo",
+      "invsr_model": "noise_predictor_sd_turbo_v5_diftune.pth",
+      "dtype": "fp16",
+      "tiled_vae": true
+    },
+    "class_type": "LoadInvSRModels",
+    "_meta": {
+      "title": "Load InvSR Models"
+    }
+  },
+  "5": {
+    "inputs": {
+      "filename_prefix": [
+        "22",
+        0
+      ],
+      "images": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "18": {
+    "inputs": {
+      "num_steps": 1,
+      "cfg": 1,
+      "batch_size": 1,
+      "chopping_batch_size": 6,
+      "chopping_size": 128,
+      "color_fix": "none",
+      "seed": 1132694053,
+      "invsr_pipe": [
+        "1",
+        0
+      ],
+      "images": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "InvSRSampler",
+    "_meta": {
+      "title": "InvSRSampler"
+    }
+  },
+  "20": {
+    "inputs": {
+      "image": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "GetImageSize+",
+    "_meta": {
+      "title": "🔧 Get Image Size"
+    }
+  },
+  "22": {
+    "inputs": {
+      "delimiter": "",
+      "string1": [
+        "23",
+        0
+      ],
+      "string2": [
+        "26",
+        0
+      ]
+    },
+    "class_type": "JoinStrings",
+    "_meta": {
+      "title": "Join Strings"
+    }
+  },
+  "23": {
+    "inputs": {
+      "string": "Images/Upscaled_InvSR_"
+    },
+    "class_type": "StringConstant",
+    "_meta": {
+      "title": "String Constant"
+    }
+  },
+  "26": {
+    "inputs": {
+      "input1": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2String",
+    "_meta": {
+      "title": "Convert to String"
+    }
+  },
+  "29": {
+    "inputs": {
+      "image": "1776079347596-175571888.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  }
+}

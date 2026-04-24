@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
@@ -1176,4 +1177,39 @@ export function exportGeometryToObj(geometry) {
   }
 
   return `${lines.join('\n')}\n`
+}
+
+export function exportGeometryToGlb(geometry) {
+  return new Promise((resolve, reject) => {
+    if (!geometry) {
+      reject(new Error('Geometry is required to export a GLB mesh.'))
+      return
+    }
+
+    const exporter = new GLTFExporter()
+    const exportMesh = new THREE.Mesh(
+      geometry.clone(),
+      new THREE.MeshStandardMaterial({ color: '#cfd8ff', metalness: 0.08, roughness: 0.62 })
+    )
+    exportMesh.name = 'MeshEditorResult'
+
+    exporter.parse(
+      exportMesh,
+      result => {
+        if (!(result instanceof ArrayBuffer)) {
+          reject(new Error('Failed to export the mesh as a binary GLB file.'))
+          return
+        }
+
+        resolve(result)
+      },
+      error => {
+        reject(error instanceof Error ? error : new Error('Failed to export the mesh as GLB.'))
+      },
+      {
+        binary: true,
+        onlyVisible: false
+      }
+    )
+  })
 }

@@ -329,16 +329,20 @@ function mapProjectRow(row) {
 
 function mapChildAssetRow(row) {
   const metadata = parseJson(row.metadata, {});
+  const thumbnail = row.thumbnail ? toAssetUrlPath(row.thumbnail) : null;
 
   return {
     id: row.id,
     parentId: row.parentId ?? null,
+    parentProjectId: row.parentProjectId ?? null,
     editId: metadata?.editId || null,
     name: row.name || '',
     filePath: row.filePath,
     filename: toAssetUrlPath(row.filePath),
     width: row.width ?? 0,
     height: row.height ?? 0,
+    thumbnailPath: row.thumbnail || null,
+    thumbnail,
     metadata,
     createdAt: row.creationDate,
     isEdit: true
@@ -494,7 +498,8 @@ function groupChildAssetsByParentFilePath(rows = [], port = null) {
     const childWithUrl = port
       ? {
         ...childAsset,
-        url: `http://localhost:${port}/assets/${encodeURI(childAsset.filename)}`
+        url: `http://localhost:${port}/assets/${encodeURI(childAsset.filename)}`,
+        thumbnailUrl: childAsset.thumbnail ? `http://localhost:${port}/assets/${encodeURI(childAsset.thumbnail)}` : null
       }
       : childAsset;
 
@@ -513,9 +518,17 @@ async function listChildAssetsByParentFilePaths(db, parentFilePaths = [], assetT
 
   return await all(
     db,
-    `SELECT child.id, child.parentId, child.name, child.filePath, child.creationDate, child.metadata,
+    `SELECT child.id, child.parentId, child.name, child.filePath, child.creationDate, child.metadata, child.thumbnail,
             child.width, child.height,
-            parent.filePath AS parentFilePath
+            parent.filePath AS parentFilePath,
+            (
+              SELECT c.projectId
+              FROM Cards_Assets ca
+              JOIN Cards c ON c.id = ca.cardId
+              WHERE ca.assetId = parent.id
+              ORDER BY c.creationDate DESC, c.id DESC
+              LIMIT 1
+            ) AS parentProjectId
      FROM Assets child
      JOIN Assets parent ON parent.id = child.parentId
      JOIN AssetTypes childType ON childType.id = child.assetTypeId
@@ -2382,7 +2395,7 @@ export async function deleteAssetEditByFilePath(filePath) {
   };
 }
 
-export async function deleteLibraryAssetByFilePath(type, filePath) {
+export async function deleteLibraryAssetByFilePath(type, filePath, { force = false } = {}) {
   const db = await getDb();
   const storedFilePath = toStoredAssetPath(type, filePath);
   const normalizedType = normalizeAssetTypeName(type);
@@ -2402,7 +2415,7 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
     [normalizedType, storedFilePath]
   );
 
-  if (linkedProject) {
+  if (linkedProject && !force) {
     return {
       status: 'linked',
       projectId: linkedProject.projectId,
@@ -2440,15 +2453,59 @@ export async function deleteLibraryAssetByFilePath(type, filePath) {
   if (childAssetRows.length > 0) {
     await run(
       db,
+      `DELETE FROM Cards_Assets
+       WHERE assetId IN (${childAssetRows.map(() => '?').join(', ')})`,
+      childAssetRows.map(childAsset => childAsset.id)
+    );
+
+    await run(
+      db,
       `DELETE FROM Assets
        WHERE id IN (${childAssetRows.map(() => '?').join(', ')})`,
       childAssetRows.map(childAsset => childAsset.id)
     );
   }
 
+  const assetIds = assets.map(asset => asset.id);
+  const linkedCardRows = assetIds.length > 0
+    ? await all(
+      db,
+      `SELECT cardId, assetId
+       FROM Cards_Assets
+       WHERE assetId IN (${assetIds.map(() => '?').join(', ')})`,
+      assetIds
+    )
+    : [];
+
+  if (linkedCardRows.length > 0) {
+    await run(
+      db,
+      `DELETE FROM Cards_Assets
+       WHERE assetId IN (${assetIds.map(() => '?').join(', ')})`,
+      assetIds
+    );
+  }
+
+  if (assetIds.length > 0) {
+    await run(
+      db,
+      `UPDATE Nodes
+       SET assetId = NULL
+       WHERE assetId IN (${assetIds.map(() => '?').join(', ')})`,
+      assetIds
+    );
+  }
+
   for (const asset of assets) {
     await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
   }
+
+  const affectedCardIds = [...new Set(linkedCardRows.map(row => row.cardId).filter(cardId => Number.isInteger(cardId)))];
+  for (const cardId of affectedCardIds) {
+    await normalizeCardAssetPositions(cardId);
+  }
+
+  await deleteCardsIfEmpty(affectedCardIds);
 
   await fs.rm(toAbsoluteStoragePath(storedFilePath), { force: true }).catch(() => null);
 
@@ -2631,7 +2688,15 @@ export async function listLibraryAssetsByType(type, port) {
   const canonicalAssetRows = candidateStoredPaths.length > 0
     ? await all(
       db,
-      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.width, a.height, a.creationDate
+      `SELECT a.id, a.name, a.filePath, a.thumbnail, a.width, a.height, a.creationDate,
+              (
+                SELECT c.projectId
+                FROM Cards_Assets ca
+                JOIN Cards c ON c.id = ca.cardId
+                WHERE ca.assetId = a.id
+                ORDER BY c.creationDate DESC, c.id DESC
+                LIMIT 1
+              ) AS projectId
        FROM Assets a
        JOIN AssetTypes at ON at.id = a.assetTypeId
        WHERE at.name = ?
@@ -2651,6 +2716,7 @@ export async function listLibraryAssetsByType(type, port) {
   }, {});
 
   const childAssetRows = await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type));
+  const childFilePaths = new Set(childAssetRows.map(row => row.filePath));
 
   const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, port);
 
@@ -2684,6 +2750,7 @@ export async function listLibraryAssetsByType(type, port) {
       name: canonicalAsset?.name || row.name,
       filename,
       filePath: row.filePath,
+      projectId: canonicalAsset?.projectId ?? null,
       type,
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
@@ -2703,7 +2770,12 @@ export async function listLibraryAssetsByType(type, port) {
   const knownFilenames = new Set(dbAssets.map(asset => asset.filename));
 
   const fileAssets = fileEntries
-    .filter(entry => !knownFilenames.has(`${subdirectory}/${entry.name}`))
+    .filter(entry => {
+      const filename = `${subdirectory}/${entry.name}`;
+      const storedFilePath = toStoredAssetPath(type, filename);
+
+      return !knownFilenames.has(filename) && !childFilePaths.has(storedFilePath);
+    })
     .sort((left, right) => right.name.localeCompare(left.name))
     .map(entry => {
       const filename = `${subdirectory}/${entry.name}`;
@@ -2717,6 +2789,7 @@ export async function listLibraryAssetsByType(type, port) {
         name: canonicalAsset?.name || entry.name,
         filename,
         filePath: storedFilePath,
+        projectId: canonicalAsset?.projectId ?? null,
         type,
         extension: path.extname(entry.name).replace('.', '').toUpperCase() || type.toUpperCase(),
         url: `http://localhost:${port}/assets/${encodeURI(filename)}`,

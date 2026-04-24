@@ -454,10 +454,19 @@ export function ProjectProvider({ children }) {
   }
 
   const saveMeshEdit = async (payload) => {
+    const formData = new FormData()
+    formData.append('assetId', payload?.assetId ?? '')
+    formData.append('filePath', payload?.filePath ?? '')
+    formData.append('name', payload?.name ?? '')
+    formData.append('saveMode', payload?.saveMode ?? 'replace')
+
+    if (payload?.meshFile) {
+      formData.append('meshFile', payload.meshFile)
+    }
+
     const res = await fetch(`${API_BASE}/meshes/editor/save`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: formData
     })
 
     const data = await res.json().catch(() => ({}))
@@ -499,8 +508,11 @@ export function ProjectProvider({ children }) {
     return data
   }
 
-  const deleteLibraryAsset = async ({ type, filename }) => {
+  const deleteLibraryAsset = async ({ type, filename, force = false }) => {
     const params = new URLSearchParams({ type, filename })
+    if (force) {
+      params.set('force', 'true')
+    }
     const res = await fetch(`${API_BASE}/assets/library?${params.toString()}`, {
       method: 'DELETE'
     })
@@ -648,7 +660,9 @@ export function ProjectProvider({ children }) {
     const formData = new FormData()
     const inputValues = {}
 
-    formData.append('projectId', projectId)
+    if (projectId !== null && projectId !== undefined && String(projectId) !== '') {
+      formData.append('projectId', projectId)
+    }
     formData.append('workflowId', workflowData.workflowId)
     if (workflowData.clientId) {
       formData.append('clientId', workflowData.clientId)
@@ -661,6 +675,12 @@ export function ProjectProvider({ children }) {
     }
     if (workflowData.name) {
       formData.append('name', workflowData.name)
+    }
+    if (workflowData.persistProcessingCard === false) {
+      formData.append('persistProcessingCard', 'false')
+    }
+    if (workflowData.persistGeneratedAssets === false) {
+      formData.append('persistGeneratedAssets', 'false')
     }
 
     Object.entries(workflowData.inputs || {}).forEach(([key, value]) => {
