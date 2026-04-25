@@ -746,12 +746,16 @@ function createProjectionScene(renderObject) {
   return scene
 }
 
-export function captureTexturedMeshView({ root, textureKey, displayTexture, camera, width, height }) {
+export function captureTexturedMeshView({ root, textureKey, displayTexture, camera, width, height, targetContext }) {
   if (!root || !displayTexture || !camera || !width || !height) {
     throw new Error('The mesh projection view could not be rendered.')
   }
 
-  const projectionCamera = createProjectionRenderCamera(camera, width / height)
+  // If a target context is provided, use ITS physical dimensions for high-res rendering
+  const renderWidth = targetContext?.canvas?.width || width
+  const renderHeight = targetContext?.canvas?.height || height
+
+  const projectionCamera = createProjectionRenderCamera(camera, renderWidth / renderHeight)
   const { object, dispose } = createTexturedRenderClone(root, textureKey, displayTexture)
   const scene = createProjectionScene(object)
   const renderer = new THREE.WebGLRenderer({
@@ -762,14 +766,16 @@ export function captureTexturedMeshView({ root, textureKey, displayTexture, came
 
   try {
     renderer.setPixelRatio(1)
-    renderer.setSize(width, height, false)
+    // Render Three.js natively at the high-res dimensions
+    renderer.setSize(renderWidth, renderHeight, false) 
     renderer.outputColorSpace = displayTexture.colorSpace || THREE.SRGBColorSpace
     renderer.render(scene, projectionCamera)
 
-    const canvas = createCanvas(width, height)
-    const context = canvas.getContext('2d')
-    context.drawImage(renderer.domElement, 0, 0, width, height)
-    return canvas
+    // Draw 1:1 mapping (no stretching, perfect pixel quality)
+    const context = targetContext || createCanvas(width, height).getContext('2d')
+    context.drawImage(renderer.domElement, 0, 0, renderWidth, renderHeight)
+    
+    return context.canvas
   } finally {
     renderer.dispose()
     dispose()

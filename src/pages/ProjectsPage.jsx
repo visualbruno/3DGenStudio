@@ -19,11 +19,19 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.2.1',
+    date: '2026-04-25',
+    items: [
+      'Improved the details of Inpainting in Mesh Editor',
+			'Added controls for inpainting result'
+    ],
+  },
+  {
     version: 'v0.2.0',
     date: '2026-04-24',
     items: [
       'Added Inpainting function in Mesh Editor',
-	  'Added ComfyUI workflow examples'
+			'Added ComfyUI workflow examples'
     ],
   },
   {

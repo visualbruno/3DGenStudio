@@ -57,6 +57,18 @@ function getRectangleBounds(startPoint, endPoint) {
   }
 }
 
+function getSupersampledCanvasSize(width, height, targetMinDimension = 1024) {
+  const maxDim = Math.max(width, height)
+  if (maxDim >= targetMinDimension) {
+    return { width, height }
+  }
+  const scale = targetMinDimension / maxDim
+  return {
+    width: Math.round(width * scale),
+    height: Math.round(height * scale)
+  }
+}
+
 function loadImageElement(url) {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -85,6 +97,132 @@ function pickGeneratedTextureAsset(generatedAssets = []) {
   })
 
   return preferredAsset || generatedAssets[0]
+}
+
+/**
+ * Blend two texture canvases by opacity and add optional noise to the patched region
+ * border to help break up seam artifacts. Writes the result into outputCanvas in-place.
+ */
+function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, opacity, noise, sharpness, saturation, maskCanvas = null) {
+  const width = outputCanvas.width
+  const height = outputCanvas.height
+  const ctx = outputCanvas.getContext('2d')
+
+  ctx.clearRect(0, 0, width, height)
+  ctx.globalAlpha = 1
+  ctx.drawImage(originalCanvas, 0, 0)
+  ctx.globalAlpha = Math.max(0, Math.min(1, opacity))
+  ctx.drawImage(patchedCanvas, 0, 0)
+  ctx.globalAlpha = 1
+
+  if (noise > 0 || sharpness > 0 || saturation !== 1) {
+    const origData = originalCanvas.getContext('2d').getImageData(0, 0, width, height).data
+    const patchData = patchedCanvas.getContext('2d').getImageData(0, 0, width, height).data
+    
+    const pixelCount = width * height
+    const hardMask = new Uint8Array(pixelCount)
+    
+    // 1. Build the hard difference mask (Used ONLY for sharpness & saturation)
+    for (let i = 0; i < pixelCount; i++) {
+      const dataIdx = i * 4
+      const delta = Math.abs(patchData[dataIdx] - origData[dataIdx])
+                  + Math.abs(patchData[dataIdx + 1] - origData[dataIdx + 1])
+                  + Math.abs(patchData[dataIdx + 2] - origData[dataIdx + 2])
+      
+      if (delta > 4) {
+        hardMask[i] = 1
+      }
+    }
+
+    // 2. Apply Noise (Targeted using a Gaussian Blur halo, inspired by ComfyUI GrowMaskWithBlur)
+    if (noise > 0) {
+      let gradientMask = null
+
+      if (maskCanvas) {
+        gradientMask = generateBlurBorderGradient(maskCanvas, width, height)
+      }
+      
+      if (gradientMask) {
+        const outImg = ctx.getImageData(0, 0, width, height)
+        const out = outImg.data
+
+        for (let i = 0; i < pixelCount; i++) {
+          const strength = gradientMask[i]
+          if (strength <= 0.01) continue 
+          
+          const dataIdx = i * 4
+          const n = (Math.random() * 2 - 1) * noise * strength
+          out[dataIdx]     = Math.max(0, Math.min(255, out[dataIdx] + n))
+          out[dataIdx + 1] = Math.max(0, Math.min(255, out[dataIdx + 1] + n))
+          out[dataIdx + 2] = Math.max(0, Math.min(255, out[dataIdx + 2] + n))
+        }
+
+        ctx.putImageData(outImg, 0, 0)
+      }
+    }
+    
+    // 3. Apply Sharpness & Saturation (Still applies to the whole patch area)
+    if (sharpness > 0 || saturation !== 1) {
+      let imgData = ctx.getImageData(0, 0, width, height)
+      imgData = processPatchImage(imgData, sharpness, saturation, hardMask)
+      ctx.putImageData(imgData, 0, 0)		
+    }
+  }
+}
+
+/**
+ * Replicates ComfyUI's GrowMaskWithBlur logic to find the exact border.
+ * Flattens transparency against white to ensure the blur creates a measurable gradient.
+ */
+function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight) {
+  // Downscale source mask to texture space
+  const tempCanvas = document.createElement('canvas')
+  tempCanvas.width = targetWidth
+  tempCanvas.height = targetHeight
+  const tempCtx = tempCanvas.getContext('2d')
+  
+  // CRITICAL FIX: Draw a solid white background first!
+  // If the mask is transparent with black brush strokes (alpha masking), 
+  // blurring without a background results in 0 RGB values everywhere, 
+  // which breaks the difference calculation.
+  tempCtx.fillStyle = '#000000'
+  tempCtx.fillRect(0, 0, targetWidth, targetHeight)
+  tempCtx.drawImage(sourceMaskCanvas, 0, 0, targetWidth, targetHeight)
+  
+  // Get the sharp mask data
+  const sharpData = tempCtx.getImageData(0, 0, targetWidth, targetHeight).data
+  
+  // Create a second canvas for the blurred version
+  const blurCanvas = document.createElement('canvas')
+  blurCanvas.width = targetWidth
+  blurCanvas.height = targetHeight
+  const blurCtx = blurCanvas.getContext('2d')
+  
+  // Apply a Gaussian Blur (12px radius creates a nice 12px wide feathered border)
+  blurCtx.filter = 'blur(12px)'
+  blurCtx.drawImage(tempCanvas, 0, 0)
+  blurCtx.filter = 'none'
+  
+  const blurData = blurCtx.getImageData(0, 0, targetWidth, targetHeight).data
+  const pixelCount = targetWidth * targetHeight
+  const gradientMask = new Float32Array(pixelCount)
+  
+  // Calculate the difference: Sharp - Blur
+  for (let i = 0; i < pixelCount; i++) {
+    const idx = i * 4
+    const sharpVal = sharpData[idx] / 255
+    const blurVal = blurData[idx] / 255
+    
+    // The halo exists where the sharp mask is dark, but the blur bled outwards (making it lighter)
+    let delta = blurVal - sharpVal
+    
+    // Clamp and normalize
+    if (delta > 0.01) { // 0.01 threshold to ignore micro-noise from compression
+      gradientMask[i] = Math.min(1.0, delta * 2.5) // Multiply to boost the falloff strength back up
+    }
+  }
+  
+  return gradientMask
 }
 
 function CameraRig({ geometry, onCameraReady, controlsEnabled = true }) {
@@ -249,6 +387,68 @@ function TexturedMesh({ root, textureKey, displayTexture }) {
   )
 }
 
+function processPatchImage(imageData, sharpness = 0, saturation = 1, patchMask = null) {
+  const { data, width, height } = imageData;
+
+  // --- SATURATION ---
+  for (let i = 0; i < data.length; i += 4) {
+    // If a mask is provided, skip pixels that are not part of the patch
+    if (patchMask && !patchMask[i / 4]) {
+      continue;
+    }
+
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+
+    data[i]     = gray + (r - gray) * saturation;
+    data[i + 1] = gray + (g - gray) * saturation;
+    data[i + 2] = gray + (b - gray) * saturation;
+  }
+
+  // --- SHARPEN (simple unsharp mask) ---
+  if (sharpness > 0.001) {
+    const copy = new Uint8ClampedArray(data);
+
+    const kernel = [
+      0, -1, 0,
+      -1, 5, -1,
+      0, -1, 0
+    ];
+
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        // If a mask is provided, skip pixels that are not part of the patch
+        const pixelIndex = y * width + x;
+        if (patchMask && !patchMask[pixelIndex]) {
+          continue;
+        }
+
+        for (let c = 0; c < 3; c++) {
+          let sum = 0;
+          let ki = 0;
+
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const px = x + kx;
+              const py = y + ky;
+              const idx = (py * width + px) * 4 + c;
+              sum += copy[idx] * kernel[ki++];
+            }
+          }
+
+          const i = (y * width + x) * 4 + c;
+          data[i] = copy[i] + (sum - copy[i]) * sharpness;
+        }
+      }
+    }
+  }
+
+  return imageData;
+}
+
 export default function MeshEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -285,6 +485,11 @@ export default function MeshEditorPage() {
   const [_holeLoops, setHoleLoops] = useState([])
   const [meshName, setMeshName] = useState(searchParams.get('name') || 'Mesh')
   const [selectionBox, setSelectionBox] = useState(null)
+  const [pendingPatch, setPendingPatch] = useState(null)
+  const [patchOpacity, setPatchOpacity] = useState(1.0)
+  const [patchNoise, setPatchNoise] = useState(0)
+	const [patchSharpness, setPatchSharpness] = useState(0.0); // 0 → 2
+	const [patchSaturation, setPatchSaturation] = useState(1.0); // 0 → 2	
 
   const assetId = searchParams.get('assetId') || ''
   const numericAssetId = Number(assetId)
@@ -300,8 +505,11 @@ export default function MeshEditorPage() {
   const displayTextureRef = useRef(null)
   const maskTextureRef = useRef(null)
   const projectionMaskCanvasRef = useRef(null)
+	const projectionMaskBackupRef = useRef(null)
   const projectionCameraRef = useRef(null)
   const [hasProjectionMask, setHasProjectionMask] = useState(false)
+  const originalTextureBackupRef = useRef(null)
+  const patchedTextureRef = useRef(null)
 
   useEffect(() => () => geometry?.dispose?.(), [geometry])
 
@@ -528,6 +736,33 @@ export default function MeshEditorPage() {
   }, [geometryRevision, texturableMesh])
 
   const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
+
+  // Re-blend the preview texture in real-time whenever the user adjusts the sliders
+  useEffect(() => {
+    if (
+      !pendingPatch
+      || !originalTextureBackupRef.current
+      || !patchedTextureRef.current
+      || !texturableMesh?.textureCanvas
+    ) {
+      return
+    }
+
+    applyPatchBlendToCanvas(
+      originalTextureBackupRef.current,
+      patchedTextureRef.current,
+      texturableMesh.textureCanvas,
+      patchOpacity,
+      patchNoise,
+			patchSharpness,
+			patchSaturation,
+			projectionMaskBackupRef.current,
+    )
+    updateCanvasTexture(displayTextureRef.current)
+    setTextureRevision(current => current + 1)
+  // texturableMesh is stable during preview — intentionally omitted from deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPatch, patchOpacity, patchNoise, patchSharpness, patchSaturation])
 
   const stats = useMemo(() => ({
     vertices: geometry?.attributes?.position?.count || 0,
@@ -797,7 +1032,7 @@ export default function MeshEditorPage() {
     }
 
     if (activeMenu === 'texturing') {
-      if (!texturingReady || !texturableMesh?.root || !texturableMesh?.maskCanvas) {
+      if (!texturingReady || !texturableMesh?.root || !texturableMesh?.maskCanvas || pendingPatch) {
         return
       }
 
@@ -1192,6 +1427,7 @@ export default function MeshEditorPage() {
       setError('')
       setFeedback('Rendering projection view...')
 
+      // 1. Capture the views at normal screen resolution (Original behavior)
       const sourceViewCanvas = captureTexturedMeshView({
         root: texturableMesh.root,
         textureKey: texturableMesh.textureKey,
@@ -1200,12 +1436,33 @@ export default function MeshEditorPage() {
         width: projectionMaskCanvas.width,
         height: projectionMaskCanvas.height
       })
-      const sourceCanvas = cropCanvas(sourceViewCanvas, bbox)
-      const maskCanvas = cropCanvas(projectionMaskCanvas, bbox)
+
+      // 2. Crop at normal screen resolution to get the exact bounding box
+      const normalSourceCrop = cropCanvas(sourceViewCanvas, bbox)
+      const normalMaskCrop = cropCanvas(projectionMaskCanvas, bbox)
+
+      // 3. SUPER-SAMPLING: Scale the cropped images up to 1024px
+      // ComfyUI needs ~1024px to generate sharp details. By cropping first,
+      // we isolate the exact area and scale it up, giving ComfyUI a crisp, large input.
+      const ssSourceCanvas = document.createElement('canvas')
+      const ssMaskCanvas = document.createElement('canvas')
+      
+      if (normalSourceCrop.width > 0 && normalSourceCrop.height > 0) {
+        const scale = Math.max(1024 / normalSourceCrop.width, 1024 / normalSourceCrop.height, 1)
+        
+        ssSourceCanvas.width = Math.round(normalSourceCrop.width * scale)
+        ssSourceCanvas.height = Math.round(normalSourceCrop.height * scale)
+        ssSourceCanvas.getContext('2d').drawImage(normalSourceCrop, 0, 0, ssSourceCanvas.width, ssSourceCanvas.height)
+        
+        ssMaskCanvas.width = Math.round(normalMaskCrop.width * scale)
+        ssMaskCanvas.height = Math.round(normalMaskCrop.height * scale)
+        ssMaskCanvas.getContext('2d').drawImage(normalMaskCrop, 0, 0, ssMaskCanvas.width, ssMaskCanvas.height)
+      }
+
       const workflowInputs = {
         ...textureWorkflowInputs,
-        [sourceParameterId]: await canvasToFile(sourceCanvas, `${meshName || 'mesh'}-source.png`),
-        [maskParameterId]: await canvasToFile(maskCanvas, `${meshName || 'mesh'}-mask.png`)
+        [sourceParameterId]: await canvasToFile(ssSourceCanvas, `${meshName || 'mesh'}-source.png`),
+        [maskParameterId]: await canvasToFile(ssMaskCanvas, `${meshName || 'mesh'}-mask.png`)
       }
 
       const generatedAssets = await runComfyWorkflow(projectId ? Number(projectId) : null, {
@@ -1225,10 +1482,31 @@ export default function MeshEditorPage() {
 
       const patchImage = await loadImageElement(buildAssetUrl(generatedPatchAsset))
       setFeedback('Reprojecting generated texture...')
+
+      // --- Create backup of the current texture before any modifications ---
+      const backupCanvas = document.createElement('canvas')
+      backupCanvas.width = texturableMesh.textureCanvas.width
+      backupCanvas.height = texturableMesh.textureCanvas.height
+      backupCanvas.getContext('2d').drawImage(texturableMesh.textureCanvas, 0, 0)
+      originalTextureBackupRef.current = backupCanvas
+			
+      // --- Create backup of the projection mask BEFORE clearing it ---
+      const maskBackup = document.createElement('canvas')
+      maskBackup.width = projectionMaskCanvas.width
+      maskBackup.height = projectionMaskCanvas.height
+      maskBackup.getContext('2d').drawImage(projectionMaskCanvas, 0, 0)
+      projectionMaskBackupRef.current = maskBackup			
+
+      // --- Apply the patch at 100% onto a separate canvas (not the live textureCanvas) ---
+      const patchedCanvas = document.createElement('canvas')
+      patchedCanvas.width = texturableMesh.textureCanvas.width
+      patchedCanvas.height = texturableMesh.textureCanvas.height
+      patchedCanvas.getContext('2d').drawImage(texturableMesh.textureCanvas, 0, 0)
+
       const projectionStats = await applyProjectedTexturePatch({
         root: texturableMesh.root,
         textureKey: texturableMesh.textureKey,
-        textureCanvas: texturableMesh.textureCanvas,
+        textureCanvas: patchedCanvas,
         textureConfig: texturableMesh.textureConfig,
         camera: projectionCamera,
         maskCanvas: projectionMaskCanvas,
@@ -1239,12 +1517,18 @@ export default function MeshEditorPage() {
           setFeedback(`Reprojecting generated texture... ${Math.round(progress * 100)}%`)
         }
       })
+      patchedTextureRef.current = patchedCanvas
+
+      // Clear the paint mask — the user cannot repaint while reviewing
       clearCanvas(texturableMesh.maskCanvas)
       clearCanvas(projectionMaskCanvas)
       projectionCameraRef.current = null
       setHasProjectionMask(false)
-      updateCanvasTexture(displayTextureRef.current)
       updateCanvasTexture(maskTextureRef.current)
+
+      // Write the initial blend (default opacity=1, noise=0) into the live textureCanvas for display
+      applyPatchBlendToCanvas(backupCanvas, patchedCanvas, texturableMesh.textureCanvas, patchOpacity, patchNoise, patchSharpness, patchSaturation, projectionMaskBackupRef.current)
+      updateCanvasTexture(displayTextureRef.current)
       setTextureRevision(current => current + 1)
 
       if (projectId && nodeId) {
@@ -1256,7 +1540,8 @@ export default function MeshEditorPage() {
       }
 
       console.info('Projected texture patch profile', projectionStats)
-      setFeedback('Projected texture patch applied.')
+      setPendingPatch({ timestamp: Date.now() })
+      setFeedback('Patch ready — adjust Opacity & Noise, then click Apply or Cancel.')
     } catch (textureError) {
       setError(textureError.message || 'Failed to regenerate the mesh texture.')
       setFeedback('')
@@ -1264,7 +1549,43 @@ export default function MeshEditorPage() {
       stopProgress()
       setTexturing(false)
     }
-  }, [cropPadding, featherRadius, meshName, nodeId, projectId, runComfyWorkflow, selectedTextureWorkflow, subscribeToComfyWorkflowProgress, texturableMesh, textureWorkflowParameterIds, textureWorkflowInputs, texturing, updateProjectNode])
+  }, [cropPadding, featherRadius, meshName, nodeId, patchNoise, patchOpacity, projectId, runComfyWorkflow, selectedTextureWorkflow, subscribeToComfyWorkflowProgress, texturableMesh, textureWorkflowParameterIds, textureWorkflowInputs, texturing, updateProjectNode])
+
+  const handleApplyPatch = useCallback(() => {
+    if (!pendingPatch) {
+      return
+    }
+
+    // The textureCanvas already holds the blended result — just clean up refs
+    originalTextureBackupRef.current = null
+    patchedTextureRef.current = null
+		projectionMaskBackupRef.current = null
+    setPendingPatch(null)
+    setPatchOpacity(1.0)
+    setPatchNoise(0)
+    setFeedback('Texture patch applied.')
+  }, [pendingPatch])
+
+  const handleCancelPatch = useCallback(() => {
+    if (!pendingPatch || !originalTextureBackupRef.current || !texturableMesh?.textureCanvas) {
+      return
+    }
+
+    // Restore the original texture from the backup canvas
+    const ctx = texturableMesh.textureCanvas.getContext('2d')
+    ctx.clearRect(0, 0, texturableMesh.textureCanvas.width, texturableMesh.textureCanvas.height)
+    ctx.drawImage(originalTextureBackupRef.current, 0, 0)
+    updateCanvasTexture(displayTextureRef.current)
+    setTextureRevision(current => current + 1)
+
+    originalTextureBackupRef.current = null
+    patchedTextureRef.current = null
+		projectionMaskBackupRef.current = null
+    setPendingPatch(null)
+    setPatchOpacity(1.0)
+    setPatchNoise(0)
+    setFeedback('Texture patch cancelled.')
+  }, [pendingPatch, texturableMesh])
 
   const deleteDisabled = selectionMode === 'face' ? selectedFaceIndices.length === 0 : selectedVertexIndices.length === 0
   const smoothDisabled = selectedVertexIndices.length === 0
@@ -1410,20 +1731,20 @@ export default function MeshEditorPage() {
                       <span className="mesh-editor-panel__section-title">Brush</span>
                       <label className="mesh-editor-range-field">
                         <span>Size</span>
-                        <input type="range" min="4" max="96" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <input type="range" min="4" max="96" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))} disabled={!!texturingUnavailableReason || !!pendingPatch} />
                         <strong>{brushSize}px</strong>
                       </label>
                       <label className="mesh-editor-range-field">
                         <span>Crop margin</span>
-                        <input type="range" min="0" max="128" value={cropPadding} onChange={event => setCropPadding(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <input type="range" min="0" max="128" value={cropPadding} onChange={event => setCropPadding(Number(event.target.value))} disabled={!!texturingUnavailableReason || !!pendingPatch} />
                         <strong>{cropPadding}px</strong>
                       </label>
                       <label className="mesh-editor-range-field">
                         <span>Feather</span>
-                        <input type="range" min="0" max="32" value={featherRadius} onChange={event => setFeatherRadius(Number(event.target.value))} disabled={!!texturingUnavailableReason} />
+                        <input type="range" min="0" max="32" value={featherRadius} onChange={event => setFeatherRadius(Number(event.target.value))} disabled={!!texturingUnavailableReason || !!pendingPatch} />
                         <strong>{featherRadius}px</strong>
                       </label>
-                      <button type="button" className="mesh-editor-btn mesh-editor-btn--ghost" onClick={handleClearTextureMask} disabled={!!texturingUnavailableReason}>Clear mask</button>
+                      <button type="button" className="mesh-editor-btn mesh-editor-btn--ghost" onClick={handleClearTextureMask} disabled={!!texturingUnavailableReason || !!pendingPatch}>Clear mask</button>
                     </div>
 
                     <div className="mesh-editor-panel__section">
@@ -1432,7 +1753,7 @@ export default function MeshEditorPage() {
                         className="mesh-editor-panel__input mesh-editor-panel__select"
                         value={textureWorkflowId}
                         onChange={event => setTextureWorkflowId(event.target.value)}
-                        disabled={comfyLoading || texturingWorkflows.length === 0 || !!texturingUnavailableReason}
+                        disabled={comfyLoading || texturingWorkflows.length === 0 || !!texturingUnavailableReason || !!pendingPatch}
                       >
                         {texturingWorkflows.length === 0 ? (
                           <option value="">No 2-image ComfyUI workflow found</option>
@@ -1462,7 +1783,7 @@ export default function MeshEditorPage() {
                                 type="button"
                                 className={`mesh-editor-toggle ${currentValue ? 'mesh-editor-toggle--active' : ''}`}
                                 onClick={() => handleTextureWorkflowInputChange(parameter, !currentValue)}
-                                disabled={!!texturingUnavailableReason}
+                                disabled={!!texturingUnavailableReason || !!pendingPatch}
                               >
                                 {currentValue ? 'Enabled' : 'Disabled'}
                               </button>
@@ -1471,7 +1792,7 @@ export default function MeshEditorPage() {
                                 className="mesh-editor-panel__input mesh-editor-panel__textarea"
                                 value={currentValue ?? ''}
                                 onChange={event => handleTextureWorkflowInputChange(parameter, event.target.value)}
-                                disabled={!!texturingUnavailableReason}
+                                disabled={!!texturingUnavailableReason || !!pendingPatch}
                               />
                             ) : (
                               <input
@@ -1479,16 +1800,91 @@ export default function MeshEditorPage() {
                                 className="mesh-editor-panel__input"
                                 value={currentValue ?? ''}
                                 onChange={event => handleTextureWorkflowInputChange(parameter, event.target.value)}
-                                disabled={!!texturingUnavailableReason}
+                                disabled={!!texturingUnavailableReason || !!pendingPatch}
                               />
                             )}
                           </label>
                         )
                       })}
 
-                      <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
-                        {texturing ? 'Regenerating…' : 'Regenerate zone'}
-                      </button>
+                      {pendingPatch ? (
+                        <div className="mesh-editor-patch-preview">
+                          <span className="mesh-editor-panel__section-title mesh-editor-patch-preview__title">
+                            <span className="material-symbols-outlined">tune</span>
+                            Review patch
+                          </span>
+                          <label className="mesh-editor-range-field">
+                            <span>Opacity <em className="mesh-editor-range-field__sub">(Original → Generated)</em></span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={patchOpacity}
+                              onChange={event => setPatchOpacity(Number(event.target.value))}
+                            />
+                            <strong>{Math.round(patchOpacity * 100)}%</strong>
+                          </label>
+                          <label className="mesh-editor-range-field">
+                            <span>Noise <em className="mesh-editor-range-field__sub">(Prevent Seams)</em></span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="32"
+                              step="1"
+                              value={patchNoise}
+                              onChange={event => setPatchNoise(Number(event.target.value))}
+                            />
+                            <strong>{patchNoise}</strong>
+                          </label>
+													<label className="mesh-editor-range-field">
+														<strong>Sharpness</strong>
+														<input
+															type="range"
+															min="0"
+															max="2"
+															step="0.01"
+															value={patchSharpness}
+															onChange={(e) => setPatchSharpness(parseFloat(e.target.value))}
+														/>
+														<strong>{patchSharpness}</strong>
+													</label>
+													<label className="mesh-editor-range-field">
+														<strong>Saturation</strong>
+														<input
+															type="range"
+															min="0"
+															max="2"
+															step="0.01"
+															value={patchSaturation}
+															onChange={(e) => setPatchSaturation(parseFloat(e.target.value))}
+														/>
+														<strong>{patchSaturation}</strong>
+													</label>													
+                          <div className="mesh-editor-actions mesh-editor-patch-preview__actions">
+                            <button
+                              type="button"
+                              className="mesh-editor-btn mesh-editor-btn--primary"
+                              onClick={handleApplyPatch}
+                            >
+                              <span className="material-symbols-outlined">check</span>
+                              Apply
+                            </button>
+                            <button
+                              type="button"
+                              className="mesh-editor-btn mesh-editor-btn--ghost"
+                              onClick={handleCancelPatch}
+                            >
+                              <span className="material-symbols-outlined">close</span>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
+                          {texturing ? 'Regenerating…' : 'Regenerate zone'}
+                        </button>
+                      )}
                     </div>
 
                     <div className="mesh-editor-panel__notes">

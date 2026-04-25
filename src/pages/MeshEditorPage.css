@@ -279,6 +279,47 @@
   color: var(--on-surface-variant);
 }
 
+.mesh-editor-patch-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(143, 245, 255, 0.22);
+  background: rgba(143, 245, 255, 0.05);
+  animation: patch-preview-in 0.18s ease;
+}
+
+@keyframes patch-preview-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.mesh-editor-patch-preview__title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--primary) !important;
+}
+
+.mesh-editor-patch-preview__title .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.mesh-editor-patch-preview__actions {
+  flex-wrap: nowrap !important;
+}
+
+.mesh-editor-patch-preview__actions .mesh-editor-btn {
+  flex: 1;
+}
+
+.mesh-editor-range-field__sub {
+  font-style: normal;
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
 .mesh-editor-toggle-group,
 .mesh-editor-actions {
   display: flex;
