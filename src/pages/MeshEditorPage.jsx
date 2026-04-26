@@ -108,11 +108,10 @@ function pickGeneratedTextureAsset(generatedAssets = []) {
  * Blend two texture canvases by opacity and add optional noise to the patched region
  * border to help break up seam artifacts. Writes the result into outputCanvas in-place.
  */
-function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, opacity, noise, sharpness, saturation, maskCanvas = null) {
+function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, opacity, noise, sharpness, saturation, maskCanvas = null, featherRadius = 12) {
   const width = outputCanvas.width
   const height = outputCanvas.height
-  const ctx = outputCanvas.getContext('2d', { willReadFrequently: true }) || outputCanvas.getContext('2d')
-
+  const ctx = outputCanvas.getContext('2d') || outputCanvas.getContext('2d')
   ctx.clearRect(0, 0, width, height)
   ctx.globalAlpha = 1
   ctx.drawImage(originalCanvas, 0, 0)
@@ -121,56 +120,44 @@ function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, op
   ctx.globalAlpha = 1
 
   if (noise > 0 || sharpness > 0 || saturation !== 1) {
-    const origData = (originalCanvas.getContext('2d', { willReadFrequently: true }) || originalCanvas.getContext('2d')).getImageData(0, 0, width, height).data
-    const patchData = (patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')).getImageData(0, 0, width, height).data
-    
+    const origData = (originalCanvas.getContext('2d')).getImageData(0, 0, width, height).data
+    const patchData = (patchedCanvas.getContext('2d')).getImageData(0, 0, width, height).data
     const pixelCount = width * height
     const hardMask = new Uint8Array(pixelCount)
-    
-    // 1. Build the hard difference mask (Used ONLY for sharpness & saturation)
+
     for (let i = 0; i < pixelCount; i++) {
       const dataIdx = i * 4
-      const delta = Math.abs(patchData[dataIdx] - origData[dataIdx])
-                  + Math.abs(patchData[dataIdx + 1] - origData[dataIdx + 1])
-                  + Math.abs(patchData[dataIdx + 2] - origData[dataIdx + 2])
-      
-      if (delta > 4) {
-        hardMask[i] = 1
-      }
+      const delta = Math.abs(patchData[dataIdx] - origData[dataIdx]) +
+                    Math.abs(patchData[dataIdx+1] - origData[dataIdx+1]) +
+                    Math.abs(patchData[dataIdx+2] - origData[dataIdx+2])
+      if (delta > 4) hardMask[i] = 1
     }
 
-    // 2. Apply Noise (Targeted using a Gaussian Blur halo, inspired by ComfyUI GrowMaskWithBlur)
-    if (noise > 0) {
-      let gradientMask = null
+    // Noise – use featherRadius for the blur border
+    if (noise > 0 && maskCanvas) {
+      const gradientMask = generateBlurBorderGradient(maskCanvas, width, height, featherRadius)
+      const outImg = ctx.getImageData(0, 0, width, height)
+      const out = outImg.data
 
-      if (maskCanvas) {
-        gradientMask = generateBlurBorderGradient(maskCanvas, width, height)
+      for (let i = 0; i < pixelCount; i++) {
+        const strength = gradientMask[i]
+        if (strength <= 0.01) continue
+        // Scale noise: 0..32 → up to ±32 per channel, further boost by strength
+        const amp = noise * 1.5 * strength
+        const n = (Math.random() * 2 - 1) * amp
+        const dataIdx = i * 4
+        out[dataIdx]     = Math.max(0, Math.min(255, out[dataIdx] + n))
+        out[dataIdx + 1] = Math.max(0, Math.min(255, out[dataIdx + 1] + n))
+        out[dataIdx + 2] = Math.max(0, Math.min(255, out[dataIdx + 2] + n))
       }
-      
-      if (gradientMask) {
-        const outImg = ctx.getImageData(0, 0, width, height)
-        const out = outImg.data
-
-        for (let i = 0; i < pixelCount; i++) {
-          const strength = gradientMask[i]
-          if (strength <= 0.01) continue 
-          
-          const dataIdx = i * 4
-          const n = (Math.random() * 2 - 1) * noise * strength
-          out[dataIdx]     = Math.max(0, Math.min(255, out[dataIdx] + n))
-          out[dataIdx + 1] = Math.max(0, Math.min(255, out[dataIdx + 1] + n))
-          out[dataIdx + 2] = Math.max(0, Math.min(255, out[dataIdx + 2] + n))
-        }
-
-        ctx.putImageData(outImg, 0, 0)
-      }
+      ctx.putImageData(outImg, 0, 0)
     }
-    
-    // 3. Apply Sharpness & Saturation (Still applies to the whole patch area)
+
+    // Sharpness & Saturation (unchanged)
     if (sharpness > 0 || saturation !== 1) {
       let imgData = ctx.getImageData(0, 0, width, height)
       imgData = processPatchImage(imgData, sharpness, saturation, hardMask)
-      ctx.putImageData(imgData, 0, 0)		
+      ctx.putImageData(imgData, 0, 0)
     }
   }
 }
@@ -179,54 +166,41 @@ function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, op
  * Replicates ComfyUI's GrowMaskWithBlur logic to find the exact border.
  * Flattens transparency against white to ensure the blur creates a measurable gradient.
  */
-function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight) {
-  // Downscale source mask to texture space
+function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight, blurRadius = 12) {
   const tempCanvas = document.createElement('canvas')
   tempCanvas.width = targetWidth
   tempCanvas.height = targetHeight
   const tempCtx = tempCanvas.getContext('2d')
-  
-  // CRITICAL FIX: Draw a solid white background first!
-  // If the mask is transparent with black brush strokes (alpha masking), 
-  // blurring without a background results in 0 RGB values everywhere, 
-  // which breaks the difference calculation.
+
+  // Fill with black background, then draw the mask (white strokes)
   tempCtx.fillStyle = '#000000'
   tempCtx.fillRect(0, 0, targetWidth, targetHeight)
   tempCtx.drawImage(sourceMaskCanvas, 0, 0, targetWidth, targetHeight)
-  
-  // Get the sharp mask data
+
   const sharpData = tempCtx.getImageData(0, 0, targetWidth, targetHeight).data
-  
-  // Create a second canvas for the blurred version
+
   const blurCanvas = document.createElement('canvas')
   blurCanvas.width = targetWidth
   blurCanvas.height = targetHeight
   const blurCtx = blurCanvas.getContext('2d')
-  
-  // Apply a Gaussian Blur (12px radius creates a nice 12px wide feathered border)
-  blurCtx.filter = 'blur(12px)'
+  blurCtx.filter = `blur(${blurRadius}px)`
   blurCtx.drawImage(tempCanvas, 0, 0)
   blurCtx.filter = 'none'
-  
+
   const blurData = blurCtx.getImageData(0, 0, targetWidth, targetHeight).data
   const pixelCount = targetWidth * targetHeight
   const gradientMask = new Float32Array(pixelCount)
-  
-  // Calculate the difference: Sharp - Blur
+
   for (let i = 0; i < pixelCount; i++) {
     const idx = i * 4
     const sharpVal = sharpData[idx] / 255
     const blurVal = blurData[idx] / 255
-    
-    // The halo exists where the sharp mask is dark, but the blur bled outwards (making it lighter)
     let delta = blurVal - sharpVal
-    
-    // Clamp and normalize
-    if (delta > 0.01) { // 0.01 threshold to ignore micro-noise from compression
-      gradientMask[i] = Math.min(1.0, delta * 2.5) // Multiply to boost the falloff strength back up
+    if (delta > 0.01) {
+      gradientMask[i] = Math.min(1.0, delta * 2.5)
     }
   }
-  
+
   return gradientMask
 }
 
@@ -511,6 +485,7 @@ export default function MeshEditorPage() {
   const displayTextureRef = useRef(null)
   const maskTextureRef = useRef(null)
   const projectionMaskCanvasRef = useRef(null)
+	const maskOverlayCanvasRef = useRef(null);
 	const projectionMaskBackupRef = useRef(null)
   const projectionCameraRef = useRef(null)
   const [hasProjectionMask, setHasProjectionMask] = useState(false)
@@ -578,6 +553,68 @@ export default function MeshEditorPage() {
       projectionCameraRef.current.updateMatrixWorld?.(true)
     }
   }, [])
+	
+	const updateMaskOverlay = useCallback(() => {
+		const maskCanvas = projectionMaskCanvasRef.current;
+		const overlayCanvas = maskOverlayCanvasRef.current;
+		if (!maskCanvas || !overlayCanvas) return;
+
+		const ctx = overlayCanvas.getContext('2d');
+		const { width, height } = maskCanvas;
+		overlayCanvas.width = width;
+		overlayCanvas.height = height;
+		ctx.clearRect(0, 0, width, height);
+
+		// Compute mask bounding box
+		const bbox = getMaskBoundingBox(maskCanvas, 0); // no extra padding here
+		if (!bbox) return;
+
+		// Expand by cropPadding
+		const cropLeft = Math.max(0, bbox.x - cropPadding);
+		const cropTop = Math.max(0, bbox.y - cropPadding);
+		const cropRight = Math.min(width, bbox.x + bbox.width + cropPadding);
+		const cropBottom = Math.min(height, bbox.y + bbox.height + cropPadding);
+		const cropWidth = cropRight - cropLeft;
+		const cropHeight = cropBottom - cropTop;
+
+		// Draw crop rectangle (white dashed)
+		ctx.save();
+		ctx.strokeStyle = '#ffffff';
+		ctx.setLineDash([5, 8]);
+		ctx.lineWidth = 2;
+		ctx.strokeRect(cropLeft, cropTop, cropWidth, cropHeight);
+		ctx.setLineDash([]); // reset
+
+		// Draw feather area (a semi-transparent gradient from the crop rectangle inward)
+		if (featherRadius > 0) {
+			// Create a gradient that fades from the crop edge towards the center
+			// Simpler: draw a stroked inner rectangle with fading opacity? 
+			// Better: use a radial gradient or multiple strokes.
+			// We'll draw a series of thin rectangles from the crop edge inward.
+			const steps = Math.min(featherRadius, 20);
+			for (let i = 1; i <= steps; i++) {
+				const t = i / steps; // 0 (outer) -> 1 (inner)
+				const alpha = 0.3 * (1 - t); // fades out inward
+				ctx.beginPath();
+				ctx.strokeStyle = `rgba(255, 255, 255, ${alpha})`;
+				ctx.lineWidth = 2;
+				const inset = i * (featherRadius / steps);
+				ctx.strokeRect(
+					cropLeft + inset,
+					cropTop + inset,
+					cropWidth - inset * 2,
+					cropHeight - inset * 2
+				);
+			}
+		}
+		ctx.restore();
+	}, [cropPadding, featherRadius]);	
+	
+	useEffect(() => {
+		if (activeMenu === 'texturing') {
+			updateMaskOverlay();
+		}
+	}, [cropPadding, featherRadius, updateMaskOverlay, activeMenu]);	
 
   useEffect(() => {
     syncProjectionMaskCanvasSize()
@@ -758,53 +795,49 @@ export default function MeshEditorPage() {
 
   const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
 
-  const rebuildProjectedTexturePreview = useCallback(() => {
-    if (
-      !pendingPatch
-      || !originalTextureBackupRef.current
-      || !texturableMesh?.textureCanvas
-      || projectionViewDataRef.current.length === 0
-    ) {
-      return
-    }
+	const rebuildProjectedTexturePreview = useCallback(() => {
+		if (
+			!pendingPatch
+			|| !originalTextureBackupRef.current
+			|| !texturableMesh?.textureCanvas
+			|| projectionViewDataRef.current.length === 0
+		) {
+			return
+		}
 
-    const textureWidth = texturableMesh.textureCanvas.width
-    const textureHeight = texturableMesh.textureCanvas.height
-    const patchedCanvas = document.createElement('canvas')
-    patchedCanvas.width = textureWidth
-    patchedCanvas.height = textureHeight
-    const patchedContext = patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')
+		const textureWidth = texturableMesh.textureCanvas.width
+		const textureHeight = texturableMesh.textureCanvas.height
+		const patchedCanvas = document.createElement('canvas')
+		patchedCanvas.width = textureWidth
+		patchedCanvas.height = textureHeight
+		const patchedContext = patchedCanvas.getContext('2d')
+		patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
 
-    patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
+		projectionViewDataRef.current.forEach((viewData, viewIndex) => {
+			const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+			if (viewOpacity <= 0 || !viewData?.patchCanvas) return
+			patchedContext.globalAlpha = viewOpacity
+			patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+		})
+		patchedContext.globalAlpha = 1
+		patchedTextureRef.current = patchedCanvas
 
-    projectionViewDataRef.current.forEach((viewData, viewIndex) => {
-      const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+		// Pass featherRadius to the blend function
+		applyPatchBlendToCanvas(
+			originalTextureBackupRef.current,
+			patchedCanvas,
+			texturableMesh.textureCanvas,
+			1,
+			patchNoise,
+			patchSharpness,
+			patchSaturation,
+			projectionMaskBackupRef.current,
+			featherRadius   // <-- new argument
+		)
 
-      if (viewOpacity <= 0 || !viewData?.patchCanvas) {
-        return
-      }
-
-      patchedContext.globalAlpha = viewOpacity
-      patchedContext.drawImage(viewData.patchCanvas, 0, 0)
-    })
-
-    patchedContext.globalAlpha = 1
-    patchedTextureRef.current = patchedCanvas
-
-    applyPatchBlendToCanvas(
-      originalTextureBackupRef.current,
-      patchedCanvas,
-      texturableMesh.textureCanvas,
-      1,
-      patchNoise,
-            patchSharpness,
-            patchSaturation,
-            projectionMaskBackupRef.current
-    )
-
-    updateCanvasTexture(displayTextureRef.current)
-    setTextureRevision(current => current + 1)
-  }, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh])
+		updateCanvasTexture(displayTextureRef.current)
+		setTextureRevision(current => current + 1)
+	}, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh, featherRadius])
 
   useEffect(() => {
     void rebuildProjectedTexturePreview()
@@ -1178,6 +1211,7 @@ export default function MeshEditorPage() {
       paintStateRef.current.lastIslandKey = islandHit?.key || ''
       paintStateRef.current.lastScreenPoint = nextPoint
       updateCanvasTexture(maskTextureRef.current)
+			updateMaskOverlay();
       setTextureRevision(current => current + 1)
       setHasProjectionMask(true)
       return
@@ -1267,6 +1301,7 @@ export default function MeshEditorPage() {
 
     clearCanvas(texturableMesh.maskCanvas)
     clearCanvas(projectionMaskCanvasRef.current)
+		updateMaskOverlay();
     projectionCameraRef.current = null
     setHasProjectionMask(false)
     updateCanvasTexture(maskTextureRef.current)
@@ -1743,11 +1778,12 @@ export default function MeshEditorPage() {
     // The textureCanvas already holds the blended result — just clean up refs
     originalTextureBackupRef.current = null
     patchedTextureRef.current = null
-      projectionViewDataRef.current = []
+		projectionViewDataRef.current = []
 		projectionMaskBackupRef.current = null
     setPendingPatch(null)
+		updateMaskOverlay();
     setPatchNoise(0)
-       setProjectionOpacities([1])
+    setProjectionOpacities([1])
     setFeedback('Texture patch applied.')
   }, [pendingPatch])
 
@@ -1765,11 +1801,12 @@ export default function MeshEditorPage() {
 
     originalTextureBackupRef.current = null
     patchedTextureRef.current = null
-      projectionViewDataRef.current = []
+    projectionViewDataRef.current = []
 		projectionMaskBackupRef.current = null
     setPendingPatch(null)
+		updateMaskOverlay();
     setPatchNoise(0)
-     setProjectionOpacities([1])
+    setProjectionOpacities([1])
     setFeedback('Texture patch cancelled.')
   }, [pendingPatch, texturableMesh])
 
@@ -2119,6 +2156,7 @@ export default function MeshEditorPage() {
                 ref={projectionMaskCanvasRef}
                 className={`mesh-editor-projection-mask ${activeMenu === 'texturing' && hasProjectionMask ? 'mesh-editor-projection-mask--active' : ''}`}
               />
+							<canvas ref={maskOverlayCanvasRef} className="mesh-editor-mask-overlay" />							
               {loading ? (
                 <div className="mesh-editor-empty-state">
                   <span className="material-symbols-outlined mesh-editor-empty-state__icon">progress_activity</span>
