@@ -111,7 +111,7 @@ function pickGeneratedTextureAsset(generatedAssets = []) {
 function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, opacity, noise, sharpness, saturation, maskCanvas = null) {
   const width = outputCanvas.width
   const height = outputCanvas.height
-  const ctx = outputCanvas.getContext('2d')
+  const ctx = outputCanvas.getContext('2d', { willReadFrequently: true }) || outputCanvas.getContext('2d')
 
   ctx.clearRect(0, 0, width, height)
   ctx.globalAlpha = 1
@@ -121,8 +121,8 @@ function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, op
   ctx.globalAlpha = 1
 
   if (noise > 0 || sharpness > 0 || saturation !== 1) {
-    const origData = originalCanvas.getContext('2d').getImageData(0, 0, width, height).data
-    const patchData = patchedCanvas.getContext('2d').getImageData(0, 0, width, height).data
+    const origData = (originalCanvas.getContext('2d', { willReadFrequently: true }) || originalCanvas.getContext('2d')).getImageData(0, 0, width, height).data
+    const patchData = (patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')).getImageData(0, 0, width, height).data
     
     const pixelCount = width * height
     const hardMask = new Uint8Array(pixelCount)
@@ -491,11 +491,11 @@ export default function MeshEditorPage() {
   const [meshName, setMeshName] = useState(searchParams.get('name') || 'Mesh')
   const [selectionBox, setSelectionBox] = useState(null)
   const [pendingPatch, setPendingPatch] = useState(null)
-  const [patchOpacity, setPatchOpacity] = useState(1.0)
   const [patchNoise, setPatchNoise] = useState(0)
 	const [patchSharpness, setPatchSharpness] = useState(0.0); // 0 → 2
 	const [patchSaturation, setPatchSaturation] = useState(1.0); // 0 → 2	
 	const [multiViewCount, setMultiViewCount] = useState(1)
+    const [projectionOpacities, setProjectionOpacities] = useState([1])
 
   const assetId = searchParams.get('assetId') || ''
   const numericAssetId = Number(assetId)
@@ -516,12 +516,27 @@ export default function MeshEditorPage() {
   const [hasProjectionMask, setHasProjectionMask] = useState(false)
   const originalTextureBackupRef = useRef(null)
   const patchedTextureRef = useRef(null)
+    const projectionViewDataRef = useRef([])
 
   useEffect(() => () => geometry?.dispose?.(), [geometry])
 
   useEffect(() => () => displayTextureRef.current?.dispose?.(), [])
 
   useEffect(() => () => maskTextureRef.current?.dispose?.(), [])
+
+    useEffect(() => {
+        setProjectionOpacities(current => {
+            const next = current.slice(0, multiViewCount)
+
+            while (next.length < multiViewCount) {
+                next.push(1)
+            }
+
+            return next.length === current.length && next.every((value, index) => value === current[index])
+                ? current
+                : next
+        })
+    }, [multiViewCount])
 
   const syncProjectionMaskCanvasSize = useCallback(() => {
     const shell = canvasShellRef.current
@@ -743,32 +758,57 @@ export default function MeshEditorPage() {
 
   const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
 
-  // Re-blend the preview texture in real-time whenever the user adjusts the sliders
-  useEffect(() => {
+  const rebuildProjectedTexturePreview = useCallback(() => {
     if (
       !pendingPatch
       || !originalTextureBackupRef.current
-      || !patchedTextureRef.current
       || !texturableMesh?.textureCanvas
+      || projectionViewDataRef.current.length === 0
     ) {
       return
     }
 
+    const textureWidth = texturableMesh.textureCanvas.width
+    const textureHeight = texturableMesh.textureCanvas.height
+    const patchedCanvas = document.createElement('canvas')
+    patchedCanvas.width = textureWidth
+    patchedCanvas.height = textureHeight
+    const patchedContext = patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')
+
+    patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
+
+    projectionViewDataRef.current.forEach((viewData, viewIndex) => {
+      const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+
+      if (viewOpacity <= 0 || !viewData?.patchCanvas) {
+        return
+      }
+
+      patchedContext.globalAlpha = viewOpacity
+      patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+    })
+
+    patchedContext.globalAlpha = 1
+    patchedTextureRef.current = patchedCanvas
+
     applyPatchBlendToCanvas(
       originalTextureBackupRef.current,
-      patchedTextureRef.current,
+      patchedCanvas,
       texturableMesh.textureCanvas,
-      patchOpacity,
+      1,
       patchNoise,
-			patchSharpness,
-			patchSaturation,
-			projectionMaskBackupRef.current,
+            patchSharpness,
+            patchSaturation,
+            projectionMaskBackupRef.current
     )
+
     updateCanvasTexture(displayTextureRef.current)
     setTextureRevision(current => current + 1)
-  // texturableMesh is stable during preview — intentionally omitted from deps
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingPatch, patchOpacity, patchNoise, patchSharpness, patchSaturation])
+  }, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh])
+
+  useEffect(() => {
+    void rebuildProjectedTexturePreview()
+  }, [rebuildProjectedTexturePreview, projectionOpacities])
 
   const stats = useMemo(() => ({
     vertices: geometry?.attributes?.position?.count || 0,
@@ -1432,12 +1472,9 @@ export default function MeshEditorPage() {
             .setFromObject(texturableMesh.root)
             .getCenter(new THREE.Vector3())
 
-		// Build all cameras: the original locked one plus (multiViewCount - 1) orbital variants
-		const cameras = generateOrbitalCameras(projectionCamera, orbitTarget, multiViewCount - 1, 30)
-
-		// One shared accumulation buffer across all views
-		const accumulatedColor  = new Float32Array(textureWidth * textureHeight * 4)
-		const accumulatedWeight = new Float32Array(textureWidth * textureHeight)
+        // Build all cameras: the original locked one plus (multiViewCount - 1) orbital variants
+        const cameras = generateOrbitalCameras(projectionCamera, orbitTarget, multiViewCount - 1, 30)
+        const viewResults = []
 
 		try {
 			setTexturing(true)
@@ -1470,7 +1507,8 @@ export default function MeshEditorPage() {
 						textureConfig: texturableMesh.textureConfig,
 						camera: viewCamera,
 						width: screenW,
-						height: screenH
+                     height: screenH,
+                        ignoreOcclusion: true
 					})
 
 					viewBbox = getMaskBoundingBox(viewScreenMask, cropPadding)
@@ -1563,9 +1601,21 @@ export default function MeshEditorPage() {
 				}
 
 				const patchImage = await loadImageElement(buildAssetUrl(generatedPatchAsset))
+              const viewAccumulatedColor = new Float32Array(textureWidth * textureHeight * 4)
+                const viewAccumulatedWeight = new Float32Array(textureWidth * textureHeight)
+                const viewPatchCanvas = document.createElement('canvas')
+                viewPatchCanvas.width = textureWidth
+                viewPatchCanvas.height = textureHeight
+                const viewPatchContext = viewPatchCanvas.getContext('2d', { willReadFrequently: true }) || viewPatchCanvas.getContext('2d')
+                viewPatchContext.drawImage(texturableMesh.textureCanvas, 0, 0)
 
-				// ── D. Accumulate this view's contribution into the shared buffers ──────
-
+                viewResults.push({
+                    camera: viewCamera,
+                    maskCanvas: viewScreenMask,
+                    bbox: viewBbox,
+                    patchImage,
+                    patchCanvas: viewPatchCanvas
+                })
 				await accumulateProjectedPatch({
 					root: texturableMesh.root,
 					textureKey: texturableMesh.textureKey,
@@ -1575,14 +1625,20 @@ export default function MeshEditorPage() {
 					bbox: viewBbox,
 					patchImage,
 					featherRadius,
-					accumulatedColor,
-					accumulatedWeight,
+                   accumulatedColor: viewAccumulatedColor,
+                    accumulatedWeight: viewAccumulatedWeight,
 					textureWidth,
 					textureHeight,
 					onProgress: progress => {
 						setFeedback(`Reprojecting${viewLabel}… ${Math.round(progress * 100)}%`)
 					}
 				})
+
+                finalizeProjectedPatch({
+                    textureCanvas: viewPatchCanvas,
+                    accumulatedColor: viewAccumulatedColor,
+                    accumulatedWeight: viewAccumulatedWeight
+                })
 
 				anyViewApplied = true
 			}
@@ -1591,9 +1647,8 @@ export default function MeshEditorPage() {
 				throw new Error('No camera angle could see the painted region. Try painting from a more direct angle.')
 			}
 
-			// ── E. Finalize ─────────────────────────────────────────────────────────
-			// Normalize the shared buffers and write the result into a separate canvas
-			// so the live texture is only touched once, right at the end.
+         // ── E. Finalize ─────────────────────────────────────────────────────────
+            // Composite the cached per-view projections once, then update the live texture.
 
 			setFeedback('Finalizing…')
 
@@ -1611,15 +1666,26 @@ export default function MeshEditorPage() {
 			maskBackup.getContext('2d').drawImage(projectionMaskCanvas, 0, 0)
 			projectionMaskBackupRef.current = maskBackup
 
-			// Build the fully-patched canvas by writing the accumulated result on top
-			// of a fresh copy of the original texture
+          // Build the fully-patched canvas by compositing the per-view projections.
 			const patchedCanvas = document.createElement('canvas')
 			patchedCanvas.width  = textureWidth
 			patchedCanvas.height = textureHeight
-			patchedCanvas.getContext('2d').drawImage(texturableMesh.textureCanvas, 0, 0)
+            const patchedContext = patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')
+            patchedContext.drawImage(backupCanvas, 0, 0)
 
-			finalizeProjectedPatch({ textureCanvas: patchedCanvas, accumulatedColor, accumulatedWeight })
+            viewResults.forEach((viewData, viewIndex) => {
+                const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+                if (viewOpacity <= 0 || !viewData.patchCanvas) {
+                    return
+                }
+
+                patchedContext.globalAlpha = viewOpacity
+                patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+            })
+
+            patchedContext.globalAlpha = 1
 			patchedTextureRef.current = patchedCanvas
+            projectionViewDataRef.current = viewResults
 
 			// Clear the paint mask — the user cannot repaint while reviewing
 			clearCanvas(texturableMesh.maskCanvas)
@@ -1633,7 +1699,7 @@ export default function MeshEditorPage() {
 				backupCanvas,
 				patchedCanvas,
 				texturableMesh.textureCanvas,
-				patchOpacity,
+               1,
 				patchNoise,
 				patchSharpness,
 				patchSaturation,
@@ -1651,8 +1717,8 @@ export default function MeshEditorPage() {
 			setPendingPatch({ timestamp: Date.now() })
 			setFeedback(
 				cameras.length > 1
-					? `Patch ready (${cameras.length} views accumulated) — adjust sliders, then Apply or Cancel.`
-					: 'Patch ready — adjust Opacity & Noise, then click Apply or Cancel.'
+                   ? `Patch ready (${cameras.length} views accumulated) — adjust per-view opacity, then Apply or Cancel.`
+                    : 'Patch ready — adjust the review sliders, then click Apply or Cancel.'
 			)
 		} catch (textureError) {
 			setError(textureError.message || 'Failed to regenerate the mesh texture.')
@@ -1662,7 +1728,7 @@ export default function MeshEditorPage() {
 		}
 	}, [
 		cropPadding, featherRadius, meshName, multiViewCount, nodeId,
-		patchNoise, patchOpacity, patchSharpness, patchSaturation,
+      patchNoise, patchSharpness, patchSaturation, projectionOpacities,
 		projectId, runComfyWorkflow, selectedTextureWorkflow,
 		subscribeToComfyWorkflowProgress, texturableMesh,
 		textureWorkflowInputs, textureWorkflowParameterIds,
@@ -1677,10 +1743,11 @@ export default function MeshEditorPage() {
     // The textureCanvas already holds the blended result — just clean up refs
     originalTextureBackupRef.current = null
     patchedTextureRef.current = null
+      projectionViewDataRef.current = []
 		projectionMaskBackupRef.current = null
     setPendingPatch(null)
-    setPatchOpacity(1.0)
     setPatchNoise(0)
+       setProjectionOpacities([1])
     setFeedback('Texture patch applied.')
   }, [pendingPatch])
 
@@ -1698,10 +1765,11 @@ export default function MeshEditorPage() {
 
     originalTextureBackupRef.current = null
     patchedTextureRef.current = null
+      projectionViewDataRef.current = []
 		projectionMaskBackupRef.current = null
     setPendingPatch(null)
-    setPatchOpacity(1.0)
     setPatchNoise(0)
+     setProjectionOpacities([1])
     setFeedback('Texture patch cancelled.')
   }, [pendingPatch, texturableMesh])
 
@@ -1865,7 +1933,7 @@ export default function MeshEditorPage() {
 											<label className="mesh-editor-range-field">
 												<span>Projection views <em className="mesh-editor-range-field__sub">(coverage vs speed)</em></span>
 												<input
-													type="range" min="1" max="4" step="1"
+													type="range" min="1" max="7" step="1"
 													value={multiViewCount}
 													onChange={e => setMultiViewCount(Number(e.target.value))}
 													disabled={!!texturingUnavailableReason || !!pendingPatch || texturing}
@@ -1941,18 +2009,26 @@ export default function MeshEditorPage() {
                             <span className="material-symbols-outlined">tune</span>
                             Review patch
                           </span>
-                          <label className="mesh-editor-range-field">
-                            <span>Opacity <em className="mesh-editor-range-field__sub">(Original → Generated)</em></span>
-                            <input
-                              type="range"
-                              min="0"
-                              max="1"
-                              step="0.01"
-                              value={patchOpacity}
-                              onChange={event => setPatchOpacity(Number(event.target.value))}
-                            />
-                            <strong>{Math.round(patchOpacity * 100)}%</strong>
-                          </label>
+                          <div className="mesh-editor-panel__section mesh-editor-panel__section--nested">
+                            <span className="mesh-editor-panel__section-title">Projection opacity</span>
+                            {projectionOpacities.slice(0, multiViewCount).map((value, index) => (
+                              <label key={`projection-opacity-${index}`} className="mesh-editor-range-field">
+                                <span>{index === 0 ? 'Current view' : `View ${index + 1}`}</span>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max="1"
+                                  step="0.01"
+                                  value={value}
+                                  onChange={event => {
+                                    const nextValue = Number(event.target.value)
+                                    setProjectionOpacities(current => current.map((item, itemIndex) => (itemIndex === index ? nextValue : item)))
+                                  }}
+                                />
+                                <strong>{Math.round(value * 100)}%</strong>
+                              </label>
+                            ))}
+                          </div>
                           <label className="mesh-editor-range-field">
                             <span>Noise <em className="mesh-editor-range-field__sub">(Prevent Seams)</em></span>
                             <input

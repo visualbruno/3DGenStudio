@@ -501,7 +501,7 @@ export function drawUvStroke(maskCanvas, fromUv, toUv, radius, islandPath = null
     return
   }
 
-  const context = maskCanvas.getContext('2d')
+  const context = maskCanvas.getContext('2d', { willReadFrequently: true }) || maskCanvas.getContext('2d')
   const startPoint = mapUvToCanvasPoint(fromUv, maskCanvas.width, maskCanvas.height, textureConfig)
   const endPoint = mapUvToCanvasPoint(toUv, maskCanvas.width, maskCanvas.height, textureConfig)
 
@@ -950,7 +950,7 @@ function splatProjectedColor(accumulatedColor, accumulatedWeight, textureWidth, 
 }
 
 export async function applyProjectedTexturePatch(params) {
-  const { textureCanvas, textureConfig } = params
+  const { textureCanvas } = params
   const W = textureCanvas.width, H = textureCanvas.height
   const accumulatedColor  = new Float32Array(W * H * 4)
   const accumulatedWeight = new Float32Array(W * H)
@@ -1097,7 +1097,8 @@ export function captureTextureMaskScreenView({
   textureConfig,
   camera,
   width,
-  height
+  height,
+  ignoreOcclusion = false
 }) {
   if (!root || !maskCanvas || !camera || !width || !height) {
     throw new Error('The mesh mask projection view could not be rendered.')
@@ -1125,7 +1126,9 @@ export function captureTextureMaskScreenView({
       map: maskTexture,
       transparent: true,
       alphaTest: 0.01,
-      side: THREE.FrontSide
+      side: ignoreOcclusion ? THREE.DoubleSide : THREE.FrontSide,
+      depthTest: !ignoreOcclusion,
+      depthWrite: false
     })
 
     child.material = mat
@@ -1216,6 +1219,7 @@ export async function accumulateProjectedPatch({
   bbox,
   patchImage,
   featherRadius = 12,
+  viewOpacity = 1,
   accumulatedColor,
   accumulatedWeight,
   textureWidth,
@@ -1288,7 +1292,7 @@ export async function accumulateProjectedPatch({
         texturePoint.x,
         texturePoint.y,
         [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
-        alpha
+        alpha * Math.max(0, Math.min(1, viewOpacity))
       )
       appliedSamples += 1
     }
