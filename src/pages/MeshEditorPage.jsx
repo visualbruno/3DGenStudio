@@ -1865,16 +1865,18 @@ export default function MeshEditorPage() {
                 <h1 className="mesh-editor-page__title font-headline">Mesh Editor</h1>
               </div>
               <div className="mesh-editor-toolbar__name-field">
-                <label className="mesh-editor-panel__label">Mesh name</label>
-                <input className="mesh-editor-panel__input" value={meshName} onChange={event => setMeshName(event.target.value)} />
+                <label className="mesh-editor-panel__label">Mesh name</label>                
               </div>
+							<div className="mesh-editor-toolbar__name-field">
+								<input className="mesh-editor-panel__input" value={meshName} onChange={event => setMeshName(event.target.value)} />
+							</div>
               <div className="mesh-editor-toolbar__save-panel">
-                <span className="mesh-editor-panel__label">Save</span>
-                <div className="mesh-editor-actions mesh-editor-toolbar__save-actions">
-                  <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={() => handleSave('replace')} disabled={saving || !geometry}>Save mesh</button>
-                  <button type="button" className="mesh-editor-btn mesh-editor-btn--secondary" onClick={() => handleSave('version')} disabled={saving || !geometry}>Save as version</button>
-                </div>
+                <label className="mesh-editor-panel__label">Save</label>
               </div>
+							<div className="mesh-editor-actions mesh-editor-toolbar__save-actions">
+								<button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={() => handleSave('replace')} disabled={saving || !geometry}>Save mesh</button>
+								<button type="button" className="mesh-editor-btn mesh-editor-btn--secondary" onClick={() => handleSave('version')} disabled={saving || !geometry}>Save as version</button>
+							</div>							
             </div>
             <div className="mesh-editor-toolbar__stats">
               <span>{stats.vertices} vertices</span>

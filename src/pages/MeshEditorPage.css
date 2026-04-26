@@ -28,7 +28,6 @@
   flex: 1;
   min-height: 0;
   width: 100%;
-  max-width: 1440px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -49,7 +48,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.55rem 0.85rem;
+  padding: 0.15rem 0.85rem;
 }
 
 .mesh-editor-toolbar__group {
@@ -67,18 +66,16 @@
 }
 
 .mesh-editor-toolbar__name-field {
-  min-width: 220px;
-  max-width: 300px;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
 }
 
 .mesh-editor-toolbar__save-panel {
+	max-width: 100px;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  min-width: 200px;
 }
 
 .mesh-editor-toolbar__save-actions {
@@ -331,7 +328,7 @@
 
 .mesh-editor-toggle-group,
 .mesh-editor-actions {
-  display: flex;
+  display: center;
   gap: 0.65rem;
   flex-wrap: wrap;
 }
