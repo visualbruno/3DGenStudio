@@ -829,16 +829,26 @@ export default function MeshEditorPage() {
 		const patchedContext = patchedCanvas.getContext('2d')
 		patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
 
-		projectionViewDataRef.current.forEach((viewData, viewIndex) => {
-			const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
-			if (viewOpacity <= 0 || !viewData?.patchCanvas) return
-			patchedContext.globalAlpha = viewOpacity
-			patchedContext.drawImage(viewData.patchCanvas, 0, 0)
-		})
+		// --- Normalize opacities ---
+		const rawOpacities = projectionOpacities.slice(0, projectionViewDataRef.current.length)
+		const totalOpacity = rawOpacities.reduce((sum, v) => sum + Math.max(0, Math.min(1, v)), 0)
+		const divisor = Math.max(1, totalOpacity)
+		
+		if (totalOpacity <= 0) {
+			// Nothing visible – just show the original texture
+			patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
+		} else {
+			projectionViewDataRef.current.forEach((viewData, viewIndex) => {
+				const raw = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+				if (raw <= 0 || !viewData?.patchCanvas) return
+				const normalizedAlpha = raw / divisor
+				patchedContext.globalAlpha = normalizedAlpha
+				patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+			})	
+		}
 		patchedContext.globalAlpha = 1
 		patchedTextureRef.current = patchedCanvas
 
-		// Pass featherRadius to the blend function
 		applyPatchBlendToCanvas(
 			originalTextureBackupRef.current,
 			patchedCanvas,
@@ -848,9 +858,8 @@ export default function MeshEditorPage() {
 			patchSharpness,
 			patchSaturation,
 			projectionMaskBackupRef.current,
-			featherRadius   // <-- new argument
+			featherRadius
 		)
-
 		updateCanvasTexture(displayTextureRef.current)
 		setTextureRevision(current => current + 1)
 	}, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh, featherRadius])
@@ -1717,26 +1726,30 @@ export default function MeshEditorPage() {
 			maskBackup.getContext('2d').drawImage(projectionMaskCanvas, 0, 0)
 			projectionMaskBackupRef.current = maskBackup
 
-          // Build the fully-patched canvas by compositing the per-view projections.
+      // Build the fully-patched canvas by compositing the per-view projections.
+			// ─── Composite all view patches with normalized opacities ───
 			const patchedCanvas = document.createElement('canvas')
-			patchedCanvas.width  = textureWidth
+			patchedCanvas.width = textureWidth
 			patchedCanvas.height = textureHeight
-            const patchedContext = patchedCanvas.getContext('2d', { willReadFrequently: true }) || patchedCanvas.getContext('2d')
-            patchedContext.drawImage(backupCanvas, 0, 0)
+			const patchedContext = patchedCanvas.getContext('2d')
+			patchedContext.drawImage(backupCanvas, 0, 0)
 
-            viewResults.forEach((viewData, viewIndex) => {
-                const viewOpacity = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
-                if (viewOpacity <= 0 || !viewData.patchCanvas) {
-                    return
-                }
+			// Normalize opacities
+			const rawOpacities = projectionOpacities.slice(0, viewResults.length)
+			const totalOpacity = rawOpacities.reduce((sum, v) => sum + Math.max(0, Math.min(1, v)), 0)
 
-                patchedContext.globalAlpha = viewOpacity
-                patchedContext.drawImage(viewData.patchCanvas, 0, 0)
-            })
-
-            patchedContext.globalAlpha = 1
+			if (totalOpacity > 0) {
+				viewResults.forEach((viewData, viewIndex) => {
+					const raw = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+					if (raw <= 0 || !viewData.patchCanvas) return
+					const normalizedAlpha = raw / totalOpacity
+					patchedContext.globalAlpha = normalizedAlpha
+					patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+				})
+			}
+			patchedContext.globalAlpha = 1
 			patchedTextureRef.current = patchedCanvas
-            projectionViewDataRef.current = viewResults
+			projectionViewDataRef.current = viewResults
 
 			// Clear the paint mask — the user cannot repaint while reviewing
 			clearCanvas(texturableMesh.maskCanvas)
