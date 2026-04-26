@@ -111,7 +111,7 @@ function pickGeneratedTextureAsset(generatedAssets = []) {
 function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, opacity, noise, sharpness, saturation, maskCanvas = null, featherRadius = 12) {
   const width = outputCanvas.width
   const height = outputCanvas.height
-  const ctx = outputCanvas.getContext('2d') || outputCanvas.getContext('2d')
+  const ctx = outputCanvas.getContext('2d')
   ctx.clearRect(0, 0, width, height)
   ctx.globalAlpha = 1
   ctx.drawImage(originalCanvas, 0, 0)
@@ -120,40 +120,56 @@ function applyPatchBlendToCanvas(originalCanvas, patchedCanvas, outputCanvas, op
   ctx.globalAlpha = 1
 
   if (noise > 0 || sharpness > 0 || saturation !== 1) {
-    const origData = (originalCanvas.getContext('2d')).getImageData(0, 0, width, height).data
-    const patchData = (patchedCanvas.getContext('2d')).getImageData(0, 0, width, height).data
+    const origData = originalCanvas.getContext('2d').getImageData(0, 0, width, height).data
+    const patchData = patchedCanvas.getContext('2d').getImageData(0, 0, width, height).data
     const pixelCount = width * height
     const hardMask = new Uint8Array(pixelCount)
 
+    // Detect patch pixels (difference between patched and original)
     for (let i = 0; i < pixelCount; i++) {
-      const dataIdx = i * 4
-      const delta = Math.abs(patchData[dataIdx] - origData[dataIdx]) +
-                    Math.abs(patchData[dataIdx+1] - origData[dataIdx+1]) +
-                    Math.abs(patchData[dataIdx+2] - origData[dataIdx+2])
+      const idx = i * 4
+      const delta = Math.abs(patchData[idx] - origData[idx]) +
+                    Math.abs(patchData[idx+1] - origData[idx+1]) +
+                    Math.abs(patchData[idx+2] - origData[idx+2])
       if (delta > 4) hardMask[i] = 1
     }
 
-    // Noise – use featherRadius for the blur border
+    // --- Noise: only in the feathered transition area (outside the sharp mask) ---
     if (noise > 0 && maskCanvas) {
+      // Get the gradient mask that represents the feather falloff (peak at edge, decays outward)
       const gradientMask = generateBlurBorderGradient(maskCanvas, width, height, featherRadius)
+
+      // Also get the sharp mask (where the original paint is solid white)
+      const sharpMaskCanvas = document.createElement('canvas')
+      sharpMaskCanvas.width = width
+      sharpMaskCanvas.height = height
+      const sharpCtx = sharpMaskCanvas.getContext('2d')
+      sharpCtx.drawImage(maskCanvas, 0, 0, width, height)
+      const sharpData = sharpCtx.getImageData(0, 0, width, height).data
+
       const outImg = ctx.getImageData(0, 0, width, height)
       const out = outImg.data
 
       for (let i = 0; i < pixelCount; i++) {
-        const strength = gradientMask[i]
-        if (strength <= 0.01) continue
-        // Scale noise: 0..32 → up to ±32 per channel, further boost by strength
-        const amp = noise * 1.5 * strength
+        const gradient = gradientMask[i]
+        if (gradient <= 0.01) continue
+
+        // Only apply noise outside the solid mask (alpha < 128) – i.e., in the transition zone
+        const sharpAlpha = sharpData[i * 4 + 3]
+        if (sharpAlpha > 128) continue  // inside the original mask, no seam noise needed
+
+        // Noise amplitude: max 12 per channel when noise=32, scaled by gradient
+        const amp = (noise / 32) * 12 * gradient
         const n = (Math.random() * 2 - 1) * amp
-        const dataIdx = i * 4
-        out[dataIdx]     = Math.max(0, Math.min(255, out[dataIdx] + n))
-        out[dataIdx + 1] = Math.max(0, Math.min(255, out[dataIdx + 1] + n))
-        out[dataIdx + 2] = Math.max(0, Math.min(255, out[dataIdx + 2] + n))
+        const idx = i * 4
+        out[idx]     = Math.max(0, Math.min(255, out[idx] + n))
+        out[idx + 1] = Math.max(0, Math.min(255, out[idx + 1] + n))
+        out[idx + 2] = Math.max(0, Math.min(255, out[idx + 2] + n))
       }
       ctx.putImageData(outImg, 0, 0)
     }
 
-    // Sharpness & Saturation (unchanged)
+    // --- Sharpness and saturation (unchanged, applied to whole patch area) ---
     if (sharpness > 0 || saturation !== 1) {
       let imgData = ctx.getImageData(0, 0, width, height)
       imgData = processPatchImage(imgData, sharpness, saturation, hardMask)
@@ -172,7 +188,7 @@ function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight,
   tempCanvas.height = targetHeight
   const tempCtx = tempCanvas.getContext('2d')
 
-  // Fill with black background, then draw the mask (white strokes)
+  // Black background, draw white mask
   tempCtx.fillStyle = '#000000'
   tempCtx.fillRect(0, 0, targetWidth, targetHeight)
   tempCtx.drawImage(sourceMaskCanvas, 0, 0, targetWidth, targetHeight)
@@ -197,10 +213,10 @@ function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight,
     const blurVal = blurData[idx] / 255
     let delta = blurVal - sharpVal
     if (delta > 0.01) {
-      gradientMask[i] = Math.min(1.0, delta * 2.5)
+      // Normalize so the peak edge is ~1.0 and falls off
+      gradientMask[i] = Math.min(1.0, delta * 2.0)
     }
   }
-
   return gradientMask
 }
 
@@ -1307,7 +1323,7 @@ export default function MeshEditorPage() {
     updateCanvasTexture(maskTextureRef.current)
     setTextureRevision(current => current + 1)
     setFeedback('Texture mask cleared.')
-  }, [texturableMesh])
+  }, [texturableMesh, updateMaskOverlay])
 
   const applyGeometryUpdate = useCallback((nextGeometry, nextHoleLoops = []) => {
     setGeometry(nextGeometry)
@@ -1660,8 +1676,8 @@ export default function MeshEditorPage() {
 					bbox: viewBbox,
 					patchImage,
 					featherRadius,
-                   accumulatedColor: viewAccumulatedColor,
-                    accumulatedWeight: viewAccumulatedWeight,
+					accumulatedColor: viewAccumulatedColor,
+					accumulatedWeight: viewAccumulatedWeight,
 					textureWidth,
 					textureHeight,
 					onProgress: progress => {
@@ -1669,11 +1685,11 @@ export default function MeshEditorPage() {
 					}
 				})
 
-                finalizeProjectedPatch({
-                    textureCanvas: viewPatchCanvas,
-                    accumulatedColor: viewAccumulatedColor,
-                    accumulatedWeight: viewAccumulatedWeight
-                })
+				finalizeProjectedPatch({
+						textureCanvas: viewPatchCanvas,
+						accumulatedColor: viewAccumulatedColor,
+						accumulatedWeight: viewAccumulatedWeight
+				})
 
 				anyViewApplied = true
 			}
@@ -1738,10 +1754,12 @@ export default function MeshEditorPage() {
 				patchNoise,
 				patchSharpness,
 				patchSaturation,
-				projectionMaskBackupRef.current
+				projectionMaskBackupRef.current,
+				featherRadius
 			)
 			updateCanvasTexture(displayTextureRef.current)
 			setTextureRevision(current => current + 1)
+			updateMaskOverlay()
 
 			if (projectId && nodeId) {
 				await updateProjectNode(Number(projectId), Number(nodeId), {
@@ -1767,7 +1785,7 @@ export default function MeshEditorPage() {
 		projectId, runComfyWorkflow, selectedTextureWorkflow,
 		subscribeToComfyWorkflowProgress, texturableMesh,
 		textureWorkflowInputs, textureWorkflowParameterIds,
-		texturing, updateProjectNode
+		texturing, updateProjectNode, updateMaskOverlay
 	])
 
   const handleApplyPatch = useCallback(() => {
@@ -1785,7 +1803,7 @@ export default function MeshEditorPage() {
     setPatchNoise(0)
     setProjectionOpacities([1])
     setFeedback('Texture patch applied.')
-  }, [pendingPatch])
+  }, [pendingPatch, updateMaskOverlay])
 
   const handleCancelPatch = useCallback(() => {
     if (!pendingPatch || !originalTextureBackupRef.current || !texturableMesh?.textureCanvas) {
@@ -1808,7 +1826,7 @@ export default function MeshEditorPage() {
     setPatchNoise(0)
     setProjectionOpacities([1])
     setFeedback('Texture patch cancelled.')
-  }, [pendingPatch, texturableMesh])
+  }, [pendingPatch, texturableMesh, updateMaskOverlay])
 
   const deleteDisabled = selectionMode === 'face' ? selectedFaceIndices.length === 0 : selectedVertexIndices.length === 0
   const smoothDisabled = selectedVertexIndices.length === 0
