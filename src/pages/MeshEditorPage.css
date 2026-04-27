@@ -146,6 +146,7 @@
     flex-direction: column;
     gap: 0.75rem;
     padding: 1rem;
+		width: 300px;
 }
 
 .mesh-editor-panel--compact {
@@ -408,6 +409,7 @@
 
 .mesh-editor-canvas-shell {
   position: relative;
+	margin-left: 50px;
   min-height: 760px;
   height: clamp(760px, calc(100vh - 185px), 1400px);
   overflow: hidden;
