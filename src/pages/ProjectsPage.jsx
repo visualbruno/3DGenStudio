@@ -19,6 +19,14 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.2.2',
+    date: '2026-04-27',
+    items: [
+      'Improved Inpainting in Mesh Editor',
+			'Supports MultiView Projection'
+    ],
+  },
+  {
     version: 'v0.2.1',
     date: '2026-04-25',
     items: [
@@ -196,7 +204,6 @@ export default function ProjectsPage() {
               <div className="projects-page__modal-header projects-page__modal-header--split">
                 <div>
                   <h1 className="projects-page__modal-title font-headline">Change Log</h1>
-                  <p className="projects-page__modal-desc">Latest updates across the project workspace.</p>
                 </div>
                 <button
                   type="button"
