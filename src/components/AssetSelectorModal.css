@@ -272,6 +272,27 @@
   cursor: not-allowed;
 }
 
+.asset-selector-child-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  color: var(--primary);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  z-index: 2;
+}
+
+.asset-selector-parent {
+  font-size: 0.6rem;
+  color: var(--on-surface-variant);
+  margin-left: 0.5rem;
+}
+
 @media (max-width: 640px) {
   .asset-selector-modal {
     max-width: 95%;

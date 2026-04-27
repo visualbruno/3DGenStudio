@@ -15,7 +15,7 @@ function getAssetPreviewUrl(filename) {
 
 const ASSETS_PER_PAGE = 20;
 
-export default function AssetSelectorModal({ assetType, onSelect, onClose }) {
+export default function AssetSelectorModal({ assetType, onSelect, onClose, showEdits = false }) {
   const { getLibraryAssets } = useProjects();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +31,29 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose }) {
       try {
         const library = await getLibraryAssets();
         const filtered = library[validType === 'mesh' ? 'meshes' : 'images'] || [];
-        setAssets(filtered);
+        
+        if (showEdits) {
+          // Flatten: include each parent asset and its children (edits/versions)
+          const flattened = [];
+          filtered.forEach(asset => {
+            // Include the parent asset (as a selectable item)
+            flattened.push({ ...asset, isChild: false });
+            
+            const children = asset.children || asset.edits || [];
+            children.forEach(child => {
+              flattened.push({
+                ...child,
+                isChild: true,
+                parentName: asset.name,
+                // Ensure child has same asset type as parent
+                type: asset.type
+              });
+            });
+          });
+          setAssets(flattened);
+        } else {
+          setAssets(filtered);
+        }
       } catch (err) {
         console.error('Failed to load assets for selector:', err);
       } finally {
@@ -39,7 +61,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose }) {
       }
     }
     loadAssets();
-  }, [getLibraryAssets, validType]);
+  }, [getLibraryAssets, validType, showEdits]);
 
   const totalPages = Math.max(1, Math.ceil(assets.length / ASSETS_PER_PAGE));
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE;
@@ -96,48 +118,57 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose }) {
             </div>
           ) : (
             <>
-              <div className={`asset-selector-grid asset-selector-grid--${validType}`}>
-                {paginatedAssets.map(asset => {
-                  const isSelected = selectedAssetId === asset.id;
-                  const previewUrl = asset.thumbnailUrl || asset.url;
-                  const dimensions = formatDimensions(asset.width, asset.height);
-                  const extension = asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase();
+							<div className={`asset-selector-grid asset-selector-grid--${validType}`}>
+								{paginatedAssets.map(asset => {
+									const isSelected = selectedAssetId === asset.id;
+									const previewUrl = asset.thumbnailUrl || asset.url;
+									const dimensions = formatDimensions(asset.width, asset.height);
+									const extension = asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase();
+									const isChild = asset.isChild;
 
-                  return (
-                    <div
-                      key={asset.id}
-                      className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
-                      onClick={() => handleSelectAsset(asset.id)}
-                    >
-                      <div className={`asset-selector-preview ${validType === 'image' ? 'asset-selector-preview--image' : 'asset-selector-preview--mesh'}`}>
-                        {validType === 'image' ? (
-                          <img src={previewUrl} alt={asset.name} className="asset-selector-image" />
-                        ) : (
-                          <div className="asset-selector-mesh-placeholder">
-                            {previewUrl ? (
-                              <img src={previewUrl} alt={asset.name} className="asset-selector-image" />
-                            ) : (
-                              <>
-                                <span className="material-symbols-outlined asset-selector-mesh-icon">view_in_ar</span>
-                                <span className="asset-selector-mesh-label font-label">3D MESH</span>
-                              </>
-                            )}
-                          </div>
-                        )}
-                        {dimensions && (
-                          <span className="asset-selector-dimensions font-label">{dimensions}</span>
-                        )}
-                      </div>
-                      <div className="asset-selector-info">
-                        <span className="asset-selector-name">{asset.name}</span>
-                        <div className="asset-selector-meta">
-                          <span className="asset-selector-badge">{extension}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+									return (
+										<div
+											key={asset.id}
+											className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
+											onClick={() => handleSelectAsset(asset.id)}
+										>
+											<div className={`asset-selector-preview ${validType === 'image' ? 'asset-selector-preview--image' : 'asset-selector-preview--mesh'}`}>
+												{validType === 'image' ? (
+													<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
+												) : (
+													<div className="asset-selector-mesh-placeholder">
+														{previewUrl ? (
+															<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
+														) : (
+															<>
+																<span className="material-symbols-outlined asset-selector-mesh-icon">view_in_ar</span>
+																<span className="asset-selector-mesh-label font-label">3D MESH</span>
+															</>
+														)}
+													</div>
+												)}
+												{dimensions && (
+													<span className="asset-selector-dimensions font-label">{dimensions}</span>
+												)}
+												{isChild && (
+													<span className="asset-selector-child-badge font-label">
+														{validType === 'image' ? 'EDIT' : 'VERSION'}
+													</span>
+												)}
+											</div>
+											<div className="asset-selector-info">
+												<span className="asset-selector-name">{asset.name}</span>
+												<div className="asset-selector-meta">
+													<span className="asset-selector-badge">{extension}</span>
+													{isChild && asset.parentName && (
+														<span className="asset-selector-parent">from {asset.parentName}</span>
+													)}
+												</div>
+											</div>
+										</div>
+									);
+								})}
+							</div>
 
               {assets.length > ASSETS_PER_PAGE && (
                 <div className="asset-selector-pagination">

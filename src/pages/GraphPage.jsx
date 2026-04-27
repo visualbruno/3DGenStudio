@@ -1748,6 +1748,7 @@ export default function GraphPage({ project }) {
 	const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
 	const [assetSelectorType, setAssetSelectorType] = useState('image');
 	const [pendingAssetNodeId, setPendingAssetNodeId] = useState(null);
+	const [assetSelectorShowEdits, setAssetSelectorShowEdits] = useState(true);
 
   const fileInputRef = useRef(null)
   const pendingUploadNodeIdRef = useRef(null)
@@ -2233,10 +2234,11 @@ export default function GraphPage({ project }) {
     })
   }, [createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
 
-	const handleOpenAssetSelector = useCallback((nodeId, type) => {
+	const handleOpenAssetSelector = useCallback((nodeId, type, showEdits = true) => {
 		setAssetSelectorType(type === 'mesh' ? 'mesh' : 'image');
 		setPendingAssetNodeId(nodeId);
 		setAssetSelectorOpen(true);
+		setAssetSelectorShowEdits(showEdits);
 	}, []);	
 
 	const handleAssetSelected = useCallback(async (asset) => {
@@ -2249,17 +2251,19 @@ export default function GraphPage({ project }) {
 
 		const assetType = assetSelectorType; // 'image' or 'mesh'
 		try {
+			// 1. Attach the library asset to the current project
 			const attachedAsset = await attachExistingAsset(project.id, {
-				filename: asset.filename,
+				filename: asset.filename || asset.filePath,
 				type: assetType,
 				name: asset.name,
 				metadata: {
-					format: asset.extension,
+					format: asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase(),
 					source: 'ASSET LIB'
 				}
 			});
 
-			await updateProjectNode(project.id, Number(pendingAssetNodeId), {
+			// 2. Update the graph node – IMPORTANT: use the returned updated node directly
+			const updatedNode = await updateProjectNode(project.id, Number(pendingAssetNodeId), {
 				assetId: attachedAsset.id,
 				name: attachedAsset.name,
 				status: null,
@@ -2267,13 +2271,10 @@ export default function GraphPage({ project }) {
 				metadata: { lastAction: 'asset-library' }
 			});
 
-			// Refresh node data
-			const updatedNode = await getProjectNodes(project.id).then(nodes => 
-				nodes.find(n => n.id === Number(pendingAssetNodeId))
-			);
+			// 3. Apply the fresh node data to the React Flow state
 			if (updatedNode) replaceFlowNodeData(updatedNode);
 
-			// Clear draft for this node
+			// 4. Clear the draft panel for this node
 			setActionDraftsByNodeId(prev => {
 				const next = { ...prev };
 				delete next[String(pendingAssetNodeId)];
@@ -2281,11 +2282,12 @@ export default function GraphPage({ project }) {
 			});
 		} catch (err) {
 			console.error('Failed to attach asset to node:', err);
+			// Optional: show user-friendly error (you can integrate a toast/notification here)
 		} finally {
 			setAssetSelectorOpen(false);
 			setPendingAssetNodeId(null);
 		}
-	}, [attachExistingAsset, assetSelectorType, project.id, updateProjectNode, getProjectNodes, replaceFlowNodeData]);
+	}, [attachExistingAsset, assetSelectorType, project.id, updateProjectNode, replaceFlowNodeData, setActionDraftsByNodeId]);
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
@@ -2332,7 +2334,7 @@ export default function GraphPage({ project }) {
 					setActionDraftsByNodeId({
 						[String(targetNodeId)]: createImageNodeDraft('assets')
 					});
-					handleOpenAssetSelector(targetNodeId, 'image');   // ✅ fixed
+					handleOpenAssetSelector(targetNodeId, 'image');
 					return;
 				}
 
@@ -2392,7 +2394,7 @@ export default function GraphPage({ project }) {
 					setActionDraftsByNodeId({
 						[String(targetNodeId)]: createImageNodeDraft('assets')
 					});
-					handleOpenAssetSelector(targetNodeId, 'mesh');   // ✅ fixed
+					handleOpenAssetSelector(targetNodeId, 'mesh');
 					return;
 				}
 
@@ -3454,6 +3456,7 @@ export default function GraphPage({ project }) {
 							});
 						}
 					}}
+					showEdits={assetSelectorShowEdits}
 				/>
 			)}			
 
