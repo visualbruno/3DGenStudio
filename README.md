@@ -73,6 +73,13 @@ Each stage feeds the next. Use **ComfyUI** workflows or external APIs at any ste
 
 ---
 
+## <img src="https://github.com/user-attachments/assets/d2304bbc-4c89-4b61-8d35-17fe9195e6c8" width="32" height="32" align="left" style="padding-right: 10px">Mesh Editor
+
+1. **Inpainting:** With ComfyUI, improve the details of your texture directly on the mesh or change it completely for your needs.
+2. **Modeling:** Basic features to edit the faces and vertices of your mesh, fix issues.
+
+---
+
 ## 📸 Showcase
 
 <details open>
@@ -98,6 +105,13 @@ Each stage feeds the next. Use **ComfyUI** workflows or external APIs at any ste
 <summary><b>Workflow / ComfyUI Integration</b></summary>
 <br>
 <img width="100%" alt="Workflow" src="https://github.com/user-attachments/assets/23d045f1-3789-47e7-8fba-22ebdd837b03" />
+</details>
+
+<details>
+<summary><b>MeshEditor / Inpainting</b></summary>
+<br>
+<img width="100%" alt="MeshEditor Inpainting" src="https://github.com/user-attachments/assets/b8488a4d-dd03-4aa0-abb0-3c222997e21a" />
+
 </details>
 
 ---
