@@ -6,6 +6,9 @@ import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
 import { createAssetEditRecord, resolveProjectImageSource, resolveProjectMeshSource } from './storage.js';
 import fs from 'fs/promises';
+import si from 'systeminformation';
+import { exec } from 'child_process';
+import util from 'util';
 import {
   ASSETS_DIR,
   DATA_DIR,
@@ -3800,6 +3803,77 @@ app.post('/api/settings', async (req, res) => {
     res.json(await saveSettings(nextSettings));
   } catch {
     res.status(500).json({ error: 'Failed to update settings' });
+  }
+});
+
+/* app.get('/api/system/stats', async (req, res) => {
+  try {
+    const [cpu, mem, graphics] = await Promise.all([
+      si.currentLoad(),
+      si.mem(),
+      si.graphics()
+    ]);
+
+    // Get the primary GPU controller
+    const gpu = graphics.controllers[0] || {};
+    
+    res.json({
+      cpu: Math.round(cpu.currentLoad),
+      ram: {
+        used: (mem.active / 1024 / 1024 / 1024).toFixed(1),
+        total: (mem.total / 1024 / 1024 / 1024).toFixed(1),
+        percent: Math.round((mem.active / mem.total) * 100)
+      },
+      gpu: {
+        name: gpu.model || 'N/A',
+        utilization: gpu.utilizationGpu || 0,
+        vramUsed: gpu.vramUsage ? (gpu.vramUsage / 1024).toFixed(1) : 0,
+        vramTotal: gpu.vram ? (gpu.vram / 1024).toFixed(1) : 0
+      }
+    });
+  } catch (err) {
+    console.error('System stats error:', err);
+    res.status(500).json({ error: 'Failed to fetch system stats' });
+  }
+}); */
+
+app.get('/api/system/stats', async (req, res) => {
+  try {
+    const [cpu, mem, graphics] = await Promise.all([
+      si.currentLoad(),
+      si.mem(),
+      si.graphics()
+    ]);
+
+    // 1. Better Search: Find the card with the most VRAM (usually the dedicated one)
+    // This works regardless of whether it's NVIDIA, AMD, or Intel Arc.
+    const gpu = graphics.controllers.reduce((prev, current) => {
+      return (current.vram > (prev.vram || 0)) ? current : prev;
+    }, graphics.controllers[0]);
+
+    // 2. Universal Mapping: Check for both 'memoryUsed' (NVIDIA style) 
+    // and 'vramUsage' (AMD/Standard style)
+    const rawVramUsed = gpu.memoryUsed || gpu.vramUsage || 0;
+    const rawVramTotal = gpu.memoryTotal || gpu.vram || 0;
+
+    res.json({
+      cpu: Math.round(cpu.currentLoad),
+      ram: {
+        used: (mem.active / (1024 ** 3)).toFixed(1),
+        total: (mem.total / (1024 ** 3)).toFixed(1)
+      },
+      gpu: {
+        name: gpu.model,
+        vendor: gpu.vendor,
+        // Convert to GB, handling the 0 case gracefully
+        vramUsed: rawVramUsed > 0 ? (rawVramUsed / 1024).toFixed(1) : "0.0",
+        vramTotal: rawVramTotal > 0 ? (rawVramTotal / 1024).toFixed(1) : "0.0",
+        utilization: gpu.utilizationGpu || 0 
+      }
+    });
+  } catch (err) {
+    console.error('Stats Error:', err);
+    res.status(500).json({ error: 'Failed to fetch stats' });
   }
 });
 

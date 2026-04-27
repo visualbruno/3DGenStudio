@@ -82,10 +82,14 @@
 .footer__metrics {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.2rem;
   font-family: monospace;
   font-size: 10px;
-  color: rgba(171, 171, 173, 0.6);
+  color: rgba(171, 171, 173, 0.8);
+}
+
+.footer__metrics span {
+  white-space: nowrap;
 }
 
 .footer__action-btn {

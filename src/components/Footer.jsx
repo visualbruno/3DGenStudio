@@ -1,6 +1,38 @@
+import { useState, useEffect } from 'react'
 import './Footer.css'
 
 export default function Footer({ variant = 'default', onChangeLogClick }) {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await fetch('http://localhost:3001/api/system/stats');
+        const data = await response.json();
+        setStats(data);
+      } catch (err) {
+        console.error('Failed to fetch system stats:', err);
+      }
+    };
+
+    fetchStats();
+    const interval = setInterval(fetchStats, 3000); // Update every 3 seconds
+    return () => clearInterval(interval);
+  }, []);
+
+  // Helper to render the metrics block
+  const renderMetrics = () => {
+    if (!stats) return <span>Loading Metrics...</span>;
+    return (
+      <>
+        <span>CPU: {stats.cpu}%</span>
+        <span>GPU: {stats.gpu.utilization}%</span>
+        <span>VRAM: {stats.gpu.vramUsed} / {stats.gpu.vramTotal} GB</span>
+        <span>RAM: {stats.ram.used} / {stats.ram.total} GB</span>
+      </>
+    );
+  };
+
   if (variant === 'kanban') {
     return (
       <footer className="footer footer--kanban" id="status-bar">
@@ -10,23 +42,12 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
             <span className="footer__status-text">System Online</span>
           </div>
           <div className="footer__metrics">
-            <span>GPU: RTX 4090 (82%)</span>
-            <span>MEM: 14.2 GB / 24 GB</span>
-            <span>LATENCY: 42ms</span>
+            {renderMetrics()}
           </div>
         </div>
-        <div className="footer__right">
-          <button className="footer__action-btn" id="action-log-btn">
-            <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>history</span>
-            ACTION LOG
-          </button>
-          <button className="footer__action-btn" id="export-queue-btn">
-            <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>layers</span>
-            EXPORT QUEUE (2)
-          </button>
-        </div>
+        {/* custom */}
       </footer>
-    )
+    );
   }
 
   return (
@@ -35,7 +56,9 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
         <span className="footer__text">
           Server Status: <span className="footer__text--success">Optimal</span>
         </span>
-        <span className="footer__text">Latency: 14ms</span>
+        <div className="footer__metrics" style={{ marginLeft: '1rem' }}>
+          {renderMetrics()}
+        </div>
       </div>
       <div className="footer__right">
         {onChangeLogClick && (
@@ -47,5 +70,5 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
         <a href="https://www.3dgenstudio.com/terms-and-conditions.html" target="_blank" className="footer__link">Terms of Service</a>
       </div>
     </footer>
-  )
+  );
 }

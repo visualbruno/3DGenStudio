@@ -27,6 +27,7 @@
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0",
     "sqlite3": "^6.0.1",
+    "systeminformation": "^5.31.5",
     "three": "^0.183.2",
     "three-mesh-bvh": "^0.9.9"
   },
