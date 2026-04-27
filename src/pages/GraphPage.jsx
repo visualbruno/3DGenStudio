@@ -25,6 +25,7 @@ import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import '@xyflow/react/dist/style.css'
 import './KanbanPage.css'
 import './GraphPage.css'
+import AssetSelectorModal from '../components/AssetSelectorModal';
 
 const DEFAULT_OUTPUT_ID = 'output-0'
 const DEFAULT_INPUT_ID = 'input-0'
@@ -1002,43 +1003,29 @@ function GraphAssetNode({ data }) {
                 </div>
               )}
 
-              {draft?.mode === 'assets' && (
-                <div className="image-card__edit-panel nodrag">
-                  <span className="graph-node__panel-title font-label">FROM ASSETS</span>
-                  {data.libraryLoading ? (
-                    <div className="image-card__asset-picker-empty">
-                      <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                      <span>{`Loading ${isMeshGen ? 'meshes' : 'images'}...`}</span>
-                    </div>
-                  ) : libraryAssetOptions.length > 0 ? (
-                    <div className="image-card__asset-picker graph-node__asset-picker">
-                      {libraryAssetOptions.map(asset => (
-                        <button
-                          key={asset.id}
-                          className="image-card__asset-option nodrag"
-                          onClick={() => data.onAttachLibraryAsset?.(data.id, asset)}
-                        >
-                          {asset.thumbnailUrl || (!isMeshGen && asset.url) ? (
-                            <img src={asset.thumbnailUrl || asset.url} alt={asset.name} className="image-card__asset-thumb" />
-                          ) : (
-                            <div className="image-card__asset-thumb graph-node__asset-thumb-placeholder">
-                              <span className="material-symbols-outlined">{isMeshGen ? 'deployed_code' : 'image'}</span>
-                            </div>
-                          )}
-                          <span className="image-card__asset-name">{asset.name}</span>
-                          {asset.isEdit && <span className="graph-node__asset-kind font-label">{isMeshGen ? 'MESH EDIT' : 'IMAGE EDIT'}</span>}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="image-card__asset-picker-empty">
-                      <span className="material-symbols-outlined">perm_media</span>
-                      <span>{`No ${isMeshGen ? 'meshes' : 'images'} available in Assets.`}</span>
-                    </div>
-                  )}
-                  <button className="kanban-sidebar__nav-item nodrag" onClick={() => data.onToggleAction?.(data.id, data.nodeKind)} style={{ justifyContent: 'center' }}>BACK</button>
-                </div>
-              )}
+							{draft?.mode === 'assets' && (
+								<div className="image-card__edit-panel nodrag">
+									<span className="graph-node__panel-title font-label">SELECT FROM ASSETS</span>
+									<div className="image-card__asset-picker-empty">
+										<span className="material-symbols-outlined">perm_media</span>
+										<span>Opening asset library...</span>
+									</div>
+									<button
+										className="kanban-sidebar__nav-item nodrag"
+										onClick={() => data.onOpenAssetSelector?.(data.id, data.nodeKind === 'meshGen' ? 'mesh' : 'image')}
+										style={{ justifyContent: 'center' }}
+									>
+										Open Asset Selector
+									</button>
+									<button
+										className="kanban-sidebar__nav-item nodrag"
+										onClick={() => data.onToggleAction?.(data.id, data.nodeKind)}
+										style={{ justifyContent: 'center' }}
+									>
+										BACK
+									</button>
+								</div>
+							)}
 
               {draft?.mode === 'api' && !isMeshGen && (
                 <div className="image-card__edit-panel nodrag">
@@ -1758,6 +1745,10 @@ export default function GraphPage({ project }) {
   const [nodePicker, setNodePicker] = useState(null)
   const [reactFlowInstance, setReactFlowInstance] = useState(null)
 
+	const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
+	const [assetSelectorType, setAssetSelectorType] = useState('image');
+	const [pendingAssetNodeId, setPendingAssetNodeId] = useState(null);
+
   const fileInputRef = useRef(null)
   const pendingUploadNodeIdRef = useRef(null)
   const progressSubscriptionsRef = useRef(new Map())
@@ -2242,6 +2233,60 @@ export default function GraphPage({ project }) {
     })
   }, [createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
 
+	const handleOpenAssetSelector = useCallback((nodeId, type) => {
+		setAssetSelectorType(type === 'mesh' ? 'mesh' : 'image');
+		setPendingAssetNodeId(nodeId);
+		setAssetSelectorOpen(true);
+	}, []);	
+
+	const handleAssetSelected = useCallback(async (asset) => {
+		if (!pendingAssetNodeId) return;
+
+		if (!asset) {
+			console.error('No asset provided');
+			return;
+		}
+
+		const assetType = assetSelectorType; // 'image' or 'mesh'
+		try {
+			const attachedAsset = await attachExistingAsset(project.id, {
+				filename: asset.filename,
+				type: assetType,
+				name: asset.name,
+				metadata: {
+					format: asset.extension,
+					source: 'ASSET LIB'
+				}
+			});
+
+			await updateProjectNode(project.id, Number(pendingAssetNodeId), {
+				assetId: attachedAsset.id,
+				name: attachedAsset.name,
+				status: null,
+				progress: null,
+				metadata: { lastAction: 'asset-library' }
+			});
+
+			// Refresh node data
+			const updatedNode = await getProjectNodes(project.id).then(nodes => 
+				nodes.find(n => n.id === Number(pendingAssetNodeId))
+			);
+			if (updatedNode) replaceFlowNodeData(updatedNode);
+
+			// Clear draft for this node
+			setActionDraftsByNodeId(prev => {
+				const next = { ...prev };
+				delete next[String(pendingAssetNodeId)];
+				return next;
+			});
+		} catch (err) {
+			console.error('Failed to attach asset to node:', err);
+		} finally {
+			setAssetSelectorOpen(false);
+			setPendingAssetNodeId(null);
+		}
+	}, [attachExistingAsset, assetSelectorType, project.id, updateProjectNode, getProjectNodes, replaceFlowNodeData]);
+
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
     dragHandle: isValueNodeKind(node.data.nodeKind)
@@ -2257,6 +2302,7 @@ export default function GraphPage({ project }) {
         id: DEFAULT_OUTPUT_ID,
         type: getNodeOutputType(node)
       },
+			onOpenAssetSelector: (nodeId, type) => handleOpenAssetSelector(nodeId, type),
       actionDraft: actionDraftsByNodeId[node.id] || null,
       connectedInputAsset: getConnectedInputAssetFrom(nodes, edges, node.id),
       imageGenerationApis,
@@ -2281,9 +2327,14 @@ export default function GraphPage({ project }) {
           return
         }
 
-        if (mode === 'assets') {
-          await ensureLibraryLoaded()
-        }
+				if (mode === 'assets') {
+					await ensureLibraryLoaded();
+					setActionDraftsByNodeId({
+						[String(targetNodeId)]: createImageNodeDraft('assets')
+					});
+					handleOpenAssetSelector(targetNodeId, 'image');   // ✅ fixed
+					return;
+				}
 
         if (mode === 'comfy') {
           const workflows = await ensureComfyWorkflowsLoaded()
@@ -2332,9 +2383,18 @@ export default function GraphPage({ project }) {
         })
       },
       onMeshGenModeSelect: async (targetNodeId, mode) => {
-        if (mode === 'api' || mode === 'assets') {
+        if (mode === 'api') {
           await ensureLibraryLoaded()
         }
+				
+				if (mode === 'assets') {
+					await ensureLibraryLoaded();
+					setActionDraftsByNodeId({
+						[String(targetNodeId)]: createImageNodeDraft('assets')
+					});
+					handleOpenAssetSelector(targetNodeId, 'mesh');   // ✅ fixed
+					return;
+				}
 
         if (mode === 'comfy') {
           await ensureLibraryLoaded()
@@ -3377,6 +3437,25 @@ export default function GraphPage({ project }) {
       />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+			
+			{assetSelectorOpen && (
+				<AssetSelectorModal
+					assetType={assetSelectorType}
+					onSelect={handleAssetSelected}
+					onClose={() => {
+						setAssetSelectorOpen(false);
+						setPendingAssetNodeId(null);
+						// Optionally clear the draft for the pending node if user cancels
+						if (pendingAssetNodeId) {
+							setActionDraftsByNodeId(prev => {
+								const next = { ...prev };
+								delete next[String(pendingAssetNodeId)];
+								return next;
+							});
+						}
+					}}
+				/>
+			)}			
 
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
 

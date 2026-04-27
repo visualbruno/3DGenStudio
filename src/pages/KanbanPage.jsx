@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef, useCallback  } from 'react'
 import { useParams } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
@@ -9,6 +9,7 @@ import MeshPreviewDialog from '../components/MeshPreviewDialog'
 import SettingsModal from '../components/SettingsModal'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import './KanbanPage.css'
+import AssetSelectorModal from '../components/AssetSelectorModal';
 
 const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
@@ -154,6 +155,16 @@ export default function KanbanPage() {
   const imageEditProgressSubscriptionsRef = useRef(new Map())
   const statusMessageTimeoutRef = useRef(null)
   const pendingResultFocusRef = useRef(null)
+	
+	const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
+	const [pendingAssetCardId, setPendingAssetCardId] = useState(null);
+	const [assetSelectorType, setAssetSelectorType] = useState('image'); // only 'image' for now	
+
+	const handleOpenAssetSelector = (cardId) => {
+		setPendingAssetCardId(cardId);
+		setAssetSelectorType('image');
+		setAssetSelectorOpen(true);
+	};
 
   const showStatusMessage = (message, tone = 'info') => {
     if (!message) {
@@ -426,19 +437,18 @@ export default function KanbanPage() {
     }))
   }
 
-  const openAssetLibrary = async (cardId = imageDraft?.cardId || null) => {
-    try {
-      setLibraryLoading(true)
-      const library = await getLibraryAssets()
-      setLibraryAssets(library)
-      setImageDraft({ mode: 'assets', cardId })
-    } catch (err) {
-      console.error('Failed to load asset library:', err)
-      showStatusMessage(err.message || 'Failed to load assets library', 'error')
-    } finally {
-      setLibraryLoading(false)
-    }
-  }
+	const openAssetLibrary = async (cardId = imageDraft?.cardId || null) => {
+		try {
+			setLibraryLoading(true);
+			await getLibraryAssets(); // preload library if needed
+			handleOpenAssetSelector(cardId);
+		} catch (err) {
+			console.error('Failed to load asset library:', err);
+			showStatusMessage(err.message || 'Failed to load assets library', 'error');
+		} finally {
+			setLibraryLoading(false);
+		}
+	};
 
   const handleAttachLibraryImage = async (libraryImage) => {
     try {
@@ -604,6 +614,42 @@ export default function KanbanPage() {
       return accumulator
     }, {})
   }, [projectCards])
+	
+	const handleAssetSelected = useCallback(async (asset) => {
+		// Determine card ID – generate a new one if none pending
+		let cardId = pendingAssetCardId;
+		if (!cardId) {
+			cardId = createImageCardId();
+		}
+
+		if (!asset) {
+			console.error('No asset provided');
+			return;
+		}
+
+		try {
+			await attachExistingAsset(projectId, {
+				filename: asset.filename,
+				type: 'image',
+				name: asset.name,
+				metadata: {
+					resolution: 'Unknown',
+					format: asset.extension,
+					source: 'ASSET LIB',
+					cardId
+				}
+			});
+			await refreshProjectAssets();
+			// Close the draft card
+			setImageDraft(null);
+		} catch (err) {
+			console.error('Failed to attach asset to card:', err);
+			showStatusMessage(err.message || 'Failed to attach asset from library', 'error');
+		} finally {
+			setAssetSelectorOpen(false);
+			setPendingAssetCardId(null);
+		}
+	}, [attachExistingAsset, projectId, refreshProjectAssets]);
 
   const imageCards = useMemo(() => {
     const cards = new Map()
@@ -2460,41 +2506,6 @@ export default function KanbanPage() {
                 </div>
               )}
 
-              {imageDraft.mode === 'assets' && (
-                <div className="image-card__options">
-                  <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>FROM ASSETS</span>
-                  {libraryLoading ? (
-                    <div className="image-card__asset-picker-empty">
-                      <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
-                      <span>Loading images...</span>
-                    </div>
-                  ) : libraryAssets.images.length > 0 ? (
-                    <div className="image-card__asset-picker">
-                      {libraryAssets.images.map(asset => (
-                        <button
-                          key={asset.id}
-                          className="image-card__asset-option"
-                          onClick={() => handleAttachLibraryImage(asset)}
-                        >
-                          <img
-                            src={asset.url}
-                            alt={asset.name}
-                            className="image-card__asset-thumb"
-                          />
-                          <span className="image-card__asset-name">{asset.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="image-card__asset-picker-empty">
-                      <span className="material-symbols-outlined">perm_media</span>
-                      <span>No images available in `assets/images`.</span>
-                    </div>
-                  )}
-                  <button className="kanban-sidebar__nav-item" onClick={() => openImageSourceMenu(imageDraft?.cardId || null)} style={{ justifyContent: 'center' }}>BACK</button>
-                </div>
-              )}
-
               {imageDraft.mode === 'comfy' && (
                 <div className="image-card__options">
                   <span className="font-label" style={{ fontSize: '0.65rem', color: 'var(--primary)', marginBottom: '0.5rem' }}>COMFYUI WORKFLOW</span>
@@ -2706,6 +2717,19 @@ export default function KanbanPage() {
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       {meshPreviewAsset && <MeshPreviewDialog asset={meshPreviewAsset} titleId="kanban-mesh-preview-dialog-title" onClose={() => setMeshPreviewAsset(null)} />}
+
+			{assetSelectorOpen && (
+				<AssetSelectorModal
+					assetType={assetSelectorType}
+					onSelect={handleAssetSelected}
+					onClose={() => {
+						setAssetSelectorOpen(false);
+						setPendingAssetCardId(null);
+						// Optionally clear the draft if it was open
+						if (imageDraft?.mode === 'assets') setImageDraft(null);
+					}}
+				/>
+			)}
 
       <div className="kanban-body">
         <main className="kanban-main" id="kanban-main">
