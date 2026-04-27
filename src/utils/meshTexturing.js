@@ -501,7 +501,7 @@ export function drawUvStroke(maskCanvas, fromUv, toUv, radius, islandPath = null
     return
   }
 
-  const context = maskCanvas.getContext('2d')
+  const context = maskCanvas.getContext('2d', { willReadFrequently: true }) || maskCanvas.getContext('2d')
   const startPoint = mapUvToCanvasPoint(fromUv, maskCanvas.width, maskCanvas.height, textureConfig)
   const endPoint = mapUvToCanvasPoint(toUv, maskCanvas.width, maskCanvas.height, textureConfig)
 
@@ -820,6 +820,92 @@ function countActiveProjectionPixels(maskData) {
   return activePixelCount
 }
 
+export function estimateMaskOrbitTarget({ root, textureKey = '', maskCanvas, camera, maxSamples = 900 }) {
+  if (!root || !maskCanvas || !camera) {
+    return null
+  }
+
+  const context = maskCanvas.getContext('2d')
+  const { width, height } = maskCanvas
+
+  if (!context || !width || !height) {
+    return null
+  }
+
+  const { data } = context.getImageData(0, 0, width, height)
+  let minX = width
+  let minY = height
+  let maxX = -1
+  let maxY = -1
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = data[(y * width + x) * 4 + 3]
+
+      if (alpha <= 0) {
+        continue
+      }
+
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x)
+      maxY = Math.max(maxY, y)
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return null
+  }
+
+  const sampledMeshes = ensureRaycastAcceleration(root, textureKey)
+  if (sampledMeshes.length === 0) {
+    return new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3())
+  }
+
+  const raycaster = new THREE.Raycaster()
+  raycaster.firstHitOnly = true
+  const pointer = new THREE.Vector2()
+  const accumulatedTarget = new THREE.Vector3()
+  let totalWeight = 0
+  const bboxWidth = maxX - minX + 1
+  const bboxHeight = maxY - minY + 1
+  const step = Math.max(2, Math.ceil(Math.sqrt((bboxWidth * bboxHeight) / maxSamples)))
+
+  camera.updateMatrixWorld?.(true)
+  root.updateMatrixWorld?.(true)
+
+  for (let y = minY; y <= maxY; y += step) {
+    for (let x = minX; x <= maxX; x += step) {
+      const alpha = data[(y * width + x) * 4 + 3] / 255
+
+      if (alpha <= 0.01) {
+        continue
+      }
+
+      pointer.set(
+        (x / width) * 2 - 1,
+        -((y / height) * 2 - 1)
+      )
+
+      raycaster.setFromCamera(pointer, camera)
+      const [intersection] = raycaster.intersectObjects(sampledMeshes, false)
+
+      if (!intersection?.point) {
+        continue
+      }
+
+      accumulatedTarget.addScaledVector(intersection.point, alpha)
+      totalWeight += alpha
+    }
+  }
+
+  if (totalWeight > 0) {
+    return accumulatedTarget.multiplyScalar(1 / totalWeight)
+  }
+
+  return new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3())
+}
+
 function waitForNextFrame() {
   return new Promise(resolve => {
     if (typeof requestAnimationFrame === 'function') {
@@ -863,146 +949,22 @@ function splatProjectedColor(accumulatedColor, accumulatedWeight, textureWidth, 
   })
 }
 
-export async function applyProjectedTexturePatch({
-  root,
-  textureKey,
-  textureCanvas,
-  textureConfig,
-  camera,
-  maskCanvas,
-  bbox,
-  patchImage,
-  featherRadius = 12,
-  onProgress = null
-}) {
-  if (!root || !textureCanvas || !camera || !maskCanvas || !bbox || !patchImage) {
-    return null
-  }
+export async function applyProjectedTexturePatch(params) {
+  const { textureCanvas } = params
+  const W = textureCanvas.width, H = textureCanvas.height
+  const accumulatedColor  = new Float32Array(W * H * 4)
+  const accumulatedWeight = new Float32Array(W * H)
 
-  const startedAt = performance.now()
-  const maskPatchCanvas = featherMask(cropCanvas(maskCanvas, bbox), featherRadius)
-  const patchCanvas = createCanvas(bbox.width, bbox.height)
-  const patchContext = patchCanvas.getContext('2d')
-  patchContext.drawImage(patchImage, 0, 0, bbox.width, bbox.height)
+  const stats = await accumulateProjectedPatch({
+    ...params,
+    accumulatedColor,
+    accumulatedWeight,
+    textureWidth: W,
+    textureHeight: H
+  })
 
-  const { data: patchData } = patchContext.getImageData(0, 0, bbox.width, bbox.height)
-  const { data: maskData } = maskPatchCanvas.getContext('2d').getImageData(0, 0, bbox.width, bbox.height)
-
-  const textureWidth = textureCanvas.width
-  const textureHeight = textureCanvas.height
-  const textureContext = textureCanvas.getContext('2d')
-  const textureImageData = textureContext.getImageData(0, 0, textureWidth, textureHeight)
-  const accumulatedColor = new Float32Array(textureWidth * textureHeight * 4)
-  const accumulatedWeight = new Float32Array(textureWidth * textureHeight)
-  const raycaster = new THREE.Raycaster()
-  raycaster.firstHitOnly = true
-  const pointer = new THREE.Vector2()
-  const activePixelCount = countActiveProjectionPixels(maskData)
-
-  camera.updateMatrixWorld?.(true)
-  root.updateMatrixWorld?.(true)
-  const projectableMeshes = ensureRaycastAcceleration(root, textureKey)
-
-  if (activePixelCount === 0 || projectableMeshes.length === 0) {
-    return {
-      durationMs: performance.now() - startedAt,
-      activePixelCount,
-      processedSamples: 0,
-      appliedSamples: 0,
-      appliedPixels: 0,
-      sampleStep: 1
-    }
-  }
-
-  let processedSamples = 0
-  let appliedSamples = 0
-  let lastProgressAt = startedAt
-
-  for (let y = 0; y < bbox.height; y += 1) {
-    for (let x = 0; x < bbox.width; x += 1) {
-      const patchIndex = (y * bbox.width + x) * 4
-      const alpha = maskData[patchIndex + 3] / 255
-
-      if (alpha <= 0.01) {
-        continue
-      }
-
-      pointer.set(
-        ((bbox.x + x + 0.5) / maskCanvas.width) * 2 - 1,
-        -(((bbox.y + y + 0.5) / maskCanvas.height) * 2 - 1)
-      )
-
-      raycaster.setFromCamera(pointer, camera)
-      const [intersection] = raycaster.intersectObjects(projectableMeshes, false)
-      processedSamples += 1
-
-      if (!intersection?.uv) {
-        continue
-      }
-
-      const texturePoint = mapUvToCanvasPoint(intersection.uv, textureWidth, textureHeight, textureConfig)
-      splatProjectedColor(
-        accumulatedColor,
-        accumulatedWeight,
-        textureWidth,
-        textureHeight,
-        texturePoint.x,
-        texturePoint.y,
-        [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
-        alpha
-      )
-      appliedSamples += 1
-    }
-
-    if ((y + 1) % PROJECTED_PATCH_ROW_BATCH === 0 || y + 1 >= bbox.height) {
-      const now = performance.now()
-
-      if (typeof onProgress === 'function' && now - lastProgressAt >= PROJECTED_PATCH_PROGRESS_INTERVAL_MS) {
-        onProgress(Math.min(1, (y + 1) / bbox.height))
-        lastProgressAt = now
-      }
-
-      await waitForNextFrame()
-    }
-  }
-
-  let appliedPixels = 0
-
-  for (let pixelIndex = 0; pixelIndex < accumulatedWeight.length; pixelIndex += 1) {
-    const weight = accumulatedWeight[pixelIndex]
-
-    if (weight <= 0) {
-      continue
-    }
-
-    const colorIndex = pixelIndex * 4
-    const blend = Math.min(1, weight)
-    const nextRed = accumulatedColor[colorIndex] / weight
-    const nextGreen = accumulatedColor[colorIndex + 1] / weight
-    const nextBlue = accumulatedColor[colorIndex + 2] / weight
-    const nextAlpha = accumulatedColor[colorIndex + 3] / weight
-
-    textureImageData.data[colorIndex] = Math.round(textureImageData.data[colorIndex] * (1 - blend) + nextRed * blend)
-    textureImageData.data[colorIndex + 1] = Math.round(textureImageData.data[colorIndex + 1] * (1 - blend) + nextGreen * blend)
-    textureImageData.data[colorIndex + 2] = Math.round(textureImageData.data[colorIndex + 2] * (1 - blend) + nextBlue * blend)
-    textureImageData.data[colorIndex + 3] = Math.round(textureImageData.data[colorIndex + 3] * (1 - blend) + nextAlpha * blend)
-    appliedPixels += 1
-  }
-
-  textureContext.putImageData(textureImageData, 0, 0)
-
-  if (typeof onProgress === 'function') {
-    onProgress(1)
-  }
-
-  return {
-    durationMs: performance.now() - startedAt,
-    activePixelCount,
-    processedSamples,
-    appliedSamples,
-    appliedPixels,
-    sampleStep: 1
-  }
+  finalizeProjectedPatch({ textureCanvas, accumulatedColor, accumulatedWeight })
+  return stats
 }
 
 export function canvasToBlob(canvas, type = 'image/png', quality = 0.92) {
@@ -1118,4 +1080,279 @@ export function getUvIslandHitInfo(texturableMesh, intersection) {
     key: `${meshUuid}:${islandIndex}`,
     path: paintTarget.islandPaths?.[islandIndex] || null
   }
+}
+
+// ─── Multi-view accumulation helpers ────────────────────────────────────────
+
+/**
+ * Renders the mesh from a given camera using the UV mask canvas as an unlit
+ * texture. The Z-buffer handles occlusion automatically, so the returned
+ * canvas is a correct screen-space mask for that viewpoint without any
+ * raycasting.
+ */
+export function captureTextureMaskScreenView({
+  root,
+  textureKey,
+  maskCanvas,
+  textureConfig,
+  camera,
+  width,
+  height,
+  ignoreOcclusion = false
+}) {
+  if (!root || !maskCanvas || !camera || !width || !height) {
+    throw new Error('The mesh mask projection view could not be rendered.')
+  }
+
+  const maskTexture = createCanvasTexture(maskCanvas, textureConfig)
+  const object = root.clone(true)
+  const materials = []
+
+  object.traverse(child => {
+    if (!child.isMesh) {
+      return
+    }
+
+    const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material]
+    const hasMaskedMaterial = sourceMaterials.some(
+      material => getTextureKeyFromMaterial(material) === textureKey
+    )
+
+    if (!hasMaskedMaterial) {
+      return
+    }
+
+    const mat = new THREE.MeshBasicMaterial({
+      map: maskTexture,
+      transparent: true,
+      alphaTest: 0.01,
+      side: ignoreOcclusion ? THREE.DoubleSide : THREE.FrontSide,
+      depthTest: !ignoreOcclusion,
+      depthWrite: false
+    })
+
+    child.material = mat
+    materials.push(mat)
+  })
+
+  const scene = new THREE.Scene()
+  scene.background = null
+  scene.add(object)
+
+  const projectionCamera = createProjectionRenderCamera(camera, width / height)
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, preserveDrawingBuffer: true })
+
+  try {
+    renderer.setPixelRatio(1)
+    renderer.setSize(width, height, false)
+    renderer.setClearColor(0x000000, 0)
+    renderer.render(scene, projectionCamera)
+
+    const canvas = createCanvas(width, height)
+    canvas.getContext('2d').drawImage(renderer.domElement, 0, 0, width, height)
+    return canvas
+  } finally {
+    renderer.dispose()
+    materials.forEach(mat => mat.dispose())
+    maskTexture.dispose()
+  }
+}
+
+/**
+ * Builds N additional cameras by orbiting around orbitTarget at fixed azimuth
+ * increments (alternating ±30°, ±60°, …) while preserving the original
+ * elevation and distance.
+ *
+ * Returns [sourceCamera, ...additionalCameras].
+ */
+export function generateOrbitalCameras(sourceCamera, orbitTarget, additionalCount, azimuthStepDeg = 30) {
+  const cameras = [sourceCamera]
+
+  if (!additionalCount || additionalCount <= 0 || !sourceCamera || !orbitTarget) {
+    return cameras
+  }
+
+  const offset = sourceCamera.position.clone().sub(orbitTarget)
+  const dist = offset.length()
+
+  if (dist < 0.0001) {
+    return cameras
+  }
+
+  const theta0 = Math.atan2(offset.x, offset.z)
+  const phi0 = Math.acos(THREE.MathUtils.clamp(offset.y / dist, -1, 1))
+  const stepRad = (azimuthStepDeg * Math.PI) / 180
+
+  for (let i = 1; i <= additionalCount; i += 1) {
+    const sign = i % 2 === 1 ? 1 : -1
+    const multiplier = Math.ceil(i / 2)
+    const theta = theta0 + sign * multiplier * stepRad
+
+    const nextPos = new THREE.Vector3(
+      orbitTarget.x + dist * Math.sin(phi0) * Math.sin(theta),
+      orbitTarget.y + dist * Math.cos(phi0),
+      orbitTarget.z + dist * Math.sin(phi0) * Math.cos(theta)
+    )
+
+    const cam = sourceCamera.clone()
+    cam.position.copy(nextPos)
+    cam.lookAt(orbitTarget)
+    cam.updateProjectionMatrix?.()
+    cam.updateMatrixWorld?.(true)
+    cameras.push(cam)
+  }
+
+  return cameras
+}
+
+/**
+ * Like applyProjectedTexturePatch but writes into caller-owned accumulation
+ * buffers instead of creating its own, and does NOT call putImageData.
+ * Call finalizeProjectedPatch once after all views have been accumulated.
+ */
+export async function accumulateProjectedPatch({
+  root,
+  textureKey,
+  textureConfig,
+  camera,
+  maskCanvas,
+  bbox,
+  patchImage,
+  featherRadius = 12,
+  viewOpacity = 1,
+  accumulatedColor,
+  accumulatedWeight,
+  textureWidth,
+  textureHeight,
+  onProgress = null
+}) {
+  if (!root || !camera || !maskCanvas || !bbox || !patchImage || !accumulatedColor || !accumulatedWeight) {
+    return { processedSamples: 0, appliedSamples: 0, activePixelCount: 0 }
+  }
+
+  const startedAt = performance.now()
+  const maskPatchCanvas = featherMask(cropCanvas(maskCanvas, bbox), featherRadius)
+  const patchCanvas = createCanvas(bbox.width, bbox.height)
+  const patchContext = patchCanvas.getContext('2d')
+  patchContext.drawImage(patchImage, 0, 0, bbox.width, bbox.height)
+
+  const { data: patchData } = patchContext.getImageData(0, 0, bbox.width, bbox.height)
+  const { data: maskData } = maskPatchCanvas.getContext('2d').getImageData(0, 0, bbox.width, bbox.height)
+
+  const raycaster = new THREE.Raycaster()
+  raycaster.firstHitOnly = true
+  const pointer = new THREE.Vector2()
+  const activePixelCount = countActiveProjectionPixels(maskData)
+
+  camera.updateMatrixWorld?.(true)
+  root.updateMatrixWorld?.(true)
+  const projectableMeshes = ensureRaycastAcceleration(root, textureKey)
+
+  if (activePixelCount === 0 || projectableMeshes.length === 0) {
+    return {
+      durationMs: performance.now() - startedAt,
+      activePixelCount,
+      processedSamples: 0,
+      appliedSamples: 0
+    }
+  }
+
+  let processedSamples = 0
+  let appliedSamples = 0
+  let lastProgressAt = startedAt
+
+  for (let y = 0; y < bbox.height; y += 1) {
+    for (let x = 0; x < bbox.width; x += 1) {
+      const patchIndex = (y * bbox.width + x) * 4
+      const alpha = maskData[patchIndex + 3] / 255
+
+      if (alpha <= 0.01) {
+        continue
+      }
+
+      pointer.set(
+        ((bbox.x + x + 0.5) / maskCanvas.width) * 2 - 1,
+        -(((bbox.y + y + 0.5) / maskCanvas.height) * 2 - 1)
+      )
+
+      raycaster.setFromCamera(pointer, camera)
+      const [intersection] = raycaster.intersectObjects(projectableMeshes, false)
+      processedSamples += 1
+
+      if (!intersection?.uv) {
+        continue
+      }
+
+      const texturePoint = mapUvToCanvasPoint(intersection.uv, textureWidth, textureHeight, textureConfig)
+      splatProjectedColor(
+        accumulatedColor,
+        accumulatedWeight,
+        textureWidth,
+        textureHeight,
+        texturePoint.x,
+        texturePoint.y,
+        [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
+        alpha * Math.max(0, Math.min(1, viewOpacity))
+      )
+      appliedSamples += 1
+    }
+
+    if ((y + 1) % PROJECTED_PATCH_ROW_BATCH === 0 || y + 1 >= bbox.height) {
+      const now = performance.now()
+
+      if (typeof onProgress === 'function' && now - lastProgressAt >= PROJECTED_PATCH_PROGRESS_INTERVAL_MS) {
+        onProgress(Math.min(1, (y + 1) / bbox.height))
+        lastProgressAt = now
+      }
+
+      await waitForNextFrame()
+    }
+  }
+
+  if (typeof onProgress === 'function') {
+    onProgress(1)
+  }
+
+  return {
+    durationMs: performance.now() - startedAt,
+    activePixelCount,
+    processedSamples,
+    appliedSamples
+  }
+}
+
+/**
+ * Normalizes the accumulated color/weight buffers and blends the result into
+ * textureCanvas in-place. Call this once after all views have been accumulated.
+ */
+export function finalizeProjectedPatch({ textureCanvas, accumulatedColor, accumulatedWeight }) {
+  const textureWidth = textureCanvas.width
+  const textureHeight = textureCanvas.height
+  const textureContext = textureCanvas.getContext('2d')
+  const textureImageData = textureContext.getImageData(0, 0, textureWidth, textureHeight)
+  let appliedPixels = 0
+
+  for (let pixelIndex = 0; pixelIndex < accumulatedWeight.length; pixelIndex += 1) {
+    const weight = accumulatedWeight[pixelIndex]
+
+    if (weight <= 0) {
+      continue
+    }
+
+    const colorIndex = pixelIndex * 4
+    const blend = Math.min(1, weight)
+    const nextRed   = accumulatedColor[colorIndex]     / weight
+    const nextGreen = accumulatedColor[colorIndex + 1] / weight
+    const nextBlue  = accumulatedColor[colorIndex + 2] / weight
+    const nextAlpha = accumulatedColor[colorIndex + 3] / weight
+
+    textureImageData.data[colorIndex]     = Math.round(textureImageData.data[colorIndex]     * (1 - blend) + nextRed   * blend)
+    textureImageData.data[colorIndex + 1] = Math.round(textureImageData.data[colorIndex + 1] * (1 - blend) + nextGreen * blend)
+    textureImageData.data[colorIndex + 2] = Math.round(textureImageData.data[colorIndex + 2] * (1 - blend) + nextBlue  * blend)
+    textureImageData.data[colorIndex + 3] = Math.round(textureImageData.data[colorIndex + 3] * (1 - blend) + nextAlpha * blend)
+    appliedPixels += 1
+  }
+
+  textureContext.putImageData(textureImageData, 0, 0)
+  return { appliedPixels }
 }
