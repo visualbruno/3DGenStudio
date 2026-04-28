@@ -19,6 +19,17 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.2.3',
+    date: '2026-04-28',
+    items: [
+      'Added AssetSelector Dialog',
+			'MeshEditor: Added dropdowns for the inputs',
+			'Added real system metrics in the footer',
+			'Improved loading time in Mesh Editor',
+			'Fixed parent in Graph mode'
+    ],
+  },
+  {
     version: 'v0.2.2',
     date: '2026-04-27',
     items: [
