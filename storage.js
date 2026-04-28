@@ -544,7 +544,7 @@ async function listChildAssetsByParentFilePaths(db, parentFilePaths = [], assetT
 
 async function getRootAssetById(assetId) {
   const db = await getDb();
-  const asset = await get(
+  let asset = await get(
     db,
     `SELECT id, parentId, assetTypeId, filePath, name
      FROM Assets
@@ -560,13 +560,21 @@ async function getRootAssetById(assetId) {
     return asset;
   }
 
-  return await get(
-    db,
-    `SELECT id, parentId, assetTypeId, filePath, name
-     FROM Assets
-     WHERE id = ?`,
-    [asset.parentId]
-  );
+  while (asset?.parentId) {
+    asset = await get(
+      db,
+      `SELECT id, parentId, assetTypeId, filePath, name
+       FROM Assets
+       WHERE id = ?`,
+      [asset.parentId]
+    );
+
+    if (!asset) {
+      return null;
+    }
+  }
+
+  return asset;
 }
 
 async function getDb() {
