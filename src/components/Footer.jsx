@@ -26,7 +26,8 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
     return (
       <>
         <span>CPU: {stats.cpu}%</span>
-        <span>GPU: {stats.gpu.utilization}%</span>
+				<span>GPU: {stats.gpu.name}</span>
+        <span>{stats.gpu.utilization}%</span>
         <span>VRAM: {stats.gpu.vramUsed} / {stats.gpu.vramTotal} GB</span>
         <span>RAM: {stats.ram.used} / {stats.ram.total} GB</span>
       </>
