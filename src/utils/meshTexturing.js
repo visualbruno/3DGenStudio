@@ -193,7 +193,7 @@ function buildUvPaintTarget(geometry, textureWidth, textureHeight, textureConfig
   })
 
   const faceIslandIndices = new Array(faceCount).fill(-1)
-  const islandPaths = []
+  const islandFacesList = []
   let islandIndex = 0
 
   for (let faceIndex = 0; faceIndex < faceCount; faceIndex += 1) {
@@ -219,29 +219,19 @@ function buildUvPaintTarget(geometry, textureWidth, textureHeight, textureConfig
       })
     }
 
-    const islandPath = new Path2D()
-    islandFaces.forEach(currentFaceIndex => {
-      const vertices = getFaceVertexIndices(geometry, currentFaceIndex)
-      const [a, b, c] = vertices.map(vertexIndex => mapUvToCanvasPoint(
-        new THREE.Vector2(uvArray[vertexIndex * 2], uvArray[vertexIndex * 2 + 1]),
-        textureWidth,
-        textureHeight,
-        textureConfig
-      ))
-
-      islandPath.moveTo(a.x, a.y)
-      islandPath.lineTo(b.x, b.y)
-      islandPath.lineTo(c.x, c.y)
-      islandPath.closePath()
-    })
-
-    islandPaths.push(islandPath)
+    islandFacesList.push(islandFaces)
     islandIndex += 1
   }
 
   return {
     faceIslandIndices,
-    islandPaths
+    islandFacesList,
+    uvArray,
+    textureWidth,
+    textureHeight,
+    textureConfig,
+    geometry,
+    islandPaths: [] // Will be lazy-loaded
   }
 }
 
@@ -259,24 +249,72 @@ function drawImageSourceToCanvas(source) {
   return canvas
 }
 
-async function loadMeshRootFromUrl(url) {
+function getOrBuildIslandPath(paintTarget, islandIndex) {
+  if (!paintTarget) {
+    return null
+  }
+
+  // Check if already built
+  if (paintTarget.islandPaths[islandIndex]) {
+    return paintTarget.islandPaths[islandIndex]
+  }
+
+  // Build the path lazily
+  const islandFaces = paintTarget.islandFacesList?.[islandIndex]
+  if (!islandFaces) {
+    return null
+  }
+
+  const { uvArray, textureWidth, textureHeight, textureConfig, geometry } = paintTarget
+  const islandPath = new Path2D()
+
+  islandFaces.forEach(currentFaceIndex => {
+    const vertices = getFaceVertexIndices(geometry, currentFaceIndex)
+    const [a, b, c] = vertices.map(vertexIndex => mapUvToCanvasPoint(
+      new THREE.Vector2(uvArray[vertexIndex * 2], uvArray[vertexIndex * 2 + 1]),
+      textureWidth,
+      textureHeight,
+      textureConfig
+    ))
+
+    islandPath.moveTo(a.x, a.y)
+    islandPath.lineTo(b.x, b.y)
+    islandPath.lineTo(c.x, c.y)
+    islandPath.closePath()
+  })
+
+  paintTarget.islandPaths[islandIndex] = islandPath
+  return islandPath
+}
+
+export async function loadMeshRootFromUrl(url) {
+  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  console.log('[meshTexturing] loadMeshRootFromUrl:start', { url })
   const extension = getExtensionFromUrl(url)
 
   if (extension === '.glb' || extension === '.gltf') {
-    return (await loadWithLoader(new GLTFLoader(), url))?.scene || null
+    const root = (await loadWithLoader(new GLTFLoader(), url))?.scene || null
+    console.log('[meshTexturing] loadMeshRootFromUrl:done', { url, elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10, type: 'gltf' })
+    return root
   }
 
   if (extension === '.obj') {
-    return await loadWithLoader(new OBJLoader(), url)
+    const root = await loadWithLoader(new OBJLoader(), url)
+    console.log('[meshTexturing] loadMeshRootFromUrl:done', { url, elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10, type: 'obj' })
+    return root
   }
 
   if (extension === '.fbx') {
-    return await loadWithLoader(new FBXLoader(), url)
+    const root = await loadWithLoader(new FBXLoader(), url)
+    console.log('[meshTexturing] loadMeshRootFromUrl:done', { url, elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10, type: 'fbx' })
+    return root
   }
 
   if (extension === '.stl') {
     const geometry = await loadWithLoader(new STLLoader(), url)
-    return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: '#cfd8ff' }))
+    const root = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: '#cfd8ff' }))
+    console.log('[meshTexturing] loadMeshRootFromUrl:done', { url, elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10, type: 'stl' })
+    return root
   }
 
   if (extension === '.ply') {
@@ -285,14 +323,24 @@ async function loadMeshRootFromUrl(url) {
       geometry.computeVertexNormals()
     }
 
-    return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: '#cfd8ff' }))
+    const root = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: '#cfd8ff' }))
+    console.log('[meshTexturing] loadMeshRootFromUrl:done', { url, elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10, type: 'ply' })
+    return root
   }
 
   throw new Error('Unsupported mesh format')
 }
 
 export async function loadTexturableMeshFromUrl(url) {
+  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  console.log('[meshTexturing] loadTexturableMeshFromUrl:start', { url })
   const root = await loadMeshRootFromUrl(url)
+
+  return loadTexturableMeshFromRoot(root, { url, startedAt })
+}
+
+export async function loadTexturableMeshFromRoot(root, { url = '', startedAt: explicitStartedAt = null } = {}) {
+  const startedAt = explicitStartedAt ?? (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
 
   if (!root) {
     throw new Error('No mesh data found')
@@ -317,6 +365,13 @@ export async function loadTexturableMeshFromUrl(url) {
         texturedMaterials.push({ child, material, texture: material.map })
       }
     })
+
+  console.log('[meshTexturing] loadTexturableMeshFromRoot:scan', {
+    url,
+    elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+    hasUvs,
+    texturedMaterialCount: texturedMaterials.length
+  })
   })
 
   if (!hasUvs) {
@@ -357,6 +412,12 @@ export async function loadTexturableMeshFromUrl(url) {
   }
 
   if (uniqueTextureKeys.size > 1) {
+    console.log('[meshTexturing] loadTexturableMeshFromRoot:done', {
+      url,
+      elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+      supported: false,
+      reason: 'multiple texture maps'
+    })
     return {
       root,
       textureCanvas: null,
@@ -376,6 +437,15 @@ export async function loadTexturableMeshFromUrl(url) {
     if (paintTarget) {
       paintTargetsByMeshUuid[child.uuid] = paintTarget
     }
+  })
+
+  console.log('[meshTexturing] loadTexturableMeshFromRoot:done', {
+    url,
+    elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+    supported: true,
+    textureWidth: textureCanvas.width,
+    textureHeight: textureCanvas.height,
+    paintTargetCount: Object.keys(paintTargetsByMeshUuid).length
   })
 
   return {
@@ -1078,7 +1148,7 @@ export function getUvIslandHitInfo(texturableMesh, intersection) {
 
   return {
     key: `${meshUuid}:${islandIndex}`,
-    path: paintTarget.islandPaths?.[islandIndex] || null
+    path: getOrBuildIslandPath(paintTarget, islandIndex) || null
   }
 }
 

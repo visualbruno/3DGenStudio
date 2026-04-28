@@ -220,9 +220,17 @@ export default function Viewer({
       return undefined
     }
 
+    const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+    console.log('[Viewer] mesh preview load:start', { modelUrl, fitMode })
+
     loadModelFromUrl(modelUrl, fitMode)
       .then(loadedModelState => {
         if (active) {
+          console.log('[Viewer] mesh preview load:done', {
+            modelUrl,
+            fitMode,
+            elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10
+          })
           setModelState({
             ...loadedModelState,
             modelUrl

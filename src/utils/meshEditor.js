@@ -213,6 +213,7 @@ function loadWithLoader(loader, url) {
 }
 
 function createMergedGeometryFromObject(object) {
+  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
   const root = object?.scene || object
 
   if (!root) {
@@ -222,11 +223,15 @@ function createMergedGeometryFromObject(object) {
   root.updateMatrixWorld(true)
 
   const geometries = []
+  let meshCount = 0
+  let sourceVertexCount = 0
   root.traverse(child => {
     if (!child.isMesh || !child.geometry?.attributes?.position) {
       return
     }
 
+    meshCount += 1
+    sourceVertexCount += child.geometry.attributes.position.count
     const geometry = child.geometry.clone()
     geometry.applyMatrix4(child.matrixWorld)
     geometries.push(geometry.index ? geometry.toNonIndexed() : geometry)
@@ -243,7 +248,21 @@ function createMergedGeometryFromObject(object) {
     weldedGeometry.computeVertexNormals()
   }
 
+  console.log('[meshEditor] createMergedGeometryFromObject', {
+    meshCount,
+    sourceVertexCount,
+    mergedVertexCount: mergedGeometry?.attributes?.position?.count || 0,
+    weldedVertexCount: weldedGeometry?.attributes?.position?.count || 0,
+    elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10
+  })
+
   return finalizeGeometry(weldedGeometry)
+}
+
+export function loadEditableGeometryFromObject(object) {
+  const geometry = createMergedGeometryFromObject(object)
+  const { positions, indices } = compactMeshData(geometryToMeshData(geometry))
+  return createIndexedGeometry(positions, indices)
 }
 
 async function loadGeometryFromUrl(url) {
@@ -832,9 +851,21 @@ export function getSelectedHoleLoops(geometry, { selectionMode = 'face', selecte
 }
 
 export async function loadEditableGeometryFromUrl(url) {
+  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  console.log('[meshEditor] loadEditableGeometryFromUrl:start', { url })
   const geometry = await loadGeometryFromUrl(url)
-  const { positions, indices } = compactMeshData(geometryToMeshData(geometry))
-  return createIndexedGeometry(positions, indices)
+  const geometryLoadedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  const indexedGeometry = loadEditableGeometryFromObject(geometry)
+  const compactedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  console.log('[meshEditor] loadEditableGeometryFromUrl:done', {
+    url,
+    loadMs: Math.round((geometryLoadedAt - startedAt) * 10) / 10,
+    compactMs: Math.round((compactedAt - geometryLoadedAt) * 10) / 10,
+    totalMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+    vertexCount: indexedGeometry?.attributes?.position?.count || 0,
+    faceCount: indexedGeometry?.index?.count ? indexedGeometry.index.count / 3 : 0
+  })
+  return indexedGeometry
 }
 
 export function geometryFaceCount(geometry) {

@@ -20,7 +20,7 @@ import {
   getFaceSelectionGeometry,
   getSelectedHoleLoops,
   getVertexSelectionPositions,
-  loadEditableGeometryFromUrl,
+  loadEditableGeometryFromObject,
   mergeSelectedVertices,
   smoothSelectedVertices,
   subdivideSelectedFaces
@@ -43,7 +43,8 @@ import {
   getTextureKeyFromMaterial,
   getUvIslandHitInfo,
   getWorkflowValueType,
-  loadTexturableMeshFromUrl,
+  loadMeshRootFromUrl,
+  loadTexturableMeshFromRoot,
   updateCanvasTexture,
   accumulateProjectedPatch,
   captureTextureMaskScreenView,
@@ -701,16 +702,54 @@ export default function MeshEditorPage() {
       try {
         setLoading(true)
         setError('')
-        const [loadedGeometry, loadedTexturableMesh] = await Promise.all([
-          loadEditableGeometryFromUrl(modelUrl),
-          loadTexturableMeshFromUrl(modelUrl).catch(textureError => ({
-            root: null,
+        const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+        console.log('[MeshEditorPage] mesh load:start', { modelUrl })
+
+        const rootStartedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+        const loadedRoot = await loadMeshRootFromUrl(modelUrl)
+        const rootLoadedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+
+        const geometryStartedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+        const texturableStartedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+
+        const geometryPromise = Promise.resolve().then(() => loadEditableGeometryFromObject(loadedRoot)).then(loadedGeometry => {
+          console.log('[MeshEditorPage] editable geometry loaded', {
+            modelUrl,
+            elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - geometryStartedAt) * 10) / 10,
+            vertices: loadedGeometry?.attributes?.position?.count || 0,
+            faces: loadedGeometry?.index?.count ? loadedGeometry.index.count / 3 : 0
+          })
+          return loadedGeometry
+        })
+
+        const texturableMeshPromise = loadTexturableMeshFromRoot(loadedRoot, { url: modelUrl, startedAt: texturableStartedAt })
+          .then(loadedTexturableMesh => {
+            console.log('[MeshEditorPage] texturable mesh loaded', {
+              modelUrl,
+              elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - texturableStartedAt) * 10) / 10,
+              hasTextureCanvas: !!loadedTexturableMesh?.textureCanvas,
+              supportError: loadedTexturableMesh?.supportError || ''
+            })
+            return loadedTexturableMesh
+          })
+          .catch(textureError => ({
+            root: loadedRoot,
             textureCanvas: null,
             textureKey: '',
             textureConfig: null,
             supportError: textureError.message || 'Texture editing is unavailable for this mesh.'
           }))
-        ])
+
+        const [loadedGeometry, loadedTexturableMesh] = await Promise.all([geometryPromise, texturableMeshPromise])
+
+        console.log('[MeshEditorPage] mesh load:complete', {
+          modelUrl,
+          elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
+          rootLoadMs: Math.round((rootLoadedAt - rootStartedAt) * 10) / 10,
+          geometryVertices: loadedGeometry?.attributes?.position?.count || 0,
+          geometryFaces: loadedGeometry?.index?.count ? loadedGeometry.index.count / 3 : 0,
+          hasTextureCanvas: !!loadedTexturableMesh?.textureCanvas
+        })
 
         if (!cancelled) {
           setGeometry(loadedGeometry)
