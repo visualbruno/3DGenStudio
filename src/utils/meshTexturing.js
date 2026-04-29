@@ -1364,6 +1364,198 @@ export async function accumulateProjectedPatch({
   let appliedSamples = 0
   let lastProgressAt = startedAt
 
+  if (binaryMask) {
+    // ─── Backward mapping ────────────────────────────────────────────────
+    // Iterate every UV texel inside each triangle's UV bbox, derive its 3D
+    // position via barycentrics, project to screen, sample the patch. This
+    // guarantees no gaps regardless of camera distance.
+    const camWorldPos = camera.getWorldPosition(new THREE.Vector3())
+    const sceneSize = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).length() || 1
+    const occlusionEps = Math.max(1e-4, sceneSize * 0.002)
+
+    const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3()
+    const sA = new THREE.Vector3(), sB = new THREE.Vector3(), sC = new THREE.Vector3()
+    const triNormal = new THREE.Vector3()
+    const edge1 = new THREE.Vector3(), edge2 = new THREE.Vector3()
+    const viewVec = new THREE.Vector3()
+    const tmpWorld = new THREE.Vector3()
+    const projTmp = new THREE.Vector3()
+    const uvAv = new THREE.Vector2(), uvBv = new THREE.Vector2(), uvCv = new THREE.Vector2()
+
+    let totalTriCount = 0
+    for (const mesh of projectableMeshes) {
+      totalTriCount += getGeometryFaceCount(mesh.geometry)
+    }
+    let trisDone = 0
+
+    for (const mesh of projectableMeshes) {
+      const geom = mesh.geometry
+      const posAttr = geom.attributes.position
+      const uvAttr = geom.attributes.uv
+      if (!posAttr || !uvAttr) {
+        continue
+      }
+      const indexAttr = geom.index
+      const triCount = getGeometryFaceCount(geom)
+      const matrixWorld = mesh.matrixWorld
+
+      for (let tri = 0; tri < triCount; tri += 1) {
+        const base = tri * 3
+        const i0 = indexAttr ? indexAttr.getX(base) : base
+        const i1 = indexAttr ? indexAttr.getX(base + 1) : base + 1
+        const i2 = indexAttr ? indexAttr.getX(base + 2) : base + 2
+
+        vA.fromBufferAttribute(posAttr, i0).applyMatrix4(matrixWorld)
+        vB.fromBufferAttribute(posAttr, i1).applyMatrix4(matrixWorld)
+        vC.fromBufferAttribute(posAttr, i2).applyMatrix4(matrixWorld)
+
+        // Backface cull
+        edge1.subVectors(vB, vA)
+        edge2.subVectors(vC, vA)
+        triNormal.crossVectors(edge1, edge2)
+        viewVec.subVectors(vA, camWorldPos)
+        if (triNormal.dot(viewVec) > 0) {
+          processedSamples += 1
+          continue
+        }
+
+        // Project verts to NDC
+        sA.copy(vA).project(camera)
+        sB.copy(vB).project(camera)
+        sC.copy(vC).project(camera)
+
+        // Cheap frustum reject (all behind / all on one side)
+        if ((sA.z < -1 && sB.z < -1 && sC.z < -1) || (sA.z > 1 && sB.z > 1 && sC.z > 1)) {
+          processedSamples += 1
+          continue
+        }
+
+        // Screen-space bbox vs mask bbox
+        const ax = (sA.x * 0.5 + 0.5) * maskCanvas.width
+        const ay = (-sA.y * 0.5 + 0.5) * maskCanvas.height
+        const bx = (sB.x * 0.5 + 0.5) * maskCanvas.width
+        const by = (-sB.y * 0.5 + 0.5) * maskCanvas.height
+        const cx = (sC.x * 0.5 + 0.5) * maskCanvas.width
+        const cy = (-sC.y * 0.5 + 0.5) * maskCanvas.height
+        const minSx = Math.min(ax, bx, cx)
+        const maxSx = Math.max(ax, bx, cx)
+        const minSy = Math.min(ay, by, cy)
+        const maxSy = Math.max(ay, by, cy)
+        if (maxSx < bbox.x || minSx > bbox.x + bbox.width
+          || maxSy < bbox.y || minSy > bbox.y + bbox.height) {
+          processedSamples += 1
+          continue
+        }
+
+        // UV pixel coords (with full texture transform applied)
+        uvAv.set(uvAttr.getX(i0), uvAttr.getY(i0))
+        uvBv.set(uvAttr.getX(i1), uvAttr.getY(i1))
+        uvCv.set(uvAttr.getX(i2), uvAttr.getY(i2))
+        const uvAp = mapUvToCanvasPoint(uvAv, textureWidth, textureHeight, textureConfig)
+        const uvBp = mapUvToCanvasPoint(uvBv, textureWidth, textureHeight, textureConfig)
+        const uvCp = mapUvToCanvasPoint(uvCv, textureWidth, textureHeight, textureConfig)
+
+        const denom = (uvBp.y - uvCp.y) * (uvAp.x - uvCp.x) + (uvCp.x - uvBp.x) * (uvAp.y - uvCp.y)
+        if (Math.abs(denom) < 1e-10) {
+          processedSamples += 1
+          continue
+        }
+        const invDenom = 1 / denom
+
+        const minPx = Math.max(0, Math.floor(Math.min(uvAp.x, uvBp.x, uvCp.x)))
+        const maxPx = Math.min(textureWidth - 1, Math.ceil(Math.max(uvAp.x, uvBp.x, uvCp.x)))
+        const minPy = Math.max(0, Math.floor(Math.min(uvAp.y, uvBp.y, uvCp.y)))
+        const maxPy = Math.min(textureHeight - 1, Math.ceil(Math.max(uvAp.y, uvBp.y, uvCp.y)))
+
+        // Slight inflation to avoid seams between adjacent triangles
+        const baryEps = -1e-4
+
+        for (let py = minPy; py <= maxPy; py += 1) {
+          for (let px = minPx; px <= maxPx; px += 1) {
+            const fx = px + 0.5
+            const fy = py + 0.5
+            const w0 = ((uvBp.y - uvCp.y) * (fx - uvCp.x) + (uvCp.x - uvBp.x) * (fy - uvCp.y)) * invDenom
+            const w1 = ((uvCp.y - uvAp.y) * (fx - uvCp.x) + (uvAp.x - uvCp.x) * (fy - uvCp.y)) * invDenom
+            const w2 = 1 - w0 - w1
+            if (w0 < baryEps || w1 < baryEps || w2 < baryEps) {
+              continue
+            }
+
+            // Interpolated 3D world position of this UV texel
+            tmpWorld.set(
+              vA.x * w0 + vB.x * w1 + vC.x * w2,
+              vA.y * w0 + vB.y * w1 + vC.y * w2,
+              vA.z * w0 + vB.z * w1 + vC.z * w2
+            )
+
+            // Project to screen
+            projTmp.copy(tmpWorld).project(camera)
+            if (projTmp.z < -1 || projTmp.z > 1) {
+              continue
+            }
+            const sxF = (projTmp.x * 0.5 + 0.5) * maskCanvas.width
+            const syF = (-projTmp.y * 0.5 + 0.5) * maskCanvas.height
+            const localX = Math.floor(sxF - bbox.x)
+            const localY = Math.floor(syF - bbox.y)
+            if (localX < 0 || localY < 0 || localX >= bbox.width || localY >= bbox.height) {
+              continue
+            }
+
+            const patchIndex = (localY * bbox.width + localX) * 4
+            if (maskData[patchIndex + 3] <= 0) {
+              continue
+            }
+
+            // Occlusion test: raycast through this screen point and verify our
+            // 3D point is the closest visible surface.
+            pointer.set(projTmp.x, projTmp.y)
+            raycaster.setFromCamera(pointer, camera)
+            const [hit] = raycaster.intersectObjects(projectableMeshes, false)
+            if (!hit) {
+              continue
+            }
+            const camDist = camWorldPos.distanceTo(tmpWorld)
+            if (hit.distance < camDist - occlusionEps) {
+              continue
+            }
+
+            // Nearest-neighbour write
+            const idx = (py * textureWidth + px) * 4
+            accumulatedColor[idx]     = patchData[patchIndex]
+            accumulatedColor[idx + 1] = patchData[patchIndex + 1]
+            accumulatedColor[idx + 2] = patchData[patchIndex + 2]
+            accumulatedColor[idx + 3] = patchData[patchIndex + 3]
+            accumulatedWeight[py * textureWidth + px] = 1.0
+            appliedSamples += 1
+          }
+        }
+
+        processedSamples += 1
+        trisDone += 1
+
+        if ((trisDone & 1023) === 0) {
+          const now = performance.now()
+          if (typeof onProgress === 'function' && now - lastProgressAt >= PROJECTED_PATCH_PROGRESS_INTERVAL_MS) {
+            onProgress(Math.min(1, trisDone / Math.max(1, totalTriCount)))
+            lastProgressAt = now
+          }
+          await waitForNextFrame()
+        }
+      }
+    }
+
+    if (typeof onProgress === 'function') {
+      onProgress(1)
+    }
+
+    return {
+      durationMs: performance.now() - startedAt,
+      activePixelCount,
+      processedSamples,
+      appliedSamples
+    }
+  }
+
   for (let y = 0; y < bbox.height; y += 1) {
     for (let x = 0; x < bbox.width; x += 1) {
       const patchIndex = (y * bbox.width + x) * 4
@@ -1387,24 +1579,6 @@ export async function accumulateProjectedPatch({
       }
 
       const texturePoint = mapUvToCanvasPoint(intersection.uv, textureWidth, textureHeight, textureConfig)
-			if (binaryMask) {
-				// Nearest-neighbour stamp – no blending across pixel borders
-				const px = Math.round(texturePoint.x)
-				const py = Math.round(texturePoint.y)
-				if (px >= 0 && px < textureWidth && py >= 0 && py < textureHeight) {
-					const idx = (py * textureWidth + px) * 4
-					// Use the patch pixel directly (respect its alpha)
-					const patchAlpha = patchData[patchIndex + 3] / 255
-					// Keep the highest alpha if multiple mask pixels map here
-					if (patchAlpha > (accumulatedColor[idx + 3] / 255)) {
-						accumulatedColor[idx]     = patchData[patchIndex]
-						accumulatedColor[idx + 1] = patchData[patchIndex + 1]
-						accumulatedColor[idx + 2] = patchData[patchIndex + 2]
-						accumulatedColor[idx + 3] = patchData[patchIndex + 3]
-						accumulatedWeight[py * textureWidth + px] = 1.0
-					}
-				}
-			} else {			
       splatProjectedColor(
         accumulatedColor,
         accumulatedWeight,
@@ -1415,7 +1589,6 @@ export async function accumulateProjectedPatch({
         [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
         alpha * Math.max(0, Math.min(1, viewOpacity))
       )
-			}
       appliedSamples += 1
     }
 
