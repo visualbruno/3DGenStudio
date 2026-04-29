@@ -1709,11 +1709,12 @@ export default function MeshEditorPage() {
         const croppedMask = cropCanvas(viewScreenMask, viewBbox);
 
         // Supersample to ~1024px
+				let supersample = 1024;
         const ssSourceCanvas = document.createElement('canvas');
         const ssMaskCanvas = document.createElement('canvas');
         let ssSourceFile = null, ssMaskFile = null;
         if (croppedSource.width > 0 && croppedSource.height > 0) {
-          const scale = Math.max(1024 / croppedSource.width, 1024 / croppedSource.height, 1);
+          const scale = Math.max(supersample / croppedSource.width, supersample / croppedSource.height, 1);
           ssSourceCanvas.width = Math.round(croppedSource.width * scale);
           ssSourceCanvas.height = Math.round(croppedSource.height * scale);
           ssSourceCanvas.getContext('2d').drawImage(croppedSource, 0, 0, ssSourceCanvas.width, ssSourceCanvas.height);

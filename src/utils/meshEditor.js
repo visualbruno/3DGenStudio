@@ -248,14 +248,6 @@ function createMergedGeometryFromObject(object) {
     weldedGeometry.computeVertexNormals()
   }
 
-  console.log('[meshEditor] createMergedGeometryFromObject', {
-    meshCount,
-    sourceVertexCount,
-    mergedVertexCount: mergedGeometry?.attributes?.position?.count || 0,
-    weldedVertexCount: weldedGeometry?.attributes?.position?.count || 0,
-    elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10
-  })
-
   return finalizeGeometry(weldedGeometry)
 }
 
@@ -852,19 +844,10 @@ export function getSelectedHoleLoops(geometry, { selectionMode = 'face', selecte
 
 export async function loadEditableGeometryFromUrl(url) {
   const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-  console.log('[meshEditor] loadEditableGeometryFromUrl:start', { url })
   const geometry = await loadGeometryFromUrl(url)
   const geometryLoadedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
   const indexedGeometry = loadEditableGeometryFromObject(geometry)
   const compactedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-  console.log('[meshEditor] loadEditableGeometryFromUrl:done', {
-    url,
-    loadMs: Math.round((geometryLoadedAt - startedAt) * 10) / 10,
-    compactMs: Math.round((compactedAt - geometryLoadedAt) * 10) / 10,
-    totalMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
-    vertexCount: indexedGeometry?.attributes?.position?.count || 0,
-    faceCount: indexedGeometry?.index?.count ? indexedGeometry.index.count / 3 : 0
-  })
   return indexedGeometry
 }
 
