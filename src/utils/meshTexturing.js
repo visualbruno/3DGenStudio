@@ -1364,11 +1364,14 @@ export async function accumulateProjectedPatch({
   let appliedSamples = 0
   let lastProgressAt = startedAt
 
-  if (binaryMask) {
+  {
     // ─── Backward mapping ────────────────────────────────────────────────
     // Iterate every UV texel inside each triangle's UV bbox, derive its 3D
     // position via barycentrics, project to screen, sample the patch. This
     // guarantees no gaps regardless of camera distance.
+    // For binaryMask we do nearest-neighbour stamping; otherwise we
+    // bilinearly sample patch+mask and accumulate with weight.
+    const clampedViewOpacity = Math.max(0, Math.min(1, viewOpacity))
     const camWorldPos = camera.getWorldPosition(new THREE.Vector3())
     const sceneSize = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).length() || 1
     const occlusionEps = Math.max(1e-4, sceneSize * 0.002)
@@ -1501,8 +1504,9 @@ export async function accumulateProjectedPatch({
               continue
             }
 
-            const patchIndex = (localY * bbox.width + localX) * 4
-            if (maskData[patchIndex + 3] <= 0) {
+            // Cheap rejection on nearest mask alpha
+            const nearestIdx = (localY * bbox.width + localX) * 4
+            if (maskData[nearestIdx + 3] <= 0) {
               continue
             }
 
@@ -1519,13 +1523,59 @@ export async function accumulateProjectedPatch({
               continue
             }
 
-            // Nearest-neighbour write
             const idx = (py * textureWidth + px) * 4
-            accumulatedColor[idx]     = patchData[patchIndex]
-            accumulatedColor[idx + 1] = patchData[patchIndex + 1]
-            accumulatedColor[idx + 2] = patchData[patchIndex + 2]
-            accumulatedColor[idx + 3] = patchData[patchIndex + 3]
-            accumulatedWeight[py * textureWidth + px] = 1.0
+            const pixelIdx = py * textureWidth + px
+
+            if (binaryMask) {
+              accumulatedColor[idx]     = patchData[nearestIdx]
+              accumulatedColor[idx + 1] = patchData[nearestIdx + 1]
+              accumulatedColor[idx + 2] = patchData[nearestIdx + 2]
+              accumulatedColor[idx + 3] = patchData[nearestIdx + 3]
+              accumulatedWeight[pixelIdx] = 1.0
+            } else {
+              // Bilinear sample of patch + mask at the projected screen point
+              const fxLocal = sxF - bbox.x - 0.5
+              const fyLocal = syF - bbox.y - 0.5
+              const x0 = Math.max(0, Math.min(bbox.width - 1, Math.floor(fxLocal)))
+              const y0 = Math.max(0, Math.min(bbox.height - 1, Math.floor(fyLocal)))
+              const x1 = Math.min(bbox.width - 1, x0 + 1)
+              const y1 = Math.min(bbox.height - 1, y0 + 1)
+              const tx = Math.max(0, Math.min(1, fxLocal - x0))
+              const ty = Math.max(0, Math.min(1, fyLocal - y0))
+
+              const i00 = (y0 * bbox.width + x0) * 4
+              const i10 = (y0 * bbox.width + x1) * 4
+              const i01 = (y1 * bbox.width + x0) * 4
+              const i11 = (y1 * bbox.width + x1) * 4
+
+              const w00 = (1 - tx) * (1 - ty)
+              const w10 = tx * (1 - ty)
+              const w01 = (1 - tx) * ty
+              const w11 = tx * ty
+
+              const sampleR = patchData[i00] * w00 + patchData[i10] * w10 + patchData[i01] * w01 + patchData[i11] * w11
+              const sampleG = patchData[i00 + 1] * w00 + patchData[i10 + 1] * w10 + patchData[i01 + 1] * w01 + patchData[i11 + 1] * w11
+              const sampleB = patchData[i00 + 2] * w00 + patchData[i10 + 2] * w10 + patchData[i01 + 2] * w01 + patchData[i11 + 2] * w11
+              const sampleA = patchData[i00 + 3] * w00 + patchData[i10 + 3] * w10 + patchData[i01 + 3] * w01 + patchData[i11 + 3] * w11
+
+              const maskAlpha = (
+                maskData[i00 + 3] * w00
+                + maskData[i10 + 3] * w10
+                + maskData[i01 + 3] * w01
+                + maskData[i11 + 3] * w11
+              ) / 255
+
+              if (maskAlpha <= 0.01) {
+                continue
+              }
+
+              const weight = maskAlpha * clampedViewOpacity
+              accumulatedColor[idx]     += sampleR * weight
+              accumulatedColor[idx + 1] += sampleG * weight
+              accumulatedColor[idx + 2] += sampleB * weight
+              accumulatedColor[idx + 3] += sampleA * weight
+              accumulatedWeight[pixelIdx] += weight
+            }
             appliedSamples += 1
           }
         }
@@ -1554,65 +1604,6 @@ export async function accumulateProjectedPatch({
       processedSamples,
       appliedSamples
     }
-  }
-
-  for (let y = 0; y < bbox.height; y += 1) {
-    for (let x = 0; x < bbox.width; x += 1) {
-      const patchIndex = (y * bbox.width + x) * 4
-      const alpha = maskData[patchIndex + 3] / 255
-
-      if (alpha <= 0.01) {
-        continue
-      }
-
-      pointer.set(
-        ((bbox.x + x + 0.5) / maskCanvas.width) * 2 - 1,
-        -(((bbox.y + y + 0.5) / maskCanvas.height) * 2 - 1)
-      )
-
-      raycaster.setFromCamera(pointer, camera)
-      const [intersection] = raycaster.intersectObjects(projectableMeshes, false)
-      processedSamples += 1
-
-      if (!intersection?.uv) {
-        continue
-      }
-
-      const texturePoint = mapUvToCanvasPoint(intersection.uv, textureWidth, textureHeight, textureConfig)
-      splatProjectedColor(
-        accumulatedColor,
-        accumulatedWeight,
-        textureWidth,
-        textureHeight,
-        texturePoint.x,
-        texturePoint.y,
-        [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
-        alpha * Math.max(0, Math.min(1, viewOpacity))
-      )
-      appliedSamples += 1
-    }
-
-    if ((y + 1) % PROJECTED_PATCH_ROW_BATCH === 0 || y + 1 >= bbox.height) {
-      const now = performance.now()
-
-      if (typeof onProgress === 'function' && now - lastProgressAt >= PROJECTED_PATCH_PROGRESS_INTERVAL_MS) {
-        onProgress(Math.min(1, (y + 1) / bbox.height))
-        lastProgressAt = now
-      }
-
-      await waitForNextFrame()
-    }
-  }
-
-  if (typeof onProgress === 'function') {
-    onProgress(1)
-  }
-
-  return {
-    durationMs: performance.now() - startedAt,
-    activePixelCount,
-    processedSamples,
-    appliedSamples
   }
 }
 
