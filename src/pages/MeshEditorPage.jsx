@@ -703,7 +703,6 @@ export default function MeshEditorPage() {
         setLoading(true)
         setError('')
         const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
-        console.log('[MeshEditorPage] mesh load:start', { modelUrl })
 
         const rootStartedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
         const loadedRoot = await loadMeshRootFromUrl(modelUrl)
@@ -713,23 +712,11 @@ export default function MeshEditorPage() {
         const texturableStartedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
 
         const geometryPromise = Promise.resolve().then(() => loadEditableGeometryFromObject(loadedRoot)).then(loadedGeometry => {
-          console.log('[MeshEditorPage] editable geometry loaded', {
-            modelUrl,
-            elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - geometryStartedAt) * 10) / 10,
-            vertices: loadedGeometry?.attributes?.position?.count || 0,
-            faces: loadedGeometry?.index?.count ? loadedGeometry.index.count / 3 : 0
-          })
           return loadedGeometry
         })
 
         const texturableMeshPromise = loadTexturableMeshFromRoot(loadedRoot, { url: modelUrl, startedAt: texturableStartedAt })
           .then(loadedTexturableMesh => {
-            console.log('[MeshEditorPage] texturable mesh loaded', {
-              modelUrl,
-              elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - texturableStartedAt) * 10) / 10,
-              hasTextureCanvas: !!loadedTexturableMesh?.textureCanvas,
-              supportError: loadedTexturableMesh?.supportError || ''
-            })
             return loadedTexturableMesh
           })
           .catch(textureError => ({
@@ -741,15 +728,6 @@ export default function MeshEditorPage() {
           }))
 
         const [loadedGeometry, loadedTexturableMesh] = await Promise.all([geometryPromise, texturableMeshPromise])
-
-        console.log('[MeshEditorPage] mesh load:complete', {
-          modelUrl,
-          elapsedMs: Math.round(((typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()) - startedAt) * 10) / 10,
-          rootLoadMs: Math.round((rootLoadedAt - rootStartedAt) * 10) / 10,
-          geometryVertices: loadedGeometry?.attributes?.position?.count || 0,
-          geometryFaces: loadedGeometry?.index?.count ? loadedGeometry.index.count / 3 : 0,
-          hasTextureCanvas: !!loadedTexturableMesh?.textureCanvas
-        })
 
         if (!cancelled) {
           setGeometry(loadedGeometry)
@@ -932,58 +910,58 @@ export default function MeshEditorPage() {
 
   const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
 
-  const rebuildProjectedTexturePreview = useCallback(() => {
-    if (
-      !pendingPatch
-      || !originalTextureBackupRef.current
-      || !texturableMesh?.textureCanvas
-      || projectionViewDataRef.current.length === 0
-    ) {
-      return
-    }
+	const rebuildProjectedTexturePreview = useCallback(() => {
+		if (
+			!pendingPatch
+			|| !originalTextureBackupRef.current
+			|| !texturableMesh?.textureCanvas
+			|| projectionViewDataRef.current.length === 0
+		) {
+			return
+		}
 
-    const textureWidth = texturableMesh.textureCanvas.width
-    const textureHeight = texturableMesh.textureCanvas.height
-    const patchedCanvas = document.createElement('canvas')
-    patchedCanvas.width = textureWidth
-    patchedCanvas.height = textureHeight
-    const patchedContext = patchedCanvas.getContext('2d')
-    patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
+		const textureWidth = texturableMesh.textureCanvas.width
+		const textureHeight = texturableMesh.textureCanvas.height
+		const patchedCanvas = document.createElement('canvas')
+		patchedCanvas.width = textureWidth
+		patchedCanvas.height = textureHeight
+		const patchedContext = patchedCanvas.getContext('2d')
+		patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
 
-    // --- Normalize opacities ---
-    const rawOpacities = projectionOpacities.slice(0, projectionViewDataRef.current.length)
-    const totalOpacity = rawOpacities.reduce((sum, v) => sum + Math.max(0, Math.min(1, v)), 0)
-    const divisor = Math.max(1, totalOpacity)
+		// --- Normalize opacities ---
+		const rawOpacities = projectionOpacities.slice(0, projectionViewDataRef.current.length)
+		const totalOpacity = rawOpacities.reduce((sum, v) => sum + Math.max(0, Math.min(1, v)), 0)
+		const divisor = Math.max(1, totalOpacity)
 
-    if (totalOpacity <= 0) {
-      // Nothing visible – just show the original texture
-      patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
-    } else {
-      projectionViewDataRef.current.forEach((viewData, viewIndex) => {
-        const raw = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
-        if (raw <= 0 || !viewData?.patchCanvas) return
-        const normalizedAlpha = raw / divisor
-        patchedContext.globalAlpha = normalizedAlpha
-        patchedContext.drawImage(viewData.patchCanvas, 0, 0)
-      })
-    }
-    patchedContext.globalAlpha = 1
-    patchedTextureRef.current = patchedCanvas
+		if (totalOpacity <= 0) {
+			patchedContext.drawImage(originalTextureBackupRef.current, 0, 0)
+		} else {
+			projectionViewDataRef.current.forEach((viewData, viewIndex) => {
+				const raw = Math.max(0, Math.min(1, projectionOpacities[viewIndex] ?? 1))
+				if (raw <= 0 || !viewData?.patchCanvas) return
+				const normalizedAlpha = raw / divisor
+				patchedContext.globalAlpha = normalizedAlpha
+				patchedContext.drawImage(viewData.patchCanvas, 0, 0)
+			})
+		}
+		patchedContext.globalAlpha = 1
+		patchedTextureRef.current = patchedCanvas
 
-    applyPatchBlendToCanvas(
-      originalTextureBackupRef.current,
-      patchedCanvas,
-      texturableMesh.textureCanvas,
-      1,
-      patchNoise,
-      patchSharpness,
-      patchSaturation,
-      projectionMaskBackupRef.current,
-      featherRadius
-    )
-    updateCanvasTexture(displayTextureRef.current)
-    setTextureRevision(current => current + 1)
-  }, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh, featherRadius])
+		// Apply blending with additional smoothing
+		applyPatchBlendToCanvas(
+			originalTextureBackupRef.current,
+			patchedCanvas,
+			texturableMesh.textureCanvas,
+			1,
+			patchNoise,
+			patchSharpness,
+			patchSaturation,
+			projectionMaskBackupRef.current,
+			Math.max(featherRadius, 4) // Force minimum feather for preview
+		)
+		updateCanvasTexture(displayTextureRef.current)
+		setTextureRevision(current => current + 1)
+	}, [patchNoise, patchSharpness, patchSaturation, pendingPatch, projectionOpacities, texturableMesh, featherRadius])
 
   useEffect(() => {
     void rebuildProjectedTexturePreview()
@@ -1820,7 +1798,8 @@ export default function MeshEditorPage() {
           textureHeight,
           onProgress: progress => {
             setFeedback(`Reprojecting${viewLabel}… ${Math.round(progress * 100)}%`);
-          }
+          },
+					binaryMask: featherRadius === 0
         });
 
         finalizeProjectedPatch({

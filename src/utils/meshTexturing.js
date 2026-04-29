@@ -1294,7 +1294,8 @@ export async function accumulateProjectedPatch({
   accumulatedWeight,
   textureWidth,
   textureHeight,
-  onProgress = null
+  onProgress = null,
+	binaryMask = false
 }) {
   if (!root || !camera || !maskCanvas || !bbox || !patchImage || !accumulatedColor || !accumulatedWeight) {
     return { processedSamples: 0, appliedSamples: 0, activePixelCount: 0 }
@@ -1302,6 +1303,38 @@ export async function accumulateProjectedPatch({
 
   const startedAt = performance.now()
   const maskPatchCanvas = featherMask(cropCanvas(maskCanvas, bbox), featherRadius)
+	
+	if (binaryMask) {
+		const ctx = maskPatchCanvas.getContext('2d')
+		const imgData = ctx.getImageData(0, 0, bbox.width, bbox.height)
+		const d = imgData.data
+		const w = bbox.width, h = bbox.height
+		
+		// Step 1: binarise
+		for (let i = 3; i < d.length; i += 4) {
+			d[i] = d[i] > 0 ? 255 : 0
+		}
+		
+		// Step 2: dilate by 1 pixel (fills any 1-pixel gaps)
+		const copy = new Uint8ClampedArray(d)
+		for (let y = 0; y < h; y++) {
+			for (let x = 0; x < w; x++) {
+				const idx = (y * w + x) * 4
+				if (copy[idx + 3] > 0) continue
+				// Check 4-connectivity neighbours
+				const hasFilledNeighbour =
+					(x > 0 && copy[((y * w + (x-1)) * 4) + 3] > 0) ||
+					(x < w-1 && copy[((y * w + (x+1)) * 4) + 3] > 0) ||
+					(y > 0 && copy[(((y-1) * w + x) * 4) + 3] > 0) ||
+					(y < h-1 && copy[(((y+1) * w + x) * 4) + 3] > 0)
+				if (hasFilledNeighbour) {
+					d[idx + 3] = 255
+				}
+			}
+		}
+		ctx.putImageData(imgData, 0, 0)
+	}
+	
   const patchCanvas = createCanvas(bbox.width, bbox.height)
   const patchContext = patchCanvas.getContext('2d')
   patchContext.drawImage(patchImage, 0, 0, bbox.width, bbox.height)
@@ -1354,6 +1387,24 @@ export async function accumulateProjectedPatch({
       }
 
       const texturePoint = mapUvToCanvasPoint(intersection.uv, textureWidth, textureHeight, textureConfig)
+			if (binaryMask) {
+				// Nearest-neighbour stamp – no blending across pixel borders
+				const px = Math.round(texturePoint.x)
+				const py = Math.round(texturePoint.y)
+				if (px >= 0 && px < textureWidth && py >= 0 && py < textureHeight) {
+					const idx = (py * textureWidth + px) * 4
+					// Use the patch pixel directly (respect its alpha)
+					const patchAlpha = patchData[patchIndex + 3] / 255
+					// Keep the highest alpha if multiple mask pixels map here
+					if (patchAlpha > (accumulatedColor[idx + 3] / 255)) {
+						accumulatedColor[idx]     = patchData[patchIndex]
+						accumulatedColor[idx + 1] = patchData[patchIndex + 1]
+						accumulatedColor[idx + 2] = patchData[patchIndex + 2]
+						accumulatedColor[idx + 3] = patchData[patchIndex + 3]
+						accumulatedWeight[py * textureWidth + px] = 1.0
+					}
+				}
+			} else {			
       splatProjectedColor(
         accumulatedColor,
         accumulatedWeight,
@@ -1364,6 +1415,7 @@ export async function accumulateProjectedPatch({
         [patchData[patchIndex], patchData[patchIndex + 1], patchData[patchIndex + 2], patchData[patchIndex + 3]],
         alpha * Math.max(0, Math.min(1, viewOpacity))
       )
+			}
       appliedSamples += 1
     }
 
@@ -1391,6 +1443,40 @@ export async function accumulateProjectedPatch({
   }
 }
 
+function gaussianBlurWeight(weightMap, width, height, radius) {
+  const kernelSize = Math.ceil(radius * 2)
+  const kernel = []
+  let kernelSum = 0
+  const sigma = radius / 2
+  for (let y = -kernelSize; y <= kernelSize; y++) {
+    for (let x = -kernelSize; x <= kernelSize; x++) {
+      const d = Math.sqrt(x*x + y*y)
+      const val = Math.exp(-(d*d) / (2*sigma*sigma))
+      kernel.push(val)
+      kernelSum += val
+    }
+  }
+  // Normalize kernel
+  for (let i = 0; i < kernel.length; i++) kernel[i] /= kernelSum
+  
+  const result = new Float32Array(weightMap.length)
+  for (let py = 0; py < height; py++) {
+    for (let px = 0; px < width; px++) {
+      let sum = 0
+      let ki = 0
+      for (let ky = -kernelSize; ky <= kernelSize; ky++) {
+        for (let kx = -kernelSize; kx <= kernelSize; kx++) {
+          const sx = Math.min(width-1, Math.max(0, px + kx))
+          const sy = Math.min(height-1, Math.max(0, py + ky))
+          sum += weightMap[sy * width + sx] * kernel[ki++]
+        }
+      }
+      result[py * width + px] = sum
+    }
+  }
+  return result
+}
+
 /**
  * Normalizes the accumulated color/weight buffers and blends the result into
  * textureCanvas in-place. Call this once after all views have been accumulated.
@@ -1411,18 +1497,46 @@ export function finalizeProjectedPatch({ textureCanvas, accumulatedColor, accumu
 
     const colorIndex = pixelIndex * 4
     const blend = Math.min(1, weight)
-    const nextRed   = accumulatedColor[colorIndex]     / weight
-    const nextGreen = accumulatedColor[colorIndex + 1] / weight
-    const nextBlue  = accumulatedColor[colorIndex + 2] / weight
-    const nextAlpha = accumulatedColor[colorIndex + 3] / weight
 
-    textureImageData.data[colorIndex]     = Math.round(textureImageData.data[colorIndex]     * (1 - blend) + nextRed   * blend)
-    textureImageData.data[colorIndex + 1] = Math.round(textureImageData.data[colorIndex + 1] * (1 - blend) + nextGreen * blend)
-    textureImageData.data[colorIndex + 2] = Math.round(textureImageData.data[colorIndex + 2] * (1 - blend) + nextBlue  * blend)
-    textureImageData.data[colorIndex + 3] = Math.round(textureImageData.data[colorIndex + 3] * (1 - blend) + nextAlpha * blend)
+    textureImageData.data[colorIndex]     = Math.round(textureImageData.data[colorIndex]     * (1 - blend) + (accumulatedColor[colorIndex]     / weight) * blend)
+    textureImageData.data[colorIndex + 1] = Math.round(textureImageData.data[colorIndex + 1] * (1 - blend) + (accumulatedColor[colorIndex + 1] / weight) * blend)
+    textureImageData.data[colorIndex + 2] = Math.round(textureImageData.data[colorIndex + 2] * (1 - blend) + (accumulatedColor[colorIndex + 2] / weight) * blend)
+    textureImageData.data[colorIndex + 3] = Math.round(textureImageData.data[colorIndex + 3] * (1 - blend) + (accumulatedColor[colorIndex + 3] / weight) * blend)
     appliedPixels += 1
   }
 
   textureContext.putImageData(textureImageData, 0, 0)
   return { appliedPixels }
+}
+
+// Add this helper function to smooth weight transitions
+function blurWeightMap(weightMap, width, height, radius) {
+  const result = new Float32Array(weightMap.length)
+  const kernelSize = Math.ceil(radius)
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let totalWeight = 0
+      let sampleCount = 0
+      
+      // Sample nearby pixels in a square kernel
+      for (let dy = -kernelSize; dy <= kernelSize; dy++) {
+        for (let dx = -kernelSize; dx <= kernelSize; dx++) {
+          const sampleX = Math.max(0, Math.min(width - 1, x + dx))
+          const sampleY = Math.max(0, Math.min(height - 1, y + dy))
+          const distance = Math.sqrt(dx * dx + dy * dy)
+          
+          if (distance <= radius) {
+            const gaussianWeight = Math.exp(-(distance * distance) / (2 * radius * radius))
+            totalWeight += weightMap[sampleY * width + sampleX] * gaussianWeight
+            sampleCount += gaussianWeight
+          }
+        }
+      }
+      
+      result[y * width + x] = sampleCount > 0 ? totalWeight / sampleCount : 0
+    }
+  }
+  
+  return result
 }
