@@ -36,6 +36,14 @@ const ASSET_SECTIONS = [
     emptyMessage: 'No meshes found in `assets/meshes`.'
   },
   {
+    key: 'brushes',
+    label: 'Brushes',
+    icon: 'brush',
+    path: 'assets/brushes',
+    emptyIcon: 'brush',
+    emptyMessage: 'No brushes found in `assets/brushes`.'
+  },
+  {
     key: 'workflows',
     label: 'Workflows',
     icon: 'account_tree',
@@ -261,7 +269,7 @@ export default function AssetsPage() {
     updateComfyWorkflow
   } = useProjects()
   const navigate = useNavigate()
-  const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [] })
+  const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [], brushes: [] })
   const [loading, setLoading] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [activeSection, setActiveSection] = useState('images')
@@ -414,7 +422,10 @@ export default function AssetsPage() {
         assetsToImport.push({ file, thumbnail })
       }
 
-      const result = await importLibraryAssets(assetsToImport)
+      const result = await importLibraryAssets(
+        assetsToImport,
+        activeSection === 'brushes' ? { assetType: 'brush' } : undefined
+      )
       await loadLibrary()
 
       const importedCount = result.imported?.length || 0
@@ -1034,6 +1045,10 @@ export default function AssetsPage() {
                   <span>{libraryAssets.meshes.length} Meshes</span>
                 </div>
                 <div className="assets-page__stat">
+                  <span className="material-symbols-outlined">brush</span>
+                  <span>{(libraryAssets.brushes || []).length} Brushes</span>
+                </div>
+                <div className="assets-page__stat">
                   <span className="material-symbols-outlined">account_tree</span>
                   <span>{workflows.length} Workflows</span>
                 </div>
@@ -1050,7 +1065,7 @@ export default function AssetsPage() {
             type="file"
             multiple
             className="assets-page__file-input"
-            accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply"
+            accept={activeSection === 'brushes' ? '.png' : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'}
             onChange={handleAssetImportChange}
           />
 
@@ -1386,14 +1401,17 @@ export default function AssetsPage() {
                   </>
                 ) : activeAssets.length > 0 ? (
                   <>
-                    <div className={`assets-grid ${activeSection === 'images' ? 'assets-grid--images' : 'assets-grid--meshes'}`}>
+                    <div className={`assets-grid ${activeSection === 'meshes' ? 'assets-grid--meshes' : 'assets-grid--images'}`}>
                       {paginatedAssets.map(asset => (
-                        <article key={asset.id} className={`asset-card ${activeSection === 'images' ? 'asset-card--image' : 'asset-card--mesh'}`}>
-                          {activeSection === 'images' ? (
+                        <article key={asset.id} className={`asset-card ${activeSection === 'meshes' ? 'asset-card--mesh' : 'asset-card--image'}`}>
+                          {activeSection === 'images' || activeSection === 'brushes' ? (
                             <div className="asset-card__preview asset-card__preview--image">
                               <img src={asset.url} alt={asset.name} className="asset-card__image" />
                               {formatDimensions(asset.width, asset.height) && (
                                 <span className="asset-card__dimensions font-label">{formatDimensions(asset.width, asset.height)}</span>
+                              )}
+                              {activeSection === 'brushes' && (
+                                <span className="asset-card__mesh-tag font-label">BRUSH</span>
                               )}
                             </div>
                           ) : (

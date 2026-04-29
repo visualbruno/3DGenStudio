@@ -116,7 +116,7 @@ function transformUvToTextureSpace(uv, textureConfig = null) {
   return nextUv
 }
 
-function mapUvToCanvasPoint(uv, textureWidth, textureHeight, textureConfig = null) {
+export function mapUvToCanvasPoint(uv, textureWidth, textureHeight, textureConfig = null) {
   const textureUv = transformUvToTextureSpace(uv, textureConfig)
 
   return {

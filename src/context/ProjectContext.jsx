@@ -552,7 +552,7 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
-  const importLibraryAssets = async (assets) => {
+  const importLibraryAssets = async (assets, options = {}) => {
     const formData = new FormData()
 
     Array.from(assets || []).forEach((asset, index) => {
@@ -567,7 +567,11 @@ export function ProjectProvider({ children }) {
       }
     })
 
-    const res = await fetch(`${API_BASE}/assets/library/import`, {
+    const importUrl = options?.assetType
+      ? `${API_BASE}/assets/library/import?assetType=${encodeURIComponent(options.assetType)}`
+      : `${API_BASE}/assets/library/import`
+
+    const res = await fetch(importUrl, {
       method: 'POST',
       body: formData
     })

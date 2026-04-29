@@ -134,6 +134,150 @@
   align-items: start;
 }
 
+.mesh-editor-workspace--with-layers {
+  grid-template-columns: 250px minmax(0, 1fr) 280px;
+}
+
+.mesh-editor-layers-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--surface-container, #1e1e22);
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 12px;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+.mesh-editor-layers-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mesh-editor-layers-panel__title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.mesh-editor-layers-panel__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+}
+
+.mesh-editor-layer-card {
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 8px;
+  padding: 0.55rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  background: var(--surface, #141418);
+}
+
+.mesh-editor-layer-card--selected {
+  border-color: var(--primary, #ac89ff);
+  box-shadow: 0 0 0 1px var(--primary, #ac89ff) inset;
+}
+
+.mesh-editor-layer-card__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mesh-editor-layer-card__name {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 0.85rem;
+  outline: none;
+  min-width: 0;
+}
+
+.mesh-editor-layer-card__icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: inline-flex;
+}
+
+.mesh-editor-layer-card__icon-btn:hover:not(:disabled) {
+  background: var(--surface-container-high, #26262c);
+  color: var(--on-surface, #eaeaee);
+}
+
+.mesh-editor-layer-card__icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mesh-editor-layer-card__row {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.mesh-editor-layer-card__row select,
+.mesh-editor-layer-card__row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+}
+
+.mesh-editor-layer-card__row select {
+  background: var(--surface-container-high, #26262c);
+  color: var(--on-surface, #eaeaee);
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.78rem;
+}
+
+.mesh-editor-layer-card__row select option {
+  background: var(--surface-container-high, #26262c);
+  color: var(--on-surface, #eaeaee);
+}
+
+.mesh-editor-paint-cursor {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+  mix-blend-mode: difference;
+  z-index: 5;
+}
+
+.mesh-editor-layer-card__color {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.mesh-editor-layers-panel__empty {
+  color: var(--on-surface-variant);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 1.25rem 0.5rem;
+}
+
 .mesh-editor-sidebar {
   display: flex;
   flex-direction: column;

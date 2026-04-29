@@ -22,15 +22,20 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const [selectedAssetId, setSelectedAssetId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Valid types: 'image' or 'mesh'
-  const validType = assetType === 'mesh' ? 'mesh' : 'image';
+  // Valid types: 'image', 'mesh', or 'brush'
+  const validType = assetType === 'mesh' ? 'mesh' : (assetType === 'brush' ? 'brush' : 'image');
+
+  const libraryKey = validType === 'mesh' ? 'meshes' : (validType === 'brush' ? 'brushes' : 'images');
+  const titleLabel = validType === 'mesh' ? 'Mesh' : (validType === 'brush' ? 'Brush' : 'Image');
+  const pluralLabel = validType === 'mesh' ? 'meshes' : (validType === 'brush' ? 'brushes' : 'images');
+  const emptyIcon = validType === 'mesh' ? 'deployed_code' : (validType === 'brush' ? 'brush' : 'image_not_supported');
 
   useEffect(() => {
     async function loadAssets() {
       setLoading(true);
       try {
         const library = await getLibraryAssets();
-        const filtered = library[validType === 'mesh' ? 'meshes' : 'images'] || [];
+        const filtered = library[libraryKey] || [];
         
         if (showEdits) {
           // Flatten: include each parent asset and its children (edits/versions)
@@ -61,7 +66,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
       }
     }
     loadAssets();
-  }, [getLibraryAssets, validType, showEdits]);
+  }, [getLibraryAssets, libraryKey, showEdits]);
 
   const totalPages = Math.max(1, Math.ceil(assets.length / ASSETS_PER_PAGE));
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE;
@@ -96,7 +101,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
       <div className="asset-selector-modal" role="dialog" aria-modal="true" aria-labelledby="asset-selector-title">
         <div className="asset-selector-header">
           <h2 id="asset-selector-title" className="asset-selector-title font-headline">
-            Select {validType === 'image' ? 'Image' : 'Mesh'}
+            Select {titleLabel}
           </h2>
           <button type="button" className="asset-selector-close" onClick={handleClose}>
             <span className="material-symbols-outlined">close</span>
@@ -111,10 +116,8 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             </div>
           ) : assets.length === 0 ? (
             <div className="asset-selector-empty">
-              <span className="material-symbols-outlined">
-                {validType === 'image' ? 'image_not_supported' : 'deployed_code'}
-              </span>
-              <span>No {validType === 'image' ? 'images' : 'meshes'} found in library.</span>
+              <span className="material-symbols-outlined">{emptyIcon}</span>
+              <span>No {pluralLabel} found in library.</span>
             </div>
           ) : (
             <>
@@ -132,8 +135,8 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 											className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
 											onClick={() => handleSelectAsset(asset.id)}
 										>
-											<div className={`asset-selector-preview ${validType === 'image' ? 'asset-selector-preview--image' : 'asset-selector-preview--mesh'}`}>
-												{validType === 'image' ? (
+											<div className={`asset-selector-preview ${validType === 'mesh' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'}`}>
+												{validType !== 'mesh' ? (
 													<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
 												) : (
 													<div className="asset-selector-mesh-placeholder">
@@ -152,7 +155,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 												)}
 												{isChild && (
 													<span className="asset-selector-child-badge font-label">
-														{validType === 'image' ? 'EDIT' : 'VERSION'}
+														{validType === 'mesh' ? 'VERSION' : 'EDIT'}
 													</span>
 												)}
 											</div>

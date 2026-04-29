@@ -81,7 +81,8 @@
   gap: 1rem;
 }
 
-.asset-selector-grid--image {
+.asset-selector-grid--image,
+.asset-selector-grid--brush {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
@@ -298,7 +299,8 @@
     max-width: 95%;
     max-height: 90vh;
   }
-  .asset-selector-grid--image {
+  .asset-selector-grid--image,
+  .asset-selector-grid--brush {
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
   .asset-selector-grid--mesh {

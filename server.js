@@ -2669,11 +2669,12 @@ app.delete('/api/graph/connections', async (req, res) => {
 
 app.get('/api/assets/library', async (req, res) => {
   try {
-    const [images, meshes] = await Promise.all([
+    const [images, meshes, brushes] = await Promise.all([
       listLibraryAssetsByType('image', PORT),
-      listLibraryAssetsByType('mesh', PORT)
+      listLibraryAssetsByType('mesh', PORT),
+      listLibraryAssetsByType('brush', PORT)
     ]);
-    res.json({ images, meshes });
+    res.json({ images, meshes, brushes });
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });
@@ -2752,8 +2753,23 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
     const imported = [];
     const skipped = [];
 
+    const overrideAssetType = (() => {
+      const requested = String(req.query?.assetType || req.body?.assetType || '').toLowerCase();
+      return ['image', 'mesh', 'brush'].includes(requested) ? requested : null;
+    })();
+
     await Promise.all(files.map(async (file, index) => {
-      const assetType = inferSupportedAssetTypeFromFilename(file.originalname);
+      let assetType = overrideAssetType;
+      if (!assetType) {
+        assetType = inferSupportedAssetTypeFromFilename(file.originalname);
+      } else if (assetType === 'brush') {
+        // Brushes must be PNG images
+        const extension = path.extname(file.originalname).toLowerCase();
+        if (extension !== '.png') {
+          skipped.push({ name: file.originalname, reason: 'Brushes must be PNG files' });
+          return;
+        }
+      }
 
       if (!assetType) {
         skipped.push({
@@ -2768,7 +2784,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
       const storedFilePath = toStoredAssetPath(assetType, filename);
       const thumbnailFile = thumbnailsByIndex.get(index);
       let thumbnailPath = null;
-      const dimensions = assetType === 'image'
+      const dimensions = (assetType === 'image' || assetType === 'brush')
         ? getImageDimensionsFromBuffer(file.buffer, { filename: file.originalname, mimeType: file.mimetype })
         : { width: 0, height: 0 };
 
@@ -2790,7 +2806,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         width: dimensions.width,
         height: dimensions.height,
         metadata: {
-          resolution: assetType === 'image' ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
+          resolution: (assetType === 'image' || assetType === 'brush') ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
           source: 'LIBRARY IMPORT'
         },
         createdAt: Date.now()

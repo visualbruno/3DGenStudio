@@ -10,6 +10,7 @@ export const IMAGE_ASSETS_DIR = path.join(ASSETS_DIR, 'images');
 export const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
 export const THUMBNAIL_ASSETS_DIR = path.join(ASSETS_DIR, 'thumbnails');
 export const WORKFLOW_ASSETS_DIR = path.join(ASSETS_DIR, 'workflows');
+export const BRUSH_ASSETS_DIR = path.join(ASSETS_DIR, 'brushes');
 
 const sqlite = sqlite3.verbose();
 const DATA_ASSETS_PREFIX = 'data/assets/';
@@ -23,7 +24,8 @@ const KANBAN_COLUMNS = [
 const ASSET_TYPES = [
   { id: 1, name: 'Image' },
   { id: 2, name: 'Mesh' },
-  { id: 3, name: 'Workflow' }
+  { id: 3, name: 'Workflow' },
+  { id: 4, name: 'Brush' }
 ];
 const ATTRIBUTE_TYPES = [
   { id: 1, name: 'Text' },
@@ -657,6 +659,7 @@ export async function initializeStorage() {
   await fs.mkdir(MESH_ASSETS_DIR, { recursive: true });
   await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
   await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(BRUSH_ASSETS_DIR, { recursive: true });
 
   const db = await openDatabase(DB_FILE);
   await exec(db, 'PRAGMA foreign_keys = ON');
@@ -821,12 +824,14 @@ export async function initializeStorage() {
 export function getAssetDirectory(type = 'image') {
   if (type === 'mesh') return MESH_ASSETS_DIR;
   if (type === 'workflow') return WORKFLOW_ASSETS_DIR;
+  if (type === 'brush') return BRUSH_ASSETS_DIR;
   return IMAGE_ASSETS_DIR;
 }
 
 export function getAssetSubdirectory(type = 'image') {
   if (type === 'mesh') return 'meshes';
   if (type === 'workflow') return 'workflows';
+  if (type === 'brush') return 'brushes';
   return 'images';
 }
 
@@ -1478,7 +1483,9 @@ export async function deleteProjectById(projectId) {
   await run(
     db,
     `DELETE FROM Assets
-     WHERE assetTypeId != (SELECT id FROM AssetTypes WHERE name = 'Workflow')
+     WHERE assetTypeId NOT IN (
+             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush')
+           )
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = Assets.id)`
   );
 }

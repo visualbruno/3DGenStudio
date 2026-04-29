@@ -45,6 +45,7 @@ import {
   getWorkflowValueType,
   loadMeshRootFromUrl,
   loadTexturableMeshFromRoot,
+  mapUvToCanvasPoint,
   updateCanvasTexture,
   accumulateProjectedPatch,
   captureTextureMaskScreenView,
@@ -515,6 +516,352 @@ export default function MeshEditorPage() {
   const [showAssetSelector, setShowAssetSelector] = useState(false);
   const [pendingAssetParamId, setPendingAssetParamId] = useState(null);
   const [uploadingImages, setUploadingImages] = useState(false);
+
+  // --- Painting mode state ---
+  const [paintBrushSource, setPaintBrushSource] = useState('asset'); // 'asset' | 'computer'
+  const [paintBrushAsset, setPaintBrushAsset] = useState(null);
+  const [paintBrushFile, setPaintBrushFile] = useState(null);
+  const [showBrushSelector, setShowBrushSelector] = useState(false);
+  const [paintBrushSize, setPaintBrushSize] = useState(32);
+  const [paintOpacity, setPaintOpacity] = useState(1);
+  const [paintFlow, setPaintFlow] = useState(1);
+  const [paintHardness, setPaintHardness] = useState(0.5);
+  const [paintRotation, setPaintRotation] = useState(0);
+  const [paintBlendMode, setPaintBlendMode] = useState('source-over');
+  const [paintColor, setPaintColor] = useState('#ffffff');
+  const [paintLayers, setPaintLayers] = useState([]); // [{ id, name, opacity, blendMode, color, visible }]
+  const [selectedLayerId, setSelectedLayerId] = useState(null);
+  const paintBrushFileInputRef = useRef(null);
+  const paintBrushImageRef = useRef(null); // HTMLImageElement of current brush
+  const paintingBaseTextureRef = useRef(null); // canvas snapshot of the base texture
+  const paintLayerCanvasesRef = useRef(new Map()); // layerId -> canvas
+  const activeStrokeRef = useRef(null); // { layerId, lastUv, lastIslandKey, pointerId }
+  const paintLayerCounterRef = useRef(0);
+  const [paintCursorPos, setPaintCursorPos] = useState(null); // { x, y } in canvasShell coords
+
+  const PAINT_BLEND_MODES = useMemo(() => [
+    { value: 'source-over', label: 'Normal' },
+    { value: 'multiply', label: 'Multiply' },
+    { value: 'screen', label: 'Screen' },
+    { value: 'overlay', label: 'Overlay' },
+    { value: 'darken', label: 'Darken' },
+    { value: 'lighten', label: 'Lighten' },
+    { value: 'color-dodge', label: 'Color Dodge' },
+    { value: 'color-burn', label: 'Color Burn' },
+    { value: 'hard-light', label: 'Hard Light' },
+    { value: 'soft-light', label: 'Soft Light' },
+    { value: 'difference', label: 'Difference' },
+    { value: 'exclusion', label: 'Exclusion' }
+  ], []);
+
+  const handlePaintBrushFileChange = useCallback((event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setPaintBrushFile(file);
+    setPaintBrushAsset(null);
+    event.target.value = '';
+  }, []);
+
+  // Load the brush whenever the source changes. We fetch as a blob (then create
+  // an object URL) so the resulting <img> draws onto a non-tainted canvas, which
+  // is required for getImageData later on. We also pre-bake an alpha-only canvas
+  // for the brush: PNGs distributed as black-on-white grayscale (no alpha channel)
+  // are converted to alpha-from-luminance, while true alpha brushes are kept as-is.
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+
+    async function load() {
+      let sourceUrl = null;
+      let usingExternalObjectUrl = false;
+      if (paintBrushSource === 'asset' && paintBrushAsset) {
+        sourceUrl = paintBrushAsset.url
+          || (paintBrushAsset.filename
+            ? `http://localhost:3001/assets/${encodeURI(paintBrushAsset.filename)}`
+            : null);
+      } else if (paintBrushSource === 'computer' && paintBrushFile) {
+        objectUrl = URL.createObjectURL(paintBrushFile);
+        sourceUrl = objectUrl;
+        usingExternalObjectUrl = false;
+      }
+
+      if (!sourceUrl) {
+        paintBrushImageRef.current = null;
+        return;
+      }
+
+      try {
+        // Fetch as blob → object URL so the image is same-origin and the
+        // resulting canvas isn't tainted (drawImage + getImageData both work).
+        let imageUrl = sourceUrl;
+        if (paintBrushSource === 'asset') {
+          const response = await fetch(sourceUrl);
+          if (!response.ok) throw new Error(`Failed to fetch brush (${response.status})`);
+          const blob = await response.blob();
+          imageUrl = URL.createObjectURL(blob);
+          objectUrl = imageUrl;
+        }
+
+        const image = new Image();
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(new Error('Failed to decode brush image'));
+          image.src = imageUrl;
+        });
+
+        if (cancelled) return;
+
+        // Bake an "alpha mask" canvas: pixels carry the brush shape as alpha,
+        // RGB is white. This way stamping is just: drawImage + source-in fill.
+        const w = image.naturalWidth || image.width;
+        const h = image.naturalHeight || image.height;
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = w;
+        maskCanvas.height = h;
+        const mctx = maskCanvas.getContext('2d');
+        mctx.drawImage(image, 0, 0);
+        const imgData = mctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
+
+        // Detect if PNG actually has an alpha channel (any pixel with alpha < 255).
+        let hasAlpha = false;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] < 250) { hasAlpha = true; break; }
+        }
+
+        // For PNGs without an alpha channel (typical black-on-white brushes),
+        // derive alpha from luminance (darker pixel = more opaque) and convert
+        // RGB to white so the brush is a clean alpha mask. Convention: black =
+        // brush, white = no brush.
+        // For PNGs with alpha (typical white-on-transparent brushes), keep both
+        // the original RGB and alpha so any RGB pattern is preserved at stamp time.
+        if (!hasAlpha) {
+          for (let i = 0; i < data.length; i += 4) {
+            const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+            data[i + 3] = Math.max(0, Math.min(255, Math.round(255 - luminance)));
+          }
+          mctx.putImageData(imgData, 0, 0);
+        }
+
+        paintBrushImageRef.current = maskCanvas;
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Failed to load brush image:', err);
+          paintBrushImageRef.current = null;
+        }
+      }
+    }
+    load();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [paintBrushSource, paintBrushAsset, paintBrushFile]);
+
+  const recompositePaintTexture = useCallback(() => {
+    if (!texturableMesh?.textureCanvas || !paintingBaseTextureRef.current) {
+      return;
+    }
+    const target = texturableMesh.textureCanvas;
+    const ctx = target.getContext('2d');
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.clearRect(0, 0, target.width, target.height);
+    ctx.drawImage(paintingBaseTextureRef.current, 0, 0);
+
+    // Reusable scratch canvas for tinted layer copies
+    let tintCanvas = null;
+
+    for (const layer of paintLayers) {
+      if (!layer.visible) continue;
+      const layerCanvas = paintLayerCanvasesRef.current.get(layer.id);
+      if (!layerCanvas) continue;
+
+      const lower = String(layer.color || '#ffffff').toLowerCase();
+      const isWhite = lower === '#ffffff' || lower === '#fff';
+      let sourceCanvas = layerCanvas;
+
+      if (!isWhite) {
+        if (!tintCanvas) {
+          tintCanvas = document.createElement('canvas');
+          tintCanvas.width = layerCanvas.width;
+          tintCanvas.height = layerCanvas.height;
+        }
+        const tctx = tintCanvas.getContext('2d');
+        tctx.globalAlpha = 1;
+        tctx.globalCompositeOperation = 'source-over';
+        tctx.clearRect(0, 0, tintCanvas.width, tintCanvas.height);
+        tctx.drawImage(layerCanvas, 0, 0);
+        // Multiply by color, then restore the layer's alpha shape.
+        tctx.globalCompositeOperation = 'multiply';
+        tctx.fillStyle = layer.color;
+        tctx.fillRect(0, 0, tintCanvas.width, tintCanvas.height);
+        tctx.globalCompositeOperation = 'destination-in';
+        tctx.drawImage(layerCanvas, 0, 0);
+        tctx.globalCompositeOperation = 'source-over';
+        sourceCanvas = tintCanvas;
+      }
+
+      ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity));
+      ctx.globalCompositeOperation = layer.blendMode || 'source-over';
+      ctx.drawImage(sourceCanvas, 0, 0);
+    }
+    ctx.restore();
+
+    updateCanvasTexture(displayTextureRef.current);
+    setTextureRevision(rev => rev + 1);
+  }, [paintLayers, texturableMesh]);
+
+  // Snapshot the base texture exactly once when entering painting mode.
+  // We deliberately do NOT re-snapshot when the layer count changes; otherwise
+  // deleting the last layer would re-capture the (still-composited) texture
+  // canvas as a new base, baking the doomed layer in permanently.
+  useEffect(() => {
+    if (activeMenu !== 'painting' || !texturableMesh?.textureCanvas) return;
+    if (paintingBaseTextureRef.current) return;
+
+    const base = document.createElement('canvas');
+    base.width = texturableMesh.textureCanvas.width;
+    base.height = texturableMesh.textureCanvas.height;
+    base.getContext('2d').drawImage(texturableMesh.textureCanvas, 0, 0);
+    paintingBaseTextureRef.current = base;
+  }, [activeMenu, texturableMesh]);
+
+  // Recomposite when layer settings change
+  useEffect(() => {
+    if (activeMenu === 'painting') {
+      recompositePaintTexture();
+    }
+  }, [activeMenu, recompositePaintTexture]);
+
+  // Flatten layers when leaving painting mode so the composited texture is kept and other modes get a clean slate.
+  const prevActiveMenuRef = useRef(activeMenu);
+  useEffect(() => {
+    if (prevActiveMenuRef.current === 'painting' && activeMenu !== 'painting') {
+      // The textureCanvas already contains the composited result; just drop layer state.
+      paintLayerCanvasesRef.current.clear();
+      paintingBaseTextureRef.current = null;
+      setPaintLayers([]);
+      setSelectedLayerId(null);
+    }
+    prevActiveMenuRef.current = activeMenu;
+  }, [activeMenu]);
+
+  // Stamp the brush onto a layer canvas at a UV point
+  const stampBrushAtUv = useCallback((layerCanvas, uv, sizePx, rotationDeg, color, flow, hardness, blendMode) => {
+    const brushImage = paintBrushImageRef.current;
+    if (!brushImage || !layerCanvas) return;
+
+    const point = mapUvToCanvasPoint(
+      uv,
+      layerCanvas.width,
+      layerCanvas.height,
+      texturableMesh?.textureConfig || null
+    );
+
+    // Build a tinted+softened brush stamp on a temp canvas
+    const stampCanvas = document.createElement('canvas');
+    stampCanvas.width = Math.max(1, Math.round(sizePx));
+    stampCanvas.height = Math.max(1, Math.round(sizePx));
+    const sctx = stampCanvas.getContext('2d');
+    // Draw brush scaled to size
+    sctx.drawImage(brushImage, 0, 0, stampCanvas.width, stampCanvas.height);
+    // Apply hardness as a soft fade: lower hardness => fade outer pixels
+    if (hardness < 0.999) {
+      const imgData = sctx.getImageData(0, 0, stampCanvas.width, stampCanvas.height);
+      const data = imgData.data;
+      const cx = stampCanvas.width / 2;
+      const cy = stampCanvas.height / 2;
+      const maxR = Math.max(cx, cy);
+      const innerR = maxR * Math.max(0, Math.min(1, hardness));
+      for (let i = 0; i < data.length; i += 4) {
+        const px = ((i / 4) % stampCanvas.width);
+        const py = Math.floor((i / 4) / stampCanvas.width);
+        const dx = px - cx;
+        const dy = py - cy;
+        const r = Math.sqrt(dx * dx + dy * dy);
+        if (r <= innerR) continue;
+        const fade = r >= maxR ? 0 : 1 - (r - innerR) / (maxR - innerR);
+        data[i + 3] = Math.round(data[i + 3] * fade);
+      }
+      sctx.putImageData(imgData, 0, 0);
+    }
+    // NOTE: we intentionally do NOT bake the layer color here — color is
+    // applied as a multiply tint at composite time so the layer color picker
+    // can update the mesh live without re-stamping.
+
+    // Draw stamp into layer canvas with flow alpha and rotation
+    const lctx = layerCanvas.getContext('2d');
+    lctx.save();
+    lctx.globalAlpha = Math.max(0, Math.min(1, flow));
+    lctx.globalCompositeOperation = blendMode || 'source-over';
+    lctx.translate(point.x, point.y);
+    if (rotationDeg) lctx.rotate((rotationDeg * Math.PI) / 180);
+    lctx.drawImage(stampCanvas, -stampCanvas.width / 2, -stampCanvas.height / 2);
+    lctx.restore();
+  }, [texturableMesh]);
+
+  // Begin a new paint stroke (creates a new layer)
+  const beginPaintStroke = useCallback(() => {
+    if (!texturableMesh?.textureCanvas) return null;
+    const w = texturableMesh.textureCanvas.width;
+    const h = texturableMesh.textureCanvas.height;
+    const layerCanvas = document.createElement('canvas');
+    layerCanvas.width = w;
+    layerCanvas.height = h;
+
+    paintLayerCounterRef.current += 1;
+    const id = `layer-${Date.now()}-${paintLayerCounterRef.current}`;
+    const layer = {
+      id,
+      name: `Layer ${paintLayerCounterRef.current}`,
+      opacity: paintOpacity,
+      blendMode: paintBlendMode,
+      color: paintColor,
+      visible: true
+    };
+    paintLayerCanvasesRef.current.set(id, layerCanvas);
+    return { layer, layerCanvas };
+  }, [paintBlendMode, paintColor, paintOpacity, texturableMesh]);
+
+  // Layer management actions
+  const handleSelectLayer = useCallback((id) => setSelectedLayerId(id), []);
+
+  const handleUpdateLayer = useCallback((id, updates) => {
+    setPaintLayers(prev => prev.map(layer => layer.id === id ? { ...layer, ...updates } : layer));
+  }, []);
+
+  const handleDeleteLayer = useCallback((id) => {
+    paintLayerCanvasesRef.current.delete(id);
+    setPaintLayers(prev => prev.filter(layer => layer.id !== id));
+    setSelectedLayerId(prev => prev === id ? null : prev);
+  }, []);
+
+  const handleMoveLayer = useCallback((id, direction) => {
+    setPaintLayers(prev => {
+      const index = prev.findIndex(layer => layer.id === id);
+      if (index === -1) return prev;
+      // Higher array index = drawn last = visually on top.
+      // "up" in the panel means move toward the top of the visual stack.
+      const target = direction === 'up' ? index + 1 : index - 1;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(index, 1);
+      next.splice(target, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const handleClearAllLayers = useCallback(() => {
+    paintLayerCanvasesRef.current.clear();
+    setPaintLayers([]);
+    setSelectedLayerId(null);
+  }, []);
 
   useEffect(() => () => geometry?.dispose?.(), [geometry])
 
@@ -1234,6 +1581,46 @@ export default function MeshEditorPage() {
       return
     }
 
+    if (activeMenu === 'painting') {
+      if (!texturableMesh?.root || !paintBrushImageRef.current) {
+        return
+      }
+
+      const intersection = getMeshIntersection(nextPoint, texturableMesh.root)
+      if (!intersection?.uv) return
+      event.preventDefault()
+
+      const stroke = beginPaintStroke()
+      if (!stroke) return
+
+      const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
+      stampBrushAtUv(
+        stroke.layerCanvas,
+        intersection.uv.clone(),
+        paintBrushSize,
+        paintRotation,
+        paintColor,
+        paintFlow,
+        paintHardness,
+        'source-over'
+      )
+
+      // Insert layer on top
+      setPaintLayers(prev => [...prev, stroke.layer])
+      setSelectedLayerId(stroke.layer.id)
+
+      activeStrokeRef.current = {
+        pointerId: event.pointerId,
+        layerId: stroke.layer.id,
+        layerCanvas: stroke.layerCanvas,
+        lastUv: intersection.uv.clone(),
+        lastIslandKey: islandHit?.key || ''
+      }
+
+      canvasShellRef.current?.setPointerCapture?.(event.pointerId)
+      return
+    }
+
     if (activeMenu === 'texturing') {
       if (!texturingReady || !texturableMesh?.root || !texturableMesh?.maskCanvas || pendingPatch) {
         return
@@ -1293,9 +1680,63 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, resetSelection, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintRotation, pendingPatch, resetSelection, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
+    if (activeMenu === 'painting') {
+      // Update brush cursor preview (always while pointer is over the canvas)
+      const shell = canvasShellRef.current
+      if (shell) {
+        const rect = shell.getBoundingClientRect()
+        setPaintCursorPos({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+      }
+
+      if (!activeStrokeRef.current || !texturableMesh?.root) return
+
+      const nextPoint = getPointerPosition(event)
+      if (!nextPoint) return
+
+      const intersection = getMeshIntersection(nextPoint, texturableMesh.root)
+      if (!intersection?.uv) return
+
+      const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
+      const fromUv = activeStrokeRef.current.lastIslandKey === (islandHit?.key || '')
+        ? activeStrokeRef.current.lastUv
+        : intersection.uv.clone()
+      const toUv = intersection.uv.clone()
+
+      // Stamp along the segment from fromUv to toUv. Spacing in canvas pixels.
+      const layerCanvas = activeStrokeRef.current.layerCanvas
+      const a = mapUvToCanvasPoint(fromUv, layerCanvas.width, layerCanvas.height, texturableMesh?.textureConfig || null)
+      const b = mapUvToCanvasPoint(toUv, layerCanvas.width, layerCanvas.height, texturableMesh?.textureConfig || null)
+      const dx = b.x - a.x
+      const dy = b.y - a.y
+      const dist = Math.hypot(dx, dy)
+      const spacing = Math.max(1, paintBrushSize * 0.25)
+      const steps = Math.max(1, Math.ceil(dist / spacing))
+
+      for (let s = 1; s <= steps; s += 1) {
+        const t = s / steps
+        const uv = fromUv.clone().lerp(toUv, t)
+        stampBrushAtUv(
+          layerCanvas,
+          uv,
+          paintBrushSize,
+          paintRotation,
+          paintColor,
+          paintFlow,
+          paintHardness,
+          'source-over'
+        )
+      }
+
+      activeStrokeRef.current.lastUv = toUv
+      activeStrokeRef.current.lastIslandKey = islandHit?.key || ''
+      // Live recomposite so the user sees the stroke
+      recompositePaintTexture()
+      return
+    }
+
     if (activeMenu === 'texturing') {
       if (!paintStateRef.current || !texturableMesh?.root || !texturableMesh?.maskCanvas) {
         return
@@ -1365,9 +1806,17 @@ export default function MeshEditorPage() {
       startPoint: dragStateRef.current.startPoint,
       endPoint: nextPoint
     })
-  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, texturableMesh])
+  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintRotation, recompositePaintTexture, stampBrushAtUv, texturableMesh])
 
   const handleCanvasPointerUp = useCallback((event) => {
+    if (activeMenu === 'painting') {
+      if (!activeStrokeRef.current || event.button !== 0) return
+      canvasShellRef.current?.releasePointerCapture?.(activeStrokeRef.current.pointerId)
+      activeStrokeRef.current = null
+      recompositePaintTexture()
+      return
+    }
+
     if (activeMenu === 'texturing') {
       if (!paintStateRef.current || event.button !== 0) {
         return
@@ -1394,9 +1843,13 @@ export default function MeshEditorPage() {
     canvasShellRef.current?.releasePointerCapture?.(dragStateRef.current.pointerId)
     dragStateRef.current = null
     setSelectionBox(null)
-  }, [activeMenu, getPointerPosition, selectAtPoint, selectWithinRectangle])
+  }, [activeMenu, getPointerPosition, recompositePaintTexture, selectAtPoint, selectWithinRectangle])
 
   const handleCanvasPointerCancel = useCallback(() => {
+    if (activeStrokeRef.current) {
+      canvasShellRef.current?.releasePointerCapture?.(activeStrokeRef.current.pointerId)
+      activeStrokeRef.current = null
+    }
     if (paintStateRef.current) {
       canvasShellRef.current?.releasePointerCapture?.(paintStateRef.current.pointerId)
       paintStateRef.current = null
@@ -1988,7 +2441,7 @@ export default function MeshEditorPage() {
             </div>
           )}
 
-          <div className="mesh-editor-workspace">
+          <div className={`mesh-editor-workspace ${activeMenu === 'painting' ? 'mesh-editor-workspace--with-layers' : ''}`}>
             <aside className="mesh-editor-sidebar">
               <div className="mesh-editor-panel mesh-editor-panel--compact">
                 <span className="mesh-editor-panel__label">Tools</span>
@@ -2009,10 +2462,18 @@ export default function MeshEditorPage() {
                     <span className="material-symbols-outlined">texture</span>
                     <span>Texturing</span>
                   </button>
+                  <button
+                    type="button"
+                    className={`mesh-editor-mode-btn ${activeMenu === 'painting' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('painting')}
+                  >
+                    <span className="material-symbols-outlined">brush</span>
+                    <span>Painting</span>
+                  </button>
                 </div>
 
                 {activeMenu === 'modeling' ? (
-                  <>
+                  <>{/* MODELING */}
                     <div className="mesh-editor-panel__section">
                       <span className="mesh-editor-panel__section-title">Selection</span>
                       <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
@@ -2078,8 +2539,8 @@ export default function MeshEditorPage() {
                       <span className="mesh-editor-panel__hint">Middle mouse drag rotates the mesh.</span>
                     </div>
                   </>
-                ) : (
-                  <>
+                ) : activeMenu === 'texturing' ? (
+                  <>{/* TEXTURING */}
                     <div className="mesh-editor-panel__section">
                       <span className="mesh-editor-panel__section-title">Brush</span>
                       <label className="mesh-editor-range-field">
@@ -2327,17 +2788,150 @@ export default function MeshEditorPage() {
                       )}
                     </div>
                   </>
+                ) : (
+                  <>{/* PAINTING */}
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">Brush</span>
+
+                      <div className="mesh-editor-workflow-field">
+                        <span>Source</span>
+                        <select
+                          className="mesh-editor-panel__input mesh-editor-panel__select"
+                          value={paintBrushSource}
+                          onChange={(e) => setPaintBrushSource(e.target.value)}
+                        >
+                          <option value="asset">From assets</option>
+                          <option value="computer">From computer</option>
+                        </select>
+                      </div>
+
+                      {paintBrushSource === 'asset' ? (
+                        <div className="mesh-editor-workflow-field">
+                          <button
+                            type="button"
+                            className="mesh-editor-btn mesh-editor-btn--secondary"
+                            onClick={() => setShowBrushSelector(true)}
+                          >
+                            <span className="material-symbols-outlined">brush</span>
+                            {paintBrushAsset ? `Brush: ${paintBrushAsset.name}` : 'Choose brush…'}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="mesh-editor-workflow-field">
+                          <input
+                            ref={paintBrushFileInputRef}
+                            type="file"
+                            accept=".png"
+                            style={{ display: 'none' }}
+                            onChange={handlePaintBrushFileChange}
+                          />
+                          <button
+                            type="button"
+                            className="mesh-editor-btn mesh-editor-btn--secondary"
+                            onClick={() => paintBrushFileInputRef.current?.click()}
+                          >
+                            <span className="material-symbols-outlined">upload_file</span>
+                            {paintBrushFile ? paintBrushFile.name : 'Upload brush PNG…'}
+                          </button>
+                        </div>
+                      )}
+
+                      <label className="mesh-editor-range-field">
+                        <span>Size</span>
+                        <input
+                          type="range" min="1" max="256" step="1"
+                          value={paintBrushSize}
+                          onChange={e => setPaintBrushSize(Number(e.target.value))}
+                        />
+                        <strong>{paintBrushSize}px</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Opacity</span>
+                        <input
+                          type="range" min="0" max="1" step="0.01"
+                          value={paintOpacity}
+                          onChange={e => setPaintOpacity(Number(e.target.value))}
+                        />
+                        <strong>{Math.round(paintOpacity * 100)}%</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Flow</span>
+                        <input
+                          type="range" min="0" max="1" step="0.01"
+                          value={paintFlow}
+                          onChange={e => setPaintFlow(Number(e.target.value))}
+                        />
+                        <strong>{Math.round(paintFlow * 100)}%</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Hardness</span>
+                        <input
+                          type="range" min="0" max="1" step="0.01"
+                          value={paintHardness}
+                          onChange={e => setPaintHardness(Number(e.target.value))}
+                        />
+                        <strong>{Math.round(paintHardness * 100)}%</strong>
+                      </label>
+                      <label className="mesh-editor-range-field">
+                        <span>Rotation</span>
+                        <input
+                          type="range" min="0" max="360" step="1"
+                          value={paintRotation}
+                          onChange={e => setPaintRotation(Number(e.target.value))}
+                        />
+                        <strong>{paintRotation}°</strong>
+                      </label>
+
+                      <div className="mesh-editor-workflow-field">
+                        <span>Blend mode</span>
+                        <select
+                          className="mesh-editor-panel__input mesh-editor-panel__select"
+                          value={paintBlendMode}
+                          onChange={e => setPaintBlendMode(e.target.value)}
+                        >
+                          {PAINT_BLEND_MODES.map(mode => (
+                            <option key={mode.value} value={mode.value}>{mode.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="mesh-editor-workflow-field">
+                      <span>Color</span>
+                      <input
+                        type="color"
+                        value={paintColor}
+                        onChange={e => setPaintColor(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="mesh-editor-panel__notes">
+                      <span className="mesh-editor-panel__hint">Select a brush, then click and drag on the mesh to paint.</span>
+                      <span className="mesh-editor-panel__hint">Each stroke creates a new layer in the panel on the right.</span>
+                      <span className="mesh-editor-panel__hint">Middle-click drag to orbit while painting.</span>
+                    </div>
+                    {paintLayers.length > 0 && (
+                      <button
+                        type="button"
+                        className="mesh-editor-btn mesh-editor-btn--ghost"
+                        onClick={handleClearAllLayers}
+                      >
+                        Clear all layers
+                      </button>
+                    )}
+                  </>
                 )}
               </div>
             </aside>
 
             <div
               ref={canvasShellRef}
-              className={`mesh-editor-canvas-shell ${activeMenu === 'texturing' ? 'mesh-editor-canvas-shell--texturing' : ''}`}
+              className={`mesh-editor-canvas-shell ${(activeMenu === 'texturing' || activeMenu === 'painting') ? 'mesh-editor-canvas-shell--texturing' : ''}`}
               onPointerDown={handleCanvasPointerDown}
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
+              onPointerLeave={() => setPaintCursorPos(null)}
             >
               <canvas
                 ref={projectionMaskCanvasRef}
@@ -2356,7 +2950,7 @@ export default function MeshEditorPage() {
                     <ambientLight intensity={1.25} />
                     <directionalLight position={[5, 7, 9]} intensity={2} castShadow />
                     <directionalLight position={[-5, 3, -4]} intensity={0.6} color="#8ff5ff" />
-                    {activeMenu === 'texturing' && texturableMesh?.root && displayTextureRef.current && maskTextureRef.current && !texturingUnavailableReason ? (
+                    {(activeMenu === 'texturing' || activeMenu === 'painting') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || (maskTextureRef.current && !texturingUnavailableReason)) ? (
                       <TexturedMesh
                         key={textureRevision}
                         root={texturableMesh.root}
@@ -2402,10 +2996,137 @@ export default function MeshEditorPage() {
                   <span>Mesh could not be loaded.</span>
                 </div>
               )}
+              {activeMenu === 'painting' && paintCursorPos && (
+                <div
+                  className="mesh-editor-paint-cursor"
+                  style={{
+                    left: paintCursorPos.x,
+                    top: paintCursorPos.y,
+                    width: paintBrushSize,
+                    height: paintBrushSize
+                  }}
+                />
+              )}
             </div>
+
+            {activeMenu === 'painting' && (
+              <aside className="mesh-editor-layers-panel">
+                <div className="mesh-editor-layers-panel__header">
+                  <span className="mesh-editor-layers-panel__title">Layers</span>
+                  <span className="mesh-editor-panel__hint">{paintLayers.length}</span>
+                </div>
+                <div className="mesh-editor-layers-panel__list">
+                  {paintLayers.length === 0 ? (
+                    <div className="mesh-editor-layers-panel__empty">
+                      No layers yet — paint on the mesh to create one.
+                    </div>
+                  ) : (
+                    // Render top-most layer first
+                    [...paintLayers].slice().reverse().map((layer, reverseIndex) => {
+                      const index = paintLayers.length - 1 - reverseIndex
+                      const isFirst = index === paintLayers.length - 1
+                      const isLast = index === 0
+                      return (
+                        <div
+                          key={layer.id}
+                          className={`mesh-editor-layer-card ${selectedLayerId === layer.id ? 'mesh-editor-layer-card--selected' : ''}`}
+                          onClick={() => handleSelectLayer(layer.id)}
+                        >
+                          <div className="mesh-editor-layer-card__header">
+                            <button
+                              type="button"
+                              className="mesh-editor-layer-card__icon-btn"
+                              title={layer.visible ? 'Hide layer' : 'Show layer'}
+                              onClick={(e) => { e.stopPropagation(); handleUpdateLayer(layer.id, { visible: !layer.visible }) }}
+                            >
+                              <span className="material-symbols-outlined">{layer.visible ? 'visibility' : 'visibility_off'}</span>
+                            </button>
+                            <input
+                              className="mesh-editor-layer-card__name"
+                              value={layer.name}
+                              onChange={e => handleUpdateLayer(layer.id, { name: e.target.value })}
+                              onClick={e => e.stopPropagation()}
+                            />
+                            <button
+                              type="button"
+                              className="mesh-editor-layer-card__icon-btn"
+                              title="Move up"
+                              disabled={isFirst}
+                              onClick={(e) => { e.stopPropagation(); handleMoveLayer(layer.id, 'up') }}
+                            >
+                              <span className="material-symbols-outlined">keyboard_arrow_up</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="mesh-editor-layer-card__icon-btn"
+                              title="Move down"
+                              disabled={isLast}
+                              onClick={(e) => { e.stopPropagation(); handleMoveLayer(layer.id, 'down') }}
+                            >
+                              <span className="material-symbols-outlined">keyboard_arrow_down</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="mesh-editor-layer-card__icon-btn"
+                              title="Delete layer"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteLayer(layer.id) }}
+                            >
+                              <span className="material-symbols-outlined">delete</span>
+                            </button>
+                          </div>
+
+                          <div className="mesh-editor-layer-card__row">
+                            <span>Opacity</span>
+                            <input
+                              type="range" min="0" max="1" step="0.01"
+                              value={layer.opacity}
+                              onChange={e => handleUpdateLayer(layer.id, { opacity: Number(e.target.value) })}
+                              onClick={e => e.stopPropagation()}
+                            />
+                          </div>
+                          <div className="mesh-editor-layer-card__row">
+                            <span>Blend</span>
+                            <select
+                              value={layer.blendMode}
+                              onChange={e => handleUpdateLayer(layer.id, { blendMode: e.target.value })}
+                              onClick={e => e.stopPropagation()}
+                            >
+                              {PAINT_BLEND_MODES.map(mode => (
+                                <option key={mode.value} value={mode.value}>{mode.label}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="mesh-editor-layer-card__row">
+                            <span>Color</span>
+                            <input
+                              type="color"
+                              className="mesh-editor-layer-card__color"
+                              value={layer.color}
+                              onChange={e => handleUpdateLayer(layer.id, { color: e.target.value })}
+                              onClick={e => e.stopPropagation()}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </aside>
+            )}
           </div>
         </section>
       </main>
+      {showBrushSelector && (
+        <AssetSelectorModal
+          assetType="brush"
+          onSelect={(asset) => {
+            setPaintBrushAsset(asset);
+            setPaintBrushFile(null);
+            setShowBrushSelector(false);
+          }}
+          onClose={() => setShowBrushSelector(false)}
+        />
+      )}
       {showAssetSelector && (
         <AssetSelectorModal
           assetType="image"
