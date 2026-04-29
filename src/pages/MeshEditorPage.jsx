@@ -456,7 +456,9 @@ export default function MeshEditorPage() {
     saveMeshEdit,
     subscribeToComfyWorkflowProgress,
     updateProjectNode,
-    uploadAssetThumbnail
+    uploadAssetThumbnail,
+    getPaintDocument,
+    savePaintDocument
   } = useProjects()
 
   const [showSettings, setShowSettings] = useState(false)
@@ -537,6 +539,7 @@ export default function MeshEditorPage() {
   const paintLayerCanvasesRef = useRef(new Map()); // layerId -> canvas
   const activeStrokeRef = useRef(null); // { layerId, lastUv, lastIslandKey, pointerId }
   const paintLayerCounterRef = useRef(0);
+  const hydratedPaintDocAssetIdRef = useRef(null);
   const [paintCursorPos, setPaintCursorPos] = useState(null); // { x, y } in canvasShell coords
 
   const PAINT_BLEND_MODES = useMemo(() => [
@@ -573,7 +576,6 @@ export default function MeshEditorPage() {
 
     async function load() {
       let sourceUrl = null;
-      let usingExternalObjectUrl = false;
       if (paintBrushSource === 'asset' && paintBrushAsset) {
         sourceUrl = paintBrushAsset.url
           || (paintBrushAsset.filename
@@ -582,7 +584,6 @@ export default function MeshEditorPage() {
       } else if (paintBrushSource === 'computer' && paintBrushFile) {
         objectUrl = URL.createObjectURL(paintBrushFile);
         sourceUrl = objectUrl;
-        usingExternalObjectUrl = false;
       }
 
       if (!sourceUrl) {
@@ -661,6 +662,101 @@ export default function MeshEditorPage() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [paintBrushSource, paintBrushAsset, paintBrushFile]);
+
+  // -------- Paint document persistence --------
+  const canvasToPngFile = useCallback(async (canvas, filename) => {
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(blob => {
+        if (!blob) {
+          reject(new Error('Failed to encode canvas to PNG'));
+          return;
+        }
+        resolve(new File([blob], filename, { type: 'image/png' }));
+      }, 'image/png');
+    });
+  }, []);
+
+  const loadImageToCanvas = useCallback(async (url, width, height) => {
+    // Fetch as blob -> object URL so getImageData / re-export remains untainted.
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to load image (${response.status})`);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = () => reject(new Error('Failed to decode image'));
+        image.src = objectUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = width || image.naturalWidth || image.width;
+      canvas.height = height || image.naturalHeight || image.height;
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }, []);
+
+  // Hydrate the paint document for the current asset (once per assetId).
+  useEffect(() => {
+    let cancelled = false;
+    if (!texturableMesh?.textureCanvas) return undefined;
+    if (!Number.isFinite(numericAssetId) || numericAssetId <= 0) return undefined;
+    if (hydratedPaintDocAssetIdRef.current === numericAssetId) return undefined;
+
+    hydratedPaintDocAssetIdRef.current = numericAssetId;
+
+    (async () => {
+      try {
+        const doc = await getPaintDocument(numericAssetId);
+        if (cancelled || !doc) return;
+
+        const w = doc.textureWidth || texturableMesh.textureCanvas.width;
+        const h = doc.textureHeight || texturableMesh.textureCanvas.height;
+
+        if (doc.base?.url) {
+          try {
+            paintingBaseTextureRef.current = await loadImageToCanvas(doc.base.url, w, h);
+          } catch (err) {
+            console.warn('Failed to load paint base:', err);
+          }
+        }
+
+        const hydratedLayers = [];
+        for (const layer of doc.layers || []) {
+          if (!layer?.url || !layer?.id) continue;
+          try {
+            const canvas = await loadImageToCanvas(layer.url, w, h);
+            paintLayerCanvasesRef.current.set(layer.id, canvas);
+            hydratedLayers.push({
+              id: layer.id,
+              name: layer.name || 'Layer',
+              opacity: typeof layer.opacity === 'number' ? layer.opacity : 1,
+              blendMode: layer.blendMode || 'source-over',
+              color: layer.color || '#ffffff',
+              visible: layer.visible !== false
+            });
+          } catch (err) {
+            console.warn(`Failed to hydrate paint layer ${layer.id}:`, err);
+          }
+        }
+
+        if (cancelled) return;
+
+        // Bump counter so newly-painted layers get distinct names/ids.
+        paintLayerCounterRef.current = Math.max(paintLayerCounterRef.current, hydratedLayers.length);
+
+        setPaintLayers(hydratedLayers);
+        setSelectedLayerId(null);
+      } catch (err) {
+        console.warn('Failed to load paint document:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [numericAssetId, texturableMesh, getPaintDocument, loadImageToCanvas]);
 
   const recompositePaintTexture = useCallback(() => {
     if (!texturableMesh?.textureCanvas || !paintingBaseTextureRef.current) {
@@ -748,6 +844,8 @@ export default function MeshEditorPage() {
       paintingBaseTextureRef.current = null;
       setPaintLayers([]);
       setSelectedLayerId(null);
+      // Allow the persisted paint document to be re-hydrated if the user comes back.
+      hydratedPaintDocAssetIdRef.current = null;
     }
     prevActiveMenuRef.current = activeMenu;
   }, [activeMenu]);
@@ -2012,6 +2110,48 @@ export default function MeshEditorPage() {
         console.warn('Failed to refresh mesh thumbnail:', thumbnailError)
       }
 
+      // Persist the paint document (layers + original base texture) when the
+      // user has an active painting session. We always send all layers so the
+      // server has a complete snapshot, including for "Save as version" where
+      // a brand-new assetId has no prior layer files on disk.
+      try {
+        if (
+          savedAsset?.id
+          && paintLayers.length > 0
+          && paintingBaseTextureRef.current
+        ) {
+          const baseCanvas = paintingBaseTextureRef.current
+          const baseFile = await canvasToPngFile(baseCanvas, 'base.png')
+
+          const layerFiles = {}
+          for (const layer of paintLayers) {
+            const layerCanvas = paintLayerCanvasesRef.current.get(layer.id)
+            if (!layerCanvas) continue
+            // eslint-disable-next-line no-await-in-loop
+            layerFiles[layer.id] = await canvasToPngFile(layerCanvas, `${layer.id}.png`)
+          }
+
+          await savePaintDocument(savedAsset.id, {
+            metadata: {
+              textureWidth: baseCanvas.width,
+              textureHeight: baseCanvas.height,
+              layers: paintLayers.map(layer => ({
+                id: layer.id,
+                name: layer.name,
+                opacity: layer.opacity,
+                blendMode: layer.blendMode,
+                color: layer.color,
+                visible: layer.visible
+              }))
+            },
+            baseFile,
+            layerFiles
+          })
+        }
+      } catch (paintDocError) {
+        console.warn('Failed to save paint document:', paintDocError)
+      }
+
       if (saveMode === 'version' && savedAsset?.id) {
         const nextSearchParams = new URLSearchParams(searchParams)
         const savedFilename = savedAsset.filename || (savedAsset.filePath ? savedAsset.filePath.replace(/^data\/assets\//, '') : '')
@@ -2032,7 +2172,7 @@ export default function MeshEditorPage() {
     } finally {
       setSaving(false)
     }
-  }, [filePath, geometry, geometryRevision, meshName, modelUrl, navigate, numericAssetId, saveMeshEdit, saving, searchParams, texturableMesh, uploadAssetThumbnail])
+  }, [filePath, geometry, geometryRevision, meshName, modelUrl, navigate, numericAssetId, saveMeshEdit, saving, searchParams, texturableMesh, uploadAssetThumbnail, paintLayers, canvasToPngFile, savePaintDocument])
 
   const handleBack = useCallback(() => {
     if (returnTo) {

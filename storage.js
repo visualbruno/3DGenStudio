@@ -11,6 +11,7 @@ export const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
 export const THUMBNAIL_ASSETS_DIR = path.join(ASSETS_DIR, 'thumbnails');
 export const WORKFLOW_ASSETS_DIR = path.join(ASSETS_DIR, 'workflows');
 export const BRUSH_ASSETS_DIR = path.join(ASSETS_DIR, 'brushes');
+export const PAINT_DOCS_DIR = path.join(ASSETS_DIR, 'paintdocs');
 
 const sqlite = sqlite3.verbose();
 const DATA_ASSETS_PREFIX = 'data/assets/';
@@ -660,6 +661,7 @@ export async function initializeStorage() {
   await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
   await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
   await fs.mkdir(BRUSH_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(PAINT_DOCS_DIR, { recursive: true });
 
   const db = await openDatabase(DB_FILE);
   await exec(db, 'PRAGMA foreign_keys = ON');
@@ -786,6 +788,16 @@ export async function initializeStorage() {
       PRIMARY KEY(sourceNodeId, targetNodeId, inputId, outputId),
       FOREIGN KEY(sourceNodeId) REFERENCES Nodes(id) ON DELETE CASCADE,
       FOREIGN KEY(targetNodeId) REFERENCES Nodes(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS PaintDocuments (
+      assetId INTEGER PRIMARY KEY,
+      baseFilePath TEXT,
+      textureWidth INTEGER NOT NULL DEFAULT 0,
+      textureHeight INTEGER NOT NULL DEFAULT 0,
+      layersJson TEXT NOT NULL DEFAULT '[]',
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
     );
     `
   );
@@ -2820,4 +2832,89 @@ export async function listLibraryAssetsByType(type, port) {
     });
 
   return [...dbAssets, ...fileAssets];
+}
+
+// ---------------------------------------------------------------------------
+// Paint documents (mesh painting layers persisted as a sidecar)
+// ---------------------------------------------------------------------------
+
+function paintDocSubdirForAsset(assetId) {
+  return path.join(PAINT_DOCS_DIR, String(assetId));
+}
+
+export function getPaintDocSubdir(assetId) {
+  return paintDocSubdirForAsset(assetId);
+}
+
+export function toStoredPaintDocPath(assetId, filename) {
+  return `data/assets/paintdocs/${assetId}/${filename}`;
+}
+
+export async function getPaintDocumentByAssetId(assetId) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    'SELECT assetId, baseFilePath, textureWidth, textureHeight, layersJson, updatedAt FROM PaintDocuments WHERE assetId = ?',
+    [assetId]
+  );
+  if (!row) return null;
+
+  let layers = [];
+  try {
+    layers = JSON.parse(row.layersJson || '[]');
+    if (!Array.isArray(layers)) layers = [];
+  } catch {
+    layers = [];
+  }
+
+  return {
+    assetId: row.assetId,
+    baseFilePath: row.baseFilePath || null,
+    textureWidth: row.textureWidth || 0,
+    textureHeight: row.textureHeight || 0,
+    layers,
+    updatedAt: row.updatedAt || 0
+  };
+}
+
+export async function upsertPaintDocument({
+  assetId,
+  baseFilePath = null,
+  textureWidth = 0,
+  textureHeight = 0,
+  layers = []
+}) {
+  const db = await getDb();
+  const layersJson = JSON.stringify(Array.isArray(layers) ? layers : []);
+  const updatedAt = Date.now();
+
+  await run(
+    db,
+    `INSERT INTO PaintDocuments (assetId, baseFilePath, textureWidth, textureHeight, layersJson, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(assetId) DO UPDATE SET
+       baseFilePath = excluded.baseFilePath,
+       textureWidth = excluded.textureWidth,
+       textureHeight = excluded.textureHeight,
+       layersJson = excluded.layersJson,
+       updatedAt = excluded.updatedAt`,
+    [assetId, baseFilePath, textureWidth, textureHeight, layersJson, updatedAt]
+  );
+
+  return await getPaintDocumentByAssetId(assetId);
+}
+
+export async function deletePaintDocument(assetId) {
+  const db = await getDb();
+  await run(db, 'DELETE FROM PaintDocuments WHERE assetId = ?', [assetId]);
+
+  // Best-effort: remove the on-disk directory for this paint document.
+  const dir = paintDocSubdirForAsset(assetId);
+  try {
+    await fs.rm(dir, { recursive: true, force: true });
+  } catch (err) {
+    if (err && err.code !== 'ENOENT') {
+      console.warn(`Failed to remove paint document directory ${dir}:`, err);
+    }
+  }
 }

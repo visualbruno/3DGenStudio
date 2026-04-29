@@ -478,6 +478,41 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const getPaintDocument = async (assetId) => {
+    if (!Number.isFinite(Number(assetId)) || Number(assetId) <= 0) return null
+    const res = await fetch(`${API_BASE}/assets/${Number(assetId)}/paint-document`)
+    if (res.status === 404) return null
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to load paint document')
+    }
+    return await res.json()
+  }
+
+  const savePaintDocument = async (assetId, { metadata, baseFile, layerFiles }) => {
+    if (!Number.isFinite(Number(assetId)) || Number(assetId) <= 0) {
+      throw new Error('A valid assetId is required to save a paint document')
+    }
+
+    const formData = new FormData()
+    formData.append('metadata', JSON.stringify(metadata || {}))
+    if (baseFile) formData.append('base', baseFile)
+    Object.entries(layerFiles || {}).forEach(([layerId, file]) => {
+      if (file) formData.append(`layer:${layerId}`, file)
+    })
+
+    const res = await fetch(`${API_BASE}/assets/${Number(assetId)}/paint-document`, {
+      method: 'PUT',
+      body: formData
+    })
+
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to save paint document')
+    }
+    return data
+  }
+
   const uploadAsset = async (projectId, file, type = 'image', metadata = {}) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -760,6 +795,8 @@ export function ProjectProvider({ children }) {
       uploadAsset,
       uploadAssetThumbnail,
       saveMeshEdit,
+      getPaintDocument,
+      savePaintDocument,
       attachExistingAsset,
       deleteAsset,
       moveKanbanCard,

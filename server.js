@@ -51,6 +51,11 @@ import {
   createAssetVersion,
   findAssetByFilePath,
   getAssetRecordById,
+  getPaintDocumentByAssetId,
+  upsertPaintDocument,
+  PAINT_DOCS_DIR,
+  toStoredPaintDocPath,
+  getPaintDocSubdir,
   renameLibraryAssetByFilePath,
   replaceAssetFileById,
   renameAssetEditByFilePath,
@@ -282,6 +287,7 @@ const workflowExecutionUpload = multer({ storage: multer.memoryStorage() });
 const libraryImportUpload = multer({ storage: multer.memoryStorage() });
 const thumbnailUpload = multer({ storage: multer.memoryStorage() });
 const meshEditorSaveUpload = multer({ storage: multer.memoryStorage() });
+const paintDocumentUpload = multer({ storage: multer.memoryStorage() });
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -2832,6 +2838,163 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
   } catch (err) {
     console.error('Failed to import library assets:', err);
     res.status(500).json({ error: 'Failed to import library assets' });
+  }
+});
+
+// -------------------------------------------------------------------------
+// Paint documents — sidecar layer data for painted meshes
+// -------------------------------------------------------------------------
+
+function buildPaintDocumentResponse(doc, assetId) {
+  if (!doc) return null;
+  const baseUrl = doc.baseFilePath
+    ? `http://localhost:${PORT}/assets/${encodeURI(doc.baseFilePath.replace(/^data\/assets\//, ''))}`
+    : null;
+  return {
+    assetId,
+    textureWidth: doc.textureWidth,
+    textureHeight: doc.textureHeight,
+    base: doc.baseFilePath ? { filePath: doc.baseFilePath, url: baseUrl } : null,
+    layers: (doc.layers || []).map(layer => ({
+      ...layer,
+      url: layer.filePath
+        ? `http://localhost:${PORT}/assets/${encodeURI(layer.filePath.replace(/^data\/assets\//, ''))}`
+        : null
+    })),
+    updatedAt: doc.updatedAt
+  };
+}
+
+app.get('/api/assets/:assetId/paint-document', async (req, res) => {
+  try {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isFinite(assetId) || assetId <= 0) {
+      return res.status(400).json({ error: 'Invalid assetId' });
+    }
+
+    const doc = await getPaintDocumentByAssetId(assetId);
+    if (!doc) {
+      return res.status(404).json({ error: 'Paint document not found' });
+    }
+
+    res.json(buildPaintDocumentResponse(doc, assetId));
+  } catch (err) {
+    console.error('Failed to load paint document:', err);
+    res.status(500).json({ error: err.message || 'Failed to load paint document' });
+  }
+});
+
+app.put('/api/assets/:assetId/paint-document', paintDocumentUpload.any(), async (req, res) => {
+  try {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isFinite(assetId) || assetId <= 0) {
+      return res.status(400).json({ error: 'Invalid assetId' });
+    }
+
+    const asset = await getAssetRecordById(assetId);
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    let metadata;
+    try {
+      metadata = JSON.parse(req.body?.metadata || '{}');
+    } catch {
+      return res.status(400).json({ error: 'Invalid metadata JSON' });
+    }
+
+    const textureWidth = Number(metadata.textureWidth) || 0;
+    const textureHeight = Number(metadata.textureHeight) || 0;
+    const incomingLayers = Array.isArray(metadata.layers) ? metadata.layers : [];
+
+    const multipartFiles = req.files || [];
+    const baseFile = multipartFiles.find(file => file.fieldname === 'base') || null;
+    const layerFilesById = new Map(
+      multipartFiles
+        .filter(file => file.fieldname.startsWith('layer:'))
+        .map(file => [file.fieldname.slice('layer:'.length), file])
+    );
+
+    const docDir = getPaintDocSubdir(assetId);
+    await fs.mkdir(docDir, { recursive: true });
+
+    // Existing record (so we can keep file paths for layers that weren't re-uploaded).
+    const existing = await getPaintDocumentByAssetId(assetId);
+    const existingLayerByFile = new Map();
+    (existing?.layers || []).forEach(layer => {
+      if (layer.filePath) existingLayerByFile.set(layer.id, layer.filePath);
+    });
+
+    // Write base texture if provided.
+    let baseFilePath = existing?.baseFilePath || null;
+    if (baseFile) {
+      const baseFilename = 'base.png';
+      await fs.writeFile(path.join(docDir, baseFilename), baseFile.buffer);
+      baseFilePath = toStoredPaintDocPath(assetId, baseFilename);
+    }
+
+    // Write each layer file (if uploaded), then build the persisted layer list.
+    const persistedLayers = [];
+    const keptFilenames = new Set();
+    if (baseFilePath) keptFilenames.add(path.basename(baseFilePath));
+
+    for (const layer of incomingLayers) {
+      if (!layer || typeof layer.id !== 'string') continue;
+      const safeId = layer.id.replace(/[^a-zA-Z0-9._-]/g, '_');
+      let filePath = existingLayerByFile.get(layer.id) || null;
+      const file = layerFilesById.get(layer.id);
+
+      if (file) {
+        const filename = `${safeId}.png`;
+        await fs.writeFile(path.join(docDir, filename), file.buffer);
+        filePath = toStoredPaintDocPath(assetId, filename);
+      }
+
+      if (!filePath) continue; // no file for this layer — skip
+
+      keptFilenames.add(path.basename(filePath));
+      persistedLayers.push({
+        id: layer.id,
+        name: typeof layer.name === 'string' ? layer.name : '',
+        opacity: Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 1,
+        blendMode: typeof layer.blendMode === 'string' ? layer.blendMode : 'source-over',
+        color: typeof layer.color === 'string' ? layer.color : '#ffffff',
+        visible: layer.visible !== false,
+        filePath
+      });
+    }
+
+    // Clean up orphan files (layers that were removed by the client).
+    try {
+      const entries = await fs.readdir(docDir);
+      await Promise.all(entries.map(async name => {
+        if (keptFilenames.has(name)) return;
+        try {
+          await fs.unlink(path.join(docDir, name));
+        } catch (cleanupErr) {
+          if (cleanupErr?.code !== 'ENOENT') {
+            console.warn(`Failed to remove orphan paint file ${name}:`, cleanupErr);
+          }
+        }
+      }));
+    } catch (err) {
+      if (err?.code !== 'ENOENT') {
+        console.warn('Failed to inspect paint document dir for cleanup:', err);
+      }
+    }
+
+    const saved = await upsertPaintDocument({
+      assetId,
+      baseFilePath,
+      textureWidth,
+      textureHeight,
+      layers: persistedLayers
+    });
+
+    res.status(200).json(buildPaintDocumentResponse(saved, assetId));
+  } catch (err) {
+    console.error('Failed to save paint document:', err);
+    res.status(500).json({ error: err.message || 'Failed to save paint document' });
   }
 });
 
