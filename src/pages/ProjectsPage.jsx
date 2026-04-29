@@ -19,6 +19,14 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.3.0',
+    date: '2026-04-29',
+    items: [
+      'Added Painting mode MeshEditor',
+			'Improve Texturing mode in MeshEditor'
+    ],
+  },
+  {
     version: 'v0.2.3',
     date: '2026-04-28',
     items: [

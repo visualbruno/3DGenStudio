@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-04-29** | Added "Painting" mode in MeshEditor |
 | **2026-04-28** | Added AssetSelector Dialog<br>MeshEditor: Added dropdowns for the inputs<br>Added real system metrics in the footer<br>Improved loading time in Mesh Editor<br>Fixed parent in Graph mode |
 | **2026-04-27** | Improved Inpainting in Mesh Editor |
 | **2026-04-25** | Improved the details of Inpainting in Mesh Editor |

@@ -540,6 +540,12 @@ export default function MeshEditorPage() {
   const activeStrokeRef = useRef(null); // { layerId, lastUv, lastIslandKey, pointerId }
   const paintLayerCounterRef = useRef(0);
   const hydratedPaintDocAssetIdRef = useRef(null);
+  // Tracks whether the current session has any reason to push a paint document
+  // to the server (either we loaded one from disk, or the user painted at
+  // least one stroke). Stays true across mode switches so deleting every
+  // layer + saving the mesh still triggers a server-side cleanup of orphan
+  // layer PNGs. Reset only when the asset under edit changes.
+  const paintDocDirtyForAssetIdRef = useRef(null);
   const [paintCursorPos, setPaintCursorPos] = useState(null); // { x, y } in canvasShell coords
 
   const PAINT_BLEND_MODES = useMemo(() => [
@@ -699,6 +705,13 @@ export default function MeshEditorPage() {
     }
   }, []);
 
+  // When the asset under edit changes, drop the dirty flag from any previous mesh.
+  useEffect(() => {
+    if (paintDocDirtyForAssetIdRef.current !== numericAssetId) {
+      paintDocDirtyForAssetIdRef.current = null;
+    }
+  }, [numericAssetId]);
+
   // Hydrate the paint document for the current asset (once per assetId).
   useEffect(() => {
     let cancelled = false;
@@ -712,6 +725,10 @@ export default function MeshEditorPage() {
       try {
         const doc = await getPaintDocument(numericAssetId);
         if (cancelled || !doc) return;
+
+        // Remember that this asset has a server-side paint document so subsequent
+        // saves keep it in sync (e.g. clean up after layers are deleted).
+        paintDocDirtyForAssetIdRef.current = numericAssetId;
 
         const w = doc.textureWidth || texturableMesh.textureCanvas.width;
         const h = doc.textureHeight || texturableMesh.textureCanvas.height;
@@ -846,6 +863,9 @@ export default function MeshEditorPage() {
       setSelectedLayerId(null);
       // Allow the persisted paint document to be re-hydrated if the user comes back.
       hydratedPaintDocAssetIdRef.current = null;
+      // Note: we deliberately do NOT clear paintDocDirtyForAssetIdRef here, so
+      // saving the mesh after exiting painting still lets the server clean up
+      // any orphan layer files for this asset.
     }
     prevActiveMenuRef.current = activeMenu;
   }, [activeMenu]);
@@ -924,8 +944,11 @@ export default function MeshEditorPage() {
       visible: true
     };
     paintLayerCanvasesRef.current.set(id, layerCanvas);
+    if (Number.isFinite(numericAssetId) && numericAssetId > 0) {
+      paintDocDirtyForAssetIdRef.current = numericAssetId;
+    }
     return { layer, layerCanvas };
-  }, [paintBlendMode, paintColor, paintOpacity, texturableMesh]);
+  }, [paintBlendMode, paintColor, paintOpacity, texturableMesh, numericAssetId]);
 
   // Layer management actions
   const handleSelectLayer = useCallback((id) => setSelectedLayerId(id), []);
@@ -2110,18 +2133,25 @@ export default function MeshEditorPage() {
         console.warn('Failed to refresh mesh thumbnail:', thumbnailError)
       }
 
-      // Persist the paint document (layers + original base texture) when the
-      // user has an active painting session. We always send all layers so the
-      // server has a complete snapshot, including for "Save as version" where
-      // a brand-new assetId has no prior layer files on disk.
+      // Persist the paint document. We sync to the server when EITHER the user
+      // currently has painting state in memory (layers + base) OR this asset
+      // had a paint document earlier in the session — otherwise deleting every
+      // layer + saving wouldn't clean up orphan PNGs on disk.
       try {
-        if (
-          savedAsset?.id
-          && paintLayers.length > 0
-          && paintingBaseTextureRef.current
-        ) {
+        const hasInMemoryPaintState = paintLayers.length > 0 && !!paintingBaseTextureRef.current
+        const isReplaceSave = saveMode !== 'version'
+        // For "Save as version" we only push if the user actually has painted
+        // something — we don't want to inherit a stale dirty flag onto a fresh
+        // version that has nothing to clean up.
+        const shouldSyncForReplace = isReplaceSave
+          && paintDocDirtyForAssetIdRef.current === savedAsset?.id
+        const shouldSync = savedAsset?.id && (hasInMemoryPaintState || shouldSyncForReplace)
+
+        if (shouldSync) {
           const baseCanvas = paintingBaseTextureRef.current
-          const baseFile = await canvasToPngFile(baseCanvas, 'base.png')
+          const baseFile = baseCanvas
+            ? await canvasToPngFile(baseCanvas, 'base.png')
+            : null
 
           const layerFiles = {}
           for (const layer of paintLayers) {
@@ -2133,8 +2163,8 @@ export default function MeshEditorPage() {
 
           await savePaintDocument(savedAsset.id, {
             metadata: {
-              textureWidth: baseCanvas.width,
-              textureHeight: baseCanvas.height,
+              textureWidth: baseCanvas?.width || 0,
+              textureHeight: baseCanvas?.height || 0,
               layers: paintLayers.map(layer => ({
                 id: layer.id,
                 name: layer.name,
@@ -2147,6 +2177,14 @@ export default function MeshEditorPage() {
             baseFile,
             layerFiles
           })
+
+          // After a successful save the on-disk state matches the in-memory
+          // state. Clear the dirty marker; subsequent edits will re-set it.
+          if (paintLayers.length === 0) {
+            paintDocDirtyForAssetIdRef.current = null
+          } else {
+            paintDocDirtyForAssetIdRef.current = savedAsset.id
+          }
         }
       } catch (paintDocError) {
         console.warn('Failed to save paint document:', paintDocError)
