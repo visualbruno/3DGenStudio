@@ -2287,7 +2287,7 @@ export default function GraphPage({ project }) {
 			setAssetSelectorOpen(false);
 			setPendingAssetNodeId(null);
 		}
-	}, [attachExistingAsset, assetSelectorType, project.id, updateProjectNode, replaceFlowNodeData, setActionDraftsByNodeId]);
+	}, [attachExistingAsset, assetSelectorType, pendingAssetNodeId, project.id, updateProjectNode, replaceFlowNodeData, setActionDraftsByNodeId]);
 
   const renderedNodes = useMemo(() => nodes.map(node => ({
     ...node,
