@@ -1413,6 +1413,25 @@ export default function MeshEditorPage() {
 
   const texturingReady = !loading && !texturingUnavailableReason && !!selectedTextureWorkflow && !!displayTextureRef.current && !!maskTextureRef.current
 
+  // Texturing & Painting both require a textured material with valid UVs.
+  // While the mesh is still loading we keep the modes enabled (otherwise the
+  // tabs would flicker on/off); once loading completes, a missing texture
+  // canvas or an explicit support error disables both modes.
+  const textureModesSupported = loading
+    ? true
+    : !!texturableMesh?.textureCanvas && !texturableMesh?.supportError
+  const textureModesDisabledReason = textureModesSupported
+    ? ''
+    : (texturableMesh?.supportError || 'This mesh has no material or UVs, so texturing and painting are unavailable.')
+
+  // If the active tab becomes unsupported after the mesh finishes loading
+  // (e.g. a UV-less mesh), fall back to Modeling so the panel stays usable.
+  useEffect(() => {
+    if (!textureModesSupported && (activeMenu === 'texturing' || activeMenu === 'painting')) {
+      setActiveMenu('modeling')
+    }
+  }, [activeMenu, textureModesSupported])
+
 	const rebuildProjectedTexturePreview = useCallback(() => {
 		if (
 			!pendingPatch
@@ -2707,6 +2726,8 @@ export default function MeshEditorPage() {
                     type="button"
                     className={`mesh-editor-mode-btn ${activeMenu === 'texturing' ? 'mesh-editor-mode-btn--active' : ''}`}
                     onClick={() => setActiveMenu('texturing')}
+                    disabled={!textureModesSupported}
+                    title={textureModesDisabledReason || undefined}
                   >
                     <span className="material-symbols-outlined">texture</span>
                     <span>Texturing</span>
@@ -2715,6 +2736,8 @@ export default function MeshEditorPage() {
                     type="button"
                     className={`mesh-editor-mode-btn ${activeMenu === 'painting' ? 'mesh-editor-mode-btn--active' : ''}`}
                     onClick={() => setActiveMenu('painting')}
+                    disabled={!textureModesSupported}
+                    title={textureModesDisabledReason || undefined}
                   >
                     <span className="material-symbols-outlined">brush</span>
                     <span>Painting</span>
