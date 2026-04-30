@@ -531,6 +531,11 @@ export default function MeshEditorPage() {
   const [paintRotation, setPaintRotation] = useState(0);
   const [paintBlendMode, setPaintBlendMode] = useState('source-over');
   const [paintColor, setPaintColor] = useState('#ffffff');
+  // 'draw' stamps the brush onto the active layer; 'erase' uses the brush
+  // shape to remove pixels from the active layer (destination-out). Erase is
+  // only meaningful with a selected layer; if the active layer is cleared we
+  // automatically fall back to 'draw' (see effect below).
+  const [paintMode, setPaintMode] = useState('draw');
   const [paintLayers, setPaintLayers] = useState([]); // [{ id, name, opacity, blendMode, color, visible }]
   const [selectedLayerId, setSelectedLayerId] = useState(null);
   const paintBrushFileInputRef = useRef(null);
@@ -968,6 +973,14 @@ export default function MeshEditorPage() {
   }, [paintBlendMode, paintOpacity, texturableMesh, numericAssetId]);
 
   // Layer management actions
+  // Erase requires a selected layer. As soon as no layer is active, snap
+  // the tool back to 'draw' so the UI can't get stuck in an unusable state.
+  useEffect(() => {
+    if (paintMode === 'erase' && !selectedLayerId) {
+      setPaintMode('draw');
+    }
+  }, [paintMode, selectedLayerId]);
+
   // Clicking the active layer deselects it, so the next stroke creates a
   // brand-new layer. Otherwise selecting a layer makes subsequent strokes
   // paint into that layer.
@@ -1734,8 +1747,8 @@ export default function MeshEditorPage() {
       event.preventDefault()
 
       // Reuse the currently selected layer if one is selected; otherwise
-      // create a new layer (which becomes selected). This way drawing only
-      // creates a layer when none is active.
+      // create a new layer (which becomes selected). Erase mode never
+      // creates a new layer — it requires an existing target.
       const existingLayer = selectedLayerId
         ? paintLayers.find(l => l.id === selectedLayerId)
         : null
@@ -1754,6 +1767,11 @@ export default function MeshEditorPage() {
           paintDocDirtyForAssetIdRef.current = numericAssetId
         }
       } else {
+        if (paintMode === 'erase') {
+          // No layer to erase from — bail out instead of accidentally
+          // creating a fresh layer just to immediately cut holes in it.
+          return
+        }
         const stroke = beginPaintStroke()
         if (!stroke) return
         activeLayerId = stroke.layer.id
@@ -1762,6 +1780,9 @@ export default function MeshEditorPage() {
       }
 
       const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
+      // Erasing uses destination-out so the brush alpha is subtracted from
+      // the layer; drawing keeps the normal source-over compositing.
+      const stampBlend = paintMode === 'erase' ? 'destination-out' : 'source-over'
       stampBrushAtUv(
         activeLayerCanvas,
         intersection.uv.clone(),
@@ -1770,7 +1791,7 @@ export default function MeshEditorPage() {
         paintColor,
         paintFlow,
         paintHardness,
-        'source-over',
+        stampBlend,
         islandHit?.path || null
       )
 
@@ -1850,7 +1871,7 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintRotation, pendingPatch, resetSelection, selectedLayerId, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, resetSelection, selectedLayerId, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
     if (activeMenu === 'painting') {
@@ -1896,7 +1917,7 @@ export default function MeshEditorPage() {
           paintColor,
           paintFlow,
           paintHardness,
-          'source-over',
+          paintMode === 'erase' ? 'destination-out' : 'source-over',
           islandHit?.path || null
         )
       }
@@ -1977,7 +1998,7 @@ export default function MeshEditorPage() {
       startPoint: dragStateRef.current.startPoint,
       endPoint: nextPoint
     })
-  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintRotation, recompositePaintTexture, stampBrushAtUv, texturableMesh])
+  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, recompositePaintTexture, stampBrushAtUv, texturableMesh])
 
   const handleCanvasPointerUp = useCallback((event) => {
     if (activeMenu === 'painting') {
@@ -3020,6 +3041,31 @@ export default function MeshEditorPage() {
                   <>{/* PAINTING */}
                     <div className="mesh-editor-panel__section">
                       <span className="mesh-editor-panel__section-title">Brush</span>
+
+                      <div className="mesh-editor-paint-mode-switch" role="radiogroup" aria-label="Paint mode">
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={paintMode === 'draw'}
+                          className={`mesh-editor-paint-mode-switch__btn ${paintMode === 'draw' ? 'mesh-editor-paint-mode-switch__btn--active' : ''}`}
+                          onClick={() => setPaintMode('draw')}
+                        >
+                          <span className="material-symbols-outlined">brush</span>
+                          Drawing
+                        </button>
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={paintMode === 'erase'}
+                          className={`mesh-editor-paint-mode-switch__btn ${paintMode === 'erase' ? 'mesh-editor-paint-mode-switch__btn--active' : ''}`}
+                          disabled={!selectedLayerId}
+                          title={selectedLayerId ? 'Erase from the selected layer' : 'Select a layer to enable erasing'}
+                          onClick={() => { if (selectedLayerId) setPaintMode('erase') }}
+                        >
+                          <span className="material-symbols-outlined">ink_eraser</span>
+                          Erasing
+                        </button>
+                      </div>
 
                       <div className="mesh-editor-workflow-field">
                         <span>Source</span>

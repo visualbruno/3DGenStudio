@@ -192,6 +192,49 @@
   gap: 0.4rem;
 }
 
+.mesh-editor-paint-mode-switch {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  margin-bottom: 0.6rem;
+}
+
+.mesh-editor-paint-mode-switch__btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.mesh-editor-paint-mode-switch__btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mesh-editor-paint-mode-switch__btn--active {
+  background: #6c8cff;
+  color: #ffffff;
+}
+
+.mesh-editor-paint-mode-switch__btn--active:hover {
+  background: #6c8cff;
+}
+
+.mesh-editor-paint-mode-switch__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .mesh-editor-layer-card__radio {
   flex: 0 0 auto;
   width: 16px;
