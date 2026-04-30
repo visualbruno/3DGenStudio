@@ -871,7 +871,7 @@ export default function MeshEditorPage() {
   }, [activeMenu]);
 
   // Stamp the brush onto a layer canvas at a UV point
-  const stampBrushAtUv = useCallback((layerCanvas, uv, sizePx, rotationDeg, color, flow, hardness, blendMode) => {
+  const stampBrushAtUv = useCallback((layerCanvas, uv, sizePx, rotationDeg, color, flow, hardness, blendMode, islandPath = null) => {
     const brushImage = paintBrushImageRef.current;
     if (!brushImage || !layerCanvas) return;
 
@@ -919,9 +919,17 @@ export default function MeshEditorPage() {
       sctx.globalCompositeOperation = 'source-over'
     }
 
-    // Draw stamp into layer canvas with flow alpha and rotation
+    // Draw stamp into layer canvas with flow alpha and rotation. When an
+    // island path is provided, clip to it so a stamp landing near a UV
+    // island border doesn't bleed into adjacent (unrelated) islands packed
+    // next to it in the texture atlas. NOTE: This does not prevent paint
+    // appearing on mirrored/overlapping UVs — those map to the same texels
+    // by design and will always share painted pixels.
     const lctx = layerCanvas.getContext('2d');
     lctx.save();
+    if (islandPath) {
+      lctx.clip(islandPath);
+    }
     lctx.globalAlpha = Math.max(0, Math.min(1, flow));
     lctx.globalCompositeOperation = blendMode || 'source-over';
     lctx.translate(point.x, point.y);
@@ -1762,7 +1770,8 @@ export default function MeshEditorPage() {
         paintColor,
         paintFlow,
         paintHardness,
-        'source-over'
+        'source-over',
+        islandHit?.path || null
       )
 
       if (createdLayer) {
@@ -1887,7 +1896,8 @@ export default function MeshEditorPage() {
           paintColor,
           paintFlow,
           paintHardness,
-          'source-over'
+          'source-over',
+          islandHit?.path || null
         )
       }
 
