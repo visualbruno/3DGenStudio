@@ -19,6 +19,15 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.3.1',
+    date: '2026-04-30',
+    items: [
+      'Mesh Editor - Painting mode: Layer selection, so we can continue to draw on it',
+			'Mesh Editor - Painting mode: Can erase the layer using a brush',
+			'Mesh Editor - Painting mode: Fixed drawing on UV seams'
+    ],
+  },
+  {
     version: 'v0.3.0',
     date: '2026-04-29',
     items: [
