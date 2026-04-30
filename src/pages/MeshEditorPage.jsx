@@ -909,9 +909,15 @@ export default function MeshEditorPage() {
       }
       sctx.putImageData(imgData, 0, 0);
     }
-    // NOTE: we intentionally do NOT bake the layer color here — color is
-    // applied as a multiply tint at composite time so the layer color picker
-    // can update the mesh live without re-stamping.
+    // Bake the brush color (from the Tools panel) into the stamp using
+    // source-in so the brush alpha is preserved. The layer's own color
+    // multiplies on top at composite time (white = no tint by default).
+    if (color) {
+      sctx.globalCompositeOperation = 'source-in'
+      sctx.fillStyle = color
+      sctx.fillRect(0, 0, stampCanvas.width, stampCanvas.height)
+      sctx.globalCompositeOperation = 'source-over'
+    }
 
     // Draw stamp into layer canvas with flow alpha and rotation
     const lctx = layerCanvas.getContext('2d');
@@ -940,7 +946,10 @@ export default function MeshEditorPage() {
       name: `Layer ${paintLayerCounterRef.current}`,
       opacity: paintOpacity,
       blendMode: paintBlendMode,
-      color: paintColor,
+      // Layer color defaults to white so the brush color (from the Tools
+      // panel, baked into each stamp) is shown as-is. The user can still
+      // tint the entire layer afterwards via the layer color picker.
+      color: '#ffffff',
       visible: true
     };
     paintLayerCanvasesRef.current.set(id, layerCanvas);
@@ -948,10 +957,15 @@ export default function MeshEditorPage() {
       paintDocDirtyForAssetIdRef.current = numericAssetId;
     }
     return { layer, layerCanvas };
-  }, [paintBlendMode, paintColor, paintOpacity, texturableMesh, numericAssetId]);
+  }, [paintBlendMode, paintOpacity, texturableMesh, numericAssetId]);
 
   // Layer management actions
-  const handleSelectLayer = useCallback((id) => setSelectedLayerId(id), []);
+  // Clicking the active layer deselects it, so the next stroke creates a
+  // brand-new layer. Otherwise selecting a layer makes subsequent strokes
+  // paint into that layer.
+  const handleSelectLayer = useCallback((id) => {
+    setSelectedLayerId(prev => prev === id ? null : id);
+  }, []);
 
   const handleUpdateLayer = useCallback((id, updates) => {
     setPaintLayers(prev => prev.map(layer => layer.id === id ? { ...layer, ...updates } : layer));
@@ -1711,12 +1725,37 @@ export default function MeshEditorPage() {
       if (!intersection?.uv) return
       event.preventDefault()
 
-      const stroke = beginPaintStroke()
-      if (!stroke) return
+      // Reuse the currently selected layer if one is selected; otherwise
+      // create a new layer (which becomes selected). This way drawing only
+      // creates a layer when none is active.
+      const existingLayer = selectedLayerId
+        ? paintLayers.find(l => l.id === selectedLayerId)
+        : null
+      const existingCanvas = existingLayer
+        ? paintLayerCanvasesRef.current.get(existingLayer.id)
+        : null
+
+      let activeLayerId
+      let activeLayerCanvas
+      let createdLayer = null
+
+      if (existingLayer && existingCanvas) {
+        activeLayerId = existingLayer.id
+        activeLayerCanvas = existingCanvas
+        if (Number.isFinite(numericAssetId) && numericAssetId > 0) {
+          paintDocDirtyForAssetIdRef.current = numericAssetId
+        }
+      } else {
+        const stroke = beginPaintStroke()
+        if (!stroke) return
+        activeLayerId = stroke.layer.id
+        activeLayerCanvas = stroke.layerCanvas
+        createdLayer = stroke.layer
+      }
 
       const islandHit = getUvIslandHitInfo(texturableMesh, intersection)
       stampBrushAtUv(
-        stroke.layerCanvas,
+        activeLayerCanvas,
         intersection.uv.clone(),
         paintBrushSize,
         paintRotation,
@@ -1726,14 +1765,15 @@ export default function MeshEditorPage() {
         'source-over'
       )
 
-      // Insert layer on top
-      setPaintLayers(prev => [...prev, stroke.layer])
-      setSelectedLayerId(stroke.layer.id)
+      if (createdLayer) {
+        setPaintLayers(prev => [...prev, createdLayer])
+        setSelectedLayerId(createdLayer.id)
+      }
 
       activeStrokeRef.current = {
         pointerId: event.pointerId,
-        layerId: stroke.layer.id,
-        layerCanvas: stroke.layerCanvas,
+        layerId: activeLayerId,
+        layerCanvas: activeLayerCanvas,
         lastUv: intersection.uv.clone(),
         lastIslandKey: islandHit?.key || ''
       }
@@ -1801,7 +1841,7 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintRotation, pendingPatch, resetSelection, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintRotation, pendingPatch, resetSelection, selectedLayerId, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
     if (activeMenu === 'painting') {
@@ -3211,6 +3251,22 @@ export default function MeshEditorPage() {
                           onClick={() => handleSelectLayer(layer.id)}
                         >
                           <div className="mesh-editor-layer-card__header">
+                            <input
+                              type="radio"
+                              className="mesh-editor-layer-card__radio"
+                              name="mesh-editor-active-layer"
+                              title="Select layer for painting"
+                              checked={selectedLayerId === layer.id}
+                              onChange={() => setSelectedLayerId(layer.id)}
+                              onClick={e => {
+                                e.stopPropagation()
+                                // Allow toggling off by clicking the active radio.
+                                if (selectedLayerId === layer.id) {
+                                  e.preventDefault()
+                                  setSelectedLayerId(null)
+                                }
+                              }}
+                            />
                             <button
                               type="button"
                               className="mesh-editor-layer-card__icon-btn"

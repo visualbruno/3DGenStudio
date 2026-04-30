@@ -192,6 +192,15 @@
   gap: 0.4rem;
 }
 
+.mesh-editor-layer-card__radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #6c8cff;
+}
+
 .mesh-editor-layer-card__name {
   flex: 1;
   background: transparent;
