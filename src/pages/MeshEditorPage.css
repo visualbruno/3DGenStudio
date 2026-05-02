@@ -313,6 +313,10 @@
   z-index: 5;
 }
 
+.mesh-editor-sculpt-cursor {
+  border-color: #ac89ff;
+}
+
 .mesh-editor-layer-card__color {
   width: 22px;
   height: 22px;

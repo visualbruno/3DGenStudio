@@ -53,8 +53,30 @@ import {
   generateOrbitalCameras,
   estimateMaskOrbitTarget
 } from '../utils/meshTexturing'
+import {
+  applyBrushTextureWeights as applySculptBrushTextureWeights,
+  applyClay as applySculptClay,
+  applyFlatten as applySculptFlatten,
+  applyGrab as applySculptGrab,
+  applyInflate as applySculptInflate,
+  applyPinch as applySculptPinch,
+  applySmooth as applySculptSmooth,
+  applyStandard as applySculptStandard,
+  createSculptContext,
+  ensureGrid as ensureSculptGrid,
+  filterFrontFacing as sculptFilterFrontFacing,
+  finalizeStroke as finalizeSculptStroke,
+  getSymmetryMirrors as sculptGetSymmetryMirrors,
+  incrementalRecomputeNormals as sculptIncrementalNormals,
+  invalidateGrid as invalidateSculptGrid,
+  queryRadius as sculptQueryRadius,
+  raycastMesh as sculptRaycastMesh,
+  restorePositions as sculptRestorePositions,
+  snapshotPositions as sculptSnapshotPositions
+} from '../utils/meshSculpt'
 import './MeshEditorPage.css'
 import AssetSelectorModal from '../components/AssetSelectorModal';
+import SculptToolsPanel from '../components/SculptToolsPanel';
 
 function getRectangleBounds(startPoint, endPoint) {
   return {
@@ -553,6 +575,51 @@ export default function MeshEditorPage() {
   const paintDocDirtyForAssetIdRef = useRef(null);
   const [paintCursorPos, setPaintCursorPos] = useState(null); // { x, y } in canvasShell coords
 
+  // --- Sculpting mode state ---
+  // Brush kind: 'standard' is the only kernel wired up in this step. Smooth
+  // and Inflate kernels exist in meshSculpt.js for the auto-smooth slider
+  // and an upcoming step.
+  const [sculptBrush, setSculptBrush] = useState('standard');
+  // Brush radius in world units. Default is recomputed from the bounding
+  // sphere when geometry loads (effect below).
+  const [sculptSize, setSculptSize] = useState(0.05);
+  const [sculptSizeRange, setSculptSizeRange] = useState({ min: 0.001, max: 1 });
+  const [sculptStrength, setSculptStrength] = useState(0.5);
+  const [sculptHardness, setSculptHardness] = useState(0.4);
+  const [sculptSpacing, setSculptSpacing] = useState(0.25);
+  const [sculptDirection, setSculptDirection] = useState(1); // +1 add, -1 subtract
+  const [sculptFrontFacesOnly, setSculptFrontFacesOnly] = useState(false);
+  const [sculptSymmetry, setSculptSymmetry] = useState({ x: false, y: false, z: false });
+  const [sculptSteadyStroke, setSculptSteadyStroke] = useState(0);
+  const [sculptAutoSmooth, setSculptAutoSmooth] = useState(0);
+  const [sculptCursor, setSculptCursor] = useState(null); // { x, y, pixelRadius } or null
+  const [sculptCanUndo, setSculptCanUndo] = useState(false);
+  const [sculptCanRedo, setSculptCanRedo] = useState(false);
+
+  // Optional textured brush stamp: an alpha map sampled across the brush
+  // footprint at kernel time. None = pure spherical falloff.
+  const [sculptStampSource, setSculptStampSource] = useState('none'); // 'none' | 'asset' | 'computer'
+  const [sculptStampAsset, setSculptStampAsset] = useState(null);
+  const [sculptStampFile, setSculptStampFile] = useState(null);
+  const [sculptStampRotation, setSculptStampRotation] = useState(0); // degrees
+  const [showSculptStampSelector, setShowSculptStampSelector] = useState(false);
+  const sculptStampFileInputRef = useRef(null);
+  // Cached alpha map for the active stamp: { alphaMap: Uint8Array, width, height }
+  const sculptStampRef = useRef(null);
+
+  const sculptContextRef = useRef(null);
+  // Object3D used for raycasting in sculpt mode (created on demand from `geometry`).
+  const sculptMeshRef = useRef(null);
+  // Active stroke state during a left-button drag.
+  // { pointerId, lastPoint, lazyPoint, accumulated, lastWorldHit, undoSnapshot }
+  const sculptStrokeRef = useRef(null);
+  // Bounded ring buffer of position-attribute snapshots for undo / redo.
+  const sculptUndoStackRef = useRef([]);
+  const sculptRedoStackRef = useRef([]);
+  // Per-stroke key state captured on pointerdown (Ctrl flips direction; Shift
+  // forces smooth-on-the-fly even if the active brush is something else).
+  const sculptStrokeKeysRef = useRef({ ctrl: false, shift: false });
+
   const PAINT_BLEND_MODES = useMemo(() => [
     { value: 'source-over', label: 'Normal' },
     { value: 'multiply', label: 'Multiply' },
@@ -1020,6 +1087,374 @@ export default function MeshEditorPage() {
   }, []);
 
   useEffect(() => () => geometry?.dispose?.(), [geometry])
+
+  // --- Sculpting: build / dispose the sculpt context per geometry. -------
+  // The context owns CSR adjacency arrays, a uniform spatial grid, and
+  // scratch buffers, all sized to the current vertex count. A new geometry
+  // (post-modeling edits or a freshly loaded mesh) means we throw it away.
+  useEffect(() => {
+    if (!geometry) {
+      sculptContextRef.current = null;
+      sculptMeshRef.current = null;
+      sculptUndoStackRef.current = [];
+      sculptRedoStackRef.current = [];
+      setSculptCanUndo(false);
+      setSculptCanRedo(false);
+      return undefined;
+    }
+
+    let ctx = null;
+    try {
+      ctx = createSculptContext(geometry);
+    } catch (err) {
+      console.warn('Could not create sculpt context:', err);
+      sculptContextRef.current = null;
+      return undefined;
+    }
+    sculptContextRef.current = ctx;
+    sculptUndoStackRef.current = [];
+    sculptRedoStackRef.current = [];
+    setSculptCanUndo(false);
+    setSculptCanRedo(false);
+
+    // Make sure the BVH exists for accelerated raycasting (meshEditor.js
+    // patches the prototype but doesn't always call computeBoundsTree).
+    if (!geometry.boundsTree && typeof geometry.computeBoundsTree === 'function') {
+      geometry.computeBoundsTree();
+    }
+
+    // Default brush size = ~8% of the bounding sphere radius. Also derive a
+    // sensible slider range so users don't have to scrub through huge values.
+    geometry.computeBoundingSphere();
+    const r = geometry.boundingSphere?.radius || 1;
+    setSculptSizeRange({ min: r * 0.001, max: r * 1.0 });
+    setSculptSize(prev => (prev > 0 && prev < r * 2 ? prev : r * 0.08));
+
+    return () => {
+      // Drop refs so the next geometry rebuilds adjacency cleanly.
+      if (sculptContextRef.current === ctx) {
+        sculptContextRef.current = null;
+        sculptMeshRef.current = null;
+      }
+    };
+  }, [geometry]);
+
+  // Build / refresh the raycast Object3D for sculpt mode. Reuses the same
+  // geometry instance (so BVH refits during a stroke take effect), and is
+  // identity-positioned in world space.
+  const ensureSculptMesh = useCallback(() => {
+    if (!geometry) return null;
+    if (!sculptMeshRef.current || sculptMeshRef.current.geometry !== geometry) {
+      const mesh = new THREE.Mesh(geometry);
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrixWorld(true);
+      sculptMeshRef.current = mesh;
+    }
+    return sculptMeshRef.current;
+  }, [geometry]);
+
+  // Compute screen-space pixel radius of a world-space brush at a given hit
+  // point, for the cursor ring overlay.
+  const computeSculptCursorPixelRadius = useCallback((worldHitPoint, canvasHeight) => {
+    const camera = cameraRef.current;
+    if (!camera || !worldHitPoint) return 24;
+    const distance = camera.position.distanceTo(worldHitPoint);
+    const fovRad = (camera.fov || 50) * Math.PI / 180;
+    const worldHeightAtDistance = 2 * Math.tan(fovRad / 2) * distance;
+    if (worldHeightAtDistance <= 0) return 24;
+    return Math.max(4, (sculptSize / worldHeightAtDistance) * canvasHeight);
+  }, [sculptSize]);
+
+  const pushSculptUndo = useCallback(() => {
+    if (!geometry) return;
+    const stack = sculptUndoStackRef.current;
+    stack.push(sculptSnapshotPositions(geometry));
+    // Keep at most ~10 strokes of history (Float32Array * 3 * vertCount).
+    while (stack.length > 10) stack.shift();
+    // A new action invalidates the redo history.
+    sculptRedoStackRef.current.length = 0;
+    setSculptCanUndo(true);
+    setSculptCanRedo(false);
+  }, [geometry]);
+
+  const handleSculptUndo = useCallback(() => {
+    if (!geometry) return;
+    const undoStack = sculptUndoStackRef.current;
+    const snap = undoStack.pop();
+    if (!snap) {
+      setSculptCanUndo(false);
+      return;
+    }
+    // Save the current state into the redo stack so the user can replay.
+    const redoStack = sculptRedoStackRef.current;
+    redoStack.push(sculptSnapshotPositions(geometry));
+    while (redoStack.length > 10) redoStack.shift();
+
+    sculptRestorePositions(geometry, snap);
+    if (sculptContextRef.current) invalidateSculptGrid(sculptContextRef.current);
+    setGeometryRevision(rev => rev + 1);
+    setSculptCanUndo(undoStack.length > 0);
+    setSculptCanRedo(true);
+  }, [geometry]);
+
+  const handleSculptRedo = useCallback(() => {
+    if (!geometry) return;
+    const redoStack = sculptRedoStackRef.current;
+    const snap = redoStack.pop();
+    if (!snap) {
+      setSculptCanRedo(false);
+      return;
+    }
+    const undoStack = sculptUndoStackRef.current;
+    undoStack.push(sculptSnapshotPositions(geometry));
+    while (undoStack.length > 10) undoStack.shift();
+
+    sculptRestorePositions(geometry, snap);
+    if (sculptContextRef.current) invalidateSculptGrid(sculptContextRef.current);
+    setGeometryRevision(rev => rev + 1);
+    setSculptCanUndo(true);
+    setSculptCanRedo(redoStack.length > 0);
+  }, [geometry]);
+
+  // Apply a single brush stamp at a given object-space point with the given
+  // surface normal. Mutates geometry buffers in place and runs an
+  // incremental normal recompute over the touched triangle fan.
+  //
+  // Handles symmetry by re-running the kernel for each mirror combination,
+  // and front-faces-only by post-filtering the queried vertex set against
+  // the (mirrored) camera position.
+  const applySculptStamp = useCallback((point, normal) => {
+    const ctx = sculptContextRef.current;
+    if (!ctx) return;
+    ensureSculptGrid(ctx, sculptSize);
+
+    const keys = sculptStrokeKeysRef.current;
+    const direction = (keys.ctrl ? -sculptDirection : sculptDirection);
+    const isSmoothing = keys.shift || sculptBrush === 'smooth';
+    // The reference per-stamp displacement scales with brush radius so
+    // strength stays radius-independent.
+    const displacement = sculptSize;
+
+    let cameraX = 0, cameraY = 0, cameraZ = 0;
+    if (sculptFrontFacesOnly && cameraRef.current) {
+      cameraX = cameraRef.current.position.x;
+      cameraY = cameraRef.current.position.y;
+      cameraZ = cameraRef.current.position.z;
+    }
+
+    const mirrors = sculptGetSymmetryMirrors(sculptSymmetry);
+    for (let m = 0; m < mirrors.length; m++) {
+      const sx = mirrors[m][0];
+      const sy = mirrors[m][1];
+      const sz = mirrors[m][2];
+      const px = point.x * sx;
+      const py = point.y * sy;
+      const pz = point.z * sz;
+      const nx = normal.x * sx;
+      const ny = normal.y * sy;
+      const nz = normal.z * sz;
+
+      const queried = sculptQueryRadius(ctx, px, py, pz, sculptSize, sculptHardness);
+      if (queried === 0) continue;
+
+      let count = queried;
+      if (sculptFrontFacesOnly) {
+        count = sculptFilterFrontFacing(
+          ctx, ctx._outIndices, ctx._outWeights, queried,
+          cameraX * sx, cameraY * sy, cameraZ * sz
+        );
+        if (count === 0) continue;
+      }
+
+      // Optional textured-falloff modulation: multiply the per-vertex
+      // weights by an alpha map sampled across the brush's tangent plane.
+      // Vertices outside the brush footprint get weight 0; the kernels
+      // multiply by weight so they no-op on those.
+      const stamp = sculptStampRef.current;
+      if (stamp) {
+        applySculptBrushTextureWeights(
+          ctx, ctx._outIndices, ctx._outWeights, count,
+          px, py, pz, nx, ny, nz,
+          sculptSize, stamp.alphaMap, stamp.width, stamp.height,
+          (sculptStampRotation * Math.PI) / 180
+        );
+      }
+
+      if (isSmoothing) {
+        applySculptSmooth(ctx, ctx._outIndices, ctx._outWeights, count, sculptStrength);
+      } else if (sculptBrush === 'inflate') {
+        applySculptInflate(ctx, ctx._outIndices, ctx._outWeights, count, sculptStrength, displacement, direction);
+      } else if (sculptBrush === 'flatten') {
+        applySculptFlatten(ctx, ctx._outIndices, ctx._outWeights, count,
+          px, py, pz, nx, ny, nz, sculptStrength, direction);
+      } else if (sculptBrush === 'clay') {
+        applySculptClay(ctx, ctx._outIndices, ctx._outWeights, count,
+          px, py, pz, nx, ny, nz, sculptStrength, displacement, direction);
+      } else if (sculptBrush === 'pinch') {
+        applySculptPinch(ctx, ctx._outIndices, ctx._outWeights, count,
+          px, py, pz, nx, ny, nz, sculptStrength, direction);
+      } else {
+        // 'standard' (and any unknown brush) — push along the brush normal.
+        // We pass a bare {x,y,z} object (the kernel only reads .x/.y/.z and
+        // never mutates) to avoid allocating a Vector3 per stamp.
+        applySculptStandard(
+          ctx, ctx._outIndices, ctx._outWeights, count,
+          { x: nx, y: ny, z: nz },
+          sculptStrength, displacement, direction
+        );
+      }
+
+      // Auto-smooth: blend in a fraction of the smooth kernel after every
+      // stamp (except when the user is already smoothing — auto-smoothing
+      // a smooth stroke would just compound to no useful effect).
+      if (sculptAutoSmooth > 0 && !isSmoothing) {
+        applySculptSmooth(
+          ctx, ctx._outIndices, ctx._outWeights, count,
+          sculptAutoSmooth * sculptStrength
+        );
+      }
+    }
+
+    sculptIncrementalNormals(ctx);
+    ctx.geometry.attributes.position.needsUpdate = true;
+    ctx.geometry.attributes.normal.needsUpdate = true;
+  }, [sculptAutoSmooth, sculptBrush, sculptDirection, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptStrength, sculptSymmetry]);
+
+  // Cancel any active sculpt stroke (used by pointercancel / mode switch).
+  const cancelSculptStroke = useCallback(() => {
+    const stroke = sculptStrokeRef.current;
+    if (!stroke) return;
+    canvasShellRef.current?.releasePointerCapture?.(stroke.pointerId);
+    sculptStrokeRef.current = null;
+  }, []);
+
+  // When leaving sculpting mode, drop the cursor and any in-flight stroke.
+  useEffect(() => {
+    if (activeMenu !== 'sculpting') {
+      cancelSculptStroke();
+      setSculptCursor(null);
+    }
+  }, [activeMenu, cancelSculptStroke]);
+
+  // Keyboard shortcuts within sculpting mode: Ctrl/Cmd+Z = undo,
+  // Ctrl/Cmd+Shift+Z and Ctrl+Y = redo. Ignored while typing in form
+  // fields so the layer/brush name editors keep their own undo behavior.
+  useEffect(() => {
+    if (activeMenu !== 'sculpting') return undefined;
+    const onKey = (event) => {
+      const target = event.target;
+      if (target && (
+        target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.isContentEditable
+      )) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault();
+        handleSculptUndo();
+      } else if ((key === 'z' && event.shiftKey) || key === 'y') {
+        event.preventDefault();
+        handleSculptRedo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [activeMenu, handleSculptUndo, handleSculptRedo]);
+
+  // Load the active textured stamp into a flat Uint8Array alpha map so the
+  // sculpt kernel can sample it without canvas API calls in the hot loop.
+  // Mirrors the painting-mode brush loader: PNGs without alpha are converted
+  // to alpha-from-luminance (black = brush, white = no brush); PNGs with
+  // an explicit alpha channel are kept as-is.
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl = null;
+
+    async function load() {
+      if (sculptStampSource === 'none') {
+        sculptStampRef.current = null;
+        return;
+      }
+
+      let sourceUrl = null;
+      if (sculptStampSource === 'asset' && sculptStampAsset) {
+        sourceUrl = sculptStampAsset.url
+          || (sculptStampAsset.filename
+            ? `http://localhost:3001/assets/${encodeURI(sculptStampAsset.filename)}`
+            : null);
+      } else if (sculptStampSource === 'computer' && sculptStampFile) {
+        objectUrl = URL.createObjectURL(sculptStampFile);
+        sourceUrl = objectUrl;
+      }
+      if (!sourceUrl) {
+        sculptStampRef.current = null;
+        return;
+      }
+
+      try {
+        let imageUrl = sourceUrl;
+        if (sculptStampSource === 'asset') {
+          const response = await fetch(sourceUrl);
+          if (!response.ok) throw new Error(`Failed to fetch stamp (${response.status})`);
+          const blob = await response.blob();
+          imageUrl = URL.createObjectURL(blob);
+          objectUrl = imageUrl;
+        }
+
+        const image = new Image();
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(new Error('Failed to decode stamp image'));
+          image.src = imageUrl;
+        });
+        if (cancelled) return;
+
+        const w = image.naturalWidth || image.width;
+        const h = image.naturalHeight || image.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const cctx = canvas.getContext('2d');
+        cctx.drawImage(image, 0, 0);
+        const pixels = cctx.getImageData(0, 0, w, h).data;
+
+        // Detect a real alpha channel.
+        let hasAlpha = false;
+        for (let i = 3; i < pixels.length; i += 4) {
+          if (pixels[i] < 250) { hasAlpha = true; break; }
+        }
+
+        const alphaMap = new Uint8Array(w * h);
+        if (hasAlpha) {
+          for (let i = 0; i < w * h; i++) alphaMap[i] = pixels[i * 4 + 3];
+        } else {
+          for (let i = 0; i < w * h; i++) {
+            const luminance = 0.299 * pixels[i * 4]
+              + 0.587 * pixels[i * 4 + 1]
+              + 0.114 * pixels[i * 4 + 2];
+            alphaMap[i] = Math.max(0, Math.min(255, Math.round(255 - luminance)));
+          }
+        }
+
+        if (!cancelled) {
+          sculptStampRef.current = { alphaMap, width: w, height: h };
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.warn('Failed to load sculpt stamp:', err);
+          sculptStampRef.current = null;
+        }
+      }
+    }
+    load();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [sculptStampSource, sculptStampAsset, sculptStampFile]);
+
 
   useEffect(() => () => displayTextureRef.current?.dispose?.(), [])
 
@@ -1756,6 +2191,109 @@ export default function MeshEditorPage() {
       return
     }
 
+    if (activeMenu === 'sculpting') {
+      const ctx = sculptContextRef.current
+      const mesh = ensureSculptMesh()
+      const camera = cameraRef.current
+      const shell = canvasShellRef.current
+      if (!ctx || !mesh || !camera || !shell) return
+
+      const rect = shell.getBoundingClientRect()
+      const hit = sculptRaycastMesh(mesh, camera, nextPoint.x, nextPoint.y, rect.width, rect.height)
+      if (!hit) return
+
+      event.preventDefault()
+      sculptStrokeKeysRef.current = { ctrl: !!event.ctrlKey || !!event.metaKey, shift: !!event.shiftKey }
+      pushSculptUndo()
+
+      // --- Grab brush: capture indices/weights once, then translate them
+      // by world-space deltas during pointermove. We do NOT call
+      // applySculptStamp at all — Grab has its own pipeline.
+      if (sculptBrush === 'grab') {
+        ensureSculptGrid(ctx, sculptSize)
+        const cameraPos = camera.position
+        const mirrors = sculptGetSymmetryMirrors(sculptSymmetry)
+        const grabMirrors = []
+        for (let mi = 0; mi < mirrors.length; mi++) {
+          const sx = mirrors[mi][0]
+          const sy = mirrors[mi][1]
+          const sz = mirrors[mi][2]
+          const queried = sculptQueryRadius(
+            ctx,
+            hit.point.x * sx, hit.point.y * sy, hit.point.z * sz,
+            sculptSize, sculptHardness
+          )
+          if (queried === 0) continue
+          let count = queried
+          if (sculptFrontFacesOnly) {
+            count = sculptFilterFrontFacing(
+              ctx, ctx._outIndices, ctx._outWeights, queried,
+              cameraPos.x * sx, cameraPos.y * sy, cameraPos.z * sz
+            )
+            if (count === 0) continue
+          }
+          // Apply the textured stamp once at capture time so the grabbed
+          // region matches the brush footprint (the move handler then just
+          // translates the captured indices — no per-frame texture sampling).
+          const stamp = sculptStampRef.current
+          if (stamp) {
+            applySculptBrushTextureWeights(
+              ctx, ctx._outIndices, ctx._outWeights, count,
+              hit.point.x * sx, hit.point.y * sy, hit.point.z * sz,
+              hit.normal.x * sx, hit.normal.y * sy, hit.normal.z * sz,
+              sculptSize, stamp.alphaMap, stamp.width, stamp.height,
+              (sculptStampRotation * Math.PI) / 180
+            )
+          }
+          // Snapshot the index/weight pair (the shared scratch buffers
+          // would be clobbered by the next mirror's queryRadius call).
+          grabMirrors.push({
+            indices: ctx._outIndices.slice(0, count),
+            weights: ctx._outWeights.slice(0, count),
+            count,
+            flip: [sx, sy, sz]
+          })
+        }
+        if (grabMirrors.length === 0) return
+
+        sculptStrokeRef.current = {
+          pointerId: event.pointerId,
+          isGrab: true,
+          grabHitDistance: hit.distance,
+          grabMirrors,
+          lastScreen: { x: nextPoint.x, y: nextPoint.y }
+        }
+
+        setSculptCursor({
+          x: nextPoint.x,
+          y: nextPoint.y,
+          pixelRadius: computeSculptCursorPixelRadius(hit.worldPoint, rect.height)
+        })
+
+        shell.setPointerCapture?.(event.pointerId)
+        return
+      }
+
+      // Standard pipeline: first stamp at the hit point.
+      applySculptStamp(hit.point, hit.normal)
+
+      sculptStrokeRef.current = {
+        pointerId: event.pointerId,
+        lastScreen: { x: nextPoint.x, y: nextPoint.y },
+        lazyScreen: { x: nextPoint.x, y: nextPoint.y },
+        accumulated: 0
+      }
+
+      setSculptCursor({
+        x: nextPoint.x,
+        y: nextPoint.y,
+        pixelRadius: computeSculptCursorPixelRadius(hit.worldPoint, rect.height)
+      })
+
+      shell.setPointerCapture?.(event.pointerId)
+      return
+    }
+
     if (activeMenu === 'painting') {
       if (!texturableMesh?.root || !paintBrushImageRef.current) {
         return
@@ -1890,9 +2428,129 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, beginPaintStroke, brushSize, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, resetSelection, selectedLayerId, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, applySculptStamp, beginPaintStroke, brushSize, computeSculptCursorPixelRadius, ensureSculptMesh, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, pushSculptUndo, resetSelection, sculptBrush, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptSymmetry, selectedLayerId, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
+    if (activeMenu === 'sculpting') {
+      const ctx = sculptContextRef.current
+      const mesh = ensureSculptMesh()
+      const camera = cameraRef.current
+      const shell = canvasShellRef.current
+      if (!ctx || !mesh || !camera || !shell) return
+
+      const nextPoint = getPointerPosition(event)
+      if (!nextPoint) return
+      const rect = shell.getBoundingClientRect()
+
+      // Update the cursor ring even when the user isn't drawing — but only
+      // when the pointer is actually over the mesh, so it doubles as a
+      // "can I sculpt here?" indicator.
+      const hoverHit = sculptRaycastMesh(mesh, camera, nextPoint.x, nextPoint.y, rect.width, rect.height)
+      if (hoverHit) {
+        setSculptCursor({
+          x: nextPoint.x,
+          y: nextPoint.y,
+          pixelRadius: computeSculptCursorPixelRadius(hoverHit.worldPoint, rect.height)
+        })
+      } else if (!sculptStrokeRef.current) {
+        setSculptCursor(null)
+      }
+
+      const stroke = sculptStrokeRef.current
+      if (!stroke) return
+
+      // --- Grab: translate captured verts by world-space delta. We never
+      // re-query the grid mid-stroke (Blender behavior).
+      if (stroke.isGrab) {
+        const dxPx = nextPoint.x - stroke.lastScreen.x
+        const dyPx = nextPoint.y - stroke.lastScreen.y
+        if (Math.abs(dxPx) < 0.5 && Math.abs(dyPx) < 0.5) return
+
+        const fovRad = (camera.fov || 50) * Math.PI / 180
+        const worldHeightAtDist = 2 * Math.tan(fovRad / 2) * stroke.grabHitDistance
+        const pxToWorld = worldHeightAtDist / Math.max(1, rect.height)
+
+        // Camera basis in world space.
+        const right = new THREE.Vector3()
+        const up = new THREE.Vector3()
+        const fwd = new THREE.Vector3()
+        camera.matrix.extractBasis(right, up, fwd)
+
+        // Screen Y points down → subtract the up component.
+        const wx = right.x * dxPx * pxToWorld - up.x * dyPx * pxToWorld
+        const wy = right.y * dxPx * pxToWorld - up.y * dyPx * pxToWorld
+        const wz = right.z * dxPx * pxToWorld - up.z * dyPx * pxToWorld
+
+        for (let mi = 0; mi < stroke.grabMirrors.length; mi++) {
+          const m = stroke.grabMirrors[mi]
+          // Mirror the world delta the same way we mirrored the seed point.
+          applySculptGrab(
+            ctx, m.indices, m.weights, m.count,
+            wx * m.flip[0], wy * m.flip[1], wz * m.flip[2],
+            sculptStrength
+          )
+          // Mark dirty by hand — applySculptGrab already does, but only
+          // for the verts it touched. Nothing else to do here.
+        }
+        sculptIncrementalNormals(ctx)
+        ctx.geometry.attributes.position.needsUpdate = true
+        ctx.geometry.attributes.normal.needsUpdate = true
+
+        stroke.lastScreen.x = nextPoint.x
+        stroke.lastScreen.y = nextPoint.y
+        return
+      }
+
+      // Steady stroke: lazy-mouse interpolation in screen space. At
+      // steadyStroke=0 the lazy cursor snaps to the pointer instantly.
+      const lazyT = 1 - sculptSteadyStroke
+      stroke.lazyScreen.x += (nextPoint.x - stroke.lazyScreen.x) * lazyT
+      stroke.lazyScreen.y += (nextPoint.y - stroke.lazyScreen.y) * lazyT
+
+      // Walk from the previous lazy position toward the new one in steps of
+      // `spacing * sculptSize` projected to screen pixels. We approximate
+      // pixels-per-world-unit using the most recent cursor pixelRadius.
+      const dx = stroke.lazyScreen.x - stroke.lastScreen.x
+      const dy = stroke.lazyScreen.y - stroke.lastScreen.y
+      const screenDist = Math.hypot(dx, dy)
+      if (screenDist <= 0.01) return
+
+      const pxPerWorldRadius = (hoverHit && setSculptCursor /* sentinel */)
+        ? Math.max(1, computeSculptCursorPixelRadius(hoverHit.worldPoint, rect.height))
+        : 24
+      const stepPixels = Math.max(1, sculptSpacing * pxPerWorldRadius)
+
+      let walked = stroke.accumulated
+      const steps = Math.floor((walked + screenDist) / stepPixels)
+      if (steps <= 0) {
+        stroke.accumulated = walked + screenDist
+        stroke.lastScreen.x = stroke.lazyScreen.x
+        stroke.lastScreen.y = stroke.lazyScreen.y
+        return
+      }
+
+      const ux = dx / screenDist
+      const uy = dy / screenDist
+      let cursorX = stroke.lastScreen.x
+      let cursorY = stroke.lastScreen.y
+      let traveled = 0
+      let firstStepDist = stepPixels - walked
+      for (let s = 0; s < steps; s++) {
+        const advance = s === 0 ? firstStepDist : stepPixels
+        cursorX += ux * advance
+        cursorY += uy * advance
+        traveled += advance
+        const stepHit = sculptRaycastMesh(mesh, camera, cursorX, cursorY, rect.width, rect.height)
+        if (!stepHit) continue
+        applySculptStamp(stepHit.point, stepHit.normal)
+      }
+
+      stroke.accumulated = (walked + screenDist) - traveled
+      stroke.lastScreen.x = stroke.lazyScreen.x
+      stroke.lastScreen.y = stroke.lazyScreen.y
+      return
+    }
+
     if (activeMenu === 'painting') {
       // Update brush cursor preview (always while pointer is over the canvas)
       const shell = canvasShellRef.current
@@ -2017,9 +2675,29 @@ export default function MeshEditorPage() {
       startPoint: dragStateRef.current.startPoint,
       endPoint: nextPoint
     })
-  }, [activeMenu, brushSize, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, recompositePaintTexture, stampBrushAtUv, texturableMesh])
+  }, [activeMenu, applySculptStamp, brushSize, computeSculptCursorPixelRadius, ensureSculptMesh, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, recompositePaintTexture, sculptSpacing, sculptSteadyStroke, sculptStrength, stampBrushAtUv, texturableMesh])
 
   const handleCanvasPointerUp = useCallback((event) => {
+    if (activeMenu === 'sculpting') {
+      const stroke = sculptStrokeRef.current
+      if (!stroke || event.button !== 0) return
+      canvasShellRef.current?.releasePointerCapture?.(stroke.pointerId)
+      sculptStrokeRef.current = null
+
+      // Stroke-end: full normal recompute + bounds + BVH refit. Topology is
+      // unchanged so refit is O(n) and dramatically cheaper than a rebuild.
+      const ctx = sculptContextRef.current
+      if (ctx) {
+        finalizeSculptStroke(ctx)
+        // Vertex positions changed: the spatial grid's cell assignments may
+        // be stale. Mark for a lazy rebuild on the next stroke.
+        invalidateSculptGrid(ctx)
+      }
+      // Bumping geometryRevision keeps stats / texture-mode warnings in sync.
+      setGeometryRevision(rev => rev + 1)
+      return
+    }
+
     if (activeMenu === 'painting') {
       if (!activeStrokeRef.current || event.button !== 0) return
       canvasShellRef.current?.releasePointerCapture?.(activeStrokeRef.current.pointerId)
@@ -2057,6 +2735,16 @@ export default function MeshEditorPage() {
   }, [activeMenu, getPointerPosition, recompositePaintTexture, selectAtPoint, selectWithinRectangle])
 
   const handleCanvasPointerCancel = useCallback(() => {
+    if (sculptStrokeRef.current) {
+      cancelSculptStroke()
+      const ctx = sculptContextRef.current
+      if (ctx) {
+        finalizeSculptStroke(ctx)
+        invalidateSculptGrid(ctx)
+      }
+      setGeometryRevision(rev => rev + 1)
+      return
+    }
     if (activeStrokeRef.current) {
       canvasShellRef.current?.releasePointerCapture?.(activeStrokeRef.current.pointerId)
       activeStrokeRef.current = null
@@ -2069,7 +2757,7 @@ export default function MeshEditorPage() {
     dragStateRef.current = null
     resetSelection()
     setSelectionBox(null)
-  }, [resetSelection])
+  }, [cancelSculptStroke, resetSelection])
 
   const handleTextureWorkflowInputChange = useCallback((parameter, rawValue) => {
     const valueType = getWorkflowValueType(parameter)
@@ -2742,6 +3430,15 @@ export default function MeshEditorPage() {
                     <span className="material-symbols-outlined">brush</span>
                     <span>Painting</span>
                   </button>
+                  <button
+                    type="button"
+                    className={`mesh-editor-mode-btn ${activeMenu === 'sculpting' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('sculpting')}
+                    title="Sculpt the mesh with brushes"
+                  >
+                    <span className="material-symbols-outlined">back_hand</span>
+                    <span>Sculpting</span>
+                  </button>
                 </div>
 
                 {activeMenu === 'modeling' ? (
@@ -3060,6 +3757,63 @@ export default function MeshEditorPage() {
                       )}
                     </div>
                   </>
+                ) : activeMenu === 'sculpting' ? (
+                  <>{/* SCULPTING */}
+                    <SculptToolsPanel
+                      brushType={sculptBrush}
+                      onBrushTypeChange={setSculptBrush}
+                      size={sculptSize}
+                      sizeMin={sculptSizeRange.min}
+                      sizeMax={sculptSizeRange.max}
+                      sizeStep={Math.max(0.0001, sculptSizeRange.max / 1000)}
+                      onSizeChange={setSculptSize}
+                      strength={sculptStrength}
+                      onStrengthChange={setSculptStrength}
+                      hardness={sculptHardness}
+                      onHardnessChange={setSculptHardness}
+                      spacing={sculptSpacing}
+                      onSpacingChange={setSculptSpacing}
+                      direction={sculptDirection}
+                      onDirectionChange={setSculptDirection}
+                      frontFacesOnly={sculptFrontFacesOnly}
+                      onFrontFacesOnlyChange={setSculptFrontFacesOnly}
+                      symmetry={sculptSymmetry}
+                      onSymmetryChange={setSculptSymmetry}
+                      steadyStroke={sculptSteadyStroke}
+                      onSteadyStrokeChange={setSculptSteadyStroke}
+                      autoSmooth={sculptAutoSmooth}
+                      onAutoSmoothChange={setSculptAutoSmooth}
+                      // All seven brushes are now wired up.
+                      enabledBrushes={['standard', 'clay', 'inflate', 'smooth', 'flatten', 'pinch', 'grab']}
+                      onUndo={handleSculptUndo}
+                      canUndo={sculptCanUndo}
+                      onRedo={handleSculptRedo}
+                      canRedo={sculptCanRedo}
+                      stampSource={sculptStampSource}
+                      onStampSourceChange={value => {
+                        setSculptStampSource(value)
+                        if (value === 'none') {
+                          setSculptStampAsset(null)
+                          setSculptStampFile(null)
+                        }
+                      }}
+                      stampAsset={sculptStampAsset}
+                      onPickStampAsset={() => setShowSculptStampSelector(true)}
+                      stampFile={sculptStampFile}
+                      onStampFileChange={event => {
+                        const file = event.target.files?.[0]
+                        if (file) {
+                          setSculptStampFile(file)
+                          setSculptStampAsset(null)
+                        }
+                        event.target.value = ''
+                      }}
+                      stampRotation={sculptStampRotation}
+                      onStampRotationChange={setSculptStampRotation}
+                      stampFileInputRef={sculptStampFileInputRef}
+                      disabled={!geometry}
+                    />
+                  </>
                 ) : (
                   <>{/* PAINTING */}
                     <div className="mesh-editor-panel__section">
@@ -3228,7 +3982,7 @@ export default function MeshEditorPage() {
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
-              onPointerLeave={() => setPaintCursorPos(null)}
+              onPointerLeave={() => { setPaintCursorPos(null); setSculptCursor(null); }}
             >
               <canvas
                 ref={projectionMaskCanvasRef}
@@ -3292,6 +4046,17 @@ export default function MeshEditorPage() {
                   <span className="material-symbols-outlined mesh-editor-empty-state__icon">deployed_code_alert</span>
                   <span>Mesh could not be loaded.</span>
                 </div>
+              )}
+              {activeMenu === 'sculpting' && sculptCursor && (
+                <div
+                  className="mesh-editor-paint-cursor mesh-editor-sculpt-cursor"
+                  style={{
+                    left: sculptCursor.x,
+                    top: sculptCursor.y,
+                    width: sculptCursor.pixelRadius * 2,
+                    height: sculptCursor.pixelRadius * 2
+                  }}
+                />
               )}
               {activeMenu === 'painting' && paintCursorPos && (
                 <div
@@ -3438,6 +4203,17 @@ export default function MeshEditorPage() {
             setShowBrushSelector(false);
           }}
           onClose={() => setShowBrushSelector(false)}
+        />
+      )}
+      {showSculptStampSelector && (
+        <AssetSelectorModal
+          assetType="brush"
+          onSelect={(asset) => {
+            setSculptStampAsset(asset);
+            setSculptStampFile(null);
+            setShowSculptStampSelector(false);
+          }}
+          onClose={() => setShowSculptStampSelector(false)}
         />
       )}
       {showAssetSelector && (
