@@ -17,6 +17,7 @@ import {
   fillHoleLoops,
   geometryFaceCount,
   getClosestVertexIndex,
+  getGeometryHoleLoops,
   getFaceSelectionGeometry,
   getSelectedHoleLoops,
   getVertexSelectionPositions,
@@ -245,10 +246,11 @@ function generateBlurBorderGradient(sourceMaskCanvas, targetWidth, targetHeight,
   return gradientMask
 }
 
-function CameraRig({ geometry, onCameraReady, controlsEnabled = true }) {
+function CameraRig({ geometry, frameKey, onCameraReady, controlsEnabled = true }) {
   const { camera } = useThree()
   const controlsRef = useRef(null)
   const [distanceBounds, setDistanceBounds] = useState({ minDistance: 0.001, maxDistance: 100 })
+  const lastFramedKeyRef = useRef(null)
 
   useEffect(() => {
     onCameraReady?.(camera)
@@ -258,6 +260,13 @@ function CameraRig({ geometry, onCameraReady, controlsEnabled = true }) {
     if (!geometry) {
       return
     }
+    // Re-frame only when the frameKey changes (i.e. a new mesh was loaded).
+    // Topology edits (delete / merge / subdivide / fill / undo) keep the same
+    // frameKey so the camera doesn't snap back to its initial framing.
+    if (lastFramedKeyRef.current === frameKey) {
+      return
+    }
+    lastFramedKeyRef.current = frameKey
 
     geometry.computeBoundingSphere()
     const sphere = geometry.boundingSphere
@@ -284,7 +293,7 @@ function CameraRig({ geometry, onCameraReady, controlsEnabled = true }) {
       controlsRef.current.target.copy(center)
       controlsRef.current.update()
     }
-  }, [camera, geometry])
+  }, [camera, geometry, frameKey])
 
   return (
     <OrbitControls
@@ -496,6 +505,11 @@ export default function MeshEditorPage() {
   const [cropPadding, setCropPadding] = useState(36)
   const [featherRadius, setFeatherRadius] = useState(12)
   const [geometryRevision, setGeometryRevision] = useState(0)
+  const [meshFrameKey, setMeshFrameKey] = useState(0)
+  const [modelingCanUndo, setModelingCanUndo] = useState(false)
+  const [modelingCanRedo, setModelingCanRedo] = useState(false)
+  const modelingUndoStackRef = useRef([])
+  const modelingRedoStackRef = useRef([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [texturing, setTexturing] = useState(false)
@@ -1683,6 +1697,14 @@ export default function MeshEditorPage() {
           setSelectedFaceIndices([])
           setSelectedVertexIndices([])
           setHoleLoops([])
+          // Bump the camera framing key so CameraRig re-frames the new mesh.
+          // Topology edits below do NOT bump this so the view stays put.
+          setMeshFrameKey(key => key + 1)
+          // Clear any modeling history from the previously loaded mesh.
+          modelingUndoStackRef.current = []
+          modelingRedoStackRef.current = []
+          setModelingCanUndo(false)
+          setModelingCanRedo(false)
         }
       } catch (err) {
         if (!cancelled) {
@@ -2785,14 +2807,100 @@ export default function MeshEditorPage() {
     setFeedback('Texture mask cleared.')
   }, [texturableMesh, updateMaskOverlay])
 
-  const applyGeometryUpdate = useCallback((nextGeometry, nextHoleLoops = []) => {
+  const applyGeometryUpdate = useCallback((nextGeometry, nextHoleLoops = [], { pushUndo = true } = {}) => {
+    if (pushUndo && geometry) {
+      // Clone before the disposal effect tears the previous geometry down.
+      const snapshot = geometry.clone()
+      const stack = modelingUndoStackRef.current
+      stack.push(snapshot)
+      while (stack.length > 20) {
+        const dropped = stack.shift()
+        dropped?.dispose?.()
+      }
+      // Any new edit invalidates the redo history.
+      modelingRedoStackRef.current.forEach(g => g?.dispose?.())
+      modelingRedoStackRef.current = []
+      setModelingCanUndo(true)
+      setModelingCanRedo(false)
+    }
     setGeometry(nextGeometry)
     setGeometryRevision(current => current + 1)
     setHoleLoops(nextHoleLoops)
     setSelectedFaceIndices([])
     setSelectedVertexIndices([])
     setFeedback('Mesh updated.')
-  }, [])
+  }, [geometry])
+
+  const handleModelingUndo = useCallback(() => {
+    const undoStack = modelingUndoStackRef.current
+    const snap = undoStack.pop()
+    if (!snap) {
+      setModelingCanUndo(false)
+      return
+    }
+    if (geometry) {
+      modelingRedoStackRef.current.push(geometry.clone())
+      while (modelingRedoStackRef.current.length > 20) {
+        modelingRedoStackRef.current.shift()?.dispose?.()
+      }
+    }
+    setGeometry(snap)
+    setGeometryRevision(current => current + 1)
+    setHoleLoops([])
+    setSelectedFaceIndices([])
+    setSelectedVertexIndices([])
+    setModelingCanUndo(undoStack.length > 0)
+    setModelingCanRedo(true)
+    setFeedback('Undo.')
+  }, [geometry])
+
+  const handleModelingRedo = useCallback(() => {
+    const redoStack = modelingRedoStackRef.current
+    const snap = redoStack.pop()
+    if (!snap) {
+      setModelingCanRedo(false)
+      return
+    }
+    if (geometry) {
+      modelingUndoStackRef.current.push(geometry.clone())
+      while (modelingUndoStackRef.current.length > 20) {
+        modelingUndoStackRef.current.shift()?.dispose?.()
+      }
+    }
+    setGeometry(snap)
+    setGeometryRevision(current => current + 1)
+    setHoleLoops([])
+    setSelectedFaceIndices([])
+    setSelectedVertexIndices([])
+    setModelingCanUndo(true)
+    setModelingCanRedo(redoStack.length > 0)
+    setFeedback('Redo.')
+  }, [geometry])
+
+  // Keyboard shortcuts within modeling mode: Ctrl/Cmd+Z = undo,
+  // Ctrl/Cmd+Shift+Z and Ctrl+Y = redo.
+  useEffect(() => {
+    if (activeMenu !== 'modeling') return undefined
+    const onKey = (event) => {
+      const target = event.target
+      if (target && (
+        target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.isContentEditable
+      )) return
+      if (!(event.ctrlKey || event.metaKey)) return
+      const key = event.key.toLowerCase()
+      if (key === 'z' && !event.shiftKey) {
+        event.preventDefault()
+        handleModelingUndo()
+      } else if ((key === 'z' && event.shiftKey) || key === 'y') {
+        event.preventDefault()
+        handleModelingRedo()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [activeMenu, handleModelingUndo, handleModelingRedo])
 
   const handleDelete = useCallback(() => {
     if (!geometry) {
@@ -2848,11 +2956,11 @@ export default function MeshEditorPage() {
   }, [applyGeometryUpdate, geometry, selectedVertexIndices, selectionMode])
 
   const handleFillHole = useCallback(() => {
-    if (!geometry || availableHoleLoops.length === 0) {
+    if (!geometry) {
       return
     }
 
-    if (selectionMode === 'vertex') {
+    if (selectionMode === 'vertex' && selectedVertexIndices.length > 0) {
       const result = bridgeAndFillSelectedHole(geometry, selectedVertexIndices)
       if (result.applied) {
         applyGeometryUpdate(result.geometry, [])
@@ -2860,7 +2968,19 @@ export default function MeshEditorPage() {
       }
     }
 
-    applyGeometryUpdate(fillHoleLoops(geometry, availableHoleLoops), [])
+    // Prefer hole loops derived from the current selection; otherwise fall
+    // back to ALL hole loops in the geometry so the user can fill holes
+    // without having to manually select boundary edges first.
+    const loopsToFill = availableHoleLoops.length > 0
+      ? availableHoleLoops
+      : getGeometryHoleLoops(geometry)
+
+    if (!loopsToFill || loopsToFill.length === 0) {
+      setFeedback('No holes detected in this mesh.')
+      return
+    }
+
+    applyGeometryUpdate(fillHoleLoops(geometry, loopsToFill), [])
   }, [applyGeometryUpdate, availableHoleLoops, geometry, selectedVertexIndices, selectionMode])
 
   const handleSave = useCallback(async (saveMode) => {
@@ -3352,7 +3472,9 @@ export default function MeshEditorPage() {
   const mergeDisabled = selectedVertexIndices.length < 2
   const subdivideDisabled = selectedFaceIndices.length === 0
   const bridgeDisabled = selectionMode !== 'vertex' || selectedVertexIndices.length < 4
-  const fillDisabled = availableHoleLoops.length === 0
+  // Fill is enabled whenever we have geometry: when there's no selection we
+  // fall back to filling every hole in the mesh.
+  const fillDisabled = !geometry
 
   return (
     <div className="mesh-editor-layout">
@@ -3469,6 +3591,20 @@ export default function MeshEditorPage() {
                         >
                           <span className="material-symbols-outlined">scatter_plot</span>
                           <span>Vertices</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">History</span>
+                      <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleModelingUndo} disabled={!modelingCanUndo} title="Undo (Ctrl+Z)">
+                          <span className="material-symbols-outlined">undo</span>
+                          <span>Undo</span>
+                        </button>
+                        <button type="button" className="mesh-editor-icon-btn" onClick={handleModelingRedo} disabled={!modelingCanRedo} title="Redo (Ctrl+Shift+Z)">
+                          <span className="material-symbols-outlined">redo</span>
+                          <span>Redo</span>
                         </button>
                       </div>
                     </div>
@@ -4025,6 +4161,7 @@ export default function MeshEditorPage() {
                     />
                     <CameraRig
                       geometry={geometry}
+                      frameKey={meshFrameKey}
                       onCameraReady={camera => { cameraRef.current = camera }}
                       controlsEnabled={activeMenu !== 'texturing' || !hasProjectionMask}
                     />
