@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-05-02** | Added "Sculpting" mode in MeshEditor<br>Implemented "Search Assets"<br>Improved Modeling mode in Mesh Editor |
 | **2026-04-30** | Painting mode: Added Layer selection<br>Can erase a layer using a brush<br>Fixed drawing on UV seams |
 | **2026-04-29** | Added "Painting" mode in MeshEditor |
 | **2026-04-28** | Added AssetSelector Dialog<br>MeshEditor: Added dropdowns for the inputs<br>Added real system metrics in the footer<br>Improved loading time in Mesh Editor<br>Fixed parent in Graph mode |
@@ -79,8 +80,10 @@ Each stage feeds the next. Use **ComfyUI** workflows or external APIs at any ste
 
 ## <img src="https://github.com/user-attachments/assets/d2304bbc-4c89-4b61-8d35-17fe9195e6c8" width="32" height="32" align="left" style="padding-right: 10px">Mesh Editor
 
-1. **Inpainting:** With ComfyUI, improve the details of your texture directly on the mesh or change it completely for your needs.
+1. **Texturing:** With ComfyUI, improve the details of your texture directly on the mesh or change it completely for your needs.
 2. **Modeling:** Basic features to edit the faces and vertices of your mesh, fix issues.
+3. **Sculpting:** Basic sculpting features (Standard, Clay, Inflate, Smooth, Flatten, Pinch, Grab).
+4. **Painting:** Paint directly on your mesh using brushes/images.
 
 ---
 

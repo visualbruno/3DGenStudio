@@ -3478,7 +3478,7 @@ export default function MeshEditorPage() {
 
   return (
     <div className="mesh-editor-layout">
-      <Header showSearch onSettingsClick={() => setShowSettings(true)} />
+      <Header onSettingsClick={() => setShowSettings(true)} />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
       <main className="mesh-editor-page">

@@ -19,6 +19,15 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.4.0',
+    date: '2026-05-02',
+    items: [
+      'Mesh Editor: New Sculpting mode',
+			'Search Assets implemented',
+			'Improved Modeling mode in Mesh Editor'
+    ],
+  },
+  {
     version: 'v0.3.1',
     date: '2026-04-30',
     items: [
