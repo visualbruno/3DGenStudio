@@ -299,6 +299,7 @@ export default function AssetsPage() {
   const [renamingEditName, setRenamingEditName] = useState('')
   const [renamingEditKey, setRenamingEditKey] = useState(null)
   const [deletingEditKey, setDeletingEditKey] = useState(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -333,7 +334,19 @@ export default function AssetsPage() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [activeSection])
+  }, [activeSection, searchQuery])
+
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+
+  const matchesSearch = useCallback((name) => {
+    if (!normalizedSearch) return true
+    return String(name || '').toLowerCase().includes(normalizedSearch)
+  }, [normalizedSearch])
+
+  const filteredWorkflows = useMemo(
+    () => workflows.filter(workflow => matchesSearch(workflow.name)),
+    [workflows, matchesSearch]
+  )
 
   const selectedInputCount = useMemo(
     () => Object.values(selectedInputs).filter(item => item.selected).length,
@@ -357,7 +370,10 @@ export default function AssetsPage() {
 
   const activeConfig = ASSET_SECTIONS.find(section => section.key === activeSection) || ASSET_SECTIONS[0]
   const isWorkflowSection = activeSection === 'workflows'
-  const activeAssets = isWorkflowSection ? [] : (libraryAssets[activeConfig.key] || [])
+  const sectionAssets = isWorkflowSection ? [] : (libraryAssets[activeConfig.key] || [])
+  const activeAssets = isWorkflowSection
+    ? []
+    : sectionAssets.filter(asset => matchesSearch(asset.name))
   const totalPages = Math.max(1, Math.ceil(activeAssets.length / ASSETS_PER_PAGE))
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE
   const paginatedAssets = activeAssets.slice(pageStart, pageStart + ASSETS_PER_PAGE)
@@ -795,7 +811,13 @@ export default function AssetsPage() {
 
   return (
     <div className="assets-layout">
-      <Header showSearch onSettingsClick={() => setShowSettings(true)} />
+      <Header
+        showSearch
+        onSettingsClick={() => setShowSettings(true)}
+        searchValue={searchQuery}
+        onSearchChange={setSearchQuery}
+        searchPlaceholder={`Search ${activeConfig.label}`}
+      />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
 
@@ -1106,7 +1128,7 @@ export default function AssetsPage() {
                     <span className="assets-section__path font-label">{activeConfig.path}</span>
                   </div>
                   <div className="assets-section__summary">
-                    <span>{isWorkflowSection ? `${workflows.length} total workflows` : `${activeAssets.length} total assets`}</span>
+                    <span>{isWorkflowSection ? `${filteredWorkflows.length} ${normalizedSearch ? 'matching' : 'total'} workflows` : `${activeAssets.length} ${normalizedSearch ? 'matching' : 'total'} assets`}</span>
                     {!isWorkflowSection && <span>{pageRangeStart}-{pageRangeEnd || 0} shown</span>}
                   </div>
                 </div>
@@ -1343,9 +1365,9 @@ export default function AssetsPage() {
                             <span className="material-symbols-outlined library-spinner">progress_activity</span>
                             <span>Loading workflows...</span>
                           </div>
-                        ) : workflows.length > 0 ? (
+                        ) : filteredWorkflows.length > 0 ? (
                           <div className="library-workflow-list">
-                            {workflows.map(workflow => (
+                            {filteredWorkflows.map(workflow => (
                               <article key={workflow.id} className="library-workflow-card">
                                 <div className="library-workflow-card__header">
                                   <div>
@@ -1392,7 +1414,7 @@ export default function AssetsPage() {
                         ) : (
                           <div className="library-empty-state">
                             <span className="material-symbols-outlined">account_tree</span>
-                            <span>No ComfyUI workflows imported yet.</span>
+                            <span>{normalizedSearch && workflows.length > 0 ? 'No workflows match your search.' : 'No ComfyUI workflows imported yet.'}</span>
                           </div>
                         )}
                       </article>
@@ -1515,7 +1537,7 @@ export default function AssetsPage() {
                 ) : (
                   <div className="assets-page__empty-state">
                     <span className="material-symbols-outlined">{activeConfig.emptyIcon}</span>
-                    <span>{activeConfig.emptyMessage}</span>
+                    <span>{normalizedSearch && sectionAssets.length > 0 ? `No ${activeConfig.label.toLowerCase()} match your search.` : activeConfig.emptyMessage}</span>
                   </div>
                 )}
               </section>

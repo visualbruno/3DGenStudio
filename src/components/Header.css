@@ -100,6 +100,45 @@
   color: var(--on-surface);
 }
 
+.header__search-field {
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  cursor: text;
+}
+
+.header__search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--on-surface);
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  width: 200px;
+}
+
+.header__search-input::placeholder {
+  color: var(--on-surface-variant);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.header__search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 50%;
+}
+
+.header__search-clear:hover {
+  color: var(--on-surface);
+}
+
 .header__search-text {
   font-size: 0.75rem;
   text-transform: uppercase;

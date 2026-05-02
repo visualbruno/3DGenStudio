@@ -1,7 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import './Header.css'
 
-export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false }) {
+export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false, searchValue = '', onSearchChange, searchPlaceholder = 'Search Assets' }) {
   const location = useLocation()
 
   const isActive = (path) => location.pathname.startsWith(path)
@@ -31,10 +31,34 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
 
       <div className="header__right">
         {showSearch && (
-          <button className="header__search-btn" id="search-assets-btn">
-            <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>search</span>
-            <span className="header__search-text">Search Assets</span>
-          </button>
+          onSearchChange ? (
+            <div className="header__search-btn header__search-field">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>search</span>
+              <input
+                type="text"
+                className="header__search-input"
+                value={searchValue}
+                onChange={event => onSearchChange(event.target.value)}
+                placeholder={searchPlaceholder}
+                id="search-assets-input"
+              />
+              {searchValue && (
+                <button
+                  type="button"
+                  className="header__search-clear"
+                  onClick={() => onSearchChange('')}
+                  title="Clear search"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
+                </button>
+              )}
+            </div>
+          ) : (
+            <button className="header__search-btn" id="search-assets-btn">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>search</span>
+              <span className="header__search-text">Search Assets</span>
+            </button>
+          )
         )}
 
         <div className="header__actions">

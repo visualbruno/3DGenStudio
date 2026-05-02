@@ -21,6 +21,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const [loading, setLoading] = useState(true);
   const [selectedAssetId, setSelectedAssetId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Valid types: 'image', 'mesh', or 'brush'
   const validType = assetType === 'mesh' ? 'mesh' : (assetType === 'brush' ? 'brush' : 'image');
@@ -68,11 +69,31 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
     loadAssets();
   }, [getLibraryAssets, libraryKey, showEdits]);
 
-  const totalPages = Math.max(1, Math.ceil(assets.length / ASSETS_PER_PAGE));
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const filteredAssets = useMemo(() => {
+    if (!normalizedSearch) return assets;
+    return assets.filter(asset => {
+      const haystack = `${asset.name || ''} ${asset.parentName || ''}`.toLowerCase();
+      return haystack.includes(normalizedSearch);
+    });
+  }, [assets, normalizedSearch]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [normalizedSearch]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredAssets.length / ASSETS_PER_PAGE));
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE;
-  const paginatedAssets = assets.slice(pageStart, pageStart + ASSETS_PER_PAGE);
-  const pageRangeStart = assets.length === 0 ? 0 : pageStart + 1;
-  const pageRangeEnd = Math.min(pageStart + ASSETS_PER_PAGE, assets.length);
+  const paginatedAssets = filteredAssets.slice(pageStart, pageStart + ASSETS_PER_PAGE);
+  const pageRangeStart = filteredAssets.length === 0 ? 0 : pageStart + 1;
+  const pageRangeEnd = Math.min(pageStart + ASSETS_PER_PAGE, filteredAssets.length);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const handleSelectAsset = (assetId) => {
     setSelectedAssetId(assetId);
@@ -108,6 +129,30 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
           </button>
         </div>
 
+        {!loading && assets.length > 0 && (
+          <div className="asset-selector-search">
+            <span className="material-symbols-outlined">search</span>
+            <input
+              type="text"
+              className="asset-selector-search-input"
+              value={searchQuery}
+              onChange={event => setSearchQuery(event.target.value)}
+              placeholder={`Search ${pluralLabel}`}
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="asset-selector-search-clear"
+                onClick={() => setSearchQuery('')}
+                title="Clear search"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="asset-selector-body">
           {loading ? (
             <div className="asset-selector-loading">
@@ -118,6 +163,11 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             <div className="asset-selector-empty">
               <span className="material-symbols-outlined">{emptyIcon}</span>
               <span>No {pluralLabel} found in library.</span>
+            </div>
+          ) : filteredAssets.length === 0 ? (
+            <div className="asset-selector-empty">
+              <span className="material-symbols-outlined">search_off</span>
+              <span>No {pluralLabel} match your search.</span>
             </div>
           ) : (
             <>
@@ -173,10 +223,10 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 								})}
 							</div>
 
-              {assets.length > ASSETS_PER_PAGE && (
+              {filteredAssets.length > ASSETS_PER_PAGE && (
                 <div className="asset-selector-pagination">
                   <div className="asset-selector-pagination-summary">
-                    Showing {pageRangeStart}-{pageRangeEnd} of {assets.length}
+                    Showing {pageRangeStart}-{pageRangeEnd} of {filteredAssets.length}
                   </div>
                   <div className="asset-selector-pagination-controls">
                     <button
