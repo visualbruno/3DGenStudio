@@ -9,7 +9,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
-  getSimpleBezierPath,
+  getSmoothStepPath,
   useUpdateNodeInternals,
   useEdgesState,
   useNodesState
@@ -547,7 +547,7 @@ function filterImageEditWorkflows(workflows = []) {
 
 const GraphDeleteEdge = memo(function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [edgePath, labelX, labelY] = getSimpleBezierPath({
+  const [edgePath, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
     targetX,

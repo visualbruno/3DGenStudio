@@ -110,6 +110,60 @@ function loadImageElement(url) {
   })
 }
 
+/**
+ * Convert a screen-space brush radius (pixels) into the equivalent radius in
+ * texture-canvas pixels, taking into account:
+ *   1. Camera perspective: farther away → smaller footprint on the mesh.
+ *   2. Local UV density of the hit face: how many texture pixels cover one
+ *      world-space unit at the hit point.
+ *
+ * Falls back to `paintBrushSize` unchanged if any required data is missing.
+ */
+function computePaintBrushTexturePx(paintBrushSize, camera, canvasHeight, intersection, textureWidth, textureHeight) {
+  if (!camera || !intersection?.face || !intersection?.object) return paintBrushSize
+
+  const geom = intersection.object.geometry
+  if (!geom?.attributes?.position || !geom?.attributes?.uv) return paintBrushSize
+
+  const pos = geom.attributes.position
+  const uvAttr = geom.attributes.uv
+  const { a, b, c } = intersection.face
+
+  // World-space triangle vertices (applying the mesh's world transform).
+  const mat = intersection.object.matrixWorld
+  const vA = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(mat)
+  const vB = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(mat)
+  const vC = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(mat)
+
+  const worldArea = new THREE.Vector3()
+    .crossVectors(vB.clone().sub(vA), vC.clone().sub(vA))
+    .length() * 0.5
+  if (worldArea <= 0) return paintBrushSize
+
+  // UV-space triangle area in texture pixels.
+  const uvA = new THREE.Vector2().fromBufferAttribute(uvAttr, a)
+  const uvB = new THREE.Vector2().fromBufferAttribute(uvAttr, b)
+  const uvC = new THREE.Vector2().fromBufferAttribute(uvAttr, c)
+  const uvEdge1x = (uvB.x - uvA.x) * textureWidth
+  const uvEdge1y = (uvB.y - uvA.y) * textureHeight
+  const uvEdge2x = (uvC.x - uvA.x) * textureWidth
+  const uvEdge2y = (uvC.y - uvA.y) * textureHeight
+  const uvArea = Math.abs(uvEdge1x * uvEdge2y - uvEdge1y * uvEdge2x) * 0.5
+  if (uvArea <= 0) return paintBrushSize
+
+  // Texture pixels per world unit at the hit face.
+  const uvDensity = Math.sqrt(uvArea / worldArea)
+
+  // World units per screen pixel at the hit distance.
+  const distance = camera.position.distanceTo(intersection.point)
+  const fovRad = (camera.fov || 50) * Math.PI / 180
+  const worldHeightAtDistance = 2 * Math.tan(fovRad / 2) * distance
+  if (worldHeightAtDistance <= 0) return paintBrushSize
+  const worldUnitsPerScreenPx = worldHeightAtDistance / Math.max(1, canvasHeight)
+
+  return Math.max(1, paintBrushSize * worldUnitsPerScreenPx * uvDensity)
+}
+
 function pickGeneratedTextureAsset(generatedAssets = []) {
   if (!Array.isArray(generatedAssets) || generatedAssets.length === 0) {
     return null
@@ -561,6 +615,7 @@ export default function MeshEditorPage() {
   const [paintBrushFile, setPaintBrushFile] = useState(null);
   const [showBrushSelector, setShowBrushSelector] = useState(false);
   const [paintBrushSize, setPaintBrushSize] = useState(32);
+  const [paintBrushNaturalSize, setPaintBrushNaturalSize] = useState(null); // { width, height } of the loaded brush, null = unknown (treat as square)
   const [paintOpacity, setPaintOpacity] = useState(1);
   const [paintFlow, setPaintFlow] = useState(1);
   const [paintHardness, setPaintHardness] = useState(0.5);
@@ -767,10 +822,12 @@ export default function MeshEditorPage() {
         // Grayscale masks, even with transparency, should use the Tools color.
         maskCanvas.__isColorBrush = hasMeaningfulColor;
         paintBrushImageRef.current = maskCanvas;
+        if (!cancelled) setPaintBrushNaturalSize({ width: w, height: h });
       } catch (err) {
         if (!cancelled) {
           console.warn('Failed to load brush image:', err);
           paintBrushImageRef.current = null;
+          setPaintBrushNaturalSize(null);
         }
       }
     }
@@ -995,12 +1052,24 @@ export default function MeshEditorPage() {
       texturableMesh?.textureConfig || null
     );
 
-    // Build a tinted+softened brush stamp on a temp canvas
+    // Build a tinted+softened brush stamp on a temp canvas.
+    // Preserve the brush's natural aspect ratio — sizePx is the longer dimension.
+    const bw = brushImage.width;
+    const bh = brushImage.height;
+    const bAspect = bw > 0 && bh > 0 ? bw / bh : 1;
+    let stampW, stampH;
+    if (bAspect >= 1) {
+      stampW = Math.max(1, Math.round(sizePx));
+      stampH = Math.max(1, Math.round(sizePx / bAspect));
+    } else {
+      stampH = Math.max(1, Math.round(sizePx));
+      stampW = Math.max(1, Math.round(sizePx * bAspect));
+    }
     const stampCanvas = document.createElement('canvas');
-    stampCanvas.width = Math.max(1, Math.round(sizePx));
-    stampCanvas.height = Math.max(1, Math.round(sizePx));
+    stampCanvas.width = stampW;
+    stampCanvas.height = stampH;
     const sctx = stampCanvas.getContext('2d');
-    // Draw brush scaled to size
+    // Draw brush scaled to size, preserving aspect ratio
     sctx.drawImage(brushImage, 0, 0, stampCanvas.width, stampCanvas.height);
     // Apply hardness as a soft fade: lower hardness => fade outer pixels
     if (hardness < 0.999) {
@@ -2393,10 +2462,19 @@ export default function MeshEditorPage() {
       // Erasing uses destination-out so the brush alpha is subtracted from
       // the layer; drawing keeps the normal source-over compositing.
       const stampBlend = paintMode === 'erase' ? 'destination-out' : 'source-over'
+      const rect0 = canvasShellRef.current?.getBoundingClientRect()
+      const scaledBrushSize = computePaintBrushTexturePx(
+        paintBrushSize,
+        cameraRef.current,
+        rect0?.height ?? 1,
+        intersection,
+        texturableMesh.textureCanvas?.width ?? 1024,
+        texturableMesh.textureCanvas?.height ?? 1024
+      )
       stampBrushAtUv(
         activeLayerCanvas,
         intersection.uv.clone(),
-        paintBrushSize,
+        scaledBrushSize,
         paintRotation,
         paintColor,
         paintFlow,
@@ -2415,7 +2493,8 @@ export default function MeshEditorPage() {
         layerId: activeLayerId,
         layerCanvas: activeLayerCanvas,
         lastUv: intersection.uv.clone(),
-        lastIslandKey: islandHit?.key || ''
+        lastIslandKey: islandHit?.key || '',
+        lastBrushSize: scaledBrushSize
       }
 
       canvasShellRef.current?.setPointerCapture?.(event.pointerId)
@@ -2633,7 +2712,19 @@ export default function MeshEditorPage() {
       const dx = b.x - a.x
       const dy = b.y - a.y
       const dist = Math.hypot(dx, dy)
-      const spacing = Math.max(1, paintBrushSize * 0.25)
+
+      // Compute the perspective-adjusted brush size for this hit point.
+      const paintRect = canvasShellRef.current?.getBoundingClientRect()
+      const scaledBrushSize = computePaintBrushTexturePx(
+        paintBrushSize,
+        cameraRef.current,
+        paintRect?.height ?? 1,
+        intersection,
+        texturableMesh.textureCanvas?.width ?? 1024,
+        texturableMesh.textureCanvas?.height ?? 1024
+      )
+      // Use the scaled size for spacing so the gap between stamps scales with the brush.
+      const spacing = Math.max(1, scaledBrushSize * 0.25)
       const steps = Math.max(1, Math.ceil(dist / spacing))
 
       for (let s = 1; s <= steps; s += 1) {
@@ -2642,7 +2733,7 @@ export default function MeshEditorPage() {
         stampBrushAtUv(
           layerCanvas,
           uv,
-          paintBrushSize,
+          scaledBrushSize,
           paintRotation,
           paintColor,
           paintFlow,
@@ -2654,6 +2745,7 @@ export default function MeshEditorPage() {
 
       activeStrokeRef.current.lastUv = toUv
       activeStrokeRef.current.lastIslandKey = islandHit?.key || ''
+      activeStrokeRef.current.lastBrushSize = scaledBrushSize
       // Live recomposite so the user sees the stroke
       recompositePaintTexture()
       return
@@ -4232,8 +4324,16 @@ export default function MeshEditorPage() {
                   style={{
                     left: paintCursorPos.x,
                     top: paintCursorPos.y,
-                    width: paintBrushSize,
-                    height: paintBrushSize
+                    width: paintBrushNaturalSize
+                      ? (paintBrushNaturalSize.width >= paintBrushNaturalSize.height
+                          ? paintBrushSize
+                          : paintBrushSize * (paintBrushNaturalSize.width / paintBrushNaturalSize.height))
+                      : paintBrushSize,
+                    height: paintBrushNaturalSize
+                      ? (paintBrushNaturalSize.height >= paintBrushNaturalSize.width
+                          ? paintBrushSize
+                          : paintBrushSize * (paintBrushNaturalSize.height / paintBrushNaturalSize.width))
+                      : paintBrushSize
                   }}
                 />
               )}
