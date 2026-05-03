@@ -6,6 +6,7 @@ import MeshPreviewDialog from '../components/MeshPreviewDialog'
 import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
+import { parseAbrFile } from '../utils/brushAbr'
 import './AssetsPage.css'
 
 const ASSETS_PER_PAGE = 20
@@ -258,6 +259,7 @@ export default function AssetsPage() {
   const {
     getLibraryAssets,
     importLibraryAssets,
+    importBrushChildAssets,
     deleteLibraryAsset,
     renameLibraryAsset,
     renameAssetEdit,
@@ -422,36 +424,92 @@ export default function AssetsPage() {
     setImportFeedback(null)
 
     try {
-      const assetsToImport = []
+      // Separate ABR files from regular asset files
+      const abrFiles = activeSection === 'brushes' ? files.filter(f => f.name.toLowerCase().endsWith('.abr')) : []
+      const regularFiles = files.filter(f => !f.name.toLowerCase().endsWith('.abr'))
 
-      for (const file of files) {
-        let thumbnail = null
+      let totalImported = 0
+      let totalSkipped = 0
+      const abrFeedbackParts = []
 
-        if (isMeshFile(file.name)) {
-          try {
-            thumbnail = await createMeshThumbnailFile(file)
-          } catch (err) {
-            console.warn(`Failed to generate mesh thumbnail for ${file.name}:`, err)
+      // Handle ABR files
+      for (const abrFile of abrFiles) {
+        try {
+          const brushSamples = await parseAbrFile(abrFile)
+
+          // Upload the first sample as the main brush asset
+          const [mainBrush, ...childBrushes] = brushSamples
+          const mainResult = await importLibraryAssets(
+            [{ file: new File([mainBrush.pngFile], mainBrush.pngFile.name, { type: 'image/png' }) }],
+            { assetType: 'brush' }
+          )
+
+          const mainAssetId = mainResult.imported?.[0]?.id
+          totalImported += 1
+
+          // Upload remaining samples as child brush edits
+          if (childBrushes.length > 0 && mainAssetId) {
+            const numericId = typeof mainAssetId === 'string'
+              ? parseInt(mainAssetId.replace(/^library:/, ''), 10)
+              : mainAssetId
+
+            await importBrushChildAssets(
+              numericId,
+              childBrushes.map(b => new File([b.pngFile], b.pngFile.name, { type: 'image/png' }))
+            )
           }
-        }
 
-        assetsToImport.push({ file, thumbnail })
+          const totalSamples = brushSamples.length
+          abrFeedbackParts.push(
+            totalSamples === 1
+              ? `"${abrFile.name}": 1 brush`
+              : `"${abrFile.name}": ${totalSamples} brushes (1 main + ${totalSamples - 1} edits)`
+          )
+        } catch (abrErr) {
+          console.error(`Failed to import ABR file "${abrFile.name}":`, abrErr)
+          abrFeedbackParts.push(`"${abrFile.name}": ${abrErr.message}`)
+          totalSkipped += 1
+        }
       }
 
-      const result = await importLibraryAssets(
-        assetsToImport,
-        activeSection === 'brushes' ? { assetType: 'brush' } : undefined
-      )
+      // Handle regular files (PNGs etc.)
+      if (regularFiles.length > 0) {
+        const assetsToImport = []
+
+        for (const file of regularFiles) {
+          let thumbnail = null
+
+          if (isMeshFile(file.name)) {
+            try {
+              thumbnail = await createMeshThumbnailFile(file)
+            } catch (err) {
+              console.warn(`Failed to generate mesh thumbnail for ${file.name}:`, err)
+            }
+          }
+
+          assetsToImport.push({ file, thumbnail })
+        }
+
+        const result = await importLibraryAssets(
+          assetsToImport,
+          activeSection === 'brushes' ? { assetType: 'brush' } : undefined
+        )
+        totalImported += result.imported?.length || 0
+        totalSkipped += result.skipped?.length || 0
+      }
+
       await loadLibrary()
 
-      const importedCount = result.imported?.length || 0
-      const skippedCount = result.skipped?.length || 0
+      const feedbackParts = []
+      if (regularFiles.length > 0 || abrFiles.length === 0) {
+        if (totalImported > 0) feedbackParts.push(`Imported ${totalImported} asset${totalImported !== 1 ? 's' : ''}.`)
+      }
+      if (abrFeedbackParts.length > 0) feedbackParts.push(...abrFeedbackParts)
+      if (totalSkipped > 0) feedbackParts.push(`${totalSkipped} file${totalSkipped !== 1 ? 's' : ''} skipped.`)
 
       setImportFeedback({
-        type: skippedCount > 0 ? 'warning' : 'success',
-        message: skippedCount > 0
-          ? `Imported ${importedCount} assets. ${skippedCount} files were skipped.`
-          : `Imported ${importedCount} assets.`
+        type: totalSkipped > 0 && totalImported === 0 ? 'error' : totalSkipped > 0 ? 'warning' : 'success',
+        message: feedbackParts.join(' ') || 'Import complete.'
       })
     } catch (err) {
       setImportFeedback({
@@ -1087,7 +1145,7 @@ export default function AssetsPage() {
             type="file"
             multiple
             className="assets-page__file-input"
-            accept={activeSection === 'brushes' ? '.png' : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'}
+            accept={activeSection === 'brushes' ? '.png,.abr' : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'}
             onChange={handleAssetImportChange}
           />
 
@@ -1456,12 +1514,12 @@ export default function AssetsPage() {
                             <div className="asset-card__meta">
                               <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
                               <div className="asset-card__actions">
-                                {activeSection === 'images' && getAssetChildren(asset).length > 0 && (
+                                {(activeSection === 'images' || activeSection === 'brushes') && getAssetChildren(asset).length > 0 && (
                                   <button
                                     type="button"
                                     className="asset-card__edits-btn"
                                     onClick={() => setEditPreviewAsset(asset)}
-                                    title="Show edits"
+                                    title={activeSection === 'brushes' ? 'Show brush variants' : 'Show edits'}
                                   >
                                     <span className="material-symbols-outlined">history</span>
                                     {getAssetChildren(asset).length}

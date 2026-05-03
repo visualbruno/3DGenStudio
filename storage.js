@@ -2036,6 +2036,38 @@ export async function createAssetEditRecord({ assetId, editId, name = '', filePa
   };
 }
 
+export async function createBrushChildRecord({ parentAssetId, name = '', filePath, width = 0, height = 0, createdAt = Date.now() }) {
+  const parentAsset = await getRootAssetById(parentAssetId);
+
+  if (!parentAsset) {
+    throw new Error('Source brush asset not found');
+  }
+
+  const storedFilePath = toStoredAssetPath('brush', filePath);
+  const childAssetId = await insertAsset({
+    name: String(name || '').trim() || 'Brush',
+    type: 'brush',
+    filePath: storedFilePath,
+    width,
+    height,
+    metadata: {
+      source: 'BRUSH IMPORT'
+    },
+    createdAt,
+    parentId: parentAsset.id
+  });
+
+  return {
+    id: childAssetId,
+    parentId: parentAsset.id,
+    name: String(name || '').trim(),
+    filePath: storedFilePath,
+    width: Number(width) || 0,
+    height: Number(height) || 0,
+    creationDate: createdAt
+  };
+}
+
 export async function updateCardAttribute(projectId, externalCardId, position, { attributeTypeId, attributeValue }) {
   const card = await resolveProjectCard(projectId, externalCardId);
   if (!card) {

@@ -4,7 +4,7 @@ import multer from 'multer';
 import path from 'path';
 import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
-import { createAssetEditRecord, resolveProjectImageSource, resolveProjectMeshSource } from './storage.js';
+import { createAssetEditRecord, createBrushChildRecord, resolveProjectImageSource, resolveProjectMeshSource } from './storage.js';
 import fs from 'fs/promises';
 import si from 'systeminformation';
 import { exec } from 'child_process';
@@ -2804,7 +2804,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         await fs.writeFile(path.join(THUMBNAIL_ASSETS_DIR, thumbnailFilename), thumbnailFile.buffer);
       }
 
-      await createLibraryAsset({
+      const createdAsset = await createLibraryAsset({
         name: file.originalname,
         type: assetType,
         filePath: storedFilePath,
@@ -2819,6 +2819,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
       });
 
       imported.push({
+        id: createdAsset?.id ?? null,
         name: file.originalname,
         filename,
         type: assetType,
@@ -2838,6 +2839,72 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
   } catch (err) {
     console.error('Failed to import library assets:', err);
     res.status(500).json({ error: 'Failed to import library assets' });
+  }
+});
+
+// -------------------------------------------------------------------------
+// Brush child assets — import additional brush PNGs as children of a parent brush
+// -------------------------------------------------------------------------
+
+app.post('/api/assets/library/brush-edits', libraryImportUpload.any(), async (req, res) => {
+  try {
+    const parentId = parseInt(String(req.body?.parentId || ''), 10);
+    if (!parentId || isNaN(parentId)) {
+      return res.status(400).json({ error: 'parentId is required and must be a valid asset id' });
+    }
+
+    const files = (req.files || []).filter(f => f.fieldname === 'files');
+    if (files.length === 0) {
+      return res.status(400).json({ error: 'No files provided' });
+    }
+
+    const imported = [];
+    const skipped = [];
+
+    await Promise.all(files.map(async (file) => {
+      const extension = path.extname(file.originalname).toLowerCase();
+      if (extension !== '.png') {
+        skipped.push({ name: file.originalname, reason: 'Brush edits must be PNG files' });
+        return;
+      }
+
+      const destinationDir = getAssetDirectory('brush');
+      const filename = createLibraryImportFilename(file.originalname);
+      const storedFilePath = toStoredAssetPath('brush', filename);
+      const dimensions = getImageDimensionsFromBuffer(file.buffer, { filename: file.originalname, mimeType: file.mimetype });
+
+      await fs.mkdir(destinationDir, { recursive: true });
+      await fs.writeFile(path.join(destinationDir, filename), file.buffer);
+
+      const childRecord = await createBrushChildRecord({
+        parentAssetId: parentId,
+        name: file.originalname.replace(/\.png$/i, ''),
+        filePath: storedFilePath,
+        width: dimensions.width,
+        height: dimensions.height,
+        createdAt: Date.now()
+      });
+
+      imported.push({
+        id: childRecord.id,
+        name: childRecord.name,
+        filename,
+        parentId: childRecord.parentId
+      });
+    }));
+
+    if (imported.length === 0 && skipped.length > 0) {
+      return res.status(400).json({
+        error: 'No brush edits were imported',
+        imported,
+        skipped
+      });
+    }
+
+    res.status(201).json({ imported, skipped });
+  } catch (err) {
+    console.error('Failed to import brush edits:', err);
+    res.status(500).json({ error: err.message || 'Failed to import brush edits' });
   }
 });
 

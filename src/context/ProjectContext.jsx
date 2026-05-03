@@ -620,6 +620,25 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const importBrushChildAssets = async (parentId, files = []) => {
+    const formData = new FormData()
+    formData.append('parentId', String(parentId))
+    Array.from(files).forEach(file => formData.append('files', file))
+
+    const res = await fetch(`${API_BASE}/assets/library/brush-edits`, {
+      method: 'POST',
+      body: formData
+    })
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to import brush edits')
+    }
+
+    return data
+  }
+
   const generateImage = async (projectId, generationData) => {
     const res = await fetch(`${API_BASE}/images/generate`, {
       method: 'POST',
@@ -802,6 +821,7 @@ export function ProjectProvider({ children }) {
       moveKanbanCard,
       getLibraryAssets,
       importLibraryAssets,
+      importBrushChildAssets,
       deleteLibraryAsset,
       renameLibraryAsset,
       renameAssetEdit,
