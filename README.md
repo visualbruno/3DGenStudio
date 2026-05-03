@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-05-03** | Support of abr file (Adobe Brush)<br>Improved performances in Graph mode<br>Fixed bugs in Mesh Editor with the brushes |
 | **2026-05-02** | Added "Sculpting" mode in MeshEditor<br>Implemented "Search Assets"<br>Improved Modeling mode in Mesh Editor |
 | **2026-04-30** | Painting mode: Added Layer selection<br>Can erase a layer using a brush<br>Fixed drawing on UV seams |
 | **2026-04-29** | Added "Painting" mode in MeshEditor |

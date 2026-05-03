@@ -19,6 +19,16 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.5.0',
+    date: '2026-05-03',
+    items: [
+      'Support of abr file (Adobe Brush)',
+			'Mesh Editor: Fixed brush color',
+			'Mesh Editor: Fixed brush size',
+			'Mesh Editor: Fixed brush orientation'
+    ],
+  },
+  {
     version: 'v0.4.1',
     date: '2026-05-03',
     items: [
