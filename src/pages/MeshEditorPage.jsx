@@ -718,16 +718,32 @@ export default function MeshEditorPage() {
 
         // Detect if PNG actually has an alpha channel (any pixel with alpha < 255).
         let hasAlpha = false;
+        let hasMeaningfulColor = false;
         for (let i = 3; i < data.length; i += 4) {
           if (data[i] < 250) { hasAlpha = true; break; }
+        }
+
+        // Distinguish colored image brushes from grayscale mask brushes.
+        // Transparent black/white/grayscale brushes should still take the
+        // Tools color; only brushes with real RGB chroma keep their own color.
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 8) continue;
+          const red = data[i];
+          const green = data[i + 1];
+          const blue = data[i + 2];
+          if (Math.max(red, green, blue) - Math.min(red, green, blue) > 10) {
+            hasMeaningfulColor = true;
+            break;
+          }
         }
 
         // For PNGs without an alpha channel (typical black-on-white brushes),
         // derive alpha from luminance (darker pixel = more opaque) and convert
         // RGB to white so the brush is a clean alpha mask. Convention: black =
         // brush, white = no brush.
-        // For PNGs with alpha (typical white-on-transparent brushes), keep both
-        // the original RGB and alpha so any RGB pattern is preserved at stamp time.
+        // For grayscale brushes with alpha, keep the alpha but normalize RGB to
+        // white so the Tools color is applied during stamping.
+        // Only genuinely colored brushes preserve their RGB at stamp time.
         if (!hasAlpha) {
           for (let i = 0; i < data.length; i += 4) {
             const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
@@ -737,13 +753,19 @@ export default function MeshEditorPage() {
             data[i + 3] = Math.max(0, Math.min(255, Math.round(255 - luminance)));
           }
           mctx.putImageData(imgData, 0, 0);
+        } else if (!hasMeaningfulColor) {
+          for (let i = 0; i < data.length; i += 4) {
+            data[i] = 255;
+            data[i + 1] = 255;
+            data[i + 2] = 255;
+          }
+          mctx.putImageData(imgData, 0, 0);
         }
 
         // Tag the brush canvas so the stamp routine knows whether to tint it.
-        // hasAlpha === true means this is a color image brush; we keep its RGB
-        // intact and skip the user-color tint at stamp time. Otherwise it's a
-        // grayscale/black-on-white mask and the tint is applied normally.
-        maskCanvas.__isColorBrush = hasAlpha;
+        // Only brushes with meaningful RGB chroma keep their own colors.
+        // Grayscale masks, even with transparency, should use the Tools color.
+        maskCanvas.__isColorBrush = hasMeaningfulColor;
         paintBrushImageRef.current = maskCanvas;
       } catch (err) {
         if (!cancelled) {

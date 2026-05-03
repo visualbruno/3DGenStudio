@@ -725,11 +725,14 @@
 .assets-dialog {
   width: 100%;
   max-width: 520px;
+  max-height: calc(100vh - 3rem);
   background: var(--surface-container-low);
   border: 1px solid rgba(143, 245, 255, 0.08);
   border-radius: var(--radius-xl);
   box-shadow: 0 32px 64px rgba(0, 0, 0, 0.45);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .assets-dialog--viewer {
@@ -764,6 +767,9 @@
 }
 
 .assets-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 1.5rem;
   color: var(--on-surface-variant);
 }

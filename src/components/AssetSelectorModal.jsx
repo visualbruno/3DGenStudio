@@ -1,5 +1,5 @@
 // components/AssetSelectorModal.jsx
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useProjects } from '../context/ProjectContext';
 import './AssetSelectorModal.css'; // we'll create a separate CSS or reuse AssetsPage.css
 
@@ -19,7 +19,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const { getLibraryAssets } = useProjects();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedAssetId, setSelectedAssetId] = useState(null);
+  const [selectedAssetKey, setSelectedAssetKey] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -30,6 +30,12 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const titleLabel = validType === 'mesh' ? 'Mesh' : (validType === 'brush' ? 'Brush' : 'Image');
   const pluralLabel = validType === 'mesh' ? 'meshes' : (validType === 'brush' ? 'brushes' : 'images');
   const emptyIcon = validType === 'mesh' ? 'deployed_code' : (validType === 'brush' ? 'brush' : 'image_not_supported');
+  const includeChildren = showEdits || validType === 'brush';
+
+  const getAssetSelectorKey = (asset) => {
+    if (!asset) return '';
+    return asset.isChild ? `child:${asset.id}:${asset.filePath || asset.filename || asset.name}` : `asset:${asset.id}`;
+  };
 
   useEffect(() => {
     async function loadAssets() {
@@ -38,12 +44,12 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
         const library = await getLibraryAssets();
         const filtered = library[libraryKey] || [];
         
-        if (showEdits) {
+        if (includeChildren) {
           // Flatten: include each parent asset and its children (edits/versions)
           const flattened = [];
           filtered.forEach(asset => {
             // Include the parent asset (as a selectable item)
-            flattened.push({ ...asset, isChild: false });
+            flattened.push({ ...asset, isChild: false, selectorKey: getAssetSelectorKey(asset) });
             
             const children = asset.children || asset.edits || [];
             children.forEach(child => {
@@ -52,13 +58,14 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
                 isChild: true,
                 parentName: asset.name,
                 // Ensure child has same asset type as parent
-                type: asset.type
+                type: asset.type,
+                selectorKey: getAssetSelectorKey({ ...child, isChild: true })
               });
             });
           });
           setAssets(flattened);
         } else {
-          setAssets(filtered);
+          setAssets(filtered.map(asset => ({ ...asset, isChild: false, selectorKey: getAssetSelectorKey(asset) })));
         }
       } catch (err) {
         console.error('Failed to load assets for selector:', err);
@@ -67,7 +74,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
       }
     }
     loadAssets();
-  }, [getLibraryAssets, libraryKey, showEdits]);
+  }, [getLibraryAssets, includeChildren, libraryKey]);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
@@ -95,13 +102,13 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
     }
   }, [currentPage, totalPages]);
 
-  const handleSelectAsset = (assetId) => {
-    setSelectedAssetId(assetId);
+  const handleSelectAsset = (assetKey) => {
+    setSelectedAssetKey(assetKey);
   };
 
 	const handleConfirm = () => {
-		if (selectedAssetId) {
-			const selectedAsset = assets.find(a => a.id === selectedAssetId);
+    if (selectedAssetKey) {
+      const selectedAsset = assets.find(a => a.selectorKey === selectedAssetKey);
 			onSelect(selectedAsset);
 		}
 		onClose();
@@ -173,17 +180,17 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             <>
 							<div className={`asset-selector-grid asset-selector-grid--${validType}`}>
 								{paginatedAssets.map(asset => {
-									const isSelected = selectedAssetId === asset.id;
-									const previewUrl = asset.thumbnailUrl || asset.url;
+                  const isSelected = selectedAssetKey === asset.selectorKey;
+                  const previewUrl = asset.thumbnailUrl || asset.url || getAssetPreviewUrl(asset.thumbnail || asset.filename);
 									const dimensions = formatDimensions(asset.width, asset.height);
 									const extension = asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase();
 									const isChild = asset.isChild;
 
 									return (
 										<div
-											key={asset.id}
+                      key={asset.selectorKey}
 											className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
-											onClick={() => handleSelectAsset(asset.id)}
+                      onClick={() => handleSelectAsset(asset.selectorKey)}
 										>
 											<div className={`asset-selector-preview ${validType === 'mesh' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'}`}>
 												{validType !== 'mesh' ? (
@@ -261,7 +268,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             type="button"
             className="asset-selector-btn asset-selector-btn--primary"
             onClick={handleConfirm}
-            disabled={!selectedAssetId || loading}
+            disabled={!selectedAssetKey || loading}
           >
             Select
           </button>
