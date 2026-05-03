@@ -739,6 +739,11 @@ export default function MeshEditorPage() {
           mctx.putImageData(imgData, 0, 0);
         }
 
+        // Tag the brush canvas so the stamp routine knows whether to tint it.
+        // hasAlpha === true means this is a color image brush; we keep its RGB
+        // intact and skip the user-color tint at stamp time. Otherwise it's a
+        // grayscale/black-on-white mask and the tint is applied normally.
+        maskCanvas.__isColorBrush = hasAlpha;
         paintBrushImageRef.current = maskCanvas;
       } catch (err) {
         if (!cancelled) {
@@ -998,7 +1003,11 @@ export default function MeshEditorPage() {
     // Bake the brush color (from the Tools panel) into the stamp using
     // source-in so the brush alpha is preserved. The layer's own color
     // multiplies on top at composite time (white = no tint by default).
-    if (color) {
+    // Skip tinting for color image brushes — those carry their own RGB and
+    // should be drawn as-is, otherwise we'd overwrite the picture with a
+    // flat color.
+    const isColorBrush = brushImage.__isColorBrush === true;
+    if (color && !isColorBrush) {
       sctx.globalCompositeOperation = 'source-in'
       sctx.fillStyle = color
       sctx.fillRect(0, 0, stampCanvas.width, stampCanvas.height)
