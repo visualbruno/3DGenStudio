@@ -317,7 +317,7 @@ function toFlowEdge(connection) {
     sourceHandle: connection.outputId || DEFAULT_OUTPUT_ID,
     targetHandle: connection.inputId || DEFAULT_INPUT_ID,
     type: 'deletable',
-    animated: true
+    animated: false
   }
 }
 
