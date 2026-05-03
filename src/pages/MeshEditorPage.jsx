@@ -164,6 +164,88 @@ function computePaintBrushTexturePx(paintBrushSize, camera, canvasHeight, inters
   return Math.max(1, paintBrushSize * worldUnitsPerScreenPx * uvDensity)
 }
 
+/**
+ * Convert a user-facing brush angle (defined in screen/canvas space) into the
+ * equivalent UV-space stamp angle for the currently hit triangle.
+ *
+ * This keeps brush orientation visually stable on screen even when UV islands
+ * are rotated/flipped relative to each other.
+ */
+function computePaintBrushUvRotationDeg(requestedRotationDeg, camera, canvasWidth, canvasHeight, intersection) {
+  if (!camera || !intersection?.face || !intersection?.object) return requestedRotationDeg
+  if (!Number.isFinite(canvasWidth) || !Number.isFinite(canvasHeight) || canvasWidth <= 0 || canvasHeight <= 0) {
+    return requestedRotationDeg
+  }
+
+  const geom = intersection.object.geometry
+  if (!geom?.attributes?.position || !geom?.attributes?.uv) return requestedRotationDeg
+
+  const pos = geom.attributes.position
+  const uvAttr = geom.attributes.uv
+  const { a, b, c } = intersection.face
+
+  const mat = intersection.object.matrixWorld
+  const vA = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(mat)
+  const vB = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(mat)
+  const vC = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(mat)
+
+  const uvA = new THREE.Vector2().fromBufferAttribute(uvAttr, a)
+  const uvB = new THREE.Vector2().fromBufferAttribute(uvAttr, b)
+  const uvC = new THREE.Vector2().fromBufferAttribute(uvAttr, c)
+
+  const edge1 = vB.clone().sub(vA)
+  const edge2 = vC.clone().sub(vA)
+  const du1 = uvB.x - uvA.x
+  const dv1 = uvB.y - uvA.y
+  const du2 = uvC.x - uvA.x
+  const dv2 = uvC.y - uvA.y
+  const uvDet = du1 * dv2 - dv1 * du2
+  if (Math.abs(uvDet) < 1e-10) return requestedRotationDeg
+
+  // World delta for +U / +V on this face.
+  const invUvDet = 1 / uvDet
+  const tangent = edge1.clone().multiplyScalar(dv2).addScaledVector(edge2, -dv1).multiplyScalar(invUvDet)
+  const bitangent = edge2.clone().multiplyScalar(du1).addScaledVector(edge1, -du2).multiplyScalar(invUvDet)
+  if (tangent.lengthSq() < 1e-12 || bitangent.lengthSq() < 1e-12) return requestedRotationDeg
+
+  const faceScale = Math.max(edge1.length(), edge2.length(), vC.distanceTo(vB), 1e-4)
+  const sampleStep = faceScale * 0.05
+  const hitPoint = intersection.point
+
+  const projectToScreen = (point) => {
+    const projected = point.clone().project(camera)
+    return new THREE.Vector2(
+      (projected.x * 0.5 + 0.5) * canvasWidth,
+      (-projected.y * 0.5 + 0.5) * canvasHeight
+    )
+  }
+
+  const p0 = projectToScreen(hitPoint)
+  const pU = projectToScreen(hitPoint.clone().addScaledVector(tangent, sampleStep))
+  const pV = projectToScreen(hitPoint.clone().addScaledVector(bitangent, sampleStep))
+  const uScreen = pU.sub(p0)
+  const vScreen = pV.sub(p0)
+
+  // Jacobian from local UV axes to local screen axes.
+  const m00 = uScreen.x
+  const m01 = vScreen.x
+  const m10 = uScreen.y
+  const m11 = vScreen.y
+  const screenDet = m00 * m11 - m01 * m10
+  if (Math.abs(screenDet) < 1e-10) return requestedRotationDeg
+
+  // Solve M * w = targetScreenDir, where w is the UV-space direction vector.
+  const requestedRad = (requestedRotationDeg * Math.PI) / 180
+  const tx = Math.cos(requestedRad)
+  const ty = Math.sin(requestedRad)
+  const invScreenDet = 1 / screenDet
+  const wx = (m11 * tx - m01 * ty) * invScreenDet
+  const wy = (-m10 * tx + m00 * ty) * invScreenDet
+  if (Math.abs(wx) < 1e-12 && Math.abs(wy) < 1e-12) return requestedRotationDeg
+
+  return (Math.atan2(wy, wx) * 180) / Math.PI
+}
+
 function pickGeneratedTextureAsset(generatedAssets = []) {
   if (!Array.isArray(generatedAssets) || generatedAssets.length === 0) {
     return null
@@ -2471,11 +2553,18 @@ export default function MeshEditorPage() {
         texturableMesh.textureCanvas?.width ?? 1024,
         texturableMesh.textureCanvas?.height ?? 1024
       )
+      const adjustedPaintRotation = computePaintBrushUvRotationDeg(
+        paintRotation,
+        cameraRef.current,
+        rect0?.width ?? 1,
+        rect0?.height ?? 1,
+        intersection
+      )
       stampBrushAtUv(
         activeLayerCanvas,
         intersection.uv.clone(),
         scaledBrushSize,
-        paintRotation,
+        adjustedPaintRotation,
         paintColor,
         paintFlow,
         paintHardness,
@@ -2723,6 +2812,13 @@ export default function MeshEditorPage() {
         texturableMesh.textureCanvas?.width ?? 1024,
         texturableMesh.textureCanvas?.height ?? 1024
       )
+      const adjustedPaintRotation = computePaintBrushUvRotationDeg(
+        paintRotation,
+        cameraRef.current,
+        paintRect?.width ?? 1,
+        paintRect?.height ?? 1,
+        intersection
+      )
       // Use the scaled size for spacing so the gap between stamps scales with the brush.
       const spacing = Math.max(1, scaledBrushSize * 0.25)
       const steps = Math.max(1, Math.ceil(dist / spacing))
@@ -2734,7 +2830,7 @@ export default function MeshEditorPage() {
           layerCanvas,
           uv,
           scaledBrushSize,
-          paintRotation,
+          adjustedPaintRotation,
           paintColor,
           paintFlow,
           paintHardness,
