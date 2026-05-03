@@ -23,10 +23,12 @@ async function checkForAppUpdate() {
 
       const remoteData = await response.json()
       const remoteVersion = String(remoteData?.version || '').trim()
+      const remoteMessage = String(remoteData?.message || '').trim()
       const result = {
         hasUpdate: Boolean(localVersion && remoteVersion && localVersion !== remoteVersion),
         localVersion,
         remoteVersion,
+        remoteMessage,
       }
       cachedVersionCheck = result
       return result
@@ -48,7 +50,8 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
   const [versionStatus, setVersionStatus] = useState({
     hasUpdate: false,
     localVersion: String(localVersionInfo?.version || '').trim(),
-    remoteVersion: ''
+    remoteVersion: '',
+    remoteMessage: '',
   })
   const notificationRef = useRef(null)
 
@@ -206,6 +209,9 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
                 <div>
                   <p className="header__notifications-card-title">New version available: v{versionStatus.remoteVersion}</p>
                   <p className="header__notifications-card-text">You are currently on v{versionStatus.localVersion}.</p>
+                  {versionStatus.remoteMessage && (
+                    <p className="header__notifications-card-text">{versionStatus.remoteMessage}</p>
+                  )}
                 </div>
               </div>
             )}
