@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addEdge,
   BaseEdge,
@@ -9,7 +9,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
-  getSmoothStepPath,
+  getSimpleBezierPath,
   useUpdateNodeInternals,
   useEdgesState,
   useNodesState
@@ -545,9 +545,9 @@ function filterImageEditWorkflows(workflows = []) {
   })
 }
 
-function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }) {
+const GraphDeleteEdge = memo(function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [edgePath, labelX, labelY] = getSmoothStepPath({
+  const [edgePath, labelX, labelY] = getSimpleBezierPath({
     sourceX,
     sourceY,
     targetX,
@@ -577,7 +577,8 @@ function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
           className="graph-page__edge-menu nodrag nopan"
           style={{
             left: `${labelX}px`,
-            top: `${labelY}px`
+            top: `${labelY}px`,
+						'z-index':0
           }}
           onPointerDown={event => event.stopPropagation()}
         >
@@ -614,9 +615,9 @@ function GraphDeleteEdge({ id, sourceX, sourceY, targetX, targetY, sourcePositio
       </EdgeLabelRenderer>
     </>
   )
-}
+})
 
-function GraphAssetNode({ data }) {
+const GraphAssetNode = memo(function GraphAssetNode({ data }) {
   const navigate = useNavigate()
   const updateNodeInternals = useUpdateNodeInternals()
   const isMeshGen = data.nodeKind === 'meshGen'
@@ -632,6 +633,7 @@ function GraphAssetNode({ data }) {
   const [showGrid, setShowGrid] = useState(true)
   const [showLightSlider, setShowLightSlider] = useState(false)
   const [lightIntensity, setLightIntensity] = useState(2.2)
+  const [showMeshPreview, setShowMeshPreview] = useState(false)
   const draft = data.actionDraft
   const isImageEditMode = ['edit-api', 'edit-comfy'].includes(draft?.mode)
   const sourceLabel = isMeshGen ? 'MESH' : 'IMAGE'
@@ -820,7 +822,7 @@ function GraphAssetNode({ data }) {
         </div>
 
         <div className="image-card__thumb graph-node__thumb">
-          {meshModelUrl ? (
+          {meshModelUrl && showMeshPreview ? (
             <div className="graph-node__mesh-preview">
               <div className="graph-node__mesh-toolbar nodrag">
                 <button
@@ -850,6 +852,14 @@ function GraphAssetNode({ data }) {
                 >
                   L
                 </button>
+                <button
+                  type="button"
+                  className="graph-node__mesh-tool"
+                  onClick={() => setShowMeshPreview(false)}
+                  title="Close 3D preview (use static thumbnail)"
+                >
+                  ×
+                </button>
                 {showLightSlider && (
                   <div className="graph-node__mesh-light-panel">
                     <input
@@ -871,6 +881,26 @@ function GraphAssetNode({ data }) {
                 lightIntensity={lightIntensity}
                 fitMode="center"
               />
+            </div>
+          ) : meshModelUrl ? (
+            <div className="image-card__thumb-item" style={{ position: 'relative', cursor: 'pointer' }} onClick={() => setShowMeshPreview(true)}>
+              {previewUrl ? (
+                <img src={previewUrl} alt={data.asset?.name || data.name || sourceLabel} className="image-card__thumb-image" />
+              ) : (
+                <div className="image-card__thumb-placeholder">
+                  <span className="material-symbols-outlined" style={{ fontSize: '32px', color: 'rgba(172,137,255,0.5)' }}>deployed_code</span>
+                </div>
+              )}
+              <button
+                type="button"
+                className="image-card__edit-action-btn nodrag"
+                style={{ position: 'absolute', bottom: '8px', right: '8px' }}
+                onClick={event => { event.stopPropagation(); setShowMeshPreview(true) }}
+                title="Load 3D preview"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>play_arrow</span>
+                3D
+              </button>
             </div>
           ) : previewUrl ? (
             <div className="image-card__thumb-item">
@@ -1423,9 +1453,9 @@ function GraphAssetNode({ data }) {
       )}
     </div>
   )
-}
+})
 
-function GraphImageCompareNode({ data }) {
+const GraphImageCompareNode = memo(function GraphImageCompareNode({ data }) {
   const [refreshKey, setRefreshKey] = useState(0)
   const [comparePosition, setComparePosition] = useState(50)
   const inputConnectors = data.inputConnectors || IMAGE_COMPARE_INPUT_IDS.map(id => ({ id, type: 'image', isConnected: false }))
@@ -1580,9 +1610,9 @@ function GraphImageCompareNode({ data }) {
       </div>
     </div>
   )
-}
+})
 
-function GraphValueNode({ data }) {
+const GraphValueNode = memo(function GraphValueNode({ data }) {
   const nodeKind = data.nodeKind
   const outputMeta = getConnectorTypeMeta(nodeKind)
   const outputValue = data.metadata?.outputValue ?? getDefaultNodeOutputValue(data.nodeTypeName || nodeKind)
@@ -1693,7 +1723,7 @@ function GraphValueNode({ data }) {
       </div>
     </div>
   )
-}
+})
 
 const flowNodeTypes = {
   image: GraphAssetNode,
@@ -3510,6 +3540,7 @@ export default function GraphPage({ project }) {
               edges={renderedEdges}
               nodeTypes={flowNodeTypes}
               edgeTypes={flowEdgeTypes}
+              onlyRenderVisibleElements
               onInit={setReactFlowInstance}
               onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
