@@ -1712,6 +1712,11 @@ function getImageEditStoredFilePath(sourceAsset, editId, extension) {
   return toStoredAssetPath('image', `images/${sourceName}/${editId}/${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`);
 }
 
+function getBrushChildStoredFilePath(parentId, extension = 'png') {
+  const safeParentFolder = sanitizeAssetFolderName(`brush-${parentId}`) || 'brush';
+  return toStoredAssetPath('brush', `brushes/${safeParentFolder}/${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`);
+}
+
 function collectInlineImageParts(responseBody) {
   return responseBody?.candidates
     ?.flatMap(candidate => candidate?.content?.parts || [])
@@ -2868,13 +2873,13 @@ app.post('/api/assets/library/brush-edits', libraryImportUpload.any(), async (re
         return;
       }
 
-      const destinationDir = getAssetDirectory('brush');
-      const filename = createLibraryImportFilename(file.originalname);
-      const storedFilePath = toStoredAssetPath('brush', filename);
+      const storedFilePath = getBrushChildStoredFilePath(parentId, 'png');
+      const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+      const filename = toAssetUrlPath(storedFilePath);
       const dimensions = getImageDimensionsFromBuffer(file.buffer, { filename: file.originalname, mimeType: file.mimetype });
 
-      await fs.mkdir(destinationDir, { recursive: true });
-      await fs.writeFile(path.join(destinationDir, filename), file.buffer);
+      await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+      await fs.writeFile(absoluteFilePath, file.buffer);
 
       const childRecord = await createBrushChildRecord({
         parentAssetId: parentId,

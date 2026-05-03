@@ -543,6 +543,10 @@
   aspect-ratio: 1 / 1;
 }
 
+.asset-card__preview--brush {
+  background: #ffffff;
+}
+
 .asset-card__preview--mesh {
   aspect-ratio: 16 / 10;
   position: relative;
@@ -792,6 +796,10 @@
   background: var(--surface-container-lowest);
   position: relative;
   overflow: hidden;
+}
+
+.asset-edit-card__preview--brush {
+  background: #ffffff;
 }
 
 .asset-edit-card__body {

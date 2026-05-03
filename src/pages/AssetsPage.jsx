@@ -929,7 +929,7 @@ export default function AssetsPage() {
                 <div className="asset-edits-grid">
                   {getAssetChildren(editPreviewAsset).map((edit, index) => (
                     <article key={`${edit.editId}-${edit.filePath}-${index}`} className="asset-edit-card">
-                      <div className="asset-edit-card__preview">
+                      <div className={`asset-edit-card__preview ${editPreviewAsset.type === 'brush' ? 'asset-edit-card__preview--brush' : ''}`}>
                         <img src={edit.url} alt={`${editPreviewAsset.name} ${edit.name?.trim() || `edit ${index + 1}`}`} className="asset-card__image" />
                         {formatDimensions(edit.width, edit.height) && (
                           <span className="asset-card__dimensions font-label">{formatDimensions(edit.width, edit.height)}</span>
@@ -1485,7 +1485,7 @@ export default function AssetsPage() {
                       {paginatedAssets.map(asset => (
                         <article key={asset.id} className={`asset-card ${activeSection === 'meshes' ? 'asset-card--mesh' : 'asset-card--image'}`}>
                           {activeSection === 'images' || activeSection === 'brushes' ? (
-                            <div className="asset-card__preview asset-card__preview--image">
+                            <div className={`asset-card__preview asset-card__preview--image ${activeSection === 'brushes' ? 'asset-card__preview--brush' : ''}`}>
                               <img src={asset.url} alt={asset.name} className="asset-card__image" />
                               {formatDimensions(asset.width, asset.height) && (
                                 <span className="asset-card__dimensions font-label">{formatDimensions(asset.width, asset.height)}</span>
