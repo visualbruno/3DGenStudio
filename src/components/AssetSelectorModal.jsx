@@ -192,7 +192,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 											className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
                       onClick={() => handleSelectAsset(asset.selectorKey)}
 										>
-											<div className={`asset-selector-preview ${validType === 'mesh' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'}`}>
+                      <div className={`asset-selector-preview ${validType === 'mesh' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'} ${validType === 'brush' ? 'asset-selector-preview--brush' : ''}`}>
 												{validType !== 'mesh' ? (
 													<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
 												) : (
