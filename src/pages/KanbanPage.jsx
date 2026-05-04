@@ -59,7 +59,7 @@ function normalizeCustomApiType(type) {
 }
 
 function isTencentMeshGenerationApi(selectedApi = '') {
-  return String(selectedApi || '') === TENCENT_MESH_GENERATION_API_ID
+  return String(selectedApi || '').trim() === TENCENT_MESH_GENERATION_API_ID
 }
 
 function canFetchTencentMeshResult(runtimeState) {
@@ -1287,6 +1287,7 @@ export default function KanbanPage() {
       mode,
       name: '',
       selectedApi: defaultSelectedApi,
+      prompt: '',
       selectedAssetId: [4, 5].includes(card.kanbanColumnId)
         ? (card.meshAssets[0]?.id ? `asset:${card.meshAssets[0].id}` : '')
         : (card.assets[0]?.id ? `asset:${card.assets[0].id}` : ''),
@@ -1435,6 +1436,10 @@ export default function KanbanPage() {
   }
 
   const resolveDraftPrompt = (card, draft) => {
+    if (card?.kanbanColumnId === 3 && isTencentMeshGenerationApi(draft?.selectedApi)) {
+      return String(draft?.prompt || '').trim()
+    }
+
     if (draft.promptSource === 'none') {
       return ''
     }
@@ -2439,22 +2444,28 @@ export default function KanbanPage() {
                         </div>
 
                         <div className="params-card__field">
-                          <label className="params-card__label font-label">Prompt Source</label>
-                          <select
-                            className="image-card__attribute-select"
-                            value={imageEditDraft.promptSource}
-                            onChange={event => handleImageEditDraftChange(card, 'promptSource', event.target.value)}
-                          >
-                            {isMeshGenCard && isTencentMeshGenerationApi(imageEditDraft.selectedApi) && (
-                              <option value="none">No prompt (use image)</option>
-                            )}
-                            {getPromptOptionsForCard(card.id).map(option => (
-                              <option key={option.id} value={option.id}>{option.label}</option>
-                            ))}
-                          </select>
+                          <label className="params-card__label font-label">{isMeshGenCard && isTencentMeshGenerationApi(imageEditDraft.selectedApi) ? 'Prompt' : 'Prompt Source'}</label>
+                          {isMeshGenCard && isTencentMeshGenerationApi(imageEditDraft.selectedApi) ? (
+                            <textarea
+                              className="gen-prompt-input"
+                              value={imageEditDraft.prompt || ''}
+                              onChange={event => handleImageEditDraftChange(card, 'prompt', event.target.value)}
+                              placeholder="Describe the mesh to generate"
+                            />
+                          ) : (
+                            <select
+                              className="image-card__attribute-select"
+                              value={imageEditDraft.promptSource}
+                              onChange={event => handleImageEditDraftChange(card, 'promptSource', event.target.value)}
+                            >
+                              {getPromptOptionsForCard(card.id).map(option => (
+                                <option key={option.id} value={option.id}>{option.label}</option>
+                              ))}
+                            </select>
+                          )}
                         </div>
 
-                        {imageEditDraft.promptSource === 'custom' && (
+                        {(!isMeshGenCard || !isTencentMeshGenerationApi(imageEditDraft.selectedApi)) && imageEditDraft.promptSource === 'custom' && (
                           <div className="params-card__field">
                             <label className="params-card__label font-label">Custom Prompt</label>
                             <textarea
