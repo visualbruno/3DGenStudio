@@ -5,6 +5,7 @@ import './MeshPreviewDialog.css'
 export default function MeshPreviewDialog({ asset, titleId = 'mesh-preview-dialog-title', onClose }) {
   const [showNormals, setShowNormals] = useState(false)
   const [showGrid, setShowGrid] = useState(true)
+  const [showShadows, setShowShadows] = useState(false)
   const [showLightSlider, setShowLightSlider] = useState(false)
   const [lightIntensity, setLightIntensity] = useState(2.2)
 
@@ -51,6 +52,15 @@ export default function MeshPreviewDialog({ asset, titleId = 'mesh-preview-dialo
               >
                 L
               </button>
+              <button
+                type="button"
+                className={`mesh-preview-dialog__tool ${showShadows ? 'mesh-preview-dialog__tool--active' : ''}`}
+                onClick={() => setShowShadows(current => !current)}
+                aria-pressed={showShadows}
+                title="Toggle shadows"
+              >
+                S
+              </button>
               {showLightSlider && (
                 <div className="mesh-preview-dialog__light-panel">
                   <input
@@ -69,6 +79,7 @@ export default function MeshPreviewDialog({ asset, titleId = 'mesh-preview-dialo
               modelUrl={asset.url}
               showNormals={showNormals}
               showGrid={showGrid}
+              showShadows={showShadows}
               lightIntensity={lightIntensity}
               fitMode="center"
             />

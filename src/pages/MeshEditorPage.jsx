@@ -448,7 +448,7 @@ function CameraRig({ geometry, frameKey, onCameraReady, controlsEnabled = true }
   )
 }
 
-function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices }) {
+function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices, showShadows = false }) {
   const faceSelectionGeometry = useMemo(() => getFaceSelectionGeometry(geometry, selectedFaceIndices), [geometry, selectedFaceIndices])
   const selectedVertexPositions = useMemo(() => getVertexSelectionPositions(geometry, selectedVertexIndices), [geometry, selectedVertexIndices])
   const selectedVertexVectors = useMemo(() => {
@@ -469,7 +469,7 @@ function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices }) {
 
   return (
     <group>
-      <mesh geometry={geometry} castShadow receiveShadow>
+      <mesh geometry={geometry} castShadow={showShadows} receiveShadow={showShadows}>
         <meshStandardMaterial color="#a9b6ff" metalness={0.08} roughness={0.62} />
       </mesh>
       <mesh geometry={geometry}>
@@ -494,7 +494,7 @@ function EditorMesh({ geometry, selectedFaceIndices, selectedVertexIndices }) {
   )
 }
 
-function TexturedMesh({ root, textureKey, displayTexture }) {
+function TexturedMesh({ root, textureKey, displayTexture, showShadows = false }) {
   const baseObject = useMemo(() => {
     if (!root || !displayTexture) {
       return null
@@ -508,8 +508,8 @@ function TexturedMesh({ root, textureKey, displayTexture }) {
         return
       }
 
-      child.castShadow = true
-      child.receiveShadow = true
+      child.castShadow = showShadows
+      child.receiveShadow = showShadows
 
       if (Array.isArray(child.material)) {
         child.material = child.material.map(material => {
@@ -539,7 +539,7 @@ function TexturedMesh({ root, textureKey, displayTexture }) {
 
     object.userData.meshEditorMaterials = materials
     return object
-  }, [displayTexture, root, textureKey])
+  }, [displayTexture, root, showShadows, textureKey])
 
   useEffect(() => () => {
     baseObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())
@@ -629,6 +629,7 @@ export default function MeshEditorPage() {
   } = useProjects()
 
   const [showSettings, setShowSettings] = useState(false)
+  const [showShadows, setShowShadows] = useState(false)
   const [activeMenu, setActiveMenu] = useState('modeling')
   const [geometry, setGeometry] = useState(null)
   const [texturableMesh, setTexturableMesh] = useState(null)
@@ -3723,6 +3724,15 @@ export default function MeshEditorPage() {
               <div className="mesh-editor-actions mesh-editor-toolbar__save-actions">
                 <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={() => handleSave('replace')} disabled={saving || !geometry}>Save mesh</button>
                 <button type="button" className="mesh-editor-btn mesh-editor-btn--secondary" onClick={() => handleSave('version')} disabled={saving || !geometry}>Save as version</button>
+                <button
+                  type="button"
+                  className={`mesh-editor-btn ${showShadows ? 'mesh-editor-btn--secondary' : 'mesh-editor-btn--ghost'}`}
+                  onClick={() => setShowShadows(current => !current)}
+                  aria-pressed={showShadows}
+                  title="Toggle scene shadows"
+                >
+                  {showShadows ? 'Shadows on' : 'Shadows off'}
+                </button>
               </div>
             </div>
             <div className="mesh-editor-toolbar__stats">
@@ -4351,10 +4361,10 @@ export default function MeshEditorPage() {
                 </div>
               ) : geometry ? (
                 <>
-                  <Canvas shadows={{ type: THREE.PCFShadowMap }} resize={{ offsetSize: true }} style={{ width: '100%', height: '100%' }}>
+                  <Canvas shadows={showShadows ? { type: THREE.PCFShadowMap } : false} resize={{ offsetSize: true }} style={{ width: '100%', height: '100%' }}>
                     <PerspectiveCamera makeDefault position={[3, 3, 5]} near={0.0001} far={4000} />
                     <ambientLight intensity={1.25} />
-                    <directionalLight position={[5, 7, 9]} intensity={2} castShadow />
+                    <directionalLight position={[5, 7, 9]} intensity={2} castShadow={showShadows} />
                     <directionalLight position={[-5, 3, -4]} intensity={0.6} color="#8ff5ff" />
                     {(activeMenu === 'texturing' || activeMenu === 'painting') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || (maskTextureRef.current && !texturingUnavailableReason)) ? (
                       <TexturedMesh
@@ -4362,12 +4372,14 @@ export default function MeshEditorPage() {
                         root={texturableMesh.root}
                         textureKey={texturableMesh.textureKey}
                         displayTexture={displayTextureRef.current}
+                        showShadows={showShadows}
                       />
                     ) : (
                       <EditorMesh
                         geometry={geometry}
                         selectedFaceIndices={selectedFaceIndices}
                         selectedVertexIndices={selectedVertexIndices}
+                        showShadows={showShadows}
                       />
                     )}
                     <Grid

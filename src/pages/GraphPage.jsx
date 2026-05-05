@@ -945,6 +945,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                 modelUrl={meshModelUrl}
                 showNormals={showNormals}
                 showGrid={showGrid}
+                showShadows={false}
                 lightIntensity={lightIntensity}
                 fitMode="center"
               />

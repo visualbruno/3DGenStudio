@@ -120,11 +120,14 @@ function loadWithLoader(loader, url) {
   })
 }
 
-function applyDisplayMaterial(object, showNormals) {
+function applyDisplayMaterial(object, showNormals, showShadows) {
   object?.traverse(child => {
     if (!child.isMesh) {
       return
     }
+
+    child.castShadow = showShadows
+    child.receiveShadow = showShadows
 
     if (!child.userData.originalMat) {
       child.userData.originalMat = child.material
@@ -208,6 +211,7 @@ export default function Viewer({
   modelUrl = null,
   showNormals = false,
   showGrid = true,
+  showShadows = true,
   lightIntensity = 2.2,
   fitMode = 'ground'
 }) {
@@ -252,9 +256,9 @@ export default function Viewer({
     }
 
     const modelClone = modelState.object.clone(true)
-    applyDisplayMaterial(modelClone, showNormals)
+    applyDisplayMaterial(modelClone, showNormals, showShadows)
     return modelClone
-  }, [modelState, modelUrl, showNormals])
+  }, [modelState, modelUrl, showNormals, showShadows])
 
   const cameraTarget = modelState?.modelUrl === modelUrl ? modelState.target : new THREE.Vector3(0, 0.75, 0)
   const cameraPosition = modelState?.modelUrl === modelUrl ? modelState.cameraPosition : new THREE.Vector3(3, 3, 5)
@@ -266,12 +270,12 @@ export default function Viewer({
     >
       <Canvas
         key={modelUrl || 'placeholder'}
-        shadows={{ type: THREE.PCFShadowMap }}
+        shadows={showShadows ? { type: THREE.PCFShadowMap } : false}
         resize={{ offsetSize: true }}
       >
         <PerspectiveCamera makeDefault position={[3, 3, 5]} />
           <ambientLight intensity={Math.max(lightIntensity * 0.55, 0.35)} />
-          <directionalLight position={[4, 6, 8]} intensity={lightIntensity} castShadow />
+          <directionalLight position={[4, 6, 8]} intensity={lightIntensity} castShadow={showShadows} />
           <directionalLight position={[-5, 3, -4]} intensity={Math.max(lightIntensity * 0.4, 0.15)} color="#8ff5ff" />
         <Suspense fallback={null}>
           {renderedModel ? <primitive object={renderedModel} /> : <PlaceholderMesh />}
