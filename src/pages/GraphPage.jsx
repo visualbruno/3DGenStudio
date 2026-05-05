@@ -35,11 +35,18 @@ const IMAGE_COMPARE_INPUT_IDS = ['input-0', 'input-1']
 const LEGACY_INPUT_ID = 'image-input'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 const TENCENT_MESH_GENERATION_API_ID = 'tencent_meshgeneration'
+const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration'
 const TENCENT_MESH_API_OPTION = { id: TENCENT_MESH_GENERATION_API_ID, name: 'Tencent Cloud · Hunyuan3D Pro' }
+const TRIPO_MESH_API_OPTION = { id: TRIPO_MESH_GENERATION_API_ID, name: 'Tripo AI' }
 const TENCENT_REGION_OPTIONS = ['ap-singapore', 'eu-frankfurt', 'na-siliconvalley']
 const TENCENT_MODEL_VERSION_OPTIONS = ['3.0', '3.1']
 const TENCENT_GENERATION_TYPE_OPTIONS = ['Normal', 'LowPoly', 'Geometry']
 const TENCENT_POLYGON_TYPE_OPTIONS = ['triangle', 'quadrilaterial']
+const TRIPO_MODEL_VERSION_OPTIONS = ['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']
+const TRIPO_TEXTURE_ALIGNMENT_OPTIONS = ['original_image', 'geometry']
+const TRIPO_TEXTURE_QUALITY_OPTIONS = ['standard', 'detailed']
+const TRIPO_ORIENTATION_OPTIONS = ['default', 'align_image']
+const TRIPO_GEOMETRY_QUALITY_OPTIONS = ['standard', 'detailed']
 const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
   { id: 'nanobana_pro', name: 'Nanobana Pro' },
@@ -68,12 +75,23 @@ function isTencentMeshGenerationApi(selectedApi = '') {
   return String(selectedApi || '') === TENCENT_MESH_GENERATION_API_ID
 }
 
+function isTripoMeshGenerationApi(selectedApi = '') {
+  return String(selectedApi || '') === TRIPO_MESH_GENERATION_API_ID
+}
+
 function canFetchTencentMeshResult(metadata = {}, status = null) {
   return isTencentMeshGenerationApi(metadata?.selectedApi)
     && status === 'processing'
     && ['RUN', 'WAIT'].includes(String(metadata?.jobStatus || '').toUpperCase())
     && metadata?.jobId
     && metadata?.region
+}
+
+function canFetchTripoMeshResult(metadata = {}, status = null) {
+  return isTripoMeshGenerationApi(metadata?.selectedApi)
+    && status === 'processing'
+    && ['queued', 'running'].includes(String(metadata?.taskStatus || '').toLowerCase())
+    && metadata?.taskId
 }
 
 function getNodeKind(nodeTypeName = '') {
@@ -383,7 +401,7 @@ function toBaseFlowNode(node, onDelete) {
       onImageModeSelect: null,
       onImageEditModeSelect: null,
       onMeshGenModeSelect: null,
-      onGetTencentResult: null,
+      onGetAsyncMeshResult: null,
       onDraftFieldChange: null,
       onDraftInputChange: null,
       onRequestLocalFile: null,
@@ -691,7 +709,12 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
   const imageInputSources = getCompatibleInputSources(inputSources, 'image')
   const selectedApiImageSource = resolveImageSourceOption(draft?.selectedInputSource, inputSources, data.libraryImageOptions)
   const isTencentMeshApi = isMeshGen && isTencentMeshGenerationApi(draft?.selectedApi)
-  const canFetchTencentResult = isMeshGen && canFetchTencentMeshResult(data.metadata, data.status)
+  const isTripoMeshApi = isMeshGen && isTripoMeshGenerationApi(draft?.selectedApi)
+  const isTripoP1Model = isTripoMeshApi && (draft?.modelVersion || 'v2.5-20250123') === 'P1-20260311'
+  const hasDraftPrompt = Boolean(String(draft?.prompt || '').trim())
+  const hasDraftInputSource = Boolean(String(draft?.selectedInputSource || '').trim())
+  const canFetchAsyncResult = isMeshGen
+    && (canFetchTencentMeshResult(data.metadata, data.status) || canFetchTripoMeshResult(data.metadata, data.status))
   const nodeDisplayName = data.name || data.asset?.name || sourceLabel
   const meshEditorPath = isMeshGen && data.asset?.id
     ? buildMeshEditorPath({
@@ -1030,8 +1053,8 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                 <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>play_arrow</span>
                 Action
               </button>
-              {canFetchTencentResult && (
-                <button className="image-card__edit-action-btn nodrag" onClick={() => data.onGetTencentResult?.(data.id)}>
+              {canFetchAsyncResult && (
+                <button className="image-card__edit-action-btn nodrag" onClick={() => data.onGetAsyncMeshResult?.(data.id)}>
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>refresh</span>
                   GET RESULT
                 </button>
@@ -1239,7 +1262,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                     value={draft.selectedInputSource || ''}
                     onChange={event => data.onDraftFieldChange?.(data.id, 'selectedInputSource', event.target.value)}
                   >
-                    {isTencentMeshApi && (
+                    {(isTencentMeshApi || isTripoMeshApi) && (
                       <option value="">No image source (use prompt)</option>
                     )}
                     {imageInputSources.length > 0 && (
@@ -1251,7 +1274,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         ))}
                       </optgroup>
                     )}
-                    {!isTencentMeshApi && data.libraryImageOptions.length > 0 && (
+                    {!isTencentMeshApi && !isTripoMeshApi && data.libraryImageOptions.length > 0 && (
                       <optgroup label="Asset library">
                         {data.libraryImageOptions.map(asset => (
                           <option key={asset.id} value={asset.sourceReference || asset.id}>
@@ -1260,10 +1283,173 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         ))}
                       </optgroup>
                     )}
-                    {imageInputSources.length === 0 && (isTencentMeshApi || data.libraryImageOptions.length === 0) && (
+                    {imageInputSources.length === 0 && (isTencentMeshApi || isTripoMeshApi || data.libraryImageOptions.length === 0) && (
                       <option value="">No image sources available</option>
                     )}
                   </select>
+                  {isTripoMeshApi && (
+                    <>
+                      <select
+                        className="params-card__select nodrag"
+                        value={draft.modelVersion || 'v2.5-20250123'}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'modelVersion', event.target.value)}
+                      >
+                        {TRIPO_MODEL_VERSION_OPTIONS.map(option => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        className="params-card__input nodrag"
+                        placeholder="Model seed (optional)"
+                        value={draft.modelSeed ?? ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'modelSeed', event.target.value)}
+                      />
+                      {!isTripoP1Model && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.enableImageAutofix ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'enableImageAutofix', !draft.enableImageAutofix)}
+                          >
+                            {draft.enableImageAutofix && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Enable image autofix</span>
+                        </label>
+                      )}
+                      <input
+                        type="number"
+                        min="1000"
+                        max="300000"
+                        className="params-card__input nodrag"
+                        placeholder="Face limit (1000-300000, optional)"
+                        value={draft.faceLimit ?? ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'faceLimit', event.target.value)}
+                      />
+                      <label className="params-card__checkbox-label nodrag">
+                        <div
+                          className={`params-card__checkbox ${draft.texture ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                          onClick={() => data.onDraftFieldChange?.(data.id, 'texture', !draft.texture)}
+                        >
+                          {draft.texture && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                        </div>
+                        <span>Texture</span>
+                      </label>
+                      <label className="params-card__checkbox-label nodrag">
+                        <div
+                          className={`params-card__checkbox ${draft.pbr ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                          onClick={() => data.onDraftFieldChange?.(data.id, 'pbr', !draft.pbr)}
+                        >
+                          {draft.pbr && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                        </div>
+                        <span>PBR</span>
+                      </label>
+                      <input
+                        type="number"
+                        className="params-card__input nodrag"
+                        placeholder="Texture seed (optional)"
+                        value={draft.textureSeed ?? ''}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'textureSeed', event.target.value)}
+                      />
+                      {!isTripoP1Model && (
+                        <select
+                          className="params-card__select nodrag"
+                          value={draft.textureAlignment || 'original_image'}
+                          onChange={event => data.onDraftFieldChange?.(data.id, 'textureAlignment', event.target.value)}
+                        >
+                          {TRIPO_TEXTURE_ALIGNMENT_OPTIONS.map(option => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                      <select
+                        className="params-card__select nodrag"
+                        value={draft.textureQuality || 'standard'}
+                        onChange={event => data.onDraftFieldChange?.(data.id, 'textureQuality', event.target.value)}
+                      >
+                        {TRIPO_TEXTURE_QUALITY_OPTIONS.map(option => (
+                          <option key={option} value={option}>{option}</option>
+                        ))}
+                      </select>
+                      <label className="params-card__checkbox-label nodrag">
+                        <div
+                          className={`params-card__checkbox ${draft.autoSize ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                          onClick={() => data.onDraftFieldChange?.(data.id, 'autoSize', !draft.autoSize)}
+                        >
+                          {draft.autoSize && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                        </div>
+                        <span>Auto size</span>
+                      </label>
+                      {!isTripoP1Model && (
+                        <select
+                          className="params-card__select nodrag"
+                          value={draft.orientation || 'default'}
+                          onChange={event => data.onDraftFieldChange?.(data.id, 'orientation', event.target.value)}
+                        >
+                          {TRIPO_ORIENTATION_OPTIONS.map(option => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                      {!isTripoP1Model && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.quad ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'quad', !draft.quad)}
+                          >
+                            {draft.quad && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Quad topology</span>
+                        </label>
+                      )}
+                      {!isTripoP1Model && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.smartLowPoly ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'smartLowPoly', !draft.smartLowPoly)}
+                          >
+                            {draft.smartLowPoly && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Smart low poly</span>
+                        </label>
+                      )}
+                      {!isTripoP1Model && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.generateParts ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'generateParts', !draft.generateParts)}
+                          >
+                            {draft.generateParts && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Generate parts</span>
+                        </label>
+                      )}
+                      <label className="params-card__checkbox-label nodrag">
+                        <div
+                          className={`params-card__checkbox ${draft.exportUv ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                          onClick={() => data.onDraftFieldChange?.(data.id, 'exportUv', !draft.exportUv)}
+                        >
+                          {draft.exportUv && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                        </div>
+                        <span>Export UV</span>
+                      </label>
+                      {!isTripoP1Model && (
+                        <select
+                          className="params-card__select nodrag"
+                          value={draft.geometryQuality || 'standard'}
+                          onChange={event => data.onDraftFieldChange?.(data.id, 'geometryQuality', event.target.value)}
+                        >
+                          {TRIPO_GEOMETRY_QUALITY_OPTIONS.map(option => (
+                            <option key={option} value={option}>{option}</option>
+                          ))}
+                        </select>
+                      )}
+                      {!isTripoP1Model && draft.generateParts && (draft.texture || draft.pbr || draft.quad) && (
+                        <div className="graph-node__linked-input font-label">
+                          generate_parts is not compatible with texture, pbr, or quad.
+                        </div>
+                      )}
+                    </>
+                  )}
                   {isTencentMeshApi && (
                     <>
                       <select
@@ -1329,13 +1515,17 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                       ? `Input: ${selectedApiImageSource.label}`
                       : isTencentMeshApi
                         ? 'Select a connected image input or leave empty to use prompt only'
-                        : 'Select an image source from the graph or asset library'}
+                        : isTripoMeshApi
+                          ? 'Provide either a prompt or an image input connector for Tripo AI'
+                          : 'Select an image source from the graph or asset library'}
                   </div>
                   <button
                     className="gen-btn nodrag"
                     onClick={() => data.onRunNodeAction?.(data.id)}
                     disabled={isTencentMeshApi
-                      ? (!draft.name?.trim() || (!draft.prompt?.trim() && !draft.selectedInputSource) || (draft.prompt?.trim() && draft.selectedInputSource))
+                      ? (!draft.name?.trim() || (!hasDraftPrompt && !hasDraftInputSource))
+                      : isTripoMeshApi
+                        ? (!draft.name?.trim() || (!hasDraftPrompt && !hasDraftInputSource))
                       : !draft.selectedInputSource}
                   >
                     <span className="material-symbols-outlined">deployed_code</span>
@@ -1887,7 +2077,8 @@ export default function GraphPage({ project }) {
     runImageEditApi,
     runImageEditComfy,
     runMeshGenerationApi,
-    queryTencentMeshGenerationResult
+    queryTencentMeshGenerationResult,
+    queryTripoMeshGenerationResult
   } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
@@ -1943,6 +2134,7 @@ export default function GraphPage({ project }) {
   const meshGenerationApis = useMemo(() => (
     [
       TENCENT_MESH_API_OPTION,
+      TRIPO_MESH_API_OPTION,
       ...customApis
         .filter(api => normalizeCustomApiType(api?.type) === 'mesh-generation')
         .map(api => ({ id: `custom_${api.id}`, name: api.name }))
@@ -2090,7 +2282,22 @@ export default function GraphPage({ project }) {
       enablePBR: false,
       faceCount: 500000,
       generationType: 'Normal',
-      polygonType: 'triangle'
+      polygonType: 'triangle',
+      modelSeed: '',
+      enableImageAutofix: false,
+      faceLimit: '',
+      texture: true,
+      pbr: true,
+      textureSeed: '',
+      textureAlignment: 'original_image',
+      textureQuality: 'standard',
+      autoSize: false,
+      orientation: 'default',
+      quad: false,
+      smartLowPoly: false,
+      generateParts: false,
+      exportUv: true,
+      geometryQuality: 'standard'
     }
   }, [meshGenerationApis, meshGenerationWorkflows])
 
@@ -2639,11 +2846,15 @@ export default function GraphPage({ project }) {
 
           if (field === 'selectedApi' && node.data.nodeKind === 'meshGen') {
             const defaultImageInputSource = getCompatibleInputSources(targetInputSources, 'image')[0] || null
+            const isAsyncImageConnectorApi = isTencentMeshGenerationApi(value) || isTripoMeshGenerationApi(value)
             nextDraft = {
               ...nextDraft,
-              selectedInputSource: isTencentMeshGenerationApi(value)
+              selectedInputSource: isAsyncImageConnectorApi
                 ? (getInputSourceSelectionValue(defaultImageInputSource) || '')
-                : (nextDraft.selectedInputSource || getInputSourceSelectionValue(defaultImageInputSource) || libraryImageOptions[0]?.sourceReference || '')
+                : (nextDraft.selectedInputSource || getInputSourceSelectionValue(defaultImageInputSource) || libraryImageOptions[0]?.sourceReference || ''),
+              modelVersion: isTripoMeshGenerationApi(value)
+                ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v2.5-20250123')
+                : (TENCENT_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : '3.0')
             }
           }
 
@@ -3073,9 +3284,13 @@ export default function GraphPage({ project }) {
             const sourceAsset = selectedApiSource?.asset || getConnectedInputAssetFrom(nodes, edges, targetNodeId)
             const sourceReference = selectedApiSource?.sourceReference || getAssetSourceReference(sourceAsset)
             const isTencentMeshApi = isTencentMeshGenerationApi(targetDraft.selectedApi)
+            const isTripoMeshApi = isTripoMeshGenerationApi(targetDraft.selectedApi)
             const trimmedPrompt = String(targetDraft.prompt || '').trim()
+            const effectiveSourceReference = (isTencentMeshApi || isTripoMeshApi) && trimmedPrompt
+              ? ''
+              : sourceReference
 
-            if (!isTencentMeshApi && !sourceReference) {
+            if (!isTencentMeshApi && !isTripoMeshApi && !effectiveSourceReference) {
               return
             }
 
@@ -3084,24 +3299,26 @@ export default function GraphPage({ project }) {
             }
 
             if (isTencentMeshApi) {
-              if (Boolean(trimmedPrompt) === Boolean(sourceReference)) {
+              if (Boolean(trimmedPrompt) === Boolean(effectiveSourceReference)) {
+                const validationMessage = 'Provide either a prompt or an image input for Tencent Cloud mesh generation'
                 await setProcessingState('error', null, {
                   processingSource: 'Tencent Cloud',
                   selectedApi: targetDraft.selectedApi,
-                  error: 'Provide either a prompt or an image input for Tencent Cloud mesh generation',
+                  error: validationMessage,
                   detail: 'Use either prompt-only or image-only input for Tencent Cloud',
                   currentNodeLabel: 'Tencent Cloud input validation failed'
                 }, {
                   progressDetail: 'Use either prompt-only or image-only input for Tencent Cloud',
                   currentNodeLabel: 'Tencent Cloud input validation failed'
                 })
+                pushMeshGenerationFailureNotification(validationMessage, 'Tencent Cloud · Hunyuan3D Pro')
                 return
               }
 
               await setProcessingState('processing', null, {
                 processingSource: 'Tencent Cloud',
                 selectedApi: targetDraft.selectedApi,
-                inputSource: sourceReference || null,
+                inputSource: effectiveSourceReference || null,
                 region: targetDraft.region,
                 modelVersion: targetDraft.modelVersion,
                 generationType: targetDraft.generationType,
@@ -3119,7 +3336,7 @@ export default function GraphPage({ project }) {
 
               try {
                 const response = await runMeshGenerationApi(project.id, {
-                  imageSource: sourceReference || null,
+                  imageSource: effectiveSourceReference || null,
                   name: targetDraft.name.trim(),
                   selectedApi: targetDraft.selectedApi,
                   prompt: trimmedPrompt,
@@ -3134,7 +3351,7 @@ export default function GraphPage({ project }) {
                 await setProcessingState('processing', null, {
                   processingSource: 'Tencent Cloud',
                   selectedApi: response.selectedApi || targetDraft.selectedApi,
-                  inputSource: sourceReference || null,
+                  inputSource: effectiveSourceReference || null,
                   region: response.region || targetDraft.region,
                   modelVersion: targetDraft.modelVersion,
                   generationType: targetDraft.generationType,
@@ -3156,7 +3373,7 @@ export default function GraphPage({ project }) {
                 await setProcessingState('error', null, {
                   processingSource: 'Tencent Cloud',
                   selectedApi: targetDraft.selectedApi,
-                  inputSource: sourceReference || null,
+                  inputSource: effectiveSourceReference || null,
                   region: targetDraft.region,
                   prompt: trimmedPrompt,
                   error: err.message || 'Tencent Cloud mesh generation failed',
@@ -3170,6 +3387,132 @@ export default function GraphPage({ project }) {
                 pushMeshGenerationFailureNotification(
                   err.message || 'Tencent Cloud mesh generation failed',
                   'Tencent Cloud · Hunyuan3D Pro'
+                )
+              }
+              return
+            }
+
+            if (isTripoMeshApi) {
+              if (Boolean(trimmedPrompt) === Boolean(effectiveSourceReference)) {
+                const validationMessage = 'Provide either a prompt or an image input for Tripo AI mesh generation'
+                await setProcessingState('error', null, {
+                  processingSource: 'Tripo AI',
+                  selectedApi: targetDraft.selectedApi,
+                  error: validationMessage,
+                  detail: 'Use either prompt-only or image-only input for Tripo AI',
+                  currentNodeLabel: 'Tripo AI input validation failed'
+                }, {
+                  progressDetail: 'Use either prompt-only or image-only input for Tripo AI',
+                  currentNodeLabel: 'Tripo AI input validation failed'
+                })
+                pushMeshGenerationFailureNotification(validationMessage, 'Tripo AI')
+                return
+              }
+
+              await setProcessingState('processing', null, {
+                processingSource: 'Tripo AI',
+                selectedApi: targetDraft.selectedApi,
+                inputSource: effectiveSourceReference || null,
+                prompt: trimmedPrompt,
+                modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                modelSeed: targetDraft.modelSeed,
+                enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
+                faceLimit: targetDraft.faceLimit,
+                texture: Boolean(targetDraft.texture),
+                pbr: Boolean(targetDraft.pbr),
+                textureSeed: targetDraft.textureSeed,
+                textureAlignment: targetDraft.textureAlignment || 'original_image',
+                textureQuality: targetDraft.textureQuality || 'standard',
+                autoSize: Boolean(targetDraft.autoSize),
+                orientation: targetDraft.orientation || 'default',
+                quad: Boolean(targetDraft.quad),
+                smartLowPoly: Boolean(targetDraft.smartLowPoly),
+                generateParts: Boolean(targetDraft.generateParts),
+                exportUv: Boolean(targetDraft.exportUv),
+                geometryQuality: targetDraft.geometryQuality || 'standard',
+                detail: 'Submitting Tripo AI mesh generation task',
+                currentNodeLabel: 'Waiting for Tripo AI task id'
+              }, {
+                progressDetail: 'Submitting Tripo AI mesh generation task',
+                currentNodeLabel: 'Waiting for Tripo AI task id'
+              })
+
+              try {
+                const response = await runMeshGenerationApi(project.id, {
+                  imageSource: effectiveSourceReference || null,
+                  name: targetDraft.name.trim(),
+                  selectedApi: targetDraft.selectedApi,
+                  prompt: trimmedPrompt,
+                  modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                  modelSeed: targetDraft.modelSeed,
+                  faceLimit: targetDraft.faceLimit,
+                  texture: Boolean(targetDraft.texture),
+                  pbr: Boolean(targetDraft.pbr),
+                  textureSeed: targetDraft.textureSeed,
+                  textureQuality: targetDraft.textureQuality || 'standard',
+                  autoSize: Boolean(targetDraft.autoSize),
+                  exportUv: Boolean(targetDraft.exportUv),
+                  ...(targetDraft.modelVersion === 'P1-20260311'
+                    ? {}
+                    : {
+                        enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
+                        textureAlignment: targetDraft.textureAlignment || 'original_image',
+                        orientation: targetDraft.orientation || 'default',
+                        quad: Boolean(targetDraft.quad),
+                        smartLowPoly: Boolean(targetDraft.smartLowPoly),
+                        generateParts: Boolean(targetDraft.generateParts),
+                        geometryQuality: targetDraft.geometryQuality || 'standard'
+                      })
+                })
+
+                await setProcessingState('processing', null, {
+                  processingSource: 'Tripo AI',
+                  selectedApi: response.selectedApi || targetDraft.selectedApi,
+                  inputSource: effectiveSourceReference || null,
+                  prompt: trimmedPrompt,
+                  modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                  modelSeed: targetDraft.modelSeed,
+                  enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
+                  faceLimit: targetDraft.faceLimit,
+                  texture: Boolean(targetDraft.texture),
+                  pbr: Boolean(targetDraft.pbr),
+                  textureSeed: targetDraft.textureSeed,
+                  textureAlignment: targetDraft.textureAlignment || 'original_image',
+                  textureQuality: targetDraft.textureQuality || 'standard',
+                  autoSize: Boolean(targetDraft.autoSize),
+                  orientation: targetDraft.orientation || 'default',
+                  quad: Boolean(targetDraft.quad),
+                  smartLowPoly: Boolean(targetDraft.smartLowPoly),
+                  generateParts: Boolean(targetDraft.generateParts),
+                  exportUv: Boolean(targetDraft.exportUv),
+                  geometryQuality: targetDraft.geometryQuality || 'standard',
+                  taskId: response.taskId,
+                  promptId: response.taskId,
+                  taskStatus: 'queued',
+                  detail: 'Tripo AI task submitted. Use GET RESULT to refresh status.',
+                  currentNodeLabel: 'Tripo AI task is queued'
+                }, {
+                  progressDetail: 'Tripo AI task submitted. Use GET RESULT to refresh status.',
+                  currentNodeLabel: 'Tripo AI task is queued'
+                })
+                setActionDraftsByNodeId({})
+              } catch (err) {
+                await setProcessingState('error', null, {
+                  processingSource: 'Tripo AI',
+                  selectedApi: targetDraft.selectedApi,
+                  inputSource: effectiveSourceReference || null,
+                  prompt: trimmedPrompt,
+                  error: err.message || 'Tripo AI mesh generation failed',
+                  detail: err.message || 'Tripo AI mesh generation failed',
+                  currentNodeLabel: 'Tripo AI task submission failed',
+                  taskStatus: 'failed'
+                }, {
+                  progressDetail: err.message || 'Tripo AI mesh generation failed',
+                  currentNodeLabel: 'Tripo AI task submission failed'
+                })
+                pushMeshGenerationFailureNotification(
+                  err.message || 'Tripo AI mesh generation failed',
+                  'Tripo AI'
                 )
               }
               return
@@ -3447,11 +3790,13 @@ export default function GraphPage({ project }) {
           }
         }
       },
-      onGetTencentResult: async (targetNodeId) => {
+      onGetAsyncMeshResult: async (targetNodeId) => {
         const targetNode = nodes.find(item => item.id === String(targetNodeId))
         const runtimeMetadata = targetNode?.data?.metadata || {}
+        const isTencentRuntime = isTencentMeshGenerationApi(runtimeMetadata?.selectedApi)
+        const isTripoRuntime = isTripoMeshGenerationApi(runtimeMetadata?.selectedApi)
 
-        if (!targetNode || !canFetchTencentMeshResult(runtimeMetadata, targetNode.data.status)) {
+        if (!targetNode || !(canFetchTencentMeshResult(runtimeMetadata, targetNode.data.status) || canFetchTripoMeshResult(runtimeMetadata, targetNode.data.status))) {
           return
         }
 
@@ -3502,21 +3847,32 @@ export default function GraphPage({ project }) {
 
         await setProcessingState('processing', null, {
           ...runtimeMetadata,
-          detail: 'Checking Tencent Cloud job result…',
-          currentNodeLabel: `Job ${runtimeMetadata.jobId}`
+          detail: isTencentRuntime ? 'Checking Tencent Cloud job result…' : 'Checking Tripo AI task result…',
+          currentNodeLabel: isTencentRuntime
+            ? `Job ${runtimeMetadata.jobId}`
+            : `Task ${runtimeMetadata.taskId}`
         }, {
-          progressDetail: 'Checking Tencent Cloud job result…',
-          currentNodeLabel: `Job ${runtimeMetadata.jobId}`
+          progressDetail: isTencentRuntime ? 'Checking Tencent Cloud job result…' : 'Checking Tripo AI task result…',
+          currentNodeLabel: isTencentRuntime
+            ? `Job ${runtimeMetadata.jobId}`
+            : `Task ${runtimeMetadata.taskId}`
         })
 
         try {
-          const response = await queryTencentMeshGenerationResult(project.id, {
-            jobId: runtimeMetadata.jobId,
-            region: runtimeMetadata.region,
-            name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
-            prompt: runtimeMetadata.prompt || '',
-            selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID
-          })
+          const response = isTencentRuntime
+            ? await queryTencentMeshGenerationResult(project.id, {
+              jobId: runtimeMetadata.jobId,
+              region: runtimeMetadata.region,
+              name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
+              prompt: runtimeMetadata.prompt || '',
+              selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID
+            })
+            : await queryTripoMeshGenerationResult(project.id, {
+              taskId: runtimeMetadata.taskId,
+              name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
+              prompt: runtimeMetadata.prompt || '',
+              selectedApi: runtimeMetadata.selectedApi || TRIPO_MESH_GENERATION_API_ID
+            })
 
           if (response.status === 'processing') {
             await setProcessingState('processing', null, {
@@ -3524,30 +3880,43 @@ export default function GraphPage({ project }) {
               selectedApi: response.selectedApi || runtimeMetadata.selectedApi,
               region: response.region || runtimeMetadata.region,
               jobId: response.jobId || runtimeMetadata.jobId,
-              promptId: response.jobId || runtimeMetadata.promptId,
+              promptId: isTencentRuntime
+                ? (response.jobId || runtimeMetadata.promptId)
+                : (response.taskId || runtimeMetadata.promptId),
               jobStatus: response.jobStatus || runtimeMetadata.jobStatus,
-              detail: `Tencent Cloud job status: ${response.jobStatus}`,
-              currentNodeLabel: response.jobStatus === 'RUN' ? 'Tencent Cloud job is running' : 'Tencent Cloud job is queued'
+              taskId: response.taskId || runtimeMetadata.taskId,
+              taskStatus: response.taskStatus || runtimeMetadata.taskStatus,
+              detail: isTencentRuntime
+                ? `Tencent Cloud job status: ${response.jobStatus}`
+                : `Tripo AI task status: ${response.taskStatus}`,
+              currentNodeLabel: isTencentRuntime
+                ? (response.jobStatus === 'RUN' ? 'Tencent Cloud job is running' : 'Tencent Cloud job is queued')
+                : (response.taskStatus === 'running' ? 'Tripo AI task is running' : 'Tripo AI task is queued')
             }, {
-              progressDetail: `Tencent Cloud job status: ${response.jobStatus}`,
-              currentNodeLabel: response.jobStatus === 'RUN' ? 'Tencent Cloud job is running' : 'Tencent Cloud job is queued'
+              progressDetail: isTencentRuntime
+                ? `Tencent Cloud job status: ${response.jobStatus}`
+                : `Tripo AI task status: ${response.taskStatus}`,
+              currentNodeLabel: isTencentRuntime
+                ? (response.jobStatus === 'RUN' ? 'Tencent Cloud job is running' : 'Tencent Cloud job is queued')
+                : (response.taskStatus === 'running' ? 'Tripo AI task is running' : 'Tripo AI task is queued')
             })
             return
           }
 
           if (response.status === 'error') {
-            const failureMessage = response.error || 'Tencent Cloud mesh generation failed'
+            const failureMessage = response.error || (isTencentRuntime ? 'Tencent Cloud mesh generation failed' : 'Tripo AI mesh generation failed')
             await setProcessingState('error', null, {
               ...runtimeMetadata,
-              jobStatus: 'FAIL',
+              jobStatus: isTencentRuntime ? 'FAIL' : runtimeMetadata.jobStatus,
+              taskStatus: isTripoRuntime ? 'failed' : runtimeMetadata.taskStatus,
               detail: failureMessage,
-              currentNodeLabel: 'Tencent Cloud job failed',
+              currentNodeLabel: isTencentRuntime ? 'Tencent Cloud job failed' : 'Tripo AI task failed',
               error: failureMessage
             }, {
               progressDetail: failureMessage,
-              currentNodeLabel: 'Tencent Cloud job failed'
+              currentNodeLabel: isTencentRuntime ? 'Tencent Cloud job failed' : 'Tripo AI task failed'
             })
-            pushMeshGenerationFailureNotification(failureMessage, 'Tencent Cloud · Hunyuan3D Pro')
+            pushMeshGenerationFailureNotification(failureMessage, isTencentRuntime ? 'Tencent Cloud · Hunyuan3D Pro' : 'Tripo AI')
             return
           }
 
@@ -3558,7 +3927,7 @@ export default function GraphPage({ project }) {
 
           await ensureGeneratedMeshThumbnails(savedMeshes)
           await applyNodeResult(savedMeshes[0], {
-            lastAction: 'mesh-generation-tencent',
+            lastAction: isTencentRuntime ? 'mesh-generation-tencent' : 'mesh-generation-tripo',
             inputSource: runtimeMetadata.inputSource || null,
             processingSource: null,
             selectedApi: null,
@@ -3566,6 +3935,8 @@ export default function GraphPage({ project }) {
             jobId: null,
             promptId: null,
             jobStatus: null,
+            taskId: null,
+            taskStatus: null,
             detail: null,
             currentNodeLabel: null,
             error: null
@@ -3575,23 +3946,24 @@ export default function GraphPage({ project }) {
           }
           setActionDraftsByNodeId({})
         } catch (err) {
-          const failureMessage = err.message || 'Failed to fetch Tencent Cloud mesh result'
+          const failureMessage = err.message || (isTencentRuntime ? 'Failed to fetch Tencent Cloud mesh result' : 'Failed to fetch Tripo AI mesh result')
           await setProcessingState('error', null, {
             ...runtimeMetadata,
-            jobStatus: 'FAIL',
+            jobStatus: isTencentRuntime ? 'FAIL' : runtimeMetadata.jobStatus,
+            taskStatus: isTripoRuntime ? 'failed' : runtimeMetadata.taskStatus,
             detail: failureMessage,
-            currentNodeLabel: 'Tencent Cloud result query failed',
+            currentNodeLabel: isTencentRuntime ? 'Tencent Cloud result query failed' : 'Tripo AI result query failed',
             error: failureMessage
           }, {
             progressDetail: failureMessage,
-            currentNodeLabel: 'Tencent Cloud result query failed'
+            currentNodeLabel: isTencentRuntime ? 'Tencent Cloud result query failed' : 'Tripo AI result query failed'
           })
-          pushMeshGenerationFailureNotification(failureMessage, 'Tencent Cloud · Hunyuan3D Pro')
+          pushMeshGenerationFailureNotification(failureMessage, isTencentRuntime ? 'Tencent Cloud · Hunyuan3D Pro' : 'Tripo AI')
         }
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]

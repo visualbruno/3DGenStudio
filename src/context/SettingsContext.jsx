@@ -112,6 +112,29 @@ export function SettingsProvider({ children }) {
           }
         }
       },
+      tencentcloud: {
+        secretId: '',
+        secretKey: '',
+        meshGeneration: {
+          models: {
+            meshgeneration: {
+              name: 'Hunyuan3D Pro',
+              model: 'meshgeneration'
+            }
+          }
+        }
+      },
+      tripoai: {
+        apiKey: '',
+        meshGeneration: {
+          models: {
+            meshgeneration: {
+              name: 'Tripo AI',
+              model: 'meshgeneration'
+            }
+          }
+        }
+      },
       comfyui: {
         path: '',
         url: 'http://127.0.0.1',

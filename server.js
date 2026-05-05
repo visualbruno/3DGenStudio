@@ -86,6 +86,16 @@ const TENCENT_REGIONS = new Set(['ap-singapore', 'eu-frankfurt', 'na-siliconvall
 const TENCENT_MODEL_VERSIONS = new Set(['3.0', '3.1']);
 const TENCENT_GENERATION_TYPES = new Set(['Normal', 'LowPoly', 'Geometry']);
 const TENCENT_POLYGON_TYPES = new Set(['triangle', 'quadrilaterial']);
+const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration';
+const TRIPO_API_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
+const TRIPO_MODEL_VERSIONS = new Set(['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']);
+const TRIPO_TEXTURE_ALIGNMENT_OPTIONS = new Set(['original_image', 'geometry']);
+const TRIPO_TEXTURE_QUALITY_OPTIONS = new Set(['standard', 'detailed']);
+const TRIPO_ORIENTATION_OPTIONS = new Set(['default', 'align_image']);
+const TRIPO_GEOMETRY_QUALITY_OPTIONS = new Set(['standard', 'detailed']);
+const TRIPO_RUNNING_STATUSES = new Set(['queued', 'running']);
+const TRIPO_SUCCESS_STATUS = 'success';
+const TRIPO_FAILURE_STATUSES = new Set(['failed', 'banned', 'expired', 'cancelled', 'unknown']);
 
 console.log('DEBUG: DATA_DIR is', DATA_DIR);
 console.log('DEBUG: DB_FILE is', path.join(DATA_DIR, 'app.db'));
@@ -356,6 +366,17 @@ const INITIAL_SCHEMA = {
           models: {
             meshgeneration: {
               name: 'Hunyuan3D Pro',
+              model: 'meshgeneration'
+            }
+          }
+        }
+      },
+      tripoai: {
+        apiKey: '',
+        meshGeneration: {
+          models: {
+            meshgeneration: {
+              name: 'Tripo AI',
               model: 'meshgeneration'
             }
           }
@@ -1218,6 +1239,385 @@ function getTencentCloudConfig(settings = {}) {
   };
 }
 
+function isTripoMeshGenerationApi(selectedApi = '') {
+  return String(selectedApi || '').trim() === TRIPO_MESH_GENERATION_API_ID;
+}
+
+function getTripoAiConfig(settings = {}) {
+  const providerSettings = settings?.apis?.tripoai || {};
+
+  return {
+    apiKey: String(providerSettings.apiKey || '').trim(),
+    meshGeneration: {
+      models: {
+        meshgeneration: {
+          name: providerSettings?.meshGeneration?.models?.meshgeneration?.name || 'Tripo AI',
+          model: providerSettings?.meshGeneration?.models?.meshgeneration?.model || 'meshgeneration'
+        }
+      }
+    }
+  };
+}
+
+function normalizeTripoBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+
+  if (typeof value === 'string') {
+    const normalizedValue = value.trim().toLowerCase();
+    if (normalizedValue === 'true') return true;
+    if (normalizedValue === 'false') return false;
+  }
+
+  return Boolean(value);
+}
+
+function normalizeTripoNullableInteger(value, fallback = null) {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? Math.round(numericValue) : fallback;
+}
+
+function normalizeTripoMeshGenerationInput({
+  prompt,
+  hasImageSource = false,
+  modelVersion,
+  modelSeed,
+  enableImageAutofix,
+  faceLimit,
+  texture,
+  pbr,
+  textureSeed,
+  textureAlignment,
+  textureQuality,
+  autoSize,
+  orientation,
+  quad,
+  smartLowPoly,
+  generateParts,
+  exportUv,
+  geometryQuality
+} = {}) {
+  const trimmedPrompt = String(prompt || '').trim();
+  const hasPrompt = Boolean(trimmedPrompt);
+
+  const normalizedModelVersion = TRIPO_MODEL_VERSIONS.has(String(modelVersion || '').trim())
+    ? String(modelVersion || '').trim()
+    : 'v2.5-20250123';
+  const normalizedModelSeed = normalizeTripoNullableInteger(modelSeed, null);
+  const normalizedEnableImageAutofix = normalizeTripoBoolean(enableImageAutofix, false);
+  const normalizedFaceLimit = normalizeTripoNullableInteger(faceLimit, null);
+  const normalizedTexture = normalizeTripoBoolean(texture, true);
+  const normalizedPbr = normalizeTripoBoolean(pbr, true);
+  const normalizedTextureSeed = normalizeTripoNullableInteger(textureSeed, null);
+  const normalizedTextureAlignment = TRIPO_TEXTURE_ALIGNMENT_OPTIONS.has(String(textureAlignment || '').trim())
+    ? String(textureAlignment || '').trim()
+    : 'original_image';
+  const normalizedTextureQuality = TRIPO_TEXTURE_QUALITY_OPTIONS.has(String(textureQuality || '').trim())
+    ? String(textureQuality || '').trim()
+    : 'standard';
+  const normalizedAutoSize = normalizeTripoBoolean(autoSize, false);
+  const normalizedOrientation = TRIPO_ORIENTATION_OPTIONS.has(String(orientation || '').trim())
+    ? String(orientation || '').trim()
+    : 'default';
+  const normalizedQuad = normalizeTripoBoolean(quad, false);
+  const normalizedSmartLowPoly = normalizeTripoBoolean(smartLowPoly, false);
+  const normalizedGenerateParts = normalizeTripoBoolean(generateParts, false);
+  const normalizedExportUv = normalizeTripoBoolean(exportUv, true);
+  const normalizedGeometryQuality = TRIPO_GEOMETRY_QUALITY_OPTIONS.has(String(geometryQuality || '').trim())
+    ? String(geometryQuality || '').trim()
+    : 'standard';
+  const isP1Model = normalizedModelVersion === 'P1-20260311';
+  const effectiveEnableImageAutofix = isP1Model ? false : normalizedEnableImageAutofix;
+  const effectiveTextureAlignment = isP1Model ? 'original_image' : normalizedTextureAlignment;
+  const effectiveOrientation = isP1Model ? 'default' : normalizedOrientation;
+  const effectiveQuad = isP1Model ? false : normalizedQuad;
+  const effectiveSmartLowPoly = isP1Model ? false : normalizedSmartLowPoly;
+  const effectiveGenerateParts = isP1Model ? false : normalizedGenerateParts;
+  const effectiveGeometryQuality = isP1Model ? 'standard' : normalizedGeometryQuality;
+
+  if (hasPrompt === hasImageSource) {
+    throw new Error('Provide either a prompt or an image input for Tripo AI mesh generation');
+  }
+
+  if (normalizedFaceLimit !== null && (normalizedFaceLimit < 1000 || normalizedFaceLimit > 300000)) {
+    throw new Error('Tripo AI face_limit must be between 1000 and 300000 when provided');
+  }
+
+  if (effectiveGenerateParts && (normalizedTexture || normalizedPbr || effectiveQuad)) {
+    throw new Error('Tripo AI generate_parts is not compatible with texture=true, pbr=true, or quad=true');
+  }
+
+  const supportsGeometryQuality = normalizedModelVersion === 'v3.0-20250812'
+    || normalizedModelVersion === 'v3.1-20260211';
+
+  return {
+    trimmedPrompt,
+    hasPrompt,
+    hasImageSource,
+    normalizedModelVersion,
+    normalizedModelSeed,
+    normalizedEnableImageAutofix: effectiveEnableImageAutofix,
+    normalizedFaceLimit,
+    normalizedTexture,
+    normalizedPbr,
+    normalizedTextureSeed,
+    normalizedTextureAlignment: effectiveTextureAlignment,
+    normalizedTextureQuality,
+    normalizedAutoSize,
+    normalizedOrientation: effectiveOrientation,
+    normalizedQuad: effectiveQuad,
+    normalizedSmartLowPoly: effectiveSmartLowPoly,
+    normalizedGenerateParts: effectiveGenerateParts,
+    normalizedExportUv,
+    normalizedGeometryQuality: effectiveGeometryQuality,
+    supportsGeometryQuality,
+    isP1Model
+  };
+}
+
+async function uploadTripoImageAndGetToken(apiKey, imageBuffer, inputFilePath = '') {
+  if (!apiKey) {
+    throw new Error('Tripo AI API Key is required');
+  }
+
+  if (!imageBuffer) {
+    throw new Error('Tripo AI image upload requires an input image');
+  }
+
+  const extension = path.extname(String(inputFilePath || '')).toLowerCase();
+  const mimeType = extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : 'image/png';
+  const uploadFilename = path.basename(inputFilePath || `input${extension || '.png'}`);
+  const formData = new FormData();
+  formData.append('file', new Blob([imageBuffer], { type: mimeType }), uploadFilename);
+
+  console.log('[TripoAI][UploadSTS] request payload:', JSON.stringify({
+    filename: uploadFilename,
+    mimeType,
+    sizeBytes: imageBuffer.length
+  }, null, 2));
+
+  const response = await fetch(`${TRIPO_API_BASE_URL}/upload/sts`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`
+    },
+    body: formData
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+  console.log('[TripoAI][UploadSTS] raw response:', JSON.stringify(responseBody || {}, null, 2));
+
+  if (!response.ok || Number(responseBody?.code) !== 0) {
+    throw new Error(responseBody?.message || responseBody?.msg || 'Failed to upload source image to Tripo AI');
+  }
+
+  const imageToken = String(responseBody?.data?.image_token || '').trim();
+
+  if (!imageToken) {
+    throw new Error('Tripo AI image upload succeeded but image_token was missing');
+  }
+
+  return imageToken;
+}
+
+async function submitTripoMeshGenerationTask(settings, {
+  prompt = '',
+  imageBuffer = null,
+  inputFilePath = '',
+  modelVersion,
+  modelSeed,
+  enableImageAutofix,
+  faceLimit,
+  texture,
+  pbr,
+  textureSeed,
+  textureAlignment,
+  textureQuality,
+  autoSize,
+  orientation,
+  quad,
+  smartLowPoly,
+  generateParts,
+  exportUv,
+  geometryQuality
+} = {}) {
+  const providerConfig = getTripoAiConfig(settings);
+  if (!providerConfig.apiKey) {
+    throw new Error('Tripo AI API Key is required');
+  }
+
+  const validatedInput = normalizeTripoMeshGenerationInput({
+    prompt,
+    hasImageSource: Boolean(imageBuffer),
+    modelVersion,
+    modelSeed,
+    enableImageAutofix,
+    faceLimit,
+    texture,
+    pbr,
+    textureSeed,
+    textureAlignment,
+    textureQuality,
+    autoSize,
+    orientation,
+    quad,
+    smartLowPoly,
+    generateParts,
+    exportUv,
+    geometryQuality
+  });
+
+  let imageToken = null;
+  if (validatedInput.hasImageSource) {
+    imageToken = await uploadTripoImageAndGetToken(providerConfig.apiKey, imageBuffer, inputFilePath);
+  }
+
+  const taskPayload = {
+    type: validatedInput.hasImageSource ? 'image_to_model' : 'text_to_model',
+    model_version: validatedInput.normalizedModelVersion,
+    texture: validatedInput.normalizedTexture,
+    pbr: validatedInput.normalizedPbr,
+    texture_quality: validatedInput.normalizedTextureQuality,
+    auto_size: validatedInput.normalizedAutoSize,
+    export_uv: validatedInput.normalizedExportUv
+  };
+
+  if (!validatedInput.isP1Model) {
+    taskPayload.enable_image_autofix = validatedInput.normalizedEnableImageAutofix;
+    taskPayload.texture_alignment = validatedInput.normalizedTextureAlignment;
+    taskPayload.orientation = validatedInput.normalizedOrientation;
+    taskPayload.quad = validatedInput.normalizedQuad;
+    taskPayload.smart_low_poly = validatedInput.normalizedSmartLowPoly;
+    taskPayload.generate_parts = validatedInput.normalizedGenerateParts;
+  }
+
+  if (validatedInput.hasImageSource) {
+    taskPayload.file = {
+      type: path.extname(String(inputFilePath || '')).toLowerCase().includes('jpg') ? 'jpg' : 'png',
+      file_token: imageToken
+    };
+  } else {
+    taskPayload.prompt = validatedInput.trimmedPrompt;
+  }
+
+  if (validatedInput.normalizedModelSeed !== null) taskPayload.model_seed = validatedInput.normalizedModelSeed;
+  if (validatedInput.normalizedFaceLimit !== null) taskPayload.face_limit = validatedInput.normalizedFaceLimit;
+  if (validatedInput.normalizedTextureSeed !== null) taskPayload.texture_seed = validatedInput.normalizedTextureSeed;
+  if (!validatedInput.isP1Model && validatedInput.supportsGeometryQuality) {
+    taskPayload.geometry_quality = validatedInput.normalizedGeometryQuality;
+  }
+
+  console.log('[TripoAI][SubmitTask] request payload:', JSON.stringify(createTripoDebugPayload(taskPayload), null, 2));
+
+  const response = await fetch(`${TRIPO_API_BASE_URL}/task`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${providerConfig.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(taskPayload)
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+  console.log('[TripoAI][SubmitTask] raw response:', JSON.stringify(responseBody || {}, null, 2));
+
+  if (!response.ok || Number(responseBody?.code) !== 0) {
+    throw new Error(responseBody?.message || responseBody?.msg || 'Tripo AI task submission failed');
+  }
+
+  const taskId = String(responseBody?.data?.task_id || '').trim();
+  if (!taskId) {
+    console.error('[TripoAI][SubmitTask] missing task_id in response payload:', JSON.stringify(responseBody || {}, null, 2));
+    throw new Error('Tripo AI task submission succeeded but task_id was missing');
+  }
+
+  return {
+    taskId,
+    imageToken,
+    requestPayload: taskPayload,
+    validatedInput
+  };
+}
+
+async function queryTripoMeshGenerationTask(settings, { taskId } = {}) {
+  const providerConfig = getTripoAiConfig(settings);
+  if (!providerConfig.apiKey) {
+    throw new Error('Tripo AI API Key is required');
+  }
+
+  console.log('[TripoAI][QueryTask] request payload:', JSON.stringify({
+    taskId: String(taskId || '').trim()
+  }, null, 2));
+
+  const response = await fetch(`${TRIPO_API_BASE_URL}/task/${encodeURIComponent(String(taskId || '').trim())}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${providerConfig.apiKey}`
+    }
+  });
+
+  const responseBody = await response.json().catch(() => ({}));
+  console.log('[TripoAI][QueryTask] raw response:', JSON.stringify(responseBody || {}, null, 2));
+
+  if (!response.ok || Number(responseBody?.code) !== 0) {
+    throw new Error(responseBody?.message || responseBody?.msg || 'Failed to query Tripo AI task status');
+  }
+
+  const taskData = responseBody?.data || {};
+  const status = String(taskData.status || '').trim().toLowerCase() || 'unknown';
+
+  const normalizedTaskResult = {
+    taskId: String(taskData.task_id || taskId || '').trim(),
+    status,
+    progress: Number(taskData.progress),
+    errorMessage: String(taskData.error_message || '').trim(),
+    output: isPlainObject(taskData.output) ? taskData.output : {}
+  };
+
+  console.log('[TripoAI][QueryTask] parsed result:', JSON.stringify(normalizedTaskResult, null, 2));
+
+  return normalizedTaskResult;
+}
+
+async function downloadTripoMeshResult(output = {}) {
+  const pbrModelUrl = String(output?.pbr_model || '').trim();
+  const modelUrl = String(output?.model || '').trim();
+  const baseModelUrl = String(output?.base_model || '').trim();
+  const selectedUrl = pbrModelUrl || modelUrl || baseModelUrl;
+
+  if (!selectedUrl) {
+    throw new Error('Tripo AI task succeeded but no model URL was returned');
+  }
+
+  const response = await fetch(selectedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download Tripo AI mesh result (${response.status})`);
+  }
+
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const extension = path.extname(getFilenameFromUrl(selectedUrl, '')).replace('.', '') || getExtensionFromContentType(contentType, 'glb');
+  const filename = getFilenameFromUrl(selectedUrl, `generated_mesh.${extension}`);
+
+  return {
+    url: selectedUrl,
+    contentType,
+    extension,
+    filename,
+    buffer,
+    isPbr: Boolean(pbrModelUrl)
+  };
+}
+
 function normalizeTencentBoolean(value, fallback = false) {
   if (typeof value === 'boolean') {
     return value;
@@ -1334,6 +1734,17 @@ function createTencentDebugPayload(params = {}) {
 
   if (typeof safePayload.ImageBase64 === 'string') {
     safePayload.ImageBase64 = `[base64:${safePayload.ImageBase64.length} chars redacted]`;
+  }
+
+  return safePayload;
+}
+
+function createTripoDebugPayload(params = {}) {
+  const safePayload = JSON.parse(JSON.stringify(params || {}));
+
+  if (safePayload?.file?.file_token) {
+    const token = String(safePayload.file.file_token);
+    safePayload.file.file_token = `[token:${token.length} chars redacted]`;
   }
 
   return safePayload;
@@ -2449,23 +2860,27 @@ app.post('/api/meshes/generate', async (req, res) => {
     const trimmedName = String(name || '').trim();
     const trimmedPrompt = String(prompt || '').trim();
     const isTencentMeshApi = isTencentMeshGenerationApi(selectedApi);
+    const isTripoMeshApi = isTripoMeshGenerationApi(selectedApi);
+    const effectiveImageSource = (isTencentMeshApi || isTripoMeshApi) && trimmedPrompt
+      ? ''
+      : imageSource;
 
     if (!projectId || !selectedApi || !trimmedName) {
       return res.status(400).json({ error: 'projectId, selectedApi and name are required' });
     }
 
-    if (!isTencentMeshApi && !trimmedPrompt) {
+    if (!isTencentMeshApi && !isTripoMeshApi && !trimmedPrompt) {
       return res.status(400).json({ error: 'prompt is required for mesh generation' });
     }
 
-    if (!isTencentMeshApi && !String(selectedApi).startsWith('custom_')) {
+    if (!isTencentMeshApi && !isTripoMeshApi && !String(selectedApi).startsWith('custom_')) {
       return res.status(400).json({ error: 'Mesh generation currently supports custom APIs only' });
     }
 
     let resolvedSource = null;
     let sourceAsset = null;
-    if (imageSource) {
-      resolvedSource = await resolveProjectImageSource(Number(projectId), imageSource);
+    if (effectiveImageSource) {
+      resolvedSource = await resolveProjectImageSource(Number(projectId), effectiveImageSource);
       sourceAsset = resolvedSource?.asset;
 
       if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'image') {
@@ -2511,7 +2926,7 @@ app.post('/api/meshes/generate', async (req, res) => {
         polygonType: validatedInput.normalizedGenerationType === 'LowPoly' ? validatedInput.normalizedPolygonType : null,
         enablePBR: validatedInput.normalizedEnablePBR,
         faceCount: validatedInput.normalizedFaceCount,
-        inputSource: imageSource || null
+        inputSource: effectiveImageSource || null
       });
 
       const submittedJob = await submitTencentCloudMeshGenerationJob(settings, {
@@ -2545,7 +2960,7 @@ app.post('/api/meshes/generate', async (req, res) => {
         faceCount: validatedInput.normalizedFaceCount,
         jobId: submittedJob.jobId,
         jobStatus: 'WAIT',
-        inputSource: imageSource || null
+        inputSource: effectiveImageSource || null
       });
 
       return res.status(202).json({
@@ -2557,6 +2972,127 @@ app.post('/api/meshes/generate', async (req, res) => {
         region: validatedInput.normalizedRegion,
         name: trimmedName,
         cardId: processingCardId
+      });
+    }
+
+    if (isTripoMeshApi) {
+      console.log('[TripoAI][GenerateRoute] request summary:', JSON.stringify({
+        promptLength: trimmedPrompt.length,
+        receivedImageSource: String(imageSource || ''),
+        effectiveImageSource: String(effectiveImageSource || ''),
+        selectedApi: String(selectedApi || '')
+      }, null, 2));
+
+      const sourceFilePath = resolvedSource ? toAbsoluteStoragePath(resolvedSource.inputFilePath) : null;
+      const sourceBuffer = sourceFilePath ? await fs.readFile(sourceFilePath) : null;
+      const validatedInput = normalizeTripoMeshGenerationInput({
+        prompt: trimmedPrompt,
+        hasImageSource: Boolean(resolvedSource),
+        modelVersion: req.body?.modelVersion,
+        modelSeed: req.body?.modelSeed,
+        enableImageAutofix: req.body?.enableImageAutofix,
+        faceLimit: req.body?.faceLimit,
+        texture: req.body?.texture,
+        pbr: req.body?.pbr,
+        textureSeed: req.body?.textureSeed,
+        textureAlignment: req.body?.textureAlignment,
+        textureQuality: req.body?.textureQuality,
+        autoSize: req.body?.autoSize,
+        orientation: req.body?.orientation,
+        quad: req.body?.quad,
+        smartLowPoly: req.body?.smartLowPoly,
+        generateParts: req.body?.generateParts,
+        exportUv: req.body?.exportUv,
+        geometryQuality: req.body?.geometryQuality
+      });
+
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Mesh Gen',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: null,
+        detail: 'Uploading image and submitting Tripo AI mesh generation task',
+        currentNodeLabel: 'Waiting for Tripo AI task id',
+        source: 'Tripo AI',
+        operationType: 'mesh-generation',
+        startedAt: processingStartedAt,
+        selectedApi,
+        inputSource: effectiveImageSource || null,
+        modelVersion: validatedInput.normalizedModelVersion,
+        texture: validatedInput.normalizedTexture,
+        pbr: validatedInput.normalizedPbr,
+        textureAlignment: validatedInput.normalizedTextureAlignment,
+        textureQuality: validatedInput.normalizedTextureQuality,
+        orientation: validatedInput.normalizedOrientation,
+        quad: validatedInput.normalizedQuad,
+        smartLowPoly: validatedInput.normalizedSmartLowPoly,
+        generateParts: validatedInput.normalizedGenerateParts,
+        exportUv: validatedInput.normalizedExportUv,
+        autoSize: validatedInput.normalizedAutoSize,
+        geometryQuality: validatedInput.supportsGeometryQuality ? validatedInput.normalizedGeometryQuality : null,
+        prompt: validatedInput.hasPrompt ? validatedInput.trimmedPrompt : ''
+      });
+
+      const submittedTask = await submitTripoMeshGenerationTask(settings, {
+        prompt: validatedInput.hasPrompt ? validatedInput.trimmedPrompt : '',
+        imageBuffer: sourceBuffer,
+        inputFilePath: resolvedSource?.inputFilePath || resolvedSource?.inputFilename || '',
+        modelVersion: validatedInput.normalizedModelVersion,
+        modelSeed: validatedInput.normalizedModelSeed,
+        enableImageAutofix: validatedInput.normalizedEnableImageAutofix,
+        faceLimit: validatedInput.normalizedFaceLimit,
+        texture: validatedInput.normalizedTexture,
+        pbr: validatedInput.normalizedPbr,
+        textureSeed: validatedInput.normalizedTextureSeed,
+        textureAlignment: validatedInput.normalizedTextureAlignment,
+        textureQuality: validatedInput.normalizedTextureQuality,
+        autoSize: validatedInput.normalizedAutoSize,
+        orientation: validatedInput.normalizedOrientation,
+        quad: validatedInput.normalizedQuad,
+        smartLowPoly: validatedInput.normalizedSmartLowPoly,
+        generateParts: validatedInput.normalizedGenerateParts,
+        exportUv: validatedInput.normalizedExportUv,
+        geometryQuality: validatedInput.normalizedGeometryQuality
+      });
+
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Mesh Gen',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: null,
+        detail: 'Tripo AI task submitted. Use GET RESULT to refresh status.',
+        currentNodeLabel: 'Tripo AI task is queued',
+        source: 'Tripo AI',
+        operationType: 'mesh-generation',
+        startedAt: processingStartedAt,
+        promptId: submittedTask.taskId,
+        selectedApi,
+        taskId: submittedTask.taskId,
+        taskStatus: 'queued',
+        inputSource: effectiveImageSource || null,
+        modelVersion: validatedInput.normalizedModelVersion,
+        texture: validatedInput.normalizedTexture,
+        pbr: validatedInput.normalizedPbr,
+        textureAlignment: validatedInput.normalizedTextureAlignment,
+        textureQuality: validatedInput.normalizedTextureQuality,
+        orientation: validatedInput.normalizedOrientation,
+        quad: validatedInput.normalizedQuad,
+        smartLowPoly: validatedInput.normalizedSmartLowPoly,
+        generateParts: validatedInput.normalizedGenerateParts,
+        exportUv: validatedInput.normalizedExportUv,
+        autoSize: validatedInput.normalizedAutoSize,
+        geometryQuality: validatedInput.supportsGeometryQuality ? validatedInput.normalizedGeometryQuality : null,
+        prompt: validatedInput.hasPrompt ? validatedInput.trimmedPrompt : ''
+      });
+
+      return res.status(202).json({
+        status: 'queued',
+        provider: 'Tripo AI',
+        selectedApi,
+        taskId: submittedTask.taskId,
+        name: trimmedName,
+        cardId: processingCardId,
+        canFetchResult: true
       });
     }
 
@@ -2782,6 +3318,115 @@ app.post('/api/meshes/generate/tencent/result', async (req, res) => {
   } catch (err) {
     console.error('Tencent Cloud mesh generation result query failed:', err);
     return res.status(500).json({ error: err.message || 'Failed to query Tencent Cloud mesh generation result' });
+  }
+});
+
+app.post('/api/meshes/generate/tripo/result', async (req, res) => {
+  try {
+    const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = TRIPO_MESH_GENERATION_API_ID } = req.body;
+    const trimmedName = String(name || '').trim();
+
+    if (!projectId || !taskId || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, taskId and name are required' });
+    }
+
+    const settings = await getSettings();
+    const taskResult = await queryTripoMeshGenerationTask(settings, { taskId });
+
+    if (TRIPO_FAILURE_STATUSES.has(taskResult.status)) {
+      if (projectId && cardId) {
+        await updateCardProcessingSnapshot(Number(projectId), cardId, {
+          columnName: 'Mesh Gen',
+          name: trimmedName,
+          status: 'error',
+          progressPercent: Number.isFinite(taskResult.progress) ? Math.max(0, Math.min(100, Math.round(taskResult.progress))) : null,
+          detail: taskResult.errorMessage || `Tripo AI task failed with status: ${taskResult.status}`,
+          currentNodeLabel: 'Tripo AI task failed',
+          source: 'Tripo AI',
+          operationType: 'mesh-generation',
+          selectedApi,
+          promptId: String(taskId),
+          taskId: String(taskId),
+          taskStatus: taskResult.status
+        });
+      }
+
+      return res.json({
+        status: 'error',
+        provider: 'Tripo AI',
+        selectedApi,
+        taskId: String(taskId),
+        taskStatus: taskResult.status,
+        error: taskResult.errorMessage || `Tripo AI task failed with status: ${taskResult.status}`
+      });
+    }
+
+    if (TRIPO_RUNNING_STATUSES.has(taskResult.status)) {
+      if (projectId && cardId) {
+        await updateCardProcessingSnapshot(Number(projectId), cardId, {
+          columnName: 'Mesh Gen',
+          name: trimmedName,
+          status: 'processing',
+          progressPercent: Number.isFinite(taskResult.progress) ? Math.max(0, Math.min(100, Math.round(taskResult.progress))) : null,
+          detail: `Tripo AI task status: ${taskResult.status}`,
+          currentNodeLabel: taskResult.status === 'running' ? 'Tripo AI task is running' : 'Tripo AI task is queued',
+          source: 'Tripo AI',
+          operationType: 'mesh-generation',
+          selectedApi,
+          promptId: String(taskId),
+          taskId: String(taskId),
+          taskStatus: taskResult.status
+        });
+      }
+
+      return res.json({
+        status: 'processing',
+        provider: 'Tripo AI',
+        selectedApi,
+        taskId: String(taskId),
+        taskStatus: taskResult.status,
+        progress: Number.isFinite(taskResult.progress) ? Math.max(0, Math.min(100, Math.round(taskResult.progress))) : null,
+        canFetchResult: true
+      });
+    }
+
+    if (taskResult.status !== TRIPO_SUCCESS_STATUS) {
+      return res.status(500).json({ error: `Unsupported Tripo AI task status: ${taskResult.status}` });
+    }
+
+    const downloadedFile = await downloadTripoMeshResult(taskResult.output);
+    const savedAssets = await saveGeneratedMeshAssets({
+      projectId: Number(projectId),
+      name: trimmedName,
+      cardId,
+      provider: 'Tripo AI',
+      prompt: String(prompt || '').trim(),
+      metadata: {
+        selectedApi,
+        taskId: String(taskId),
+        sourceUrl: downloadedFile.url,
+        isPbrModel: downloadedFile.isPbr
+      },
+      downloadedFiles: [downloadedFile]
+    });
+
+    if (cardId) {
+      await clearCardProcessingState(Number(projectId), cardId, {
+        name: trimmedName
+      });
+    }
+
+    return res.json({
+      status: 'completed',
+      provider: 'Tripo AI',
+      selectedApi,
+      taskId: String(taskId),
+      taskStatus: TRIPO_SUCCESS_STATUS,
+      assets: savedAssets
+    });
+  } catch (err) {
+    console.error('Tripo AI mesh generation result query failed:', err);
+    return res.status(500).json({ error: err.message || 'Failed to query Tripo AI mesh generation result' });
   }
 });
 

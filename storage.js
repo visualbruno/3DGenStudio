@@ -147,6 +147,17 @@ export const DEFAULT_SETTINGS = {
         }
       }
     },
+    tripoai: {
+      apiKey: '',
+      meshGeneration: {
+        models: {
+          meshgeneration: {
+            name: 'Tripo AI',
+            model: 'meshgeneration'
+          }
+        }
+      }
+    },
     comfyui: {
       path: '',
       url: 'http://127.0.0.1',
