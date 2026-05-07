@@ -37,7 +37,7 @@ const TOOLS = {
 
 const DEFAULT_ADJUST_VALUES = { blackPoint: 0, whitePoint: 255, contrast: 0, saturation: 0 }
 const DEFAULT_FILTER_VALUES = { blur: 0, sharpen: 0 }
-const DEFAULT_SHADOW_REMOVER_VALUES = { strength: 40, threshold: 32, softness: 18, midtoneProtection: 72 }
+const DEFAULT_SHADOW_REMOVER_VALUES = { strength: 40, threshold: 32, softness: 18, midtoneProtection: 72, warmth: 0 }
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 8
 const ZOOM_STEP = 1.15
@@ -2095,6 +2095,21 @@ export default function ImageEditorPage() {
             />
           </label>
 
+          <label className="image-editor-label">
+            Shadow Warmth ({shadowRemoverValues.warmth > 0 ? '+' : ''}{shadowRemoverValues.warmth}%)
+            <input
+              className="image-editor-input"
+              type="range"
+              min="-100"
+              max="100"
+              value={shadowRemoverValues.warmth}
+              onChange={event => {
+                setShadowRemoverValues(prev => ({ ...prev, warmth: Number(event.target.value) }))
+                setShadowRemoverPreviewDirty(true)
+              }}
+            />
+          </label>
+
           <div className="image-editor-toggle-row">
             <button type="button" className="image-editor-btn" onClick={handleResetShadowRemover}>
               Reset
@@ -2104,7 +2119,7 @@ export default function ImageEditorPage() {
             </button>
           </div>
 
-          <p className="image-editor-help">Lifts low-luminance regions on the GPU when available and falls back to CPU if WebGL is unavailable.</p>
+          <p className="image-editor-help">Lifts shadows using a gamma curve (like Lightroom&apos;s Shadows slider). Warmth corrects the cool blue cast common in outdoor shadows. GPU-accelerated with CPU fallback.</p>
         </div>
       )
     }

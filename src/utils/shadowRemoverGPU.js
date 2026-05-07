@@ -9,35 +9,81 @@ void main() {
 }
 `
 
+// Key algorithm changes from previous version:
+//
+// 1. Removed pow(shadowMask, 2.2) — applying display gamma to a blend mask is incorrect.
+//    It suppressed the effect on moderate shadows (pow(0.5,2.2)≈0.22) and had no
+//    photographic rationale. Threshold + softness already control selectivity.
+//
+// 2. Fixed double-mask bug — the old code applied effectiveMask both inside
+//    targetLuminance and in the final mix(), squaring its influence on edge pixels.
+//    The gamma-lift approach encodes the mask directly in the exponent, so there
+//    is no separate blend step.
+//
+// 3. Replaced additive lift with a gamma-curve lift: pow(rgb, liftGamma), where
+//    liftGamma = 1 - effectiveMask * uStrength * 0.6. This is how Lightroom/
+//    Photoshop Shadows sliders work. It lifts deep shadows heavily, midtones
+//    gently, and highlights not at all — matching photographic expectations.
+//    It also eliminates the extreme liftRatio problem near luminance≈0.
+//
+// 4. Added noise floor guard: smoothstep(0.005, 0.025, luminance) softly prevents
+//    the effect from amplifying sensor noise in near-black pixels.
+//
+// 5. Replaced the 8% desaturation (neutralize) with a uWarmth parameter. Real
+//    photographic shadows have a cool (sky-lit) blue cast. A warmth slider lets
+//    you correct that at the same time as lifting, which is the standard workflow.
+//
+// 6. Added early-exit for near-transparent pixels.
+
 const FRAGMENT_SHADER = `
 uniform sampler2D tDiffuse;
 uniform float uStrength;
 uniform float uThreshold;
 uniform float uSoftness;
 uniform float uMidtoneProtection;
+uniform float uWarmth;
 varying vec2 vUv;
 
 void main() {
   vec4 texel = texture2D(tDiffuse, vUv);
+
+  // Skip fully transparent pixels — no visible effect, avoids unnecessary work
+  if (texel.a < 0.004) {
+    gl_FragColor = texel;
+    return;
+  }
+
   float luminance = dot(texel.rgb, vec3(0.2126, 0.7152, 0.0722));
+
+  // Shadow mask: 1.0 in deep shadows, 0.0 in highlights
   float shadowStart = max(0.0, uThreshold - uSoftness);
   float shadowEnd = min(1.0, uThreshold + uSoftness * 1.35);
   float shadowMask = 1.0 - smoothstep(shadowStart, shadowEnd, luminance);
-  shadowMask = pow(shadowMask, 2.2);
 
+  // Noise floor: smoothly fade out the effect below ~2% luminance so sensor
+  // noise in near-black regions is not amplified by the lift
+  float noiseGuard = smoothstep(0.005, 0.025, luminance);
+  shadowMask *= noiseGuard;
+
+  // Midtone / highlight protection: prevents the lift from bleeding into brighter areas
   float protectStart = mix(0.18, 0.42, uMidtoneProtection);
   float protectEnd = mix(0.48, 0.82, uMidtoneProtection);
   float highlightGuard = smoothstep(protectStart, protectEnd, luminance);
   float effectiveMask = shadowMask * (1.0 - highlightGuard);
 
-  float targetLuminance = min(1.0, luminance + effectiveMask * uStrength * (0.22 + (1.0 - luminance) * 0.38));
-  float safeLuminance = max(luminance, 0.0001);
-  float liftRatio = targetLuminance / safeLuminance;
-  vec3 lifted = mix(texel.rgb, clamp(texel.rgb * liftRatio, 0.0, 1.0), effectiveMask);
+  // Photographic gamma-curve lift.
+  // liftGamma encodes both where (effectiveMask) and how much (uStrength) to lift.
+  // At effectiveMask=0: gamma=1.0, no change.
+  // At effectiveMask=1, uStrength=1: gamma=0.4, strong perceptual lift.
+  float liftGamma = 1.0 - effectiveMask * uStrength * 0.6;
+  vec3 lifted = pow(clamp(texel.rgb, 0.0001, 1.0), vec3(liftGamma));
 
-  float grayscale = dot(lifted, vec3(0.299, 0.587, 0.114));
-  float neutralize = effectiveMask * uStrength * 0.08;
-  lifted = mix(lifted, vec3(grayscale), neutralize);
+  // Warmth correction for lifted shadows.
+  // Positive uWarmth: reduce cool (blue) cast — common in sky-lit outdoor shadows.
+  // Negative uWarmth: push shadows cooler (artistic / indoor use).
+  float warmthShift = effectiveMask * uStrength * uWarmth * 0.12;
+  lifted.r = clamp(lifted.r + warmthShift, 0.0, 1.0);
+  lifted.b = clamp(lifted.b - warmthShift, 0.0, 1.0);
 
   gl_FragColor = vec4(clamp(lifted, 0.0, 1.0), texel.a);
 }
@@ -45,6 +91,14 @@ void main() {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
+}
+
+function smoothstep(edge0, edge1, value) {
+  if (edge0 === edge1) {
+    return value < edge0 ? 0 : 1
+  }
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1)
+  return t * t * (3 - 2 * t)
 }
 
 function createCanvas(width, height) {
@@ -66,10 +120,12 @@ function normalizeSettings(settings = {}) {
     strength: clamp((Number(settings.strength) || 0) / 100, 0, 1),
     threshold: clamp((Number(settings.threshold) || 0) / 100, 0, 1),
     softness: clamp((Number(settings.softness) || 0) / 100, 0.01, 1),
-    midtoneProtection: clamp((Number(settings.midtoneProtection) || 0) / 100, 0, 1)
+    midtoneProtection: clamp((Number(settings.midtoneProtection) || 0) / 100, 0, 1),
+    warmth: clamp((Number(settings.warmth) || 0) / 100, -1, 1)
   }
 }
 
+// CPU fallback — exact mirror of the GLSL shader above
 function applyShadowRemoverCpu(sourceCanvas, settings) {
   const normalized = normalizeSettings(settings)
   if (normalized.strength <= 0) {
@@ -83,9 +139,15 @@ function applyShadowRemoverCpu(sourceCanvas, settings) {
   const imageData = context.getImageData(0, 0, outputCanvas.width, outputCanvas.height)
   const data = imageData.data
 
+  const shadowStart = Math.max(0, normalized.threshold - normalized.softness)
+  const shadowEnd = Math.min(1, normalized.threshold + normalized.softness * 1.35)
+  const protectStart = 0.18 + (0.42 - 0.18) * normalized.midtoneProtection
+  const protectEnd = 0.48 + (0.82 - 0.48) * normalized.midtoneProtection
+
   for (let index = 0; index < data.length; index += 4) {
     const alpha = data[index + 3]
-    if (alpha === 0) {
+    // Mirror the shader's early-exit for near-transparent pixels (< ~1/255 ≈ 0.004)
+    if (alpha < 1) {
       continue
     }
 
@@ -94,29 +156,29 @@ function applyShadowRemoverCpu(sourceCanvas, settings) {
     const blue = data[index + 2] / 255
     const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722
 
-    const shadowStart = Math.max(0, normalized.threshold - normalized.softness)
-    const shadowEnd = Math.min(1, normalized.threshold + normalized.softness * 1.35)
+    // Shadow mask — same as GLSL, no pow(2.2) bias
     let shadowMask = 1 - smoothstep(shadowStart, shadowEnd, luminance)
-    shadowMask = Math.pow(shadowMask, 2.2)
 
-    const protectStart = 0.18 + (0.42 - 0.18) * normalized.midtoneProtection
-    const protectEnd = 0.48 + (0.82 - 0.48) * normalized.midtoneProtection
+    // Noise floor guard
+    const noiseGuard = smoothstep(0.005, 0.025, luminance)
+    shadowMask *= noiseGuard
+
+    // Midtone / highlight protection
     const highlightGuard = smoothstep(protectStart, protectEnd, luminance)
     const effectiveMask = shadowMask * (1 - highlightGuard)
 
-    const targetLuminance = Math.min(1, luminance + effectiveMask * normalized.strength * (0.22 + (1 - luminance) * 0.38))
-    const safeLuminance = Math.max(luminance, 0.0001)
-    const liftRatio = targetLuminance / safeLuminance
+    // Gamma-curve lift
+    const liftGamma = 1 - effectiveMask * normalized.strength * 0.6
+    const safe = Math.max
 
-    let nextRed = red + (clamp(red * liftRatio, 0, 1) - red) * effectiveMask
-    let nextGreen = green + (clamp(green * liftRatio, 0, 1) - green) * effectiveMask
-    let nextBlue = blue + (clamp(blue * liftRatio, 0, 1) - blue) * effectiveMask
+    let nextRed = Math.pow(clamp(red, 0.0001, 1), liftGamma)
+    let nextGreen = Math.pow(clamp(green, 0.0001, 1), liftGamma)
+    let nextBlue = Math.pow(clamp(blue, 0.0001, 1), liftGamma)
 
-    const grayscale = nextRed * 0.299 + nextGreen * 0.587 + nextBlue * 0.114
-    const neutralize = effectiveMask * normalized.strength * 0.08
-    nextRed = nextRed + (grayscale - nextRed) * neutralize
-    nextGreen = nextGreen + (grayscale - nextGreen) * neutralize
-    nextBlue = nextBlue + (grayscale - nextBlue) * neutralize
+    // Warmth correction
+    const warmthShift = effectiveMask * normalized.strength * normalized.warmth * 0.12
+    nextRed = clamp(nextRed + warmthShift, 0, 1)
+    nextBlue = clamp(nextBlue - warmthShift, 0, 1)
 
     data[index] = Math.round(clamp(nextRed, 0, 1) * 255)
     data[index + 1] = Math.round(clamp(nextGreen, 0, 1) * 255)
@@ -125,15 +187,6 @@ function applyShadowRemoverCpu(sourceCanvas, settings) {
 
   context.putImageData(imageData, 0, 0)
   return outputCanvas
-}
-
-function smoothstep(edge0, edge1, value) {
-  if (edge0 === edge1) {
-    return value < edge0 ? 0 : 1
-  }
-
-  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1)
-  return t * t * (3 - 2 * t)
 }
 
 class ShadowRemoverRenderer {
@@ -158,7 +211,8 @@ class ShadowRemoverRenderer {
         uStrength: { value: 0 },
         uThreshold: { value: 0.5 },
         uSoftness: { value: 0.2 },
-        uMidtoneProtection: { value: 0.5 }
+        uMidtoneProtection: { value: 0.5 },
+        uWarmth: { value: 0 }
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -198,6 +252,7 @@ class ShadowRemoverRenderer {
     this.material.uniforms.uThreshold.value = normalized.threshold
     this.material.uniforms.uSoftness.value = normalized.softness
     this.material.uniforms.uMidtoneProtection.value = normalized.midtoneProtection
+    this.material.uniforms.uWarmth.value = normalized.warmth
 
     this.renderer.render(this.scene, this.camera)
 
