@@ -2829,8 +2829,7 @@ export default function MeshEditorPage() {
       return null
     }
 
-    const maskFormat = THREE.RedFormat ?? THREE.LuminanceFormat
-    const texture = new THREE.DataTexture(mask.alpha, mask.width, mask.height, maskFormat)
+    const texture = new THREE.DataTexture(mask.alpha, mask.width, mask.height, THREE.RedFormat)
     texture.magFilter = THREE.LinearFilter
     texture.minFilter = THREE.LinearFilter
     texture.wrapS = THREE.ClampToEdgeWrapping
