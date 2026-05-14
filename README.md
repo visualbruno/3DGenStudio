@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-05-14** | Mesh Editor: Added new Boolean mode |
 | **2026-05-07** | Image Editor: Added an experimental Shadow Remover<br>Image Editor: Can draw and erase the Base Layer<br>Notifications: Display errors in notifications panel<br>Graph Page: Can drag output connector to the workflow |
 | **2026-05-05** | Can generate Mesh using Tripo AI and Tencent Cloud<br>Image Editor : Added Zoom-In/Out feature |
 | **2026-05-04** | New Image Editor |

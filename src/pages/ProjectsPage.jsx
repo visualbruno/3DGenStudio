@@ -19,6 +19,15 @@ const STATUS_MAP = {
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v0.8.0',
+    date: '2026-05-14',
+    items: [
+      'Mesh Editor: Added a new Boolean mode',
+			'Mesh Editor: Fixed Texturing',
+			'Assets Page: Fixed image ratio'
+    ],
+  },
+  {
     version: 'v0.7.1',
     date: '2026-05-07',
     items: [
