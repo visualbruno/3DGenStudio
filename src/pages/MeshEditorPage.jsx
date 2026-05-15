@@ -1283,6 +1283,7 @@ export default function MeshEditorPage() {
   const projectionMaskCanvasRef = useRef(null)
   const maskOverlayCanvasRef = useRef(null);
   const projectionMaskBackupRef = useRef(null)
+  const texturableEditableMeshRef = useRef(null)
   const projectionCameraRef = useRef(null)
   const [hasProjectionMask, setHasProjectionMask] = useState(false)
   const originalTextureBackupRef = useRef(null)
@@ -2474,6 +2475,66 @@ export default function MeshEditorPage() {
   }, [texturableMesh])
 
   useEffect(() => {
+    const root = texturableMesh?.root
+    if (!root) {
+      texturableEditableMeshRef.current = null
+      return
+    }
+
+    const textureKey = texturableMesh?.textureKey || ''
+    let fallbackMesh = null
+    let matchedMesh = null
+
+    root.traverse(child => {
+      if (!child.isMesh) {
+        return
+      }
+
+      if (!fallbackMesh) {
+        fallbackMesh = child
+      }
+
+      if (matchedMesh || !textureKey) {
+        return
+      }
+
+      const materials = Array.isArray(child.material) ? child.material : [child.material]
+      const hasMatchingTexture = materials.some(material => getTextureKeyFromMaterial(material) === textureKey)
+      if (hasMatchingTexture) {
+        matchedMesh = child
+      }
+    })
+
+    texturableEditableMeshRef.current = matchedMesh || fallbackMesh
+  }, [texturableMesh?.root, texturableMesh?.textureKey])
+
+  useEffect(() => {
+    const root = texturableMesh?.root
+    if (!root || !geometry) {
+      return
+    }
+
+    let targetMesh = texturableEditableMeshRef.current
+
+    if (!targetMesh) {
+      root.traverse(child => {
+        if (!targetMesh && child.isMesh) {
+          targetMesh = child
+        }
+      })
+      texturableEditableMeshRef.current = targetMesh
+    }
+
+    if (!targetMesh) {
+      return
+    }
+
+    targetMesh.geometry = geometry
+    targetMesh.updateMatrixWorld(true)
+    root.updateMatrixWorld(true)
+  }, [geometry, geometryRevision, texturableMesh])
+
+  useEffect(() => {
     let cancelled = false
 
     async function loadWorkflows() {
@@ -2627,9 +2688,10 @@ export default function MeshEditorPage() {
     setTextureWorkflowInputs(createTexturePaintWorkflowDraft(selectedTextureWorkflow))
   }, [selectedTextureWorkflow])
 
+  const editableGeometryHasUvs = !!geometry?.attributes?.uv?.count
   const texturingUnavailableReason = useMemo(() => {
-    if (geometryRevision > 0) {
-      return 'Texture painting works on the original UV mesh. Save and reopen the mesh after topology edits to paint accurately.'
+    if (!editableGeometryHasUvs) {
+      return 'The edited mesh has no UVs, so texturing and painting are unavailable for this revision.'
     }
 
     if (texturableMesh?.supportError) {
@@ -2641,7 +2703,7 @@ export default function MeshEditorPage() {
     }
 
     return ''
-  }, [geometryRevision, texturableMesh])
+  }, [editableGeometryHasUvs, texturableMesh])
 
   const handleImageParamSourceChange = (paramId, type, value = null) => {
     setImageParamSources(prev => {
@@ -4107,7 +4169,12 @@ export default function MeshEditorPage() {
       setSaving(true)
       setError('')
       setFeedback('Saving mesh...')
-      const meshBinary = geometryRevision === 0 && texturableMesh?.root && texturableMesh?.textureCanvas
+      const canExportTextured = !!(
+        texturableMesh?.root
+        && texturableMesh?.textureCanvas
+        && geometry?.attributes?.uv?.count
+      )
+      const meshBinary = canExportTextured
         ? await exportTexturedMeshToGlb({
           root: texturableMesh.root,
           textureKey: texturableMesh.textureKey,
@@ -5490,7 +5557,7 @@ export default function MeshEditorPage() {
                       shadow-camera-far={120}
                     />
                     <directionalLight position={[-5, 3, -4]} intensity={0.6} color="#8ff5ff" />
-                    {(activeMenu === 'texturing' || activeMenu === 'painting') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || (maskTextureRef.current && !texturingUnavailableReason)) ? (
+                    {(activeMenu === 'texturing' || activeMenu === 'painting') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || maskTextureRef.current) ? (
                       <TexturedMesh
                         key={textureRevision}
                         root={texturableMesh.root}

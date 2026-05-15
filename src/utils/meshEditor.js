@@ -259,8 +259,8 @@ function createMergedGeometryFromObject(object) {
 
 export function loadEditableGeometryFromObject(object) {
   const geometry = createMergedGeometryFromObject(object)
-  const { positions, indices } = compactMeshData(geometryToMeshData(geometry))
-  return createIndexedGeometry(positions, indices)
+  const { positions, indices, uvs } = compactMeshData(geometryToMeshData(geometry))
+  return createIndexedGeometry(positions, indices, uvs)
 }
 
 async function loadGeometryFromUrl(url) {
@@ -289,9 +289,14 @@ async function loadGeometryFromUrl(url) {
   throw new Error('Unsupported mesh format')
 }
 
-function createIndexedGeometry(positions = [], indices = []) {
+function createIndexedGeometry(positions = [], indices = [], uvs = null) {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+
+  if (Array.isArray(uvs) && uvs.length === (positions.length / 3) * 2) {
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  }
+
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return finalizeGeometry(geometry)
@@ -302,8 +307,15 @@ function createIndexBuffer(indices = [], vertexCount = 0) {
   return new THREE.BufferAttribute(new IndexArray(indices), 1)
 }
 
-function replaceGeometryData(geometry, positions = [], indices = []) {
+function replaceGeometryData(geometry, positions = [], indices = [], uvs = null) {
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
+
+  if (Array.isArray(uvs) && uvs.length === (positions.length / 3) * 2) {
+    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uvs), 2))
+  } else {
+    geometry.deleteAttribute('uv')
+  }
+
   geometry.setIndex(createIndexBuffer(indices, positions.length / 3))
   geometry.deleteAttribute('normal')
   geometry.computeVertexNormals()
@@ -556,20 +568,25 @@ function getBridgeAndFillCandidate(geometry, selectedVertexIndices = []) {
 
 function geometryToMeshData(geometry) {
   if (!geometry?.attributes?.position) {
-    return { positions: [], indices: [] }
+    return { positions: [], indices: [], uvs: null }
   }
 
   const positions = Array.from(geometry.attributes.position.array)
   const indices = geometry.index
     ? Array.from(geometry.index.array)
     : Array.from({ length: positions.length / 3 }, (_, index) => index)
+  const uvAttribute = geometry.attributes.uv
+  const uvs = uvAttribute?.array?.length === (positions.length / 3) * 2
+    ? Array.from(uvAttribute.array)
+    : null
 
-  return { positions, indices }
+  return { positions, indices, uvs }
 }
 
-function compactMeshData({ positions = [], indices = [] }) {
+function compactMeshData({ positions = [], indices = [], uvs = null }) {
   const usedVertices = [...new Set(indices)]
   const nextPositions = []
+  const nextUvs = Array.isArray(uvs) ? [] : null
   const remap = new Map()
 
   usedVertices.forEach((vertexIndex, nextIndex) => {
@@ -579,6 +596,13 @@ function compactMeshData({ positions = [], indices = [] }) {
       positions[vertexIndex * 3 + 1],
       positions[vertexIndex * 3 + 2]
     )
+
+    if (nextUvs) {
+      nextUvs.push(
+        uvs[vertexIndex * 2],
+        uvs[vertexIndex * 2 + 1]
+      )
+    }
   })
 
   const nextIndices = []
@@ -598,7 +622,7 @@ function compactMeshData({ positions = [], indices = [] }) {
     nextIndices.push(a, b, c)
   }
 
-  return { positions: nextPositions, indices: nextIndices }
+  return { positions: nextPositions, indices: nextIndices, uvs: nextUvs }
 }
 
 function getFace(meshData, faceIndex) {
@@ -928,10 +952,14 @@ export function deleteSelectedFaces(geometry, selectedFaceIndices = []) {
   }
 
   const holeLoops = buildHoleLoops(meshData, selectedFaceIndices)
-  const compacted = compactMeshData({ positions: meshData.positions, indices: nextIndices })
+  const compacted = compactMeshData({
+    positions: meshData.positions,
+    indices: nextIndices,
+    uvs: meshData.uvs
+  })
 
   return {
-    geometry: createIndexedGeometry(compacted.positions, compacted.indices),
+    geometry: createIndexedGeometry(compacted.positions, compacted.indices, compacted.uvs),
     holeLoops
   }
 }
@@ -1013,9 +1041,11 @@ export function mergeSelectedVertices(geometry, selectedVertexIndices = []) {
 
   const meshData = geometryToMeshData(geometry)
   const nextPositions = [...meshData.positions]
+  const nextUvs = meshData.uvs ? [...meshData.uvs] : null
   const selectedSet = new Set(selectedVertexIndices)
   const keepVertex = selectedVertexIndices[0]
   const centroid = new THREE.Vector3()
+  const uvCentroid = new THREE.Vector2()
 
   selectedVertexIndices.forEach(vertexIndex => {
     centroid.add(new THREE.Vector3(
@@ -1023,21 +1053,38 @@ export function mergeSelectedVertices(geometry, selectedVertexIndices = []) {
       meshData.positions[vertexIndex * 3 + 1],
       meshData.positions[vertexIndex * 3 + 2]
     ))
+
+    if (nextUvs) {
+      uvCentroid.add(new THREE.Vector2(
+        meshData.uvs[vertexIndex * 2],
+        meshData.uvs[vertexIndex * 2 + 1]
+      ))
+    }
   })
   centroid.multiplyScalar(1 / selectedVertexIndices.length)
+
+  if (nextUvs) {
+    uvCentroid.multiplyScalar(1 / selectedVertexIndices.length)
+  }
 
   nextPositions[keepVertex * 3] = centroid.x
   nextPositions[keepVertex * 3 + 1] = centroid.y
   nextPositions[keepVertex * 3 + 2] = centroid.z
 
+  if (nextUvs) {
+    nextUvs[keepVertex * 2] = uvCentroid.x
+    nextUvs[keepVertex * 2 + 1] = uvCentroid.y
+  }
+
   const nextIndices = meshData.indices.map(vertexIndex => (selectedSet.has(vertexIndex) ? keepVertex : vertexIndex))
-  const compacted = compactMeshData({ positions: nextPositions, indices: nextIndices })
-  return createIndexedGeometry(compacted.positions, compacted.indices)
+  const compacted = compactMeshData({ positions: nextPositions, indices: nextIndices, uvs: nextUvs })
+  return createIndexedGeometry(compacted.positions, compacted.indices, compacted.uvs)
 }
 
 export function subdivideSelectedFaces(geometry, selectedFaceIndices = []) {
   const meshData = geometryToMeshData(geometry)
   const nextPositions = [...meshData.positions]
+  const nextUvs = meshData.uvs ? [...meshData.uvs] : null
   const nextIndices = []
 
   const selectedFaces = new Set(selectedFaceIndices)
@@ -1112,6 +1159,13 @@ export function subdivideSelectedFaces(geometry, selectedFaceIndices = []) {
       (meshData.positions[left * 3 + 1] + meshData.positions[right * 3 + 1]) / 2,
       (meshData.positions[left * 3 + 2] + meshData.positions[right * 3 + 2]) / 2
     )
+
+    if (nextUvs) {
+      nextUvs.push(
+        (meshData.uvs[left * 2] + meshData.uvs[right * 2]) / 2,
+        (meshData.uvs[left * 2 + 1] + meshData.uvs[right * 2 + 1]) / 2
+      )
+    }
 
     midpointCache.set(key, midpointIndex)
     return midpointIndex
@@ -1212,10 +1266,11 @@ export function subdivideSelectedFaces(geometry, selectedFaceIndices = []) {
 
   const compacted = compactMeshData({
     positions: nextPositions,
-    indices: nextIndices
+    indices: nextIndices,
+    uvs: nextUvs
   })
 
-  return createIndexedGeometry(compacted.positions, compacted.indices)
+  return createIndexedGeometry(compacted.positions, compacted.indices, compacted.uvs)
 }
 	
 
@@ -1237,7 +1292,7 @@ export function fillHoleLoops(geometry, holeLoops = []) {
     safeTriangles.forEach(triangle => nextIndices.push(...triangle))
   })
 
-  return replaceGeometryData(geometry, meshData.positions, nextIndices)
+  return replaceGeometryData(geometry, meshData.positions, nextIndices, meshData.uvs)
 }
 
 export function bridgeSelectedHoleSegments(geometry, selectedVertexIndices = []) {
@@ -1266,7 +1321,7 @@ export function bridgeSelectedHoleSegments(geometry, selectedVertexIndices = [])
 
   const nextIndices = [...meshData.indices]
   bridgeTriangles.forEach(triangle => nextIndices.push(...triangle))
-  replaceGeometryData(geometry, meshData.positions, nextIndices)
+  replaceGeometryData(geometry, meshData.positions, nextIndices, meshData.uvs)
 
   return {
     geometry,
