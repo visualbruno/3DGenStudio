@@ -616,7 +616,14 @@ function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width,
         continue
       }
 
-      const layerOpacity = clamp01((layer.opacity ?? 1) * srcAlpha)
+      // At seam pixels (boundary zone of the projection), fade towards the
+      // underlying texture by scaling down this layer's effective opacity.
+      // opacitySeams = 1 keeps the previous behavior (opaque seams).
+      const seamFactor = layer.sharedSeamMask?.[i]
+        ? clamp01(layer.opacitySeams ?? 1)
+        : 1
+      const effectiveLayerOpacity = clamp01((layer.opacity ?? 1) * seamFactor)
+      const layerOpacity = clamp01(effectiveLayerOpacity * srcAlpha)
 
       // Use the pure 3D mathematically-derived confidence (based on facing angle and distance)
       let conf = layer.confidenceMap?.[i] || 0
@@ -651,7 +658,7 @@ function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width,
       // Any covered pixel must be fully opaque — using srcAlpha here caused
       // the feathered mask edge to bleed the checkerboard through as a white
       // gradient at projection silhouette boundaries.
-      finalMaxOpacity = Math.max(finalMaxOpacity, clamp01(layer.opacity ?? 1))
+      finalMaxOpacity = Math.max(finalMaxOpacity, effectiveLayerOpacity)
     }
 
     if (accumWeight > 0) {
@@ -2646,6 +2653,7 @@ export default function MeshEditorPage() {
   const [projectionWorkflowInputs, setProjectionWorkflowInputs] = useState({})
   const [projectionImageParamSources, setProjectionImageParamSources] = useState({})
   const [projectionStarted, setProjectionStarted] = useState(false)
+  const [projectionKeepTexture, setProjectionKeepTexture] = useState(false)
   const [projecting, setProjecting] = useState(false)
   const [projectionRebuilding, setProjectionRebuilding] = useState(false)
   const [projectionRebuildProgress, setProjectionRebuildProgress] = useState(0)
@@ -2735,6 +2743,7 @@ export default function MeshEditorPage() {
   const projectionLayerDataRef = useRef(new Map())
   const projectionLayerCounterRef = useRef(0)
   const projectionRebuildTokenRef = useRef(0)
+  const projectionBaseTextureRef = useRef(null)
   const [imageParamSources, setImageParamSources] = useState({});
   const [showAssetSelector, setShowAssetSelector] = useState(false);
   const [pendingAssetParamId, setPendingAssetParamId] = useState(null);
@@ -5835,6 +5844,8 @@ export default function MeshEditorPage() {
 
   useEffect(() => {
     setProjectionStarted(false)
+    setProjectionKeepTexture(false)
+    projectionBaseTextureRef.current = null
     projectionCoverageRef.current = null
     projectionFaceOwnershipRef.current.clear()
     projectionLayerDataRef.current.clear()
@@ -5860,7 +5871,12 @@ export default function MeshEditorPage() {
     try {
       const textureContext = textureCanvas.getContext('2d')
       textureContext.clearRect(0, 0, texW, texH)
-      drawProjectionCheckerboard(textureContext, texW, texH)
+      const baseSnapshot = projectionBaseTextureRef.current
+      if (baseSnapshot && baseSnapshot.width === texW && baseSnapshot.height === texH) {
+        textureContext.drawImage(baseSnapshot, 0, 0)
+      } else {
+        drawProjectionCheckerboard(textureContext, texW, texH)
+      }
       const composedImage = textureContext.getImageData(0, 0, texW, texH)
       const composedData = composedImage.data
       const layerSnapshots = []
@@ -6012,6 +6028,7 @@ export default function MeshEditorPage() {
         }
 
         const layerOpacity = Math.max(0, Math.min(1, Number(layer.opacity ?? 1)))
+        const layerOpacitySeams = Math.max(0, Math.min(1, Number(layer.opacitySeams ?? 1)))
         const layerBlendMode = layer.blendMode || 'source-over'
         const layerCoverage = layerData.coverageMask
         const layerOwnership = layerData.ownershipMask
@@ -6029,6 +6046,7 @@ export default function MeshEditorPage() {
             sharedSeamMask: layerSharedSeam,
             confidenceMap: layerConfidence,
             opacity: layerOpacity,
+            opacitySeams: layerOpacitySeams,
             blendMode: layerBlendMode,
             blendPixels: effectiveBlendPixels
           })
@@ -6088,6 +6106,7 @@ export default function MeshEditorPage() {
       layer.id,
       layer.visible === false ? 0 : 1,
       layer.opacity ?? 1,
+      layer.opacitySeams ?? 1,
       layer.blendMode || 'source-over',
       layer.blendPixels ?? '',
       layer.cropBorder ?? ''
@@ -6153,25 +6172,55 @@ export default function MeshEditorPage() {
       return
     }
 
-    const clampedSize = Math.max(512, Math.min(4096, Math.round(projectionTextureSize)))
-    const textureCanvas = texturableMesh.textureCanvas
-    textureCanvas.width = clampedSize
-    textureCanvas.height = clampedSize
-    const textureCtx = textureCanvas.getContext('2d')
-    textureCtx.clearRect(0, 0, clampedSize, clampedSize)
-    drawProjectionCheckerboard(textureCtx, clampedSize, clampedSize)
+    const keepTexture = window.confirm(
+      'Keep the current texture for this projection session?\n\n'
+      + 'OK = keep the existing texture (Texture Size cannot be changed; projections will fade with the current texture at their seams).\n'
+      + 'Cancel = clear the texture and start with a fresh checkerboard.'
+    )
 
-    if (texturableMesh.maskCanvas) {
-      texturableMesh.maskCanvas.width = clampedSize
-      texturableMesh.maskCanvas.height = clampedSize
-      clearCanvas(texturableMesh.maskCanvas)
+    const textureCanvas = texturableMesh.textureCanvas
+    const textureCtx = textureCanvas.getContext('2d')
+
+    if (keepTexture) {
+      const baseW = textureCanvas.width
+      const baseH = textureCanvas.height
+      const baseSnapshot = document.createElement('canvas')
+      baseSnapshot.width = baseW
+      baseSnapshot.height = baseH
+      baseSnapshot.getContext('2d').drawImage(textureCanvas, 0, 0)
+      projectionBaseTextureRef.current = baseSnapshot
+
+      if (texturableMesh.maskCanvas) {
+        if (texturableMesh.maskCanvas.width !== baseW || texturableMesh.maskCanvas.height !== baseH) {
+          texturableMesh.maskCanvas.width = baseW
+          texturableMesh.maskCanvas.height = baseH
+        }
+        clearCanvas(texturableMesh.maskCanvas)
+      }
+
+      projectionCoverageRef.current = new Uint8Array(baseW * baseH)
+    } else {
+      const clampedSize = Math.max(512, Math.min(4096, Math.round(projectionTextureSize)))
+      textureCanvas.width = clampedSize
+      textureCanvas.height = clampedSize
+      textureCtx.clearRect(0, 0, clampedSize, clampedSize)
+      drawProjectionCheckerboard(textureCtx, clampedSize, clampedSize)
+
+      if (texturableMesh.maskCanvas) {
+        texturableMesh.maskCanvas.width = clampedSize
+        texturableMesh.maskCanvas.height = clampedSize
+        clearCanvas(texturableMesh.maskCanvas)
+      }
+
+      projectionCoverageRef.current = new Uint8Array(clampedSize * clampedSize)
+      projectionBaseTextureRef.current = null
     }
 
-    projectionCoverageRef.current = new Uint8Array(clampedSize * clampedSize)
     projectionFaceOwnershipRef.current.clear()
     projectionLayerDataRef.current.clear()
     projectionLayerCounterRef.current = 0
     setProjectionLayers([])
+    setProjectionKeepTexture(keepTexture)
     setProjectionStarted(true)
     setPendingPatch(null)
     setPatchNoise(0)
@@ -6192,7 +6241,11 @@ export default function MeshEditorPage() {
       : null
 
     setTextureRevision(current => current + 1)
-    setFeedback(`Projection session started with ${clampedSize}x${clampedSize} texture.`)
+    const w = textureCanvas.width
+    const h = textureCanvas.height
+    setFeedback(keepTexture
+      ? `Projection session started — keeping current ${w}x${h} texture.`
+      : `Projection session started with ${w}x${h} texture.`)
   }, [projectionTextureSize, texturableMesh])
 
   const modifiedProjectionCount = Object.entries(projectionLayerDrafts).reduce((count, [layerId, draft]) => {
@@ -6410,6 +6463,7 @@ export default function MeshEditorPage() {
           id: layerId,
           name: layerName,
           opacity: 1,
+          opacitySeams: 1,
           blendMode: 'source-over',
           blendPixels: initialBlendPixels,
           cropBorder: initialCropBorder,
@@ -7482,7 +7536,7 @@ export default function MeshEditorPage() {
                           step="256"
                           value={projectionTextureSize}
                           onChange={event => setProjectionTextureSize(Number(event.target.value))}
-                          disabled={projectionStarted || projecting}
+                          disabled={projectionStarted || projecting || projectionKeepTexture}
                         />
                         <strong>{projectionTextureSize}px</strong>
                       </label>
@@ -8318,6 +8372,19 @@ export default function MeshEditorPage() {
                           <div className="mesh-editor-layer-card__row">
                             <span>Alpha</span>
                             <strong>{Math.round((layer.opacity ?? 1) * 100)}%</strong>
+                          </div>
+                          <div className="mesh-editor-layer-card__row">
+                            <span>Opacity seams</span>
+                            <input
+                              type="range" min="0" max="1" step="0.01"
+                              value={layer.opacitySeams ?? 1}
+                              onChange={e => handleUpdateProjectionLayer(layer.id, { opacitySeams: Number(e.target.value) })}
+                              disabled={projectionRebuilding}
+                            />
+                          </div>
+                          <div className="mesh-editor-layer-card__row">
+                            <span>Seams</span>
+                            <strong>{Math.round((layer.opacitySeams ?? 1) * 100)}%</strong>
                           </div>
                           <div className="mesh-editor-layer-card__row">
                             <span>Blend</span>
