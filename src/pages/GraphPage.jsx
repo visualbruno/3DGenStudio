@@ -548,10 +548,8 @@ function buildNodeInputSources(nodeId, currentNodes, currentEdges) {
 
 function filterMeshGenerationWorkflows(workflows = []) {
   return workflows.filter(workflow => {
-    const parameterValueTypes = (workflow.parameters || []).map(parameter => getWorkflowParameterValueType(parameter))
     const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
-
-    return parameterValueTypes.includes('image') && outputValueTypes.includes('mesh')
+    return outputValueTypes.includes('mesh')
   })
 }
 

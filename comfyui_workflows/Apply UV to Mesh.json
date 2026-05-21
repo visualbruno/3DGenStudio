@@ -46,7 +46,7 @@
       "width": 1024,
       "height": 1024,
       "batch_size": 1,
-      "color": 0
+      "color": 16777215
     },
     "class_type": "EmptyImage",
     "_meta": {
