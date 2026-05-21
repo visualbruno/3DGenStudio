@@ -144,6 +144,7 @@ export default function KanbanPage() {
     uploadAssetThumbnail,
     attachExistingAsset,
     deleteAsset,
+    deleteCard,
     moveKanbanCard,
     getLibraryAssets,
     getAttributeTypes,
@@ -495,10 +496,14 @@ export default function KanbanPage() {
     }
   }
 
-  const handleRemoveImageCard = async (cardAssets) => {
+  const handleRemoveImageCard = async (cardId, cardAssets) => {
     try {
       for (const asset of cardAssets) {
         await deleteAsset(asset.id)
+      }
+
+      if (cardId) {
+        await deleteCard(projectId, cardId)
       }
 
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
@@ -2303,7 +2308,7 @@ export default function KanbanPage() {
             disabled={cardLocked}
             onClick={(e) => {
               e.stopPropagation()
-              handleRemoveImageCard(card.allAssets || card.assets)
+              handleRemoveImageCard(card.id, card.allAssets || card.assets)
             }}
             title="Remove card"
           >

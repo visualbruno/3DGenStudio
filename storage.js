@@ -2151,6 +2151,23 @@ export async function deleteCardAttribute(projectId, externalCardId, position) {
   return { status: 'deleted' };
 }
 
+export async function deleteCard(projectId, externalCardId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const card = await resolveProjectCard(normalizedProjectId, externalCardId);
+
+  if (!card) {
+    return { status: 'not-found' };
+  }
+
+  const db = await getDb();
+  await run(db, 'DELETE FROM Cards_Assets WHERE cardId = ?', [card.id]);
+  await run(db, 'DELETE FROM Cards_Attributes WHERE cardId = ?', [card.id]);
+  await run(db, 'DELETE FROM Cards WHERE id = ?', [card.id]);
+  await normalizeCardPositions(normalizedProjectId, card.kanbanColumnId);
+
+  return { status: 'deleted' };
+}
+
 export async function moveCard(projectId, externalCardId, kanbanColumnId, position) {
   const db = await getDb();
   const card = await resolveProjectCard(projectId, externalCardId);

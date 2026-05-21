@@ -21,6 +21,7 @@ import {
   createTask,
   createWorkflowRecord,
   clearCardProcessingState,
+  deleteCard,
   deleteCardAttribute,
   deleteAssetEditByFilePath,
   deleteAssetById,
@@ -1055,10 +1056,9 @@ async function waitForComfyHistory(baseUrl, promptId, maxAttempts = 180) {
 
 function getComfyHistoryImages(historyRecord, selectedOutputs = []) {
   const preferredNodeIds = selectedOutputs.map(output => String(output.nodeId || output.id));
-  const orderedNodeIds = [
-    ...preferredNodeIds,
-    ...Object.keys(historyRecord?.outputs || {}).filter(nodeId => !preferredNodeIds.includes(String(nodeId)))
-  ];
+  const orderedNodeIds = preferredNodeIds.length > 0
+    ? preferredNodeIds.filter(nodeId => historyRecord?.outputs?.[nodeId])
+    : Object.keys(historyRecord?.outputs || {});
 
   const images = [];
 
@@ -2079,10 +2079,9 @@ async function extractMeshOutputFromApiResponse(response, responseBody) {
 function getComfyHistoryFiles(historyRecord, selectedOutputs = []) {
   const selectedOutputsByNodeId = new Map(selectedOutputs.map(output => [String(output.nodeId || output.id), output]));
   const preferredNodeIds = selectedOutputs.map(output => String(output.nodeId || output.id));
-  const orderedNodeIds = [
-    ...preferredNodeIds,
-    ...Object.keys(historyRecord?.outputs || {}).filter(nodeId => !preferredNodeIds.includes(String(nodeId)))
-  ];
+  const orderedNodeIds = preferredNodeIds.length > 0
+    ? preferredNodeIds.filter(nodeId => historyRecord?.outputs?.[nodeId])
+    : Object.keys(historyRecord?.outputs || {});
   const files = [];
 
   for (const nodeId of orderedNodeIds) {
@@ -4619,6 +4618,21 @@ app.put('/api/cards/move', async (req, res) => {
   } catch (err) {
     console.error('Failed to move card:', err);
     res.status(500).json({ error: err.message || 'Failed to move card' });
+  }
+});
+
+app.delete('/api/cards/:cardId', async (req, res) => {
+  try {
+    const projectId = Number(req.query.projectId);
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await deleteCard(projectId, req.params.cardId));
+  } catch (err) {
+    console.error('Failed to delete card:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete card' });
   }
 });
 

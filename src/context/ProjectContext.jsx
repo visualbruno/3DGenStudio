@@ -289,6 +289,20 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const deleteCard = async (projectId, cardId) => {
+    const res = await fetch(`${API_BASE}/cards/${encodeURIComponent(cardId)}?projectId=${projectId}`, {
+      method: 'DELETE'
+    })
+
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete card')
+    }
+
+    return data
+  }
+
   const deleteCardAttribute = async (projectId, cardId, position) => {
     const res = await fetch(`${API_BASE}/card-attributes/${encodeURIComponent(cardId)}/${position}?projectId=${projectId}`, {
       method: 'DELETE'
@@ -873,6 +887,7 @@ export function ProjectProvider({ children }) {
       attachExistingAsset,
       deleteAsset,
       moveKanbanCard,
+      deleteCard,
       getLibraryAssets,
       importLibraryAssets,
       importBrushChildAssets,
