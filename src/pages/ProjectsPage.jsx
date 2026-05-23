@@ -199,11 +199,19 @@ export default function ProjectsPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [showChangeLog, setShowChangeLog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [projectToDelete, setProjectToDelete] = useState(null)
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     preset: PRESETS[0],
   })
+
+  const handleConfirmDelete = async (deleteAssets) => {
+    if (!projectToDelete) return
+    const id = projectToDelete.id
+    setProjectToDelete(null)
+    await deleteProject(id, { deleteAssets })
+  }
 
   const handleCreate = async (e) => {
     e.preventDefault()
@@ -322,6 +330,46 @@ export default function ProjectsPage() {
           </div>
         )}
 
+        {projectToDelete && (
+          <div className="projects-page__modal-overlay" onClick={() => setProjectToDelete(null)}>
+            <div className="projects-page__modal" onClick={(e) => e.stopPropagation()}>
+              <div className="projects-page__modal-glow" />
+
+              <div className="projects-page__modal-header">
+                <h1 className="projects-page__modal-title font-headline">Delete Project</h1>
+                <p className="projects-page__modal-desc">
+                  Delete <strong>{projectToDelete.name}</strong>? Its assets (images, meshes) that aren&apos;t shared with another project can also be deleted.
+                </p>
+              </div>
+
+              <div className="projects-page__form-actions">
+                <button
+                  type="button"
+                  className="projects-page__btn-primary"
+                  onClick={() => handleConfirmDelete(true)}
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>delete_forever</span>
+                  Delete project & assets
+                </button>
+                <button
+                  type="button"
+                  className="projects-page__btn-secondary"
+                  onClick={() => handleConfirmDelete(false)}
+                >
+                  Delete project only
+                </button>
+                <button
+                  type="button"
+                  className="projects-page__btn-secondary"
+                  onClick={() => setProjectToDelete(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {showChangeLog && (
           <div className="projects-page__modal-overlay" onClick={() => setShowChangeLog(false)}>
             <div className="projects-page__modal projects-page__modal--changelog" onClick={(e) => e.stopPropagation()}>
@@ -419,7 +467,7 @@ export default function ProjectsPage() {
                 {/* Delete button */}
                 <button
                   className="project-card__delete"
-                  onClick={(e) => { e.stopPropagation(); deleteProject(project.id) }}
+                  onClick={(e) => { e.stopPropagation(); setProjectToDelete(project) }}
                   title="Delete project"
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>

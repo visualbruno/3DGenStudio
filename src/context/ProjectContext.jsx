@@ -327,8 +327,9 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
-  const deleteProject = async (id) => {
-    await fetch(`${API_BASE}/projects/${id}`, { method: 'DELETE' })
+  const deleteProject = async (id, { deleteAssets = false } = {}) => {
+    const query = deleteAssets ? '?deleteAssets=true' : ''
+    await fetch(`${API_BASE}/projects/${id}${query}`, { method: 'DELETE' })
     await fetchProjects()
   }
 

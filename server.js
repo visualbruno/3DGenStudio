@@ -3742,7 +3742,8 @@ app.get('/api/projects/:id', async (req, res) => {
 
 app.delete('/api/projects/:id', async (req, res) => {
   try {
-    await deleteProjectById(Number(req.params.id));
+    const deleteAssets = req.query.deleteAssets === 'true';
+    await deleteProjectById(Number(req.params.id), { deleteAssets });
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Deletion failed' });

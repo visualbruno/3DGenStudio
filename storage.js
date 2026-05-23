@@ -1512,17 +1512,104 @@ export async function getProjectById(projectId) {
   return row ? mapProjectRow(row) : null;
 }
 
-export async function deleteProjectById(projectId) {
+export async function deleteProjectById(projectId, { deleteAssets = false } = {}) {
   const db = await getDb();
+
+  let candidateAssetIds = [];
+  if (deleteAssets) {
+    const projectAssetRows = await all(
+      db,
+      `SELECT assetId FROM (
+         SELECT ca.assetId AS assetId
+         FROM Cards_Assets ca
+         JOIN Cards c ON c.id = ca.cardId
+         WHERE c.projectId = ?
+         UNION
+         SELECT n.assetId AS assetId
+         FROM Nodes n
+         WHERE n.projectId = ? AND n.assetId IS NOT NULL
+       )`,
+      [projectId, projectId]
+    );
+    const directIds = projectAssetRows.map(row => row.assetId);
+
+    if (directIds.length > 0) {
+      const directPlaceholders = directIds.map(() => '?').join(',');
+      const siblingRows = await all(
+        db,
+        `SELECT id FROM Assets
+         WHERE filePath IN (SELECT filePath FROM Assets WHERE id IN (${directPlaceholders}))`,
+        directIds
+      );
+      candidateAssetIds = siblingRows.map(row => row.id);
+    }
+  }
+
   await run(db, 'DELETE FROM Projects WHERE id = ?', [projectId]);
-  await run(
+
+  if (!deleteAssets || candidateAssetIds.length === 0) return;
+
+  const placeholders = candidateAssetIds.map(() => '?').join(',');
+
+  const eligibleRows = await all(
     db,
-    `DELETE FROM Assets
-     WHERE assetTypeId NOT IN (
+    `SELECT a.id, a.filePath, a.thumbnail
+     FROM Assets a
+     WHERE a.id IN (${placeholders})
+       AND a.assetTypeId NOT IN (
              SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush')
            )
-       AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = Assets.id)`
+       AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = a.id)
+       AND NOT EXISTS (SELECT 1 FROM Nodes WHERE Nodes.assetId = a.id)`,
+    candidateAssetIds
   );
+
+  if (eligibleRows.length === 0) return;
+
+  const eligibleIds = eligibleRows.map(row => row.id);
+  const eligiblePlaceholders = eligibleIds.map(() => '?').join(',');
+  const childRows = await all(
+    db,
+    `SELECT id, filePath, thumbnail FROM Assets WHERE parentId IN (${eligiblePlaceholders})`,
+    eligibleIds
+  );
+
+  const allDeletedRows = [...eligibleRows, ...childRows];
+  const allDeletedIds = allDeletedRows.map(row => row.id);
+  const filePathsToCheck = new Set(allDeletedRows.map(row => row.filePath).filter(Boolean));
+  const thumbnailsToCheck = new Set(allDeletedRows.map(row => row.thumbnail).filter(Boolean));
+
+  await run(
+    db,
+    `DELETE FROM Assets WHERE id IN (${eligiblePlaceholders})`,
+    eligibleIds
+  );
+
+  for (const filePath of filePathsToCheck) {
+    const stillReferenced = await get(
+      db,
+      'SELECT 1 FROM Assets WHERE filePath = ? LIMIT 1',
+      [filePath]
+    );
+    if (!stillReferenced) {
+      await fs.rm(toAbsoluteStoragePath(filePath), { force: true }).catch(() => null);
+    }
+  }
+
+  for (const thumbnail of thumbnailsToCheck) {
+    const stillReferenced = await get(
+      db,
+      'SELECT 1 FROM Assets WHERE thumbnail = ? LIMIT 1',
+      [thumbnail]
+    );
+    if (!stillReferenced) {
+      await fs.rm(toAbsoluteStoragePath(thumbnail), { force: true }).catch(() => null);
+    }
+  }
+
+  for (const id of allDeletedIds) {
+    await fs.rm(paintDocSubdirForAsset(id), { recursive: true, force: true }).catch(() => null);
+  }
 }
 
 export async function listProjectTasks(projectId) {
