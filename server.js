@@ -5438,7 +5438,7 @@ app.get('/api/system/stats', async (req, res) => {
     // This works regardless of whether it's NVIDIA, AMD, or Intel Arc.
     const gpu = graphics.controllers.reduce((prev, current) => {
       return (current.vram > (prev.vram || 0)) ? current : prev;
-    }, graphics.controllers[0]);
+    }, graphics.controllers[0] || {});
 
     // 2. Universal Mapping: Check for both 'memoryUsed' (NVIDIA style) 
     // and 'vramUsage' (AMD/Standard style)
