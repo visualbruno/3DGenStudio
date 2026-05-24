@@ -138,7 +138,7 @@ function buildMeshEditorPath(asset, projectId, returnTo) {
   const query = new URLSearchParams({
     assetId: String(asset?.id || ''),
     filePath: asset?.filePath || asset?.filename || '',
-    url: asset?.filename ? `http://localhost:3001/assets/${encodeURI(asset.filename)}` : '',
+    url: asset?.filename ? `/backend/assets/${encodeURI(asset.filename)}` : '',
     name: asset?.name || 'Mesh',
     projectId: projectId ? String(projectId) : '',
     returnTo: returnTo || ''
@@ -354,7 +354,7 @@ export default function KanbanPage() {
       return asset
     }
 
-    const assetUrl = `http://localhost:3001/assets/${encodeURI(asset.filename)}`
+    const assetUrl = `/backend/assets/${encodeURI(asset.filename)}`
     const response = await fetch(assetUrl)
 
     if (!response.ok) {
@@ -1194,7 +1194,7 @@ export default function KanbanPage() {
       return null
     }
 
-    return `http://localhost:3001/assets/${encodeURI(filename)}`
+    return `/backend/assets/${encodeURI(filename)}`
   }
 
   const formatAssetDimensions = (width, height) => {

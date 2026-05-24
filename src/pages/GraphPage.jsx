@@ -345,7 +345,7 @@ function getAssetPreviewUrl(filename) {
     return null
   }
 
-  return `http://localhost:3001/assets/${encodeURI(filename)}`
+  return `/backend/assets/${encodeURI(filename)}`
 }
 
 function appendCacheBust(url, cacheKey) {

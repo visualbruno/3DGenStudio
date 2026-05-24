@@ -10,7 +10,7 @@ function formatDimensions(width, height) {
 
 function getAssetPreviewUrl(filename) {
   if (!filename) return null;
-  return `http://localhost:3001/assets/${encodeURI(filename)}`;
+  return `/backend/assets/${encodeURI(filename)}`;
 }
 
 const ASSETS_PER_PAGE = 20;

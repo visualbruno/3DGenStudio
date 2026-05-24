@@ -7,7 +7,7 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/system/stats');
+        const response = await fetch('/backend/api/system/stats');
         const data = await response.json();
         setStats(data);
       } catch (err) {
