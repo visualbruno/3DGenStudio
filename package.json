@@ -32,7 +32,8 @@
     "tencentcloud-sdk-nodejs-intl-en": "^3.0.1352",
     "three": "^0.183.2",
     "three-bvh-csg": "^0.0.18",
-    "three-mesh-bvh": "^0.9.9"
+    "three-mesh-bvh": "^0.9.9",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",

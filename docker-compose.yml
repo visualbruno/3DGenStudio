@@ -1,0 +1,20 @@
+services:
+  3dgenstudio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: 3dgenstudio
+
+    ports:
+      # Customize host port mappings here as needed
+      - "3000:3000"   # App (frontend)
+      # - "9001:9001"   # Supervisord web UI, optional
+
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./models:/app/models
+      - ./cache:/app/cache
+
+    restart: unless-stopped

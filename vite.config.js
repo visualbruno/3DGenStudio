@@ -1,9 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// /backend/* is proxied to the Express backend so the frontend uses relative
-// paths rather than hardcoded localhost:3001 URLs.
+// /backend/* on the frontend is proxied to the backend
 const backendTarget = process.env.VITE_BACKEND_URL || 'http://127.0.0.1:3001';
+
+// Bind to all interfaces and allow any Host header only inside a container.
+const inDocker = process.env.RUNNING_IN_DOCKER === '1';
 
 const backendProxy = {
   target: backendTarget,
@@ -16,7 +18,7 @@ export default defineConfig({
   base: '/',
   plugins: [react()],
   server: {
-    host: 'localhost',
+    host: inDocker ? '0.0.0.0' : 'localhost',
     port: 3000,
     strictPort: true,
     proxy: {
@@ -24,15 +26,17 @@ export default defineConfig({
     }
   },
   preview: {
-    host: 'localhost',
+    host: inDocker ? '0.0.0.0' : 'localhost',
     port: 3000,
     strictPort: true,
+    allowedHosts: inDocker ? true : undefined,
     proxy: {
       '/backend': backendProxy,
     }
   },
-  build: {
-    minify: false,
-    sourcemap: true,
-  },
+  // uncomment for debugging
+  // build: {
+  //   minify: false,
+  //   sourcemap: true,
+  // },
 })

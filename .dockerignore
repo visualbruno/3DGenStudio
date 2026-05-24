@@ -1,0 +1,13 @@
+# App dependencies and build artifacts - rebuilt inside the image
+node_modules/
+dist/
+.cache/
+.git/
+
+# Persistent runtime data - mounted as volumes, never baked into the image
+data/
+output/
+models/
+cache/
+
+npm-debug.log

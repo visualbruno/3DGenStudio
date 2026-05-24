@@ -6,6 +6,9 @@ dist/
 
 # Local database and assets (Portable Data)
 data/
+output/
+models/
+cache/
 
 # OS files
 .DS_Store
