@@ -44,8 +44,11 @@ function buildFileList(config, selections, comfyPathsByCategory) {
     addFile(comfyPathsByCategory.DiffusionModels, modelEntry)
     addFile(comfyPathsByCategory.VAE, diffusion.VAE)
     addFile(comfyPathsByCategory.TextEncoder, diffusion.TextEncoder)
-    if (diffusion.LoRA) {
-      addFile(comfyPathsByCategory.LoRA, diffusion.LoRA)
+    const loras = Array.isArray(diffusion.LoRA)
+      ? diffusion.LoRA
+      : (diffusion.LoRA ? [diffusion.LoRA] : [])
+    for (const loraEntry of loras) {
+      addFile(comfyPathsByCategory.LoRA, loraEntry)
     }
   }
 
@@ -74,6 +77,9 @@ export default function SetupWizardModal({ onComplete, onClose }) {
 
   const [installBusy, setInstallBusy] = useState(false)
   const [installResult, setInstallResult] = useState(null)
+  const [workflowSelection, setWorkflowSelection] = useState({})
+  const [overwriteWorkflows, setOverwriteWorkflows] = useState(false)
+  const workflowSelectionPrimedRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
@@ -156,6 +162,50 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     () => filesToDownload.reduce((sum, file) => sum + (file.expectedBytes || 0), 0),
     [filesToDownload]
   )
+
+  const candidateWorkflows = useMemo(() => {
+    if (!config) return []
+    const items = []
+    for (const sel of selections) {
+      if (!sel.modelQuality) continue
+      const diffusion = (config.DiffusionModels || []).find(d => d.Name === sel.diffusionName)
+      for (const workflow of diffusion?.Workflows || []) {
+        items.push({
+          key: workflow.File,
+          name: workflow.Name,
+          workflowFile: workflow.File,
+          subtitle: diffusion.Name,
+          diffusionName: diffusion.Name,
+          modelQuality: sel.modelQuality
+        })
+      }
+    }
+    for (const workflow of config.OtherWorkflows || []) {
+      items.push({
+        key: workflow.File,
+        name: workflow.Name,
+        workflowFile: workflow.File,
+        subtitle: 'Other',
+        diffusionName: null,
+        modelQuality: null
+      })
+    }
+    return items
+  }, [config, selections])
+
+  useEffect(() => {
+    if (stepId !== 'workflows') {
+      workflowSelectionPrimedRef.current = false
+      return
+    }
+    if (workflowSelectionPrimedRef.current) return
+    workflowSelectionPrimedRef.current = true
+    const next = {}
+    for (const item of candidateWorkflows) {
+      next[item.key] = true
+    }
+    setWorkflowSelection(next)
+  }, [stepId, candidateWorkflows])
 
   const handleSkip = async () => {
     try {
@@ -279,17 +329,24 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     setInstallBusy(true)
     setInstallResult(null)
     try {
-      const payloadSelections = selections.filter(s => s.modelQuality)
+      const payloadWorkflows = candidateWorkflows
+        .filter(item => workflowSelection[item.key])
+        .map(item => ({
+          workflowFile: item.workflowFile,
+          diffusionName: item.diffusionName,
+          modelQuality: item.modelQuality
+        }))
+
       const res = await fetch(`${API_BASE}/setup/install-workflows`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ selections: payloadSelections })
+        body: JSON.stringify({ workflows: payloadWorkflows, overwrite: overwriteWorkflows })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Failed to install workflows')
       setInstallResult(data)
     } catch (err) {
-      setInstallResult({ installed: [], errors: [{ workflow: '*', error: err.message || String(err) }] })
+      setInstallResult({ installed: [], skipped: [], errors: [{ workflow: '*', error: err.message || String(err) }] })
     } finally {
       setInstallBusy(false)
     }
@@ -395,7 +452,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
         {stepId === 'models' && config && (
           <div className="setup-wizard__body">
             <p className="setup-wizard__hint">
-              Pick one quality per model you want to install — or leave it as “Don’t install”. Sizes include the model file and its required VAE / Text Encoder / LoRA.
+              Pick one quality per model you want to install — or leave everything as “Don’t install” to skip downloads and jump straight to importing workflows. Sizes include the model file and its required VAE / Text Encoder / LoRA(s).
             </p>
 
             <div className="setup-wizard__model-list">
@@ -457,7 +514,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
                 type="button"
                 className="projects-page__btn-primary"
                 onClick={handleStartDownload}
-                disabled={checkingFiles || selections.every(s => !s.modelQuality)}
+                disabled={checkingFiles}
               >
                 {filesToDownload.length === 0 ? 'Next' : 'Download'}
               </button>
@@ -522,28 +579,86 @@ export default function SetupWizardModal({ onComplete, onClose }) {
         {stepId === 'workflows' && (
           <div className="setup-wizard__body">
             <p className="setup-wizard__hint">
-              Install the workflows for the models you selected. The downloaded diffusion model is wired into each workflow.
+              Pick the workflows to import. Diffusion-tied workflows are wired to the model you downloaded.
             </p>
 
-            <ul className="setup-wizard__workflow-list">
-              {selections.filter(s => s.modelQuality).flatMap(sel => {
-                const diffusion = (config?.DiffusionModels || []).find(d => d.Name === sel.diffusionName)
-                return (diffusion?.Workflows || []).map(workflow => (
-                  <li key={`${sel.diffusionName}::${workflow.Name}`}>
-                    <span className="material-symbols-outlined">graph_3</span>
-                    {workflow.Name}
-                  </li>
-                ))
-              })}
-            </ul>
+            <div className="setup-wizard__workflow-toolbar">
+              <span className="setup-wizard__workflow-counter">
+                {Object.values(workflowSelection).filter(Boolean).length} / {candidateWorkflows.length} selected
+              </span>
+              <div className="setup-wizard__workflow-toolbar-actions">
+                <button
+                  type="button"
+                  className="setup-wizard__workflow-link"
+                  onClick={() => setWorkflowSelection(
+                    Object.fromEntries(candidateWorkflows.map(item => [item.key, true]))
+                  )}
+                  disabled={installBusy}
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="setup-wizard__workflow-link"
+                  onClick={() => setWorkflowSelection({})}
+                  disabled={installBusy}
+                >
+                  Select none
+                </button>
+              </div>
+            </div>
+
+            <div className="setup-wizard__workflow-list">
+              {candidateWorkflows.length === 0 && (
+                <div className="setup-wizard__workflow-empty">No workflows available for the current selection.</div>
+              )}
+              {candidateWorkflows.map(item => (
+                <label key={item.key} className="setup-wizard__workflow-item">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(workflowSelection[item.key])}
+                    onChange={(e) =>
+                      setWorkflowSelection(prev => ({ ...prev, [item.key]: e.target.checked }))
+                    }
+                    disabled={installBusy}
+                  />
+                  <span className="setup-wizard__workflow-item-body">
+                    <span className="setup-wizard__workflow-item-name">{item.name}</span>
+                    <span className="setup-wizard__workflow-item-meta">{item.subtitle}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <label className="setup-wizard__overwrite">
+              <input
+                type="checkbox"
+                checked={overwriteWorkflows}
+                onChange={(e) => setOverwriteWorkflows(e.target.checked)}
+                disabled={installBusy}
+              />
+              <span>Overwrite existing workflows with the same name</span>
+            </label>
 
             {installResult && (
               <div className="setup-wizard__result">
-                <div>Installed: <strong>{installResult.installed?.length || 0}</strong></div>
+                <div>
+                  Installed: <strong>{installResult.installed?.length || 0}</strong>
+                  {installResult.skipped?.length > 0 && (
+                    <> · Skipped: <strong>{installResult.skipped.length}</strong></>
+                  )}
+                </div>
+                {installResult.skipped?.length > 0 && (
+                  <ul className="setup-wizard__result-skipped">
+                    {installResult.skipped.map((s, i) => (
+                      <li key={i}>{s.name} — already installed (enable overwrite to replace)</li>
+                    ))}
+                  </ul>
+                )}
                 {installResult.errors?.length > 0 && (
                   <ul className="setup-wizard__result-errors">
                     {installResult.errors.map((e, i) => (
-                      <li key={i}>{e.workflow || e.diffusionName || 'error'}: {e.error}</li>
+                      <li key={i}>{e.workflow || e.workflowFile || 'error'}: {e.error}</li>
                     ))}
                   </ul>
                 )}
@@ -564,7 +679,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
                   type="button"
                   className="projects-page__btn-primary"
                   onClick={handleInstallWorkflows}
-                  disabled={installBusy}
+                  disabled={installBusy || Object.values(workflowSelection).every(v => !v)}
                 >
                   {installBusy ? 'Installing…' : 'Install Workflows'}
                 </button>

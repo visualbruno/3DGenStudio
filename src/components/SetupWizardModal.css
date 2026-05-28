@@ -1,6 +1,15 @@
-.setup-wizard {
+.projects-page__modal.setup-wizard {
   max-width: 640px;
+  max-height: 90vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline) transparent;
 }
+
+.projects-page__modal.setup-wizard::-webkit-scrollbar { width: 5px; }
+.projects-page__modal.setup-wizard::-webkit-scrollbar-track { background: transparent; }
+.projects-page__modal.setup-wizard::-webkit-scrollbar-thumb { background: var(--outline); border-radius: 10px; }
 
 .setup-wizard__steps {
   list-style: none;
@@ -228,30 +237,137 @@
   transition: width 0.2s ease;
 }
 
-.setup-wizard__workflow-list {
-  list-style: none;
-  margin: 0;
+.setup-wizard__workflow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.setup-wizard__workflow-counter {
+  font-size: 0.7rem;
+  font-family: var(--font-label);
+  color: var(--on-surface-variant);
+}
+
+.setup-wizard__workflow-toolbar-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.setup-wizard__workflow-link {
+  background: none;
+  border: none;
   padding: 0;
+  font-size: 0.72rem;
+  color: var(--primary);
+  font-family: var(--font-headline);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.setup-wizard__workflow-link:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.setup-wizard__workflow-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.setup-wizard__workflow-list {
   display: flex;
   flex-direction: column;
   gap: 0.375rem;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 6px;
+
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline) transparent;
 }
 
-.setup-wizard__workflow-list li {
+.setup-wizard__workflow-list::-webkit-scrollbar { width: 5px; }
+.setup-wizard__workflow-list::-webkit-scrollbar-track { background: transparent; }
+.setup-wizard__workflow-list::-webkit-scrollbar-thumb { background: var(--outline); border-radius: 10px; }
+
+.setup-wizard__workflow-empty {
+  font-size: 0.75rem;
+  color: var(--on-surface-variant);
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.setup-wizard__workflow-item {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.625rem;
   font-size: 0.8rem;
   color: var(--on-surface);
   padding: 0.5rem 0.75rem;
   background: rgba(18, 19, 22, 0.45);
   border-radius: var(--radius-md);
   border: 1px solid rgba(71, 72, 74, 0.12);
+  cursor: pointer;
+  transition: border-color var(--transition-base), background var(--transition-base);
 }
 
-.setup-wizard__workflow-list .material-symbols-outlined {
-  font-size: 16px;
-  color: var(--secondary);
+.setup-wizard__workflow-item:hover {
+  border-color: rgba(143, 245, 255, 0.25);
+}
+
+.setup-wizard__workflow-item input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.setup-wizard__workflow-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+}
+
+.setup-wizard__workflow-item-name {
+  color: var(--on-surface);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.setup-wizard__workflow-item-meta {
+  font-size: 0.66rem;
+  color: var(--on-surface-variant);
+  font-family: var(--font-label);
+  letter-spacing: 0.02em;
+}
+
+.setup-wizard__overwrite {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--on-surface-variant);
+  padding: 0.625rem 0.75rem;
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+}
+
+.setup-wizard__overwrite input[type="checkbox"] {
+  accent-color: var(--primary);
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.setup-wizard__result-skipped {
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+  color: var(--on-surface-variant);
+  font-size: 0.72rem;
 }
 
 .setup-wizard__result {
@@ -261,7 +377,15 @@
   border-radius: var(--radius-md);
   background: rgba(18, 19, 22, 0.45);
   border: 1px solid rgba(71, 72, 74, 0.12);
+  max-height: 70px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline) transparent;
 }
+
+.setup-wizard__result::-webkit-scrollbar { width: 5px; }
+.setup-wizard__result::-webkit-scrollbar-track { background: transparent; }
+.setup-wizard__result::-webkit-scrollbar-thumb { background: var(--outline); border-radius: 10px; }
 
 .setup-wizard__result-errors {
   margin: 0.5rem 0 0;

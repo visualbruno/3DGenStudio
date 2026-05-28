@@ -55,25 +55,12 @@
       "title": "Trellis2 - PreProcess Image"
     }
   },
-  "202": {
-    "inputs": {
-      "reorient_vertices": "90 degrees",
-      "mesh": [
-        "259",
-        0
-      ]
-    },
-    "class_type": "Trellis2MeshWithVoxelToTrimesh",
-    "_meta": {
-      "title": "Trellis2 - Mesh With Voxel To Trimesh"
-    }
-  },
   "203": {
     "inputs": {
       "filename_prefix": "3DGenStudio",
       "file_format": "glb",
       "trimesh": [
-        "202",
+        "261",
         0
       ]
     },
@@ -181,11 +168,15 @@
       ],
       "use_tiled_decoder": true,
       "pipeline": [
-        "258",
-        2
+        "260",
+        1
       ],
       "shape_slat": [
         "258",
+        0
+      ],
+      "texture_slat": [
+        "260",
         0
       ]
     },
@@ -272,6 +263,66 @@
     "class_type": "Trellis2FillHolesWithMeshlib",
     "_meta": {
       "title": "Trellis2 - Fill Holes with Meshlib"
+    }
+  },
+  "260": {
+    "inputs": {
+      "resolution": 1024,
+      "texture_steps": 12,
+      "texture_guidance_strength": 1,
+      "texture_guidance_rescale": 0,
+      "texture_rescale_t": 3,
+      "texture_sampler": "euler",
+      "texture_guidance_interval_start": 0.6,
+      "texture_guidance_interval_end": 0.9,
+      "verbose": false,
+      "dino_lock": 0,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "from_resolution": 0,
+      "pipeline": [
+        "258",
+        2
+      ],
+      "image_cond": [
+        "213",
+        1
+      ],
+      "shape_slat": [
+        "258",
+        0
+      ]
+    },
+    "class_type": "Trellis2TexSlatGenerator",
+    "_meta": {
+      "title": "Trellis2 - Tex Slat Generator"
+    }
+  },
+  "261": {
+    "inputs": {
+      "mesh_cluster_threshold_cone_half_angle_rad": 60,
+      "mesh_cluster_refine_iterations": 0,
+      "mesh_cluster_global_iterations": 1,
+      "mesh_cluster_smooth_strength": 1,
+      "texture_size": 2048,
+      "texture_alpha_mode": "OPAQUE",
+      "double_side_material": false,
+      "bake_on_vertices": false,
+      "use_custom_normals": true,
+      "inpainting": "telea",
+      "reorient_vertices": "90 degrees",
+      "mesh": [
+        "259",
+        0
+      ],
+      "bvh": [
+        "217",
+        1
+      ]
+    },
+    "class_type": "Trellis2UnWrapAndRasterizer",
+    "_meta": {
+      "title": "Trellis2 - UV Unwrap and Rasterize"
     }
   }
 }

@@ -5474,7 +5474,7 @@ app.get('/api/system/stats', async (req, res) => {
 
 const SETUP_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'setup');
 const SETUP_CONFIG_PATH = path.join(SETUP_DIR, 'setup.json');
-const SETUP_TYPE_TO_VALUE_TYPE = { Image: 'image', String: 'string', Number: 'number', Boolean: 'boolean' };
+const SETUP_TYPE_TO_VALUE_TYPE = { Image: 'image', String: 'string', Number: 'number', Boolean: 'boolean', Mesh: 'mesh', Video: 'video' };
 const setupDownloadJobs = new Map();
 
 function getSetupDownloadJob(jobId) {
@@ -5685,14 +5685,33 @@ async function runSetupDownloads(jobId, comfyPath, files) {
   });
 }
 
-async function installSetupWorkflow(workflowConfig, diffusionModelFileName) {
+async function deleteExistingWorkflowsByName(name) {
+  const normalizedName = sanitizeDisplayName(name, 'Workflow');
+  const records = await listWorkflowRecords();
+  let deleted = 0;
+  for (const record of records) {
+    if (sanitizeDisplayName(record.name, 'Workflow') === normalizedName) {
+      try {
+        await deleteLibraryAssetByFilePath('workflow', record.filePath, { force: true });
+        deleted += 1;
+      } catch (err) {
+        console.warn(`[setup] failed to delete existing workflow ${record.name}:`, err.message);
+      }
+    }
+  }
+  return deleted;
+}
+
+async function installSetupWorkflow(workflowConfig, diffusionModelFileName = '') {
   if (!workflowConfig?.File) {
     throw new Error('Workflow configuration is missing a File path');
   }
 
   const absoluteWorkflowPath = path.join(path.dirname(fileURLToPath(import.meta.url)), workflowConfig.File);
   const rawJson = await fs.readFile(absoluteWorkflowPath, 'utf-8');
-  const substitutedJson = rawJson.replaceAll('{diffusion_model}', diffusionModelFileName);
+  const substitutedJson = diffusionModelFileName
+    ? rawJson.replaceAll('{diffusion_model}', diffusionModelFileName)
+    : rawJson;
   const workflowJson = JSON.parse(substitutedJson);
 
   const parsedWorkflow = parseComfyWorkflow(workflowJson);
@@ -5921,39 +5940,77 @@ app.get('/api/setup/download/progress/:jobId', (req, res) => {
 
 app.post('/api/setup/install-workflows', async (req, res) => {
   try {
-    const selections = Array.isArray(req.body?.selections) ? req.body.selections : [];
-    if (selections.length === 0) {
-      return res.json({ installed: [] });
+    const workflows = Array.isArray(req.body?.workflows) ? req.body.workflows : [];
+    const overwrite = req.body?.overwrite === true;
+
+    if (workflows.length === 0) {
+      return res.json({ installed: [], skipped: [], errors: [] });
     }
 
     const config = await loadSetupConfig();
     const diffusionByName = new Map((config.DiffusionModels || []).map(model => [model.Name, model]));
+    const workflowsByFile = new Map();
+    for (const diffusion of config.DiffusionModels || []) {
+      for (const workflow of diffusion.Workflows || []) {
+        workflowsByFile.set(workflow.File, { workflow, diffusion });
+      }
+    }
+    for (const workflow of config.OtherWorkflows || []) {
+      workflowsByFile.set(workflow.File, { workflow, diffusion: null });
+    }
+
+    const existingByName = new Map();
+    for (const record of await listWorkflowRecords()) {
+      existingByName.set(sanitizeDisplayName(record.name, 'Workflow'), record);
+    }
+
     const installed = [];
+    const skipped = [];
     const errors = [];
 
-    for (const selection of selections) {
-      const diffusion = diffusionByName.get(selection.diffusionName);
-      if (!diffusion) {
-        errors.push({ diffusionName: selection.diffusionName, error: 'Unknown DiffusionModel' });
+    for (const selection of workflows) {
+      const entry = workflowsByFile.get(selection.workflowFile);
+      if (!entry) {
+        errors.push({ workflowFile: selection.workflowFile, error: 'Unknown workflow' });
         continue;
       }
-      const modelEntry = diffusion.Models?.[selection.modelQuality];
-      if (!modelEntry?.FileName) {
-        errors.push({ diffusionName: selection.diffusionName, error: `Unknown model quality ${selection.modelQuality}` });
+
+      const { workflow: workflowConfig, diffusion } = entry;
+      const normalizedName = sanitizeDisplayName(workflowConfig.Name, 'Workflow');
+      const existing = existingByName.get(normalizedName);
+
+      if (existing && !overwrite) {
+        skipped.push({ name: normalizedName, reason: 'already-installed' });
         continue;
       }
-      for (const workflowConfig of diffusion.Workflows || []) {
-        try {
-          const record = await installSetupWorkflow(workflowConfig, modelEntry.FileName);
-          installed.push({ id: record.id, name: record.name });
-        } catch (err) {
-          console.error(`[setup] failed to install workflow ${workflowConfig?.Name}:`, err);
-          errors.push({ workflow: workflowConfig?.Name, error: err.message || String(err) });
+
+      let diffusionFileName = '';
+      if (diffusion) {
+        const diffusionRecord = selection.diffusionName ? diffusionByName.get(selection.diffusionName) : diffusion;
+        const modelEntry = diffusionRecord?.Models?.[selection.modelQuality];
+        if (!modelEntry?.FileName) {
+          errors.push({ workflow: normalizedName, error: 'Missing diffusion model selection' });
+          continue;
         }
+        diffusionFileName = modelEntry.FileName;
+      }
+
+      try {
+        if (existing && overwrite) {
+          await deleteExistingWorkflowsByName(normalizedName);
+          existingByName.delete(normalizedName);
+        }
+
+        const record = await installSetupWorkflow(workflowConfig, diffusionFileName);
+        existingByName.set(normalizedName, record);
+        installed.push({ id: record.id, name: record.name, overwritten: Boolean(existing) });
+      } catch (err) {
+        console.error(`[setup] failed to install workflow ${workflowConfig?.Name}:`, err);
+        errors.push({ workflow: normalizedName, error: err.message || String(err) });
       }
     }
 
-    res.json({ installed, errors });
+    res.json({ installed, skipped, errors });
   } catch (err) {
     console.error('Failed to install setup workflows:', err);
     res.status(500).json({ error: err.message || 'Failed to install setup workflows' });

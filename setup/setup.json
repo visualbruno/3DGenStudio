@@ -20,7 +20,10 @@
 			},
 			"VAE":         { "FileName": "qwen_image_vae.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true",                                "Size": 0.3 },
 			"TextEncoder": { "FileName": "qwen_2.5_vl_7b_fp8_scaled.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors?download=true",       "Size": 9.4 },
-			"LoRA":        { "FileName": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors?download=true",        "Size": 0.9 },
+			"LoRA":[
+				{ "FileName": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors?download=true",        "Size": 0.9 },
+				{ "FileName": "QIE-2511-Studio-DeLight-5000.safetensors", "Url": "https://huggingface.co/prithivMLmods/QIE-2511-Studio-DeLight/resolve/main/QIE-2511-Studio-DeLight-5000.safetensors?download=true",        "Size": 0.2 }
+			],
 			"Workflows": [
 				{
 					"Name": "Mesh Projection with QwenImageEdit",
@@ -50,7 +53,46 @@
 					"Outputs": [
 						{ "Node": "35", "Name": "Save Image", "Type": "Image" }
 					]
-				}
+				},
+				{
+					"Name": "Edit Image with QwenImageEdit",
+					"File": "setup/Edit Image with QwenImageEdit2511.json",
+					"Inputs": [
+						{ "Node": "146", "Input": "image",  "Name": "Input Image",    "Type": "Image"  },
+						{ "Node": "148",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "143", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "156", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "155", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Inpainting with QwenImageEdit",
+					"File": "setup/Inpainting with QwenImageEdit.json",
+					"Inputs": [
+						{ "Node": "11", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
+						{ "Node": "161",  "Input": "image", "Name": "Source Mask",            "Type": "Image" },
+						{ "Node": "152", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "138", "Input": "largest_size",  "Name": "Image Scale To MaxDim",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "14", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Delight Image with QwenImageEdit",
+					"File": "setup/Delight Image with QwenImageEdit2511.json",
+					"Inputs": [
+						{ "Node": "146", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
+						{ "Node": "148",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "143", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "172", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "155", "Name": "Save Image", "Type": "Image" }
+					]
+				}					
 			]
 		},
 		{
@@ -67,7 +109,9 @@
 			},
 			"VAE":         { "FileName": "qwen_image_vae.safetensors",            "Url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true",                          "Size": 0.3 },
 			"TextEncoder": { "FileName": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors?download=true", "Size": 9.4 },
-			"LoRA":        { "FileName": "Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors?download=true", "Size": 0.9 },
+			"LoRA":[        
+				{ "FileName": "Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors?download=true", "Size": 0.9 }
+			],
 			"Workflows": [
 				{
 					"Name": "Gen Image with Qwen 2512",
@@ -141,5 +185,56 @@
 				}
 			]
 		}
+	],
+	"OtherWorkflows":[
+		{
+			"Name": "Remove Background with RMBG",
+			"File": "setup/Remove Background with RMBG.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "2",  "Input": "mask_offset",  "Name": "Mask Offset",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "4", "Name": "Save Image", "Type": "Image" }
+			]
+		},
+		{
+			"Name": "Gen MeshOnly with Trellis2",
+			"File": "setup/Gen Mesh Only with Trellis2.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},
+		{
+			"Name": "Gen TexturedMesh with Trellis2",
+			"File": "setup/Gen TexturedMesh with Trellis2.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number" },
+				{ "Node": "261",  "Input": "texture_size",  "Name": "Texture Size",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},
+		{
+			"Name": "Simplify Mesh with Trellis2",
+			"File": "setup/Simplify Mesh with Trellis2.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "glb_path",  "Name": "Source Mesh", "Type": "Mesh" },
+				{ "Node": "3",  "Input": "target_face_num",  "Name": "Target Face Number",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "5", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		}			
 	]
 }
