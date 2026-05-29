@@ -73,6 +73,7 @@
 					"Inputs": [
 						{ "Node": "11", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
 						{ "Node": "161",  "Input": "image", "Name": "Source Mask",            "Type": "Image" },
+						{ "Node": "1",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "152", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
 						{ "Node": "138", "Input": "largest_size",  "Name": "Image Scale To MaxDim",  "Type": "Number" }
 					],
