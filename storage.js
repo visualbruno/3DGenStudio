@@ -12,6 +12,7 @@ export const THUMBNAIL_ASSETS_DIR = path.join(ASSETS_DIR, 'thumbnails');
 export const WORKFLOW_ASSETS_DIR = path.join(ASSETS_DIR, 'workflows');
 export const BRUSH_ASSETS_DIR = path.join(ASSETS_DIR, 'brushes');
 export const PAINT_DOCS_DIR = path.join(ASSETS_DIR, 'paintdocs');
+export const WIKI_ASSETS_DIR = path.join(ASSETS_DIR, 'wiki');
 
 const sqlite = sqlite3.verbose();
 const DATA_ASSETS_PREFIX = 'data/assets/';
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS = {
     name: 'User',
     avatar: null
   },
+  initialSetupComplete: false,
   apis: {
     google: {
       apiKey: '',
@@ -685,6 +687,7 @@ export async function initializeStorage() {
   await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
   await fs.mkdir(BRUSH_ASSETS_DIR, { recursive: true });
   await fs.mkdir(PAINT_DOCS_DIR, { recursive: true });
+  await fs.mkdir(WIKI_ASSETS_DIR, { recursive: true });
 
   const db = await openDatabase(DB_FILE);
   await exec(db, 'PRAGMA foreign_keys = ON');
@@ -822,8 +825,22 @@ export async function initializeStorage() {
       updatedAt INTEGER NOT NULL,
       FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS WikiPages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      parentId INTEGER,
+      title TEXT NOT NULL,
+      icon TEXT,
+      content TEXT NOT NULL DEFAULT '',
+      position INTEGER NOT NULL DEFAULT 0,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(parentId) REFERENCES WikiPages(id) ON DELETE CASCADE
+    );
     `
   );
+
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_wikipages_parentId ON WikiPages(parentId)');
 
   const assetColumns = await all(db, 'PRAGMA table_info(Assets)');
   if (!assetColumns.some(column => column.name === 'thumbnail')) {
@@ -2873,6 +2890,41 @@ export async function updateWorkflowRecord(workflowId, { name, parameters = [], 
   );
 
   return await getWorkflowRecordById(workflowId);
+}
+
+function mapWikiPageRow(row) {
+  return {
+    id: row.id,
+    parentId: row.parentId ?? null,
+    title: row.title,
+    icon: row.icon || null,
+    content: row.content ?? '',
+    position: row.position ?? 0,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+export async function listWikiPages() {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    'SELECT id, parentId, title, icon, position, updatedAt FROM WikiPages ORDER BY position, id'
+  );
+  return rows.map(row => ({
+    id: row.id,
+    parentId: row.parentId ?? null,
+    title: row.title,
+    icon: row.icon || null,
+    position: row.position ?? 0,
+    updatedAt: row.updatedAt
+  }));
+}
+
+export async function getWikiPage(id) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT * FROM WikiPages WHERE id = ?', [Number(id)]);
+  return row ? mapWikiPageRow(row) : null;
 }
 
 export async function listLibraryAssetsByType(type, port) {

@@ -26,6 +26,7 @@ function normalizeSettings(settings) {
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({
     profile: { name: 'User', avatar: null },
+    initialSetupComplete: false,
     apis: {
       google: {
         apiKey: '',

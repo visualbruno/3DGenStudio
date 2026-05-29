@@ -40,6 +40,12 @@
   margin-top: 0.25rem;
 }
 
+.projects-page__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
 .projects-page__new-btn {
   display: flex;
   align-items: center;
@@ -54,6 +60,28 @@
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--transition-base);
+}
+
+.projects-page__setup-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.125rem;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-family: var(--font-headline);
+  font-weight: 600;
+  font-size: 0.875rem;
+  border: 1px solid rgba(71, 72, 74, 0.3);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.projects-page__setup-btn:hover {
+  color: var(--primary);
+  border-color: rgba(143, 245, 255, 0.35);
+  background: rgba(143, 245, 255, 0.04);
 }
 
 .projects-page__new-btn:hover {

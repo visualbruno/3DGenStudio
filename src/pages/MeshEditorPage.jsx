@@ -7464,7 +7464,7 @@ export default function MeshEditorPage() {
                       </label>
                       <label className="mesh-editor-range-field">
                         <span>Crop margin</span>
-                        <input type="range" min="0" max="128" value={cropPadding} onChange={event => setCropPadding(Number(event.target.value))} disabled={!!texturingUnavailableReason || !!pendingPatch} />
+                        <input type="range" min="0" max="256" value={cropPadding} onChange={event => setCropPadding(Number(event.target.value))} disabled={!!texturingUnavailableReason || !!pendingPatch} />
                         <strong>{cropPadding}px</strong>
                       </label>
                       <label className="mesh-editor-range-field">

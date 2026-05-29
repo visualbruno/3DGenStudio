@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
+import { useSettings } from '../context/SettingsContext.shared'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
+import SetupWizardModal from '../components/SetupWizardModal'
 import './ProjectsPage.css'
 
 const PRESETS = [
@@ -18,6 +20,14 @@ const STATUS_MAP = {
 }
 
 const CHANGE_LOG_ENTRIES = [
+  {
+    version: 'v1.0.0',
+    date: '2026-05-29',
+    items: [
+			'Initial Setup: Download the models and configure automatically the workflows',
+			'Wiki: First version of a documentation'
+    ],
+  },
   {
     version: 'v0.9.2',
     date: '2026-05-23',
@@ -196,11 +206,26 @@ const CHANGE_LOG_ENTRIES = [
 
 export default function ProjectsPage() {
   const { projects, createProject, deleteProject } = useProjects()
+  const { settings, loading: settingsLoading } = useSettings()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [showChangeLog, setShowChangeLog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [setupManualOpen, setSetupManualOpen] = useState(false)
+  const [setupDismissed, setSetupDismissed] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState(null)
+
+  const showSetup = setupManualOpen
+    || (!settingsLoading && !settings?.initialSetupComplete && !setupDismissed)
+
+  const closeSetup = () => {
+    setSetupManualOpen(false)
+    setSetupDismissed(true)
+  }
+  const openSetup = () => {
+    setSetupDismissed(false)
+    setSetupManualOpen(true)
+  }
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -233,6 +258,13 @@ export default function ProjectsPage() {
       <Header onSettingsClick={() => setShowSettings(true)} />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {showSetup && (
+        <SetupWizardModal
+          onClose={closeSetup}
+          onComplete={closeSetup}
+        />
+      )}
 
       <main className="projects-page">
         {/* Hero / Create Modal */}
@@ -416,10 +448,21 @@ export default function ProjectsPage() {
               <h1 className="projects-page__page-title font-headline">Your Projects</h1>
               <p className="projects-page__page-desc">{projects.length} workspace{projects.length !== 1 ? 's' : ''} available</p>
             </div>
-            <button className="projects-page__new-btn" onClick={() => setShowCreate(true)} id="open-create-modal">
-              <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
-              New Project
-            </button>
+            <div className="projects-page__header-actions">
+              <button className="projects-page__new-btn" onClick={() => setShowCreate(true)} id="open-create-modal">
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>add</span>
+                New Project
+              </button>
+              <button
+                type="button"
+                className="projects-page__setup-btn"
+                onClick={openSetup}
+                id="open-setup-modal"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>settings_suggest</span>
+                Setup
+              </button>
+            </div>
           </div>
 
           <div className="projects-page__grid">

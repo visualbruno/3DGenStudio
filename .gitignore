@@ -7,6 +7,10 @@ dist/
 # Local database and assets (Portable Data)
 data/
 
+# Wiki author mode — presence of this file unlocks editing the Wiki.
+# Kept local (never synced) so the published docs are read-only for end users.
+.wiki-author
+
 # OS files
 .DS_Store
 Thumbs.db

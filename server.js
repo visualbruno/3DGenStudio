@@ -6,6 +6,10 @@ import { Buffer } from 'buffer';
 import { randomUUID } from 'crypto';
 import { createAssetEditRecord, createBrushChildRecord, resolveProjectImageSource, resolveProjectMeshSource } from './storage.js';
 import fs from 'fs/promises';
+import { createWriteStream, existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import si from 'systeminformation';
 import tencentcloudSdk from 'tencentcloud-sdk-nodejs-intl-en';
 import {
@@ -13,6 +17,7 @@ import {
   DATA_DIR,
   DEFAULT_SETTINGS,
   WORKFLOW_ASSETS_DIR,
+  WIKI_ASSETS_DIR,
   THUMBNAIL_ASSETS_DIR,
   createProject,
   createLibraryAsset,
@@ -46,6 +51,8 @@ import {
   listProjectTasks,
   listProjects,
   listWorkflowRecords,
+  listWikiPages as dbListWikiPages,
+  getWikiPage as dbGetWikiPage,
   moveCard,
   createProjectConnection,
   createProjectNode,
@@ -72,6 +79,18 @@ import {
   updateProjectNodePosition,
   updateWorkflowRecord
 } from './storage.js';
+import {
+  WIKI_MEDIA_DIR,
+  wikiManifestExists,
+  listWikiPages,
+  getWikiPage,
+  createWikiPage,
+  updateWikiPage,
+  deleteWikiPage,
+  moveWikiPage,
+  seedWikiFiles,
+  importWikiPages
+} from './wikiStorage.js';
 
 const app = express();
 const PORT = 3001;
@@ -105,6 +124,7 @@ app.use(cors());
 app.use('/api/meshes/editor/save', express.json({ limit: '50mb' }));
 app.use(express.json({ limit: '10mb' }));
 app.use('/assets', express.static(ASSETS_DIR));
+app.use('/wiki-media', express.static(WIKI_MEDIA_DIR));
 
 // Multer Config for Asset Uploads
 const storage = multer.diskStorage({
@@ -306,6 +326,153 @@ const libraryImportUpload = multer({ storage: multer.memoryStorage() });
 const thumbnailUpload = multer({ storage: multer.memoryStorage() });
 const meshEditorSaveUpload = multer({ storage: multer.memoryStorage() });
 const paintDocumentUpload = multer({ storage: multer.memoryStorage() });
+const wikiMediaUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 256 * 1024 * 1024 } });
+
+const WIKI_MEDIA_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg',
+  '.mp4', '.webm', '.ogg', '.mov', '.m4v'
+]);
+
+function buildWikiPageTree(pages) {
+  const byId = new Map(pages.map(page => [page.id, { ...page, children: [] }]));
+  const roots = [];
+  for (const page of byId.values()) {
+    if (page.parentId !== null && page.parentId !== undefined && byId.has(page.parentId)) {
+      byId.get(page.parentId).children.push(page);
+    } else {
+      roots.push(page);
+    }
+  }
+  const sortNodes = nodes => {
+    nodes.sort((a, b) => (a.position - b.position) || (a.id - b.id));
+    nodes.forEach(node => sortNodes(node.children));
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+// ── Wiki ──────────────────────────────────────────────────────────────────
+// Author mode is unlocked only when the gitignored `.wiki-author` marker file
+// exists at the project root. Checked live so it can be toggled without a
+// restart. Read-only installations (end users) never have this file.
+const WIKI_AUTHOR_FLAG = path.join(process.cwd(), '.wiki-author');
+
+function isWikiAuthorMode() {
+  return existsSync(WIKI_AUTHOR_FLAG);
+}
+
+function requireWikiAuthor(req, res, next) {
+  if (!isWikiAuthorMode()) {
+    return res.status(403).json({ error: 'The Wiki is read-only on this installation.' });
+  }
+  next();
+}
+
+app.get('/api/wiki/config', (req, res) => {
+  res.json({ authorMode: isWikiAuthorMode() });
+});
+
+app.get('/api/wiki/pages', async (req, res) => {
+  try {
+    const pages = await listWikiPages();
+    res.json({ pages, tree: buildWikiPageTree(pages) });
+  } catch (err) {
+    console.error('Failed to list wiki pages:', err);
+    res.status(500).json({ error: err.message || 'Failed to list wiki pages' });
+  }
+});
+
+app.get('/api/wiki/pages/:id', async (req, res) => {
+  try {
+    const page = await getWikiPage(req.params.id);
+    if (!page) {
+      return res.status(404).json({ error: 'Wiki page not found' });
+    }
+    res.json(page);
+  } catch (err) {
+    console.error('Failed to load wiki page:', err);
+    res.status(500).json({ error: err.message || 'Failed to load wiki page' });
+  }
+});
+
+app.post('/api/wiki/pages', requireWikiAuthor, async (req, res) => {
+  try {
+    const { parentId = null, title, icon = null, content = '' } = req.body || {};
+    const page = await createWikiPage({ parentId, title, icon, content });
+    res.status(201).json(page);
+  } catch (err) {
+    console.error('Failed to create wiki page:', err);
+    res.status(400).json({ error: err.message || 'Failed to create wiki page' });
+  }
+});
+
+app.put('/api/wiki/pages/:id', requireWikiAuthor, async (req, res) => {
+  try {
+    const { title, icon, content } = req.body || {};
+    const page = await updateWikiPage(req.params.id, { title, icon, content });
+    if (!page) {
+      return res.status(404).json({ error: 'Wiki page not found' });
+    }
+    res.json(page);
+  } catch (err) {
+    console.error('Failed to update wiki page:', err);
+    res.status(400).json({ error: err.message || 'Failed to update wiki page' });
+  }
+});
+
+app.put('/api/wiki/pages/:id/move', requireWikiAuthor, async (req, res) => {
+  try {
+    const { parentId, position } = req.body || {};
+    const page = await moveWikiPage(req.params.id, { parentId, position });
+    if (!page) {
+      return res.status(404).json({ error: 'Wiki page not found' });
+    }
+    res.json(page);
+  } catch (err) {
+    console.error('Failed to move wiki page:', err);
+    res.status(400).json({ error: err.message || 'Failed to move wiki page' });
+  }
+});
+
+app.delete('/api/wiki/pages/:id', requireWikiAuthor, async (req, res) => {
+  try {
+    const result = await deleteWikiPage(req.params.id);
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Wiki page not found' });
+    }
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete wiki page:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete wiki page' });
+  }
+});
+
+app.post('/api/wiki/media', requireWikiAuthor, wikiMediaUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const extension = path.extname(req.file.originalname).toLowerCase();
+    if (!WIKI_MEDIA_EXTENSIONS.has(extension)) {
+      return res.status(400).json({ error: `Unsupported file type: ${extension || 'unknown'}` });
+    }
+
+    await fs.mkdir(WIKI_MEDIA_DIR, { recursive: true });
+    const uniqueName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${extension}`;
+    await fs.writeFile(path.join(WIKI_MEDIA_DIR, uniqueName), req.file.buffer);
+
+    const isVideo = ['.mp4', '.webm', '.ogg', '.mov', '.m4v'].includes(extension);
+    res.status(201).json({
+      url: `http://localhost:${PORT}/wiki-media/${encodeURIComponent(uniqueName)}`,
+      kind: isVideo ? 'video' : 'image',
+      name: req.file.originalname
+    });
+  } catch (err) {
+    console.error('Failed to upload wiki media:', err);
+    res.status(500).json({ error: err.message || 'Failed to upload wiki media' });
+  }
+});
 
 const INITIAL_SCHEMA = {
   projects: [
@@ -5438,7 +5605,7 @@ app.get('/api/system/stats', async (req, res) => {
     // This works regardless of whether it's NVIDIA, AMD, or Intel Arc.
     const gpu = graphics.controllers.reduce((prev, current) => {
       return (current.vram > (prev.vram || 0)) ? current : prev;
-    }, graphics.controllers[0]);
+    }, graphics.controllers[0] || {});
 
     // 2. Universal Mapping: Check for both 'memoryUsed' (NVIDIA style) 
     // and 'vramUsage' (AMD/Standard style)
@@ -5466,8 +5633,608 @@ app.get('/api/system/stats', async (req, res) => {
   }
 });
 
+// ─── INITIAL SETUP ───
+
+const SETUP_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'setup');
+const SETUP_CONFIG_PATH = path.join(SETUP_DIR, 'setup.json');
+const SETUP_TYPE_TO_VALUE_TYPE = { Image: 'image', String: 'string', Number: 'number', Boolean: 'boolean', Mesh: 'mesh', Video: 'video' };
+const setupDownloadJobs = new Map();
+
+function getSetupDownloadJob(jobId) {
+  if (!setupDownloadJobs.has(jobId)) {
+    setupDownloadJobs.set(jobId, { subscribers: new Set(), snapshot: null });
+  }
+  return setupDownloadJobs.get(jobId);
+}
+
+function publishSetupDownloadProgress(jobId, payload) {
+  const job = getSetupDownloadJob(jobId);
+  const message = { jobId, timestamp: Date.now(), ...payload };
+  job.snapshot = message;
+
+  for (const response of job.subscribers) {
+    response.write(`data: ${JSON.stringify(message)}\n\n`);
+  }
+
+  if (message.status === 'done' || message.status === 'error') {
+    setTimeout(() => {
+      if (job.subscribers.size === 0) {
+        setupDownloadJobs.delete(jobId);
+      }
+    }, 60000);
+  }
+}
+
+function subscribeSetupDownload(jobId, req, res) {
+  const job = getSetupDownloadJob(jobId);
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write('retry: 1000\n\n');
+
+  job.subscribers.add(res);
+
+  if (job.snapshot) {
+    res.write(`data: ${JSON.stringify(job.snapshot)}\n\n`);
+  }
+
+  const heartbeat = setInterval(() => res.write(': keep-alive\n\n'), 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    job.subscribers.delete(res);
+  });
+}
+
+async function loadSetupConfig() {
+  const raw = await fs.readFile(SETUP_CONFIG_PATH, 'utf-8');
+  return JSON.parse(raw);
+}
+
+async function pathExists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fileSizeOrNull(targetPath) {
+  try {
+    const stat = await fs.stat(targetPath);
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveComfySubPath(comfyPath, relativePath) {
+  const normalizedRelative = String(relativePath || '').replace(/^[/\\]+/, '');
+  return path.join(comfyPath, normalizedRelative);
+}
+
+async function downloadFileWithProgress(url, destinationPath, onChunk) {
+  const response = await fetch(url);
+  if (!response.ok || !response.body) {
+    throw new Error(`Download failed (${response.status} ${response.statusText})`);
+  }
+
+  const totalBytes = Number(response.headers.get('content-length')) || 0;
+  const tempPath = `${destinationPath}.part`;
+  const writeStream = createWriteStream(tempPath);
+
+  let receivedBytes = 0;
+
+  try {
+    for await (const chunk of response.body) {
+      const writeOk = writeStream.write(chunk);
+      if (!writeOk) {
+        await new Promise(resolve => writeStream.once('drain', resolve));
+      }
+      receivedBytes += chunk.length;
+      onChunk?.(receivedBytes, totalBytes);
+    }
+
+    await new Promise((resolve, reject) => {
+      writeStream.end(err => err ? reject(err) : resolve());
+    });
+
+    await fs.rename(tempPath, destinationPath);
+  } catch (err) {
+    writeStream.destroy();
+    try { await fs.unlink(tempPath); } catch { /* best-effort cleanup */ }
+    throw err;
+  }
+
+  return { receivedBytes, totalBytes };
+}
+
+async function runSetupDownloads(jobId, comfyPath, files) {
+  const totalExpectedBytes = files.reduce((sum, file) => sum + (Number(file.expectedBytes) || 0), 0);
+  let cumulativeCompletedBytes = 0;
+
+  publishSetupDownloadProgress(jobId, {
+    status: 'downloading',
+    currentIndex: 0,
+    totalFiles: files.length,
+    currentFile: files[0]?.fileName || '',
+    currentBytes: 0,
+    currentTotalBytes: 0,
+    currentPercent: 0,
+    overallPercent: 0
+  });
+
+  for (let index = 0; index < files.length; index += 1) {
+    const file = files[index];
+    const destinationPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir, file.fileName));
+
+    try {
+      await fs.mkdir(path.dirname(destinationPath), { recursive: true });
+
+      const existingSize = await fileSizeOrNull(destinationPath);
+      if (existingSize !== null && existingSize > 0) {
+        cumulativeCompletedBytes += existingSize;
+        publishSetupDownloadProgress(jobId, {
+          status: 'downloading',
+          currentIndex: index,
+          totalFiles: files.length,
+          currentFile: file.fileName,
+          currentBytes: existingSize,
+          currentTotalBytes: existingSize,
+          currentPercent: 100,
+          overallPercent: totalExpectedBytes > 0 ? Math.min(100, Math.round((cumulativeCompletedBytes / totalExpectedBytes) * 100)) : 0,
+          skipped: true
+        });
+        continue;
+      }
+
+      let lastEmit = 0;
+      let lastReceived = 0;
+
+      const result = await downloadFileWithProgress(file.url, destinationPath, (currentBytes, currentTotalBytes) => {
+        const now = Date.now();
+        if (now - lastEmit < 200 && currentBytes < currentTotalBytes) {
+          return;
+        }
+        lastEmit = now;
+        lastReceived = currentBytes;
+
+        publishSetupDownloadProgress(jobId, {
+          status: 'downloading',
+          currentIndex: index,
+          totalFiles: files.length,
+          currentFile: file.fileName,
+          currentBytes,
+          currentTotalBytes,
+          currentPercent: currentTotalBytes > 0 ? Math.round((currentBytes / currentTotalBytes) * 100) : 0,
+          overallPercent: totalExpectedBytes > 0 ? Math.min(100, Math.round(((cumulativeCompletedBytes + currentBytes) / totalExpectedBytes) * 100)) : 0
+        });
+      });
+
+      cumulativeCompletedBytes += Math.max(result.receivedBytes, lastReceived);
+
+      publishSetupDownloadProgress(jobId, {
+        status: 'downloading',
+        currentIndex: index,
+        totalFiles: files.length,
+        currentFile: file.fileName,
+        currentBytes: result.receivedBytes,
+        currentTotalBytes: result.totalBytes || result.receivedBytes,
+        currentPercent: 100,
+        overallPercent: totalExpectedBytes > 0 ? Math.min(100, Math.round((cumulativeCompletedBytes / totalExpectedBytes) * 100)) : 0
+      });
+    } catch (err) {
+      console.error(`[setup] download failed for ${file.fileName}:`, err);
+      publishSetupDownloadProgress(jobId, {
+        status: 'error',
+        currentIndex: index,
+        totalFiles: files.length,
+        currentFile: file.fileName,
+        error: err.message || String(err)
+      });
+      return;
+    }
+  }
+
+  publishSetupDownloadProgress(jobId, {
+    status: 'done',
+    totalFiles: files.length,
+    currentIndex: files.length,
+    overallPercent: 100
+  });
+}
+
+async function deleteExistingWorkflowsByName(name) {
+  const normalizedName = sanitizeDisplayName(name, 'Workflow');
+  const records = await listWorkflowRecords();
+  let deleted = 0;
+  for (const record of records) {
+    if (sanitizeDisplayName(record.name, 'Workflow') === normalizedName) {
+      try {
+        await deleteLibraryAssetByFilePath('workflow', record.filePath, { force: true });
+        deleted += 1;
+      } catch (err) {
+        console.warn(`[setup] failed to delete existing workflow ${record.name}:`, err.message);
+      }
+    }
+  }
+  return deleted;
+}
+
+async function installSetupWorkflow(workflowConfig, diffusionModelFileName = '') {
+  if (!workflowConfig?.File) {
+    throw new Error('Workflow configuration is missing a File path');
+  }
+
+  const absoluteWorkflowPath = path.join(path.dirname(fileURLToPath(import.meta.url)), workflowConfig.File);
+  const rawJson = await fs.readFile(absoluteWorkflowPath, 'utf-8');
+  const substitutedJson = diffusionModelFileName
+    ? rawJson.replaceAll('{diffusion_model}', diffusionModelFileName)
+    : rawJson;
+  const workflowJson = JSON.parse(substitutedJson);
+
+  const parsedWorkflow = parseComfyWorkflow(workflowJson);
+  const availableParameters = new Map(parsedWorkflow.inputs.map(input => [input.id, input]));
+  const availableOutputs = new Map(parsedWorkflow.outputs.map(output => [String(output.nodeId), output]));
+
+  const parameters = [];
+  for (const inputCfg of workflowConfig.Inputs || []) {
+    const parameterId = `${inputCfg.Node}.${inputCfg.Input}`;
+    const sourceParameter = availableParameters.get(parameterId);
+    if (!sourceParameter) {
+      throw new Error(`Workflow "${workflowConfig.Name}": input ${parameterId} not found`);
+    }
+    parameters.push({
+      ...sourceParameter,
+      name: sanitizeDisplayName(inputCfg.Name || sourceParameter.name, sourceParameter.name),
+      valueType: normalizeComfyValueType(SETUP_TYPE_TO_VALUE_TYPE[inputCfg.Type], getDefaultComfyValueType(sourceParameter))
+    });
+  }
+
+  const outputs = [];
+  for (const outputCfg of workflowConfig.Outputs || []) {
+    const outputNodeId = String(outputCfg.Node);
+    const sourceOutput = availableOutputs.get(outputNodeId);
+    if (!sourceOutput) {
+      throw new Error(`Workflow "${workflowConfig.Name}": output node ${outputNodeId} not found`);
+    }
+    outputs.push({
+      ...sourceOutput,
+      name: sanitizeDisplayName(outputCfg.Name || sourceOutput.nodeTitle, sourceOutput.nodeTitle),
+      valueType: normalizeComfyValueType(SETUP_TYPE_TO_VALUE_TYPE[outputCfg.Type], 'image')
+    });
+  }
+
+  if (outputs.length === 0) {
+    throw new Error(`Workflow "${workflowConfig.Name}" has no outputs configured`);
+  }
+
+  const filePath = await saveWorkflowFile(workflowConfig.Name, workflowJson);
+  const workflowRecord = await createWorkflowRecord({
+    name: sanitizeDisplayName(workflowConfig.Name, 'Workflow'),
+    filePath,
+    parameters,
+    outputs
+  });
+
+  return workflowRecord;
+}
+
+async function pickFolderNative({ description = 'Select folder', initialPath = '' } = {}) {
+  if (process.platform !== 'win32') {
+    throw new Error('Native folder picker is only available on Windows');
+  }
+
+  const safeDescription = String(description).replace(/'/g, "''");
+  const safeInitial = String(initialPath || '').replace(/'/g, "''");
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+$dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+$dlg.Description = '${safeDescription}'
+$dlg.ShowNewFolderButton = $false
+if ('${safeInitial}'.Length -gt 0 -and (Test-Path -LiteralPath '${safeInitial}')) {
+  $dlg.SelectedPath = '${safeInitial}'
+}
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.WindowState = 'Minimized'
+$owner.Opacity = 0
+$owner.Show()
+$owner.Activate()
+try {
+  $result = $dlg.ShowDialog($owner)
+} finally {
+  $owner.Close()
+  $owner.Dispose()
+}
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+  Write-Output $dlg.SelectedPath
+}
+`;
+
+  return await new Promise((resolve, reject) => {
+    const proc = spawn(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-STA', '-Command', script],
+      { windowsHide: true }
+    );
+
+    let stdout = '';
+    let stderr = '';
+
+    proc.stdout.on('data', chunk => { stdout += chunk.toString(); });
+    proc.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    proc.on('error', err => reject(err));
+    proc.on('close', code => {
+      if (code !== 0) {
+        reject(new Error(stderr.trim() || `Folder picker exited with code ${code}`));
+        return;
+      }
+      const selected = stdout.replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean).pop() || '';
+      resolve(selected);
+    });
+  });
+}
+
+app.post('/api/setup/pick-folder', async (req, res) => {
+  try {
+    const description = String(req.body?.description || 'Select folder').slice(0, 200);
+    const initialPath = String(req.body?.initialPath || '').slice(0, 1024);
+    const selected = await pickFolderNative({ description, initialPath });
+    res.json({ path: selected });
+  } catch (err) {
+    console.error('Folder picker failed:', err);
+    res.status(500).json({ error: err.message || 'Folder picker failed' });
+  }
+});
+
+app.get('/api/setup/config', async (req, res) => {
+  try {
+    res.json(await loadSetupConfig());
+  } catch (err) {
+    console.error('Failed to load setup config:', err);
+    res.status(500).json({ error: err.message || 'Failed to load setup config' });
+  }
+});
+
+app.post('/api/setup/check-comfy-path', async (req, res) => {
+  try {
+    const comfyPath = String(req.body?.path || '').trim();
+    if (!comfyPath) {
+      return res.status(400).json({ error: 'A ComfyUI folder path is required' });
+    }
+
+    const rootExists = await pathExists(comfyPath);
+    if (!rootExists) {
+      return res.status(400).json({ error: `Folder does not exist: ${comfyPath}` });
+    }
+
+    const modelsDir = path.join(comfyPath, 'models');
+    const modelsExist = await pathExists(modelsDir);
+    if (!modelsExist) {
+      return res.status(400).json({ error: `This does not look like a ComfyUI folder (missing "models" subfolder): ${comfyPath}` });
+    }
+
+    const config = await loadSetupConfig();
+    const created = [];
+    for (const relativePath of Object.values(config.ComfyUIPaths || {})) {
+      const target = resolveComfySubPath(comfyPath, relativePath);
+      if (!(await pathExists(target))) {
+        await fs.mkdir(target, { recursive: true });
+        created.push(relativePath);
+      }
+    }
+
+    res.json({ ok: true, comfyPath, createdSubfolders: created });
+  } catch (err) {
+    console.error('Failed to validate ComfyUI path:', err);
+    res.status(500).json({ error: err.message || 'Failed to validate ComfyUI path' });
+  }
+});
+
+app.post('/api/setup/check-files', async (req, res) => {
+  try {
+    const comfyPath = String(req.body?.comfyPath || '').trim();
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+
+    if (!comfyPath) {
+      return res.status(400).json({ error: 'comfyPath is required' });
+    }
+
+    const results = [];
+    for (const file of files) {
+      const absPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir || '', file.fileName || ''));
+      const size = await fileSizeOrNull(absPath);
+      results.push({
+        relativeDir: file.relativeDir || '',
+        fileName: file.fileName || '',
+        exists: size !== null && size > 0,
+        sizeBytes: size
+      });
+    }
+
+    res.json({ files: results });
+  } catch (err) {
+    console.error('Failed to check setup files:', err);
+    res.status(500).json({ error: err.message || 'Failed to check setup files' });
+  }
+});
+
+app.post('/api/setup/download', async (req, res) => {
+  try {
+    const comfyPath = String(req.body?.comfyPath || '').trim();
+    const files = Array.isArray(req.body?.files) ? req.body.files : [];
+
+    if (!comfyPath) {
+      return res.status(400).json({ error: 'comfyPath is required' });
+    }
+
+    if (files.length === 0) {
+      const jobId = randomUUID();
+      publishSetupDownloadProgress(jobId, { status: 'done', totalFiles: 0, currentIndex: 0, overallPercent: 100 });
+      return res.json({ jobId });
+    }
+
+    const jobId = randomUUID();
+    getSetupDownloadJob(jobId);
+
+    runSetupDownloads(jobId, comfyPath, files).catch(err => {
+      console.error('[setup] download job crashed:', err);
+      publishSetupDownloadProgress(jobId, { status: 'error', error: err.message || String(err) });
+    });
+
+    res.json({ jobId });
+  } catch (err) {
+    console.error('Failed to start setup downloads:', err);
+    res.status(500).json({ error: err.message || 'Failed to start setup downloads' });
+  }
+});
+
+app.get('/api/setup/download/progress/:jobId', (req, res) => {
+  subscribeSetupDownload(req.params.jobId, req, res);
+});
+
+app.post('/api/setup/install-workflows', async (req, res) => {
+  try {
+    const workflows = Array.isArray(req.body?.workflows) ? req.body.workflows : [];
+    const overwrite = req.body?.overwrite === true;
+
+    if (workflows.length === 0) {
+      return res.json({ installed: [], skipped: [], errors: [] });
+    }
+
+    const config = await loadSetupConfig();
+    const diffusionByName = new Map((config.DiffusionModels || []).map(model => [model.Name, model]));
+    const workflowsByFile = new Map();
+    for (const diffusion of config.DiffusionModels || []) {
+      for (const workflow of diffusion.Workflows || []) {
+        workflowsByFile.set(workflow.File, { workflow, diffusion });
+      }
+    }
+    for (const workflow of config.OtherWorkflows || []) {
+      workflowsByFile.set(workflow.File, { workflow, diffusion: null });
+    }
+
+    const existingByName = new Map();
+    for (const record of await listWorkflowRecords()) {
+      existingByName.set(sanitizeDisplayName(record.name, 'Workflow'), record);
+    }
+
+    const installed = [];
+    const skipped = [];
+    const errors = [];
+
+    for (const selection of workflows) {
+      const entry = workflowsByFile.get(selection.workflowFile);
+      if (!entry) {
+        errors.push({ workflowFile: selection.workflowFile, error: 'Unknown workflow' });
+        continue;
+      }
+
+      const { workflow: workflowConfig, diffusion } = entry;
+      const normalizedName = sanitizeDisplayName(workflowConfig.Name, 'Workflow');
+      const existing = existingByName.get(normalizedName);
+
+      if (existing && !overwrite) {
+        skipped.push({ name: normalizedName, reason: 'already-installed' });
+        continue;
+      }
+
+      let diffusionFileName = '';
+      if (diffusion) {
+        const diffusionRecord = selection.diffusionName ? diffusionByName.get(selection.diffusionName) : diffusion;
+        const modelEntry = diffusionRecord?.Models?.[selection.modelQuality];
+        if (!modelEntry?.FileName) {
+          errors.push({ workflow: normalizedName, error: 'Missing diffusion model selection' });
+          continue;
+        }
+        diffusionFileName = modelEntry.FileName;
+      }
+
+      try {
+        if (existing && overwrite) {
+          await deleteExistingWorkflowsByName(normalizedName);
+          existingByName.delete(normalizedName);
+        }
+
+        const record = await installSetupWorkflow(workflowConfig, diffusionFileName);
+        existingByName.set(normalizedName, record);
+        installed.push({ id: record.id, name: record.name, overwritten: Boolean(existing) });
+      } catch (err) {
+        console.error(`[setup] failed to install workflow ${workflowConfig?.Name}:`, err);
+        errors.push({ workflow: normalizedName, error: err.message || String(err) });
+      }
+    }
+
+    res.json({ installed, skipped, errors });
+  } catch (err) {
+    console.error('Failed to install setup workflows:', err);
+    res.status(500).json({ error: err.message || 'Failed to install setup workflows' });
+  }
+});
+
 // Start server
+// Copy any media referenced from the legacy data/assets/wiki location into the
+// git-tracked wiki/media folder and rewrite the URLs so docs ship with the app.
+async function rewriteAndCopyWikiMedia(content) {
+  if (!content) return content;
+  const regex = /(?:https?:\/\/[^/\s)]+)?\/assets\/wiki\/([^\s)"'<>]+)/g;
+  const matches = [...content.matchAll(regex)];
+  let result = content;
+  for (const match of matches) {
+    const fileName = decodeURIComponent(match[1]);
+    try {
+      await fs.copyFile(path.join(WIKI_ASSETS_DIR, fileName), path.join(WIKI_MEDIA_DIR, fileName));
+    } catch {
+      // source missing — leave the reference, nothing to copy
+    }
+    const newUrl = `http://localhost:${PORT}/wiki-media/${encodeURIComponent(fileName)}`;
+    result = result.split(match[0]).join(newUrl);
+  }
+  return result;
+}
+
+async function migrateWikiIfNeeded() {
+  if (wikiManifestExists()) return;
+
+  let dbRows = [];
+  try {
+    dbRows = await dbListWikiPages();
+  } catch {
+    dbRows = [];
+  }
+
+  if (dbRows.length > 0) {
+    await fs.mkdir(WIKI_MEDIA_DIR, { recursive: true });
+    const fullPages = [];
+    for (const row of dbRows) {
+      const page = await dbGetWikiPage(row.id);
+      if (!page) continue;
+      page.content = await rewriteAndCopyWikiMedia(page.content);
+      fullPages.push(page);
+    }
+    await importWikiPages(fullPages);
+    console.log(`📚 Migrated ${fullPages.length} wiki page(s) from the database into the wiki/ folder`);
+  } else {
+    await seedWikiFiles();
+    console.log('📚 Seeded the wiki/ folder with default documentation');
+  }
+}
+
 initializeStorage().then(async () => {
+  try {
+    await migrateWikiIfNeeded();
+  } catch (err) {
+    console.warn('Failed to prepare wiki documentation folder:', err.message);
+  }
+
   try {
     const cleared = await clearStaleProcessingCards({
       preservedSources: ['Tencent Cloud', 'Tripo AI']

@@ -383,7 +383,7 @@
       "sensitivity": 1,
       "process_res": 1024,
       "mask_blur": 0,
-      "mask_offset": 0,
+      "mask_offset": -1,
       "invert_output": false,
       "refine_foreground": false,
       "background": "Alpha",

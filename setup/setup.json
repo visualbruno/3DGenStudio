@@ -1,0 +1,241 @@
+{
+	"ComfyUIPaths": {
+		"DiffusionModels": "models/diffusion_models",
+		"VAE": "models/vae",
+		"TextEncoder": "models/text_encoders",
+		"LoRA": "models/loras"
+	},
+	"DiffusionModels": [
+		{
+			"Name": "Qwen Image Edit 2511",
+			"Models": {
+				"F16":  { "FileName": "qwen-image-edit-2511-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-F16.gguf?download=true",    "Size": 40.9 },
+				"BF16": { "FileName": "qwen-image-edit-2511-BF16.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-BF16.gguf?download=true",   "Size": 40.9 },
+				"Q8":   { "FileName": "qwen-image-edit-2511-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q8_0.gguf?download=true",   "Size": 21.8 },
+				"Q6":   { "FileName": "qwen-image-edit-2511-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q6_K.gguf?download=true",   "Size": 16.9 },
+				"Q5":   { "FileName": "qwen-image-edit-2511-Q5_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q5_K_M.gguf?download=true", "Size": 15.0 },
+				"Q4":   { "FileName": "qwen-image-edit-2511-Q4_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q4_K_M.gguf?download=true", "Size": 13.2 },
+				"Q3":   { "FileName": "qwen-image-edit-2511-Q3_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q3_K_M.gguf?download=true", "Size": 9.9  },
+				"Q2":   { "FileName": "qwen-image-edit-2511-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF/resolve/main/qwen-image-edit-2511-Q2_K.gguf?download=true",   "Size": 7.5  }
+			},
+			"VAE":         { "FileName": "qwen_image_vae.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true",                                "Size": 0.3 },
+			"TextEncoder": { "FileName": "qwen_2.5_vl_7b_fp8_scaled.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors?download=true",       "Size": 9.4 },
+			"LoRA":[
+				{ "FileName": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors?download=true",        "Size": 0.9 },
+				{ "FileName": "QIE-2511-Studio-DeLight-5000.safetensors", "Url": "https://huggingface.co/prithivMLmods/QIE-2511-Studio-DeLight/resolve/main/QIE-2511-Studio-DeLight-5000.safetensors?download=true",        "Size": 0.2 }
+			],
+			"Workflows": [
+				{
+					"Name": "Mesh Projection with QwenImageEdit",
+					"File": "setup/Mesh Projection with QwenImageEdit.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "35", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection TexturedView with QwenImageEdit",
+					"File": "setup/Mesh Projection TexturedView with QwenImageEdit.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "35", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Edit Image with QwenImageEdit",
+					"File": "setup/Edit Image with QwenImageEdit2511.json",
+					"Inputs": [
+						{ "Node": "146", "Input": "image",  "Name": "Input Image",    "Type": "Image"  },
+						{ "Node": "148",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "143", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "156", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "155", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Inpainting with QwenImageEdit",
+					"File": "setup/Inpainting with QwenImageEdit.json",
+					"Inputs": [
+						{ "Node": "11", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
+						{ "Node": "161",  "Input": "image", "Name": "Source Mask",            "Type": "Image" },
+						{ "Node": "1",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "152", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "138", "Input": "largest_size",  "Name": "Image Scale To MaxDim",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "14", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Delight Image with QwenImageEdit",
+					"File": "setup/Delight Image with QwenImageEdit2511.json",
+					"Inputs": [
+						{ "Node": "146", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
+						{ "Node": "148",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "143", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "172", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "155", "Name": "Save Image", "Type": "Image" }
+					]
+				}					
+			]
+		},
+		{
+			"Name": "Qwen Image 2512",
+			"Models": {
+				"F16":  { "FileName": "qwen-image-2512-F16.gguf",    "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-F16.gguf?download=true",    "Size": 40.9 },
+				"BF16": { "FileName": "qwen-image-2512-BF16.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-BF16.gguf?download=true",   "Size": 40.9 },
+				"Q8":   { "FileName": "qwen-image-2512-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q8_0.gguf?download=true",   "Size": 21.8 },
+				"Q6":   { "FileName": "qwen-image-2512-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q6_K.gguf?download=true",   "Size": 16.8 },
+				"Q5":   { "FileName": "qwen-image-2512-Q5_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q5_K_M.gguf?download=true", "Size": 15.0 },
+				"Q4":   { "FileName": "qwen-image-2512-Q4_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q4_K_M.gguf?download=true", "Size": 13.2 },
+				"Q3":   { "FileName": "qwen-image-2512-Q3_K_M.gguf", "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q3_K_M.gguf?download=true", "Size": 9.9  },
+				"Q2":   { "FileName": "qwen-image-2512-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/Qwen-Image-2512-GGUF/resolve/main/qwen-image-2512-Q2_K.gguf?download=true",   "Size": 7.3  }
+			},
+			"VAE":         { "FileName": "qwen_image_vae.safetensors",            "Url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors?download=true",                          "Size": 0.3 },
+			"TextEncoder": { "FileName": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors?download=true", "Size": 9.4 },
+			"LoRA":[        
+				{ "FileName": "Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-2512-Lightning/resolve/main/Qwen-Image-2512-Lightning-4steps-V1.0-bf16.safetensors?download=true", "Size": 0.9 }
+			],
+			"Workflows": [
+				{
+					"Name": "Gen Image with Qwen 2512",
+					"File": "setup/Gen Image with QwenImage2512.json",
+					"Inputs": [
+						{ "Node": "112", "Input": "text",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "116", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "116", "Input": "steps", "Name": "Steps",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "90", "Name": "Save Image", "Type": "Image" }
+					]
+				}
+			]
+		},
+		{
+			"Name": "Flux 2 Dev",
+			"Models": {
+				"F16":  { "FileName": "flux2-dev-F16.gguf",    "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-F16.gguf?download=true",    "Size": 64.4 },
+				"BF16": { "FileName": "flux2-dev-BF16.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-BF16.gguf?download=true",   "Size": 64.4 },
+				"Q8":   { "FileName": "flux2-dev-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q8_0.gguf?download=true",   "Size": 35.0 },
+				"Q6":   { "FileName": "flux2-dev-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q6_K.gguf?download=true",   "Size": 27.4 },
+				"Q5":   { "FileName": "flux2-dev-Q5_K_M.gguf", "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q5_K_M.gguf?download=true", "Size": 23.9 },
+				"Q4":   { "FileName": "flux2-dev-Q4_K_M.gguf", "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q4_K_M.gguf?download=true", "Size": 20.0 },
+				"Q3":   { "FileName": "flux2-dev-Q3_K_M.gguf", "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q3_K_M.gguf?download=true", "Size": 15.8 },
+				"Q2":   { "FileName": "flux2-dev-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-dev-GGUF/resolve/main/flux2-dev-Q2_K.gguf?download=true",   "Size": 12.9 }
+			},
+			"VAE":         { "FileName": "flux2-vae.safetensors",                        "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors?download=true",                                     "Size": 0.3  },
+			"TextEncoder": { "FileName": "mistral_3_small_flux2_fp4_mixed.safetensors",  "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/text_encoders/mistral_3_small_flux2_fp4_mixed.safetensors?download=true",      "Size": 12.3 },
+			"Workflows": [
+				{
+					"Name": "Gen Image with Flux2 Dev",
+					"File": "setup/Gen Image with Flux2Dev.json",
+					"Inputs": [
+						{ "Node": "96", "Input": "text",       "Name": "Prompt", "Type": "String" },
+						{ "Node": "92", "Input": "noise_seed", "Name": "Seed",   "Type": "Number" },
+						{ "Node": "85", "Input": "steps",      "Name": "Steps",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "9", "Name": "Save Image", "Type": "Image" }
+					]
+				}
+			]
+		},
+		{
+			"Name": "Z-Image Turbo",
+			"Models": {
+				"F16":  { "FileName": "z-image-turbo-F16.gguf",    "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-F16.gguf?download=true",    "Size": 12.3 },
+				"BF16": { "FileName": "z-image-turbo-BF16.gguf",   "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-BF16.gguf?download=true",   "Size": 12.3 },
+				"Q8":   { "FileName": "z-image-turbo-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q8_0.gguf?download=true",   "Size": 7.22 },
+				"Q6":   { "FileName": "z-image-turbo-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q6_K.gguf?download=true",   "Size": 5.91 },
+				"Q5":   { "FileName": "z-image-turbo-Q5_K_M.gguf", "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q5_K_M.gguf?download=true", "Size": 5.6  },
+				"Q4":   { "FileName": "z-image-turbo-Q4_K_M.gguf", "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q4_K_M.gguf?download=true", "Size": 5.0  },
+				"Q3":   { "FileName": "z-image-turbo-Q3_K_M.gguf", "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q3_K_M.gguf?download=true", "Size": 4.2  },
+				"Q2":   { "FileName": "z-image-turbo-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/Z-Image-Turbo-GGUF/resolve/main/z-image-turbo-Q2_K.gguf?download=true",   "Size": 3.6  }
+			},
+			"VAE":         { "FileName": "ae.safetensors",                  "Url": "https://huggingface.co/black-forest-labs/FLUX.2-dev/resolve/main/ae.safetensors?download=true",                                                "Size": 0.3 },
+			"TextEncoder": { "FileName": "qwen_3_4b_fp8_mixed.safetensors", "Url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors?download=true",          "Size": 5.6 },
+			"Workflows": [
+				{
+					"Name": "Gen Image with Z Image Turbo",
+					"File": "setup/Gen Image with ZImageTurbo.json",
+					"Inputs": [
+						{ "Node": "34:27", "Input": "text",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "34:3",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "34:3",  "Input": "steps", "Name": "Steps",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "43", "Name": "Save Image", "Type": "Image" }
+					]
+				}
+			]
+		}
+	],
+	"OtherWorkflows":[
+		{
+			"Name": "Remove Background with RMBG",
+			"File": "setup/Remove Background with RMBG.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "2",  "Input": "mask_offset",  "Name": "Mask Offset",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "4", "Name": "Save Image", "Type": "Image" }
+			]
+		},
+		{
+			"Name": "Gen MeshOnly with Trellis2",
+			"File": "setup/Gen Mesh Only with Trellis2.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},
+		{
+			"Name": "Gen TexturedMesh with Trellis2",
+			"File": "setup/Gen TexturedMesh with Trellis2.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number" },
+				{ "Node": "261",  "Input": "texture_size",  "Name": "Texture Size",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},
+		{
+			"Name": "Simplify Mesh with Trellis2",
+			"File": "setup/Simplify Mesh with Trellis2.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "glb_path",  "Name": "Source Mesh", "Type": "Mesh" },
+				{ "Node": "3",  "Input": "target_face_num",  "Name": "Target Face Number",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "5", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		}			
+	]
+}

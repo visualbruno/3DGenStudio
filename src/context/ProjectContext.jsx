@@ -835,6 +835,100 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const getWikiConfig = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/wiki/config`)
+      if (!res.ok) return { authorMode: false }
+      return await res.json()
+    } catch {
+      return { authorMode: false }
+    }
+  }
+
+  const getWikiPages = async () => {
+    const res = await fetch(`${API_BASE}/wiki/pages`)
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load wiki pages')
+    }
+    return data
+  }
+
+  const getWikiPage = async (id) => {
+    const res = await fetch(`${API_BASE}/wiki/pages/${id}`)
+    if (res.status === 404) return null
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to load wiki page')
+    }
+    return data
+  }
+
+  const createWikiPage = async (payload) => {
+    const res = await fetch(`${API_BASE}/wiki/pages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to create wiki page')
+    }
+    return data
+  }
+
+  const updateWikiPage = async (id, payload) => {
+    const res = await fetch(`${API_BASE}/wiki/pages/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to update wiki page')
+    }
+    return data
+  }
+
+  const moveWikiPage = async (id, payload) => {
+    const res = await fetch(`${API_BASE}/wiki/pages/${id}/move`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to move wiki page')
+    }
+    return data
+  }
+
+  const deleteWikiPage = async (id) => {
+    const res = await fetch(`${API_BASE}/wiki/pages/${id}`, { method: 'DELETE' })
+    if (res.status === 204) {
+      return { deleted: true }
+    }
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to delete wiki page')
+    }
+    return data
+  }
+
+  const uploadWikiMedia = async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const res = await fetch(`${API_BASE}/wiki/media`, {
+      method: 'POST',
+      body: formData
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to upload media')
+    }
+    return data
+  }
+
   const subscribeToComfyWorkflowProgress = (promptId, handlers = {}) => {
     if (!promptId || typeof EventSource === 'undefined') {
       return () => {}
@@ -915,6 +1009,14 @@ export function ProjectProvider({ children }) {
       updateComfyWorkflow,
       runComfyWorkflow,
       subscribeToComfyWorkflowProgress,
+      getWikiConfig,
+      getWikiPages,
+      getWikiPage,
+      createWikiPage,
+      updateWikiPage,
+      moveWikiPage,
+      deleteWikiPage,
+      uploadWikiMedia,
       refreshProjects: fetchProjects
     }}>
       {children}

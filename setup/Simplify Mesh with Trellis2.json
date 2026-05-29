@@ -1,0 +1,52 @@
+{
+  "1": {
+    "inputs": {
+      "glb_path": ""
+    },
+    "class_type": "Trellis2LoadMesh",
+    "_meta": {
+      "title": "Trellis2 - Load Mesh"
+    }
+  },
+  "3": {
+    "inputs": {
+      "target_face_num": 1000000,
+      "method": "Cumesh",
+      "trimesh": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "Trellis2SimplifyTrimesh",
+    "_meta": {
+      "title": "Trellis2 - Simplify Trimesh"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioSimplified",
+      "file_format": "glb",
+      "trimesh": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "Trellis2ExportMesh",
+    "_meta": {
+      "title": "Trellis2 - Export Mesh"
+    }
+  },
+  "5": {
+    "inputs": {
+      "model_file": [
+        "4",
+        0
+      ],
+      "image": ""
+    },
+    "class_type": "Preview3D",
+    "_meta": {
+      "title": "Preview 3D & Animation"
+    }
+  }
+}

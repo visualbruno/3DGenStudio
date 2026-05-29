@@ -67,7 +67,6 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
             Change Log
           </button>
         )}
-        <a href="https://github.com/visualbruno/3DGenStudio/tree/main/docs" target="_blank" className="footer__link">Documentation</a>
         <a href="https://www.3dgenstudio.com/terms-and-conditions.html" target="_blank" className="footer__link">Terms of Service</a>
       </div>
     </footer>

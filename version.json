@@ -1,4 +1,4 @@
 {
-	"version": "0.9.2",
-	"message": "Fixed bugs + Mesh Editor in Projection mode can sent Textured/Untextured view to ComfyUI"
+	"version": "1.0.0",
+	"message": "New dependencies have been added. Run the command: npm install"
 }

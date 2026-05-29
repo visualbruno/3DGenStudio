@@ -35,7 +35,7 @@
   "3": {
     "inputs": {
       "conditioning": [
-        "58",
+        "9",
         0
       ],
       "latent": [
@@ -51,7 +51,7 @@
   "4": {
     "inputs": {
       "pixels": [
-        "33",
+        "38",
         0
       ],
       "vae": [
@@ -67,6 +67,7 @@
   "5": {
     "inputs": {
       "strength": 1,
+      "pre_cfg": false,
       "model": [
         "1",
         0
@@ -97,7 +98,7 @@
   "7": {
     "inputs": {
       "conditioning": [
-        "57",
+        "8",
         0
       ],
       "latent": [
@@ -112,7 +113,7 @@
   },
   "8": {
     "inputs": {
-      "prompt": "Draw the front-right side view",
+      "prompt": "Draw the front-left side view",
       "clip": [
         "14",
         0
@@ -237,7 +238,7 @@
   },
   "20": {
     "inputs": {
-      "seed": 1000,
+      "seed": 433735871179849,
       "steps": 4,
       "cfg": 1,
       "sampler_name": "euler",
@@ -341,20 +342,6 @@
       "title": "ImageCompositeMasked"
     }
   },
-  "33": {
-    "inputs": {
-      "low_threshold": 0.05,
-      "high_threshold": 0.25,
-      "image": [
-        "21",
-        0
-      ]
-    },
-    "class_type": "Canny",
-    "_meta": {
-      "title": "Canny"
-    }
-  },
   "34": {
     "inputs": {
       "value": 1024
@@ -364,128 +351,26 @@
       "title": "Image Resolution"
     }
   },
-  "56": {
+  "35": {
     "inputs": {
-      "pixels": [
-        "63",
-        0
-      ],
-      "vae": [
-        "15",
+      "filename_prefix": "Qwen",
+      "images": [
+        "36",
         0
       ]
     },
-    "class_type": "VAEEncode",
+    "class_type": "SaveImage",
     "_meta": {
-      "title": "VAE Encode"
+      "title": "Save Image"
     }
   },
-  "57": {
-    "inputs": {
-      "conditioning": [
-        "8",
-        0
-      ],
-      "latent": [
-        "56",
-        0
-      ]
-    },
-    "class_type": "ReferenceLatent",
-    "_meta": {
-      "title": "ReferenceLatent"
-    }
-  },
-  "58": {
-    "inputs": {
-      "conditioning": [
-        "9",
-        0
-      ],
-      "latent": [
-        "56",
-        0
-      ]
-    },
-    "class_type": "ReferenceLatent",
-    "_meta": {
-      "title": "ReferenceLatent"
-    }
-  },
-  "59": {
-    "inputs": {
-      "image": "projection-textured-view.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "Textured View"
-    }
-  },
-  "60": {
-    "inputs": {
-      "value": 1,
-      "width": 1024,
-      "height": 1024
-    },
-    "class_type": "SolidMask",
-    "_meta": {
-      "title": "SolidMask"
-    }
-  },
-  "61": {
-    "inputs": {
-      "mask": [
-        "59",
-        1
-      ]
-    },
-    "class_type": "InvertMask",
-    "_meta": {
-      "title": "InvertMask"
-    }
-  },
-  "62": {
-    "inputs": {
-      "mask": [
-        "60",
-        0
-      ]
-    },
-    "class_type": "MaskToImage",
-    "_meta": {
-      "title": "Convert Mask to Image"
-    }
-  },
-  "63": {
-    "inputs": {
-      "x": 0,
-      "y": 0,
-      "resize_source": false,
-      "destination": [
-        "62",
-        0
-      ],
-      "source": [
-        "59",
-        0
-      ],
-      "mask": [
-        "61",
-        0
-      ]
-    },
-    "class_type": "ImageCompositeMasked",
-    "_meta": {
-      "title": "ImageCompositeMasked"
-    }
-  },
-  "73": {
+  "36": {
     "inputs": {
       "model": "RMBG-2.0",
       "sensitivity": 1,
       "process_res": 1024,
       "mask_blur": 0,
-      "mask_offset": 0,
+      "mask_offset": -1,
       "invert_output": false,
       "refine_foreground": false,
       "background": "Alpha",
@@ -500,17 +385,45 @@
       "title": "Remove Background (RMBG)"
     }
   },
-  "74": {
+  "37": {
     "inputs": {
-      "filename_prefix": "Qwen",
-      "images": [
-        "73",
+      "image": "projection-textured-view.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Textured View"
+    }
+  },
+  "38": {
+    "inputs": {
+      "blend_factor": 1,
+      "blend_mode": "screen",
+      "image1": [
+        "37",
+        0
+      ],
+      "image2": [
+        "39",
         0
       ]
     },
-    "class_type": "SaveImage",
+    "class_type": "ImageBlend",
     "_meta": {
-      "title": "Save Image"
+      "title": "Blend Images"
+    }
+  },
+  "39": {
+    "inputs": {
+      "low_threshold": 0.05,
+      "high_threshold": 0.25,
+      "image": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "Canny",
+    "_meta": {
+      "title": "Canny"
     }
   }
 }
