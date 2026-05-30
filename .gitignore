@@ -6,6 +6,9 @@ dist/
 
 # Local database and assets (Portable Data)
 data/
+output/
+models/
+cache/
 
 # Wiki author mode — presence of this file unlocks editing the Wiki.
 # Kept local (never synced) so the published docs are read-only for end users.

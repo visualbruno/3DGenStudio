@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { SettingsContext } from './SettingsContext.shared'
 
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = '/backend/api'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 
 function normalizeCustomApiType(type) {

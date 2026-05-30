@@ -158,6 +158,58 @@ npm run dev
 > [!NOTE] 
 > This starts the backend server on `http://localhost:3001` and the Vite frontend development server.
 
+### 🐳 Docker
+
+Run the full stack in a self-contained container — no local Node.js install required.
+No GPU required — all inference is offloaded to ComfyUI or external APIs.
+
+> [!NOTE]
+> The Docker image uses a lightweight Alpine base (no CUDA drivers). GPU hardware
+> stats in the system metrics footer will not be available inside the container.
+
+**Prerequisites:** Docker and Docker Compose.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/visualbruno/3DGenStudio.git
+cd 3DGenStudio
+
+# 2. Build the image (installs deps & compiles the frontend inside the container)
+docker compose build
+
+# 3. Start the stack
+docker compose up
+```
+
+The app will be available at `http://localhost:3000`.
+
+> [!NOTE]
+> `data/`, `output/`, `models/`, and `cache/` are mounted as volumes so your
+> projects and generated assets persist across container restarts.
+
+#### Changing the port
+
+Edit the `ports` section in `docker-compose.yml`. The format is `"HOST:CONTAINER"` —
+only the host-side number needs to change:
+
+```yaml
+ports:
+  - "8300:3000"   # app now reachable at http://localhost:8300
+  - "9001:9001"   # supervisord web UI (optional, remove to hide it)
+```
+
+#### Restricting access to localhost only
+
+By default Docker binds to `0.0.0.0`, making the app reachable from other machines
+on your network. To allow only the local machine to connect, prefix the host port
+with `127.0.0.1:`:
+
+```yaml
+ports:
+  - "127.0.0.1:3000:3000"   # app: localhost only
+  - "127.0.0.1:9001:9001"   # supervisord web UI: localhost only
+```
+
 ### Configuration
 Open the application and configure your services in the settings area:
 - `ComfyUI` path / host / port

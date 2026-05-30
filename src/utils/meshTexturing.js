@@ -1340,7 +1340,7 @@ export function buildAssetUrl(asset) {
     .replace(/^data\/assets\//, '')
     .replace(/^assets\//, '')
 
-  return `http://localhost:3001/assets/${encodeURI(normalizedPath)}`
+  return `/backend/assets/${encodeURI(normalizedPath)}`
 }
 
 export function createTexturePaintWorkflowDraft(workflow) {

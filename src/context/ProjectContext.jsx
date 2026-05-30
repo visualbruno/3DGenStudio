@@ -2,7 +2,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 
 const ProjectContext = createContext(null)
-const API_BASE = 'http://localhost:3001/api'
+const API_BASE = '/backend/api'
 
 export function ProjectProvider({ children }) {
   const [projects, setProjects] = useState([])
