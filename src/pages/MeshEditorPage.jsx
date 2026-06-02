@@ -636,7 +636,14 @@ function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width,
         const t = clamp01(1 - dEdge / denom) // 1 at the owned border → 0 blendPx inside
         const conf = layer.confidenceMap?.[i] || 0
         const smoothConf = conf * conf * (3 - 2 * conf)
-        influence = (t * t * (3 - 2 * t)) * smoothConf * opacity * seamMax
+
+        // Continuous transition of the confidence penalty from 1.0 (at the boundary where dEdge -> 0)
+        // to smoothConf * seamMax (further inside). This removes the severe discontinuity drop
+        // at the boundary with unowned territory, preventing visible seam lines.
+        const finalSeamLimit = smoothConf * seamMax
+        const scaledConf = finalSeamLimit + (1 - finalSeamLimit) * t
+
+        influence = (t * t * (3 - 2 * t)) * scaledConf * opacity
       } else {
         // Owned and no blend requested → strict lock, do not change.
         influence = 0
