@@ -259,6 +259,31 @@
 					"Outputs": [
 						{ "Node": "64", "Name": "Save Image", "Type": "Image" }
 					]
+				},
+				{
+					"Name": "Edit Image with Flux2Klein9B",
+					"File": "setup/Edit Image with Flux2Klein9B.json",
+					"Inputs": [
+						{ "Node": "1", "Input": "image",  "Name": "Input Image",    "Type": "Image"  },
+						{ "Node": "6",  "Input": "text", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "7", "Input": "noise_seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "66", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "70", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Albedo Image with Flux2Klein9B",
+					"File": "setup/Albedo Image with Flux2Klein9B.json",
+					"Inputs": [
+						{ "Node": "1", "Input": "image",  "Name": "Input Image",    "Type": "Image"  },
+						{ "Node": "7", "Input": "noise_seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "66", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "70", "Name": "Save Image", "Type": "Image" }
+					]
 				}				
 			]
 		}		
