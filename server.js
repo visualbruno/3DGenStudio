@@ -2257,6 +2257,11 @@ function getComfyHistoryFiles(historyRecord, selectedOutputs = []) {
     const selectedOutput = selectedOutputsByNodeId.get(String(nodeId));
     const expectedType = normalizeComfyValueType(selectedOutput?.valueType, getDefaultComfyValueType(selectedOutput, true));
 
+    // String/text outputs are collected separately by getComfyHistoryTexts.
+    if (expectedType === 'string') {
+      continue;
+    }
+
     for (const [outputKey, outputValue] of Object.entries(nodeOutput || {})) {
       if (!Array.isArray(outputValue)) {
         continue;
@@ -2432,6 +2437,72 @@ app.post('/api/meshes/texture', async (req, res) => {
   }
 
   return files;
+}
+
+function collectComfyOutputStrings(value, collected) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) {
+      collected.push(trimmed);
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectComfyOutputStrings(entry, collected);
+    }
+    return;
+  }
+
+  if (value && typeof value === 'object') {
+    // ComfyUI text nodes commonly expose their result under a `text` key.
+    if (typeof value.text === 'string') {
+      collectComfyOutputStrings(value.text, collected);
+      return;
+    }
+    if (Array.isArray(value.text)) {
+      collectComfyOutputStrings(value.text, collected);
+      return;
+    }
+    if (typeof value.string === 'string') {
+      collectComfyOutputStrings(value.string, collected);
+      return;
+    }
+  }
+}
+
+function getComfyHistoryTexts(historyRecord, selectedOutputs = []) {
+  const selectedOutputsByNodeId = new Map(selectedOutputs.map(output => [String(output.nodeId || output.id), output]));
+  const preferredNodeIds = selectedOutputs
+    .filter(output => normalizeComfyValueType(output?.valueType, getDefaultComfyValueType(output, true)) === 'string')
+    .map(output => String(output.nodeId || output.id));
+  const orderedNodeIds = preferredNodeIds.filter(nodeId => historyRecord?.outputs?.[nodeId]);
+  const texts = [];
+
+  for (const nodeId of orderedNodeIds) {
+    const nodeOutput = historyRecord?.outputs?.[nodeId];
+    const selectedOutput = selectedOutputsByNodeId.get(String(nodeId));
+
+    for (const [outputKey, outputValue] of Object.entries(nodeOutput || {})) {
+      const collected = [];
+      collectComfyOutputStrings(outputValue, collected);
+
+      if (collected.length === 0) {
+        continue;
+      }
+
+      texts.push({
+        nodeId,
+        outputKey,
+        expectedType: 'string',
+        text: collected.join('\n'),
+        outputName: selectedOutput?.name || null
+      });
+    }
+  }
+
+  return texts;
 }
 
 async function downloadComfyOutputFile(baseUrl, file) {
@@ -2908,14 +2979,37 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     await executionMonitor.completion;
     const historyRecord = await waitForComfyHistory(baseUrl, queuedPromptId);
     const workflowFiles = getComfyHistoryFiles(historyRecord, workflow.outputs);
+    const workflowTexts = getComfyHistoryTexts(historyRecord, workflow.outputs);
 
-    if (workflowFiles.length === 0) {
+    if (workflowFiles.length === 0 && workflowTexts.length === 0) {
       throw new Error('The ComfyUI workflow finished but no compatible files were returned');
     }
 
     const imageCardId = persistProcessingCard ? processingCardId : null;
     const baseTimestamp = Date.now();
     const generatedAssets = [];
+
+    for (const [index, workflowText] of workflowTexts.entries()) {
+      generatedAssets.push({
+        type: 'text',
+        name: workflowText.outputName || trimmedName || workflow.name,
+        text: workflowText.text,
+        metadata: {
+          source: 'COMFYUI',
+          provider: 'ComfyUI',
+          workflowId: workflow.id,
+          workflowName: workflow.name,
+          promptId: queuedPromptId,
+          outputNodeId: workflowText.nodeId,
+          outputKey: workflowText.outputKey
+        },
+        createdAt: baseTimestamp + index,
+        outputKey: workflowText.outputKey,
+        outputNodeId: workflowText.nodeId,
+        expectedType: 'string',
+        temporary: true
+      });
+    }
 
     for (const [index, workflowFile] of workflowFiles.entries()) {
       const downloadedFile = await downloadComfyOutputFile(baseUrl, workflowFile);

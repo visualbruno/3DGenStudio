@@ -151,6 +151,12 @@ function getDefaultTargetInputId(nodeTypeName = '') {
     return IMAGE_COMPARE_INPUT_IDS[0]
   }
 
+  // Text nodes can run text-generating ComfyUI workflows, so they accept inputs
+  // (e.g. an image to describe). Pure value nodes (number/boolean) do not.
+  if (nodeKind === 'text') {
+    return DEFAULT_INPUT_ID
+  }
+
   if (isValueNodeKind(nodeKind)) {
     return null
   }
@@ -633,6 +639,13 @@ function filterImageEditWorkflows(workflows = []) {
 
     return outputValueTypes.includes('image')
       && parameterValueTypes.every(valueType => ['image', 'string', 'number', 'boolean'].includes(valueType))
+  })
+}
+
+function filterTextGenerationWorkflows(workflows = []) {
+  return workflows.filter(workflow => {
+    const outputValueTypes = (workflow.outputs || []).map(output => output.valueType || 'image')
+    return outputValueTypes.includes('string')
   })
 }
 
@@ -1974,13 +1987,142 @@ const GraphImageCompareNode = memo(function GraphImageCompareNode({ data }) {
 })
 
 const GraphValueNode = memo(function GraphValueNode({ data }) {
+  const updateNodeInternals = useUpdateNodeInternals()
   const nodeKind = data.nodeKind
+  const isTextNode = nodeKind === 'text'
   const outputMeta = getConnectorTypeMeta(nodeKind)
   const outputValue = data.metadata?.outputValue ?? getDefaultNodeOutputValue(data.nodeTypeName || nodeKind)
   const nodeDisplayName = data.name || data.nodeTypeName || outputMeta.label
 
+  const draft = data.actionDraft
+  const isProcessing = data.status === 'processing'
+  const progressDetail = data.progressDetail || data.metadata?.detail || ''
+  const currentNodeLabel = data.currentNodeLabel || data.metadata?.currentNodeLabel || ''
+  const textWorkflows = data.textGenerationWorkflows || []
+  const selectedWorkflow = textWorkflows.find(workflow => workflow.id == draft?.workflowId) || null
+  const inputConnectors = useMemo(() => (
+    isTextNode
+      ? (data.inputConnectors || [{ id: DEFAULT_INPUT_ID, type: null, isConnected: false }])
+      : []
+  ), [isTextNode, data.inputConnectors])
+  const inputSources = data.inputSources || []
+  const connectedInputCount = inputConnectors.filter(connector => connector.isConnected).length
+
+  useEffect(() => {
+    if (isTextNode) {
+      updateNodeInternals(String(data.id))
+    }
+  }, [data.id, isTextNode, inputConnectors, updateNodeInternals])
+
+  const renderWorkflowField = (parameter) => {
+    const valueType = getWorkflowParameterValueType(parameter)
+    const currentValue = draft?.inputs?.[parameter.id]
+    const compatibleSources = getCompatibleInputSources(inputSources, valueType)
+    const binding = getWorkflowParameterBinding(draft, parameter)
+    const selectedSource = resolveSelectedInputSource(binding.source, compatibleSources)
+
+    const renderCustomValueField = () => {
+      if (isFileWorkflowValueType(valueType)) {
+        return (
+          <div className="graph-node__linked-input font-label">
+            {`Connect a ${valueType} input to provide this value.`}
+          </div>
+        )
+      }
+
+      if (valueType === 'boolean') {
+        return (
+          <label className="params-card__checkbox-label nodrag">
+            <div
+              className={`params-card__checkbox ${currentValue ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+              onClick={() => data.onDraftInputChange?.(data.id, parameter, !currentValue)}
+            >
+              {currentValue && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+            </div>
+            <span>{parameter.label || 'Toggle value'}</span>
+          </label>
+        )
+      }
+
+      if (valueType === 'string' || parameter.type === 'json') {
+        return (
+          <textarea
+            className="gen-prompt-input image-card__param-textarea nodrag"
+            value={typeof currentValue === 'string' ? currentValue : JSON.stringify(currentValue ?? '', null, 2)}
+            onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.value)}
+          />
+        )
+      }
+
+      return (
+        <input
+          type={valueType === 'number' ? 'number' : 'text'}
+          className="params-card__input nodrag"
+          value={currentValue ?? ''}
+          onChange={event => data.onDraftInputChange?.(data.id, parameter, event.target.value)}
+        />
+      )
+    }
+
+    return (
+      <>
+        {compatibleSources.length > 0 && (
+          <select
+            className="params-card__select nodrag"
+            value={binding.source || 'custom'}
+            onChange={event => data.onDraftInputSourceChange?.(data.id, parameter, event.target.value)}
+          >
+            {compatibleSources.map(source => (
+              <option key={source.connectorId} value={getInputSourceSelectionValue(source)}>
+                {`${getConnectorTypeMeta(source.type).letter} · ${source.label}`}
+              </option>
+            ))}
+            <option value="custom">Custom value</option>
+          </select>
+        )}
+
+        {selectedSource ? (
+          <div className="graph-node__linked-input font-label">
+            {`Using ${getConnectorTypeMeta(selectedSource.type).label} input · ${selectedSource.label}`}
+          </div>
+        ) : renderCustomValueField()}
+      </>
+    )
+  }
+
   return (
     <div className={`graph-node graph-node--value graph-node--${nodeKind}`}>
+      {isTextNode && inputConnectors.map((connector, index) => {
+        const connectorMeta = getConnectorTypeMeta(connector.type)
+
+        return (
+          <div
+            key={connector.id}
+            className="graph-node__connector graph-node__connector--input"
+            style={getConnectorPosition(index, inputConnectors.length)}
+          >
+            <Handle
+              type="target"
+              id={connector.id}
+              position={Position.Left}
+              className="graph-node__handle graph-node__handle--input"
+              style={{ borderColor: connectorMeta.color }}
+            />
+            <span
+              className="graph-node__connector-badge font-label"
+              style={{
+                color: connectorMeta.color,
+                background: connectorMeta.background,
+                borderColor: connectorMeta.color
+              }}
+              title={connector.type ? connectorMeta.label : 'Available input'}
+            >
+              {connectorMeta.letter}
+            </span>
+          </div>
+        )
+      })}
+
       <div className="graph-node__value-card">
         <div className="graph-node__value-header graph-node__drag-handle">
           <div className="graph-node__value-title-group">
@@ -2028,7 +2170,7 @@ const GraphValueNode = memo(function GraphValueNode({ data }) {
             <textarea
               className="gen-prompt-input graph-node__value-input graph-node__value-input--textarea nodrag"
               value={String(outputValue ?? '')}
-              placeholder="Type text"
+              placeholder="Type text or generate it with a workflow"
               onChange={event => data.onNodeOutputValueChange?.(data.id, event.target.value)}
               onBlur={event => data.onNodeOutputValueCommit?.(data.id, event.target.value)}
             />
@@ -2056,9 +2198,123 @@ const GraphValueNode = memo(function GraphValueNode({ data }) {
             />
           )}
 
+          {isTextNode && isProcessing && (
+            <>
+              <p className="image-card__meta font-label">{progressDetail || 'Processing…'}</p>
+              {currentNodeLabel && (
+                <p className="image-card__meta font-label image-card__meta--loading-node">{currentNodeLabel}</p>
+              )}
+              {Number.isFinite(data.progress) && (
+                <div className="image-card__progress graph-node__progress" aria-hidden="true">
+                  <div
+                    className="image-card__progress-bar"
+                    style={{ width: `${Math.max(0, Math.min(100, data.progress || 0))}%` }}
+                  />
+                </div>
+              )}
+            </>
+          )}
+
           <div className="graph-node__ports-summary font-label">
+            {isTextNode && (
+              <span className="graph-node__port-label">Inputs · {connectedInputCount > 0 ? `${connectedInputCount} connected` : 'empty'}</span>
+            )}
             <span className="graph-node__port-label graph-node__port-label--output">Output · {outputMeta.label}</span>
           </div>
+
+          {isTextNode && (
+            <div className="image-card__attributes graph-node__actions-panel">
+              <div className="image-card__edit-actions">
+                <div className="graph-node__primary-actions">
+                  <button className="image-card__edit-action-btn nodrag" onClick={() => data.onToggleAction?.(data.id, data.nodeKind)} disabled={isProcessing}>
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>play_arrow</span>
+                    Action
+                  </button>
+                </div>
+
+                {draft?.mode === 'select' && (
+                  <div className="image-card__edit-action-menu">
+                    <button className="image-card__edit-action-option nodrag" onClick={() => data.onTextModeSelect?.(data.id, 'comfy')}>
+                      Generate · ComfyUI Workflow
+                    </button>
+                  </div>
+                )}
+
+                {draft?.mode === 'comfy' && (
+                  <div className="image-card__edit-panel nodrag">
+                    <span className="graph-node__panel-title font-label">COMFYUI WORKFLOW</span>
+                    {data.comfyLoading ? (
+                      <div className="image-card__asset-picker-empty">
+                        <span className="material-symbols-outlined image-card__loading-spinner">progress_activity</span>
+                        <span>Loading workflows...</span>
+                      </div>
+                    ) : textWorkflows.length > 0 ? (
+                      <>
+                        <select
+                          className="params-card__select nodrag"
+                          value={draft.workflowId || ''}
+                          onChange={event => data.onDraftFieldChange?.(data.id, 'workflowId', event.target.value)}
+                        >
+                          {textWorkflows.map(workflow => (
+                            <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+                          ))}
+                        </select>
+                        <div className="image-card__workflow-meta">
+                          <span>{selectedWorkflow?.parameters?.length || 0} input parameters configured</span>
+                          <span>{selectedWorkflow?.outputs?.length || 0} outputs selected</span>
+                        </div>
+                        {(selectedWorkflow?.parameters || []).length > 0 ? (
+                          <div className="image-card__workflow-params">
+                            {selectedWorkflow.parameters.map(parameter => (
+                              <div key={parameter.id} className="params-card__field">
+                                <label className="params-card__label font-label">
+                                  {parameter.name} • {getWorkflowParameterValueType(parameter).toUpperCase()}
+                                </label>
+                                {renderWorkflowField(parameter)}
+                                <span className="image-card__param-hint">
+                                  {parameter.label} • default: {formatWorkflowDefaultValue(parameter.defaultValue)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="image-card__asset-picker-empty image-card__asset-picker-empty--compact">
+                            <span className="material-symbols-outlined">tune</span>
+                            <span>This workflow has no exposed parameters. Start it directly.</span>
+                          </div>
+                        )}
+                        <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={isProcessing}>
+                          <span className="material-symbols-outlined">bolt</span>
+                          GENERATE TEXT
+                        </button>
+                        <button
+                          className="kanban-sidebar__nav-item nodrag"
+                          onClick={() => data.onTextModeSelect?.(data.id, 'select')}
+                          style={{ justifyContent: 'center' }}
+                        >
+                          BACK
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="image-card__asset-picker-empty">
+                          <span className="material-symbols-outlined">account_tree</span>
+                          <span>No imported workflows with a text (String) output are available.</span>
+                        </div>
+                        <button
+                          className="kanban-sidebar__nav-item nodrag"
+                          onClick={() => data.onTextModeSelect?.(data.id, 'select')}
+                          style={{ justifyContent: 'center' }}
+                        >
+                          BACK
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2202,6 +2458,8 @@ export default function GraphPage({ project }) {
 
   const meshGenerationWorkflows = useMemo(() => filterMeshGenerationWorkflows(comfyWorkflows), [comfyWorkflows])
 
+  const textGenerationWorkflows = useMemo(() => filterTextGenerationWorkflows(comfyWorkflows), [comfyWorkflows])
+
   const libraryImageOptions = useMemo(() => {
     return (libraryAssets.images || []).flatMap(asset => {
       const children = asset.children || asset.edits || []
@@ -2281,6 +2539,21 @@ export default function GraphPage({ project }) {
       inputBindings: mode === 'comfy' ? createWorkflowDraftBindings(defaultWorkflow, inputSources) : {}
     }
   }, [imageGenerationApis, imageGenerationWorkflows])
+
+  const createTextNodeDraft = useCallback((mode = 'select', inputSources = [], workflowListOverride = null) => {
+    const workflowList = workflowListOverride || textGenerationWorkflows
+    const defaultWorkflow = workflowList[0] || null
+    return {
+      mode,
+      workflowId: defaultWorkflow?.id || '',
+      inputs: mode === 'comfy'
+        ? createWorkflowDraftInputs(defaultWorkflow, () => null)
+        : {},
+      inputBindings: mode === 'comfy'
+        ? createWorkflowDraftBindings(defaultWorkflow, inputSources, ['string', 'number', 'boolean'])
+        : {}
+    }
+  }, [textGenerationWorkflows])
 
   const createImageEditNodeDraft = useCallback((mode = 'select', sourceAsset = null, inputSources = [], libraryOptions = [], workflowListOverride = null) => {
     const workflowList = workflowListOverride || imageEditWorkflows
@@ -2741,9 +3014,11 @@ export default function GraphPage({ project }) {
         ? createMeshGenNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId), inputSources, libraryImageOptions)
         : nodeKind === 'imageEdit'
         ? createImageEditNodeDraft('select', getConnectedInputAssetFrom(nodes, edges, nodeId), inputSources, libraryImageOptions)
+        : nodeKind === 'text'
+        ? createTextNodeDraft('select', inputSources)
         : createImageNodeDraft('select', inputSources)
     })
-  }, [createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
+  }, [createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, edges, getConnectedInputAssetFrom, libraryImageOptions, nodes])
 
 	const handleOpenAssetSelector = useCallback((nodeId, type, showEdits = true) => {
 		setAssetSelectorType(type === 'mesh' ? 'mesh' : 'image');
@@ -2828,6 +3103,7 @@ export default function GraphPage({ project }) {
       imageGenerationWorkflows,
       imageEditWorkflows,
       meshGenerationWorkflows,
+      textGenerationWorkflows,
       libraryImageOptions,
       libraryMeshOptions,
       libraryLoading,
@@ -2936,6 +3212,21 @@ export default function GraphPage({ project }) {
           [String(targetNodeId)]: createMeshGenNodeDraft(mode, getConnectedInputAssetFrom(nodes, edges, targetNodeId), nodeInputSources, libraryImageOptions)
         })
       },
+      onTextModeSelect: async (targetNodeId, mode) => {
+        if (mode === 'comfy') {
+          const workflows = await ensureComfyWorkflowsLoaded()
+          const nodeInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+
+          setActionDraftsByNodeId({
+            [String(targetNodeId)]: createTextNodeDraft('comfy', nodeInputSources, filterTextGenerationWorkflows(workflows || []))
+          })
+          return
+        }
+
+        setActionDraftsByNodeId({
+          [String(targetNodeId)]: createTextNodeDraft('select', buildNodeInputSources(targetNodeId, nodes, edges))
+        })
+      },
       onDraftFieldChange: (targetNodeId, field, value) => {
         setActionDraftsByNodeId(currentDrafts => {
           const nodeDraft = currentDrafts[String(targetNodeId)]
@@ -2952,11 +3243,14 @@ export default function GraphPage({ project }) {
           if (field === 'workflowId') {
             const isEditNode = ['edit-api', 'edit-comfy'].includes(nodeDraft.mode)
             const isMeshGenNode = node.data.nodeKind === 'meshGen'
-            const workflowList = isMeshGenNode
-              ? meshGenerationWorkflows
-              : isEditNode
-                ? imageEditWorkflows
-                : imageGenerationWorkflows
+            const isTextNode = node.data.nodeKind === 'text'
+            const workflowList = isTextNode
+              ? textGenerationWorkflows
+              : isMeshGenNode
+                ? meshGenerationWorkflows
+                : isEditNode
+                  ? imageEditWorkflows
+                  : imageGenerationWorkflows
             const selectedWorkflow = workflowList.find(workflow => workflow.id == value) || null
             nextDraft = {
               ...nextDraft,
@@ -2965,9 +3259,11 @@ export default function GraphPage({ project }) {
                     ? ({ source: libraryImageOptions[0]?.sourceReference || '' })
                     : null)
                 : createWorkflowDraftInputs(selectedWorkflow, () => null),
-              inputBindings: (isEditNode || isMeshGenNode)
-                ? createWorkflowDraftBindings(selectedWorkflow, targetInputSources, ['image'])
-                : createWorkflowDraftBindings(selectedWorkflow, targetInputSources)
+              inputBindings: isTextNode
+                ? createWorkflowDraftBindings(selectedWorkflow, targetInputSources, ['string', 'number', 'boolean'])
+                : (isEditNode || isMeshGenNode)
+                  ? createWorkflowDraftBindings(selectedWorkflow, targetInputSources, ['image'])
+                  : createWorkflowDraftBindings(selectedWorkflow, targetInputSources)
             }
           }
 
@@ -3132,6 +3428,116 @@ export default function GraphPage({ project }) {
               })
             }
           }
+        }
+
+        if (targetNode.data.nodeKind === 'text') {
+          if (targetDraft.mode !== 'comfy') {
+            return
+          }
+
+          const workflow = textGenerationWorkflows.find(item => item.id == targetDraft.workflowId)
+          if (!workflow) {
+            return
+          }
+
+          const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
+          const inputValues = {}
+          for (const parameter of workflow.parameters || []) {
+            const valueType = getWorkflowParameterValueType(parameter)
+            const inputValue = resolveWorkflowParameterValue(parameter, targetDraft, targetInputSources)
+
+            if (isFileWorkflowValueType(valueType)) {
+              if (!inputValue) {
+                return
+              }
+              inputValues[parameter.id] = inputValue
+              continue
+            }
+
+            if (valueType === 'number') {
+              if (String(inputValue ?? '').trim() === '' || Number.isNaN(Number(inputValue))) {
+                return
+              }
+              inputValues[parameter.id] = inputValue
+              continue
+            }
+
+            if (valueType === 'boolean') {
+              inputValues[parameter.id] = Boolean(inputValue)
+              continue
+            }
+
+            if (!String(inputValue ?? '').trim()) {
+              return
+            }
+
+            inputValues[parameter.id] = inputValue
+          }
+
+          const promptId = createComfyExecutionId('graph-text-prompt')
+          const clientId = createComfyExecutionId('graph-text-client')
+          setActionDraftsByNodeId({})
+          closeNodeProgressSubscription(targetNodeId)
+          progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
+            onMessage: payload => {
+              setNodes(current => current.map(item => (
+                item.id === String(targetNodeId)
+                  ? {
+                      ...item,
+                      data: {
+                        ...item.data,
+                        status: payload?.status === 'error' ? 'error' : 'processing',
+                        progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
+                        progressDetail: payload?.detail || item.data.progressDetail || null,
+                        currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
+                      }
+                    }
+                  : item
+              )))
+            },
+            onError: () => {}
+          }))
+
+          await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
+            progressDetail: 'Preparing ComfyUI workflow',
+            currentNodeLabel: 'Waiting for ComfyUI execution to start'
+          })
+          try {
+            const results = await runComfyWorkflow(project.id, {
+              workflowId: Number(targetDraft.workflowId),
+              name: targetNode.data.name || workflow.name,
+              inputs: inputValues,
+              promptId,
+              clientId,
+              persistProcessingCard: false,
+              persistGeneratedAssets: false
+            })
+            const textResult = (Array.isArray(results) ? results : [results]).find(item => item?.type === 'text')
+            if (!textResult || typeof textResult.text !== 'string') {
+              throw new Error('The workflow did not return any text output')
+            }
+            setNodeTransientData(targetNodeId, {
+              status: 'processing',
+              progress: 100,
+              progressDetail: 'Saving generated text',
+              currentNodeLabel: 'ComfyUI workflow completed'
+            })
+            const updatedNode = await updateProjectNode(project.id, Number(targetNodeId), {
+              status: null,
+              progress: null,
+              metadata: { outputValue: textResult.text, lastAction: 'comfy-text', promptId }
+            })
+            replaceFlowNodeData(updatedNode)
+            setNodeTransientData(targetNodeId, {
+              progressDetail: null,
+              currentNodeLabel: null
+            })
+          } catch (err) {
+            await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
+          } finally {
+            closeNodeProgressSubscription(targetNodeId)
+          }
+          return
         }
 
         if (targetNode.data.nodeKind === 'image') {
@@ -4108,7 +4514,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, nodes, openActionDraft, project.id, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, project.id, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]
@@ -4271,6 +4677,7 @@ export default function GraphPage({ project }) {
         const nodeInputSources = buildNodeInputSources(nodeId, nodes, edges)
         const isEditNode = node.data.nodeKind === 'imageEdit'
         const isMeshGenNode = node.data.nodeKind === 'meshGen'
+        const isTextNode = node.data.nodeKind === 'text'
         let nextDraft = draft
 
         if (draft.mode === 'api' && (isEditNode || isMeshGenNode)) {
@@ -4294,7 +4701,9 @@ export default function GraphPage({ project }) {
         }
 
         if (draft.mode === 'comfy') {
-          const workflowList = isMeshGenNode ? meshGenerationWorkflows : isEditNode ? imageEditWorkflows : imageGenerationWorkflows
+          const workflowList = isTextNode
+            ? textGenerationWorkflows
+            : isMeshGenNode ? meshGenerationWorkflows : isEditNode ? imageEditWorkflows : imageGenerationWorkflows
           const selectedWorkflow = workflowList.find(workflow => workflow.id == draft.workflowId) || null
 
           if (selectedWorkflow) {
@@ -4340,7 +4749,7 @@ export default function GraphPage({ project }) {
       const nextSerialized = JSON.stringify(nextDrafts)
       return currentSerialized === nextSerialized ? currentDrafts : nextDrafts
     })
-  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, meshGenerationWorkflows, nodes])
+  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, meshGenerationWorkflows, textGenerationWorkflows, nodes])
 
   useEffect(() => {
     hasAutoFitOnLoadRef.current = false

@@ -755,48 +755,101 @@ function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width,
   dilateProjectionGutter(outputData, committed, width, height)
 }
 
-async function applySeamPostProcessing(textureCanvas, layerSnapshots, seamThreshold, blurRadius, strength) {
+// Seam smoothing post-process.
+//
+// The visible seams in a projection bake are the ownership BOUNDARIES between
+// two different views — where the front view meets the top view in the
+// composite, etc. Both sides of such a boundary are fully-covered, high
+// -confidence texels, so the old detector (smooth only where the per-texel max
+// confidence < threshold) found almost nothing once the bake moved to the GPU:
+// the GPU path uses a steep cosine (alpha 6) that saturates confidence to ~1
+// everywhere a view faces the surface and collapses to ~0 only in a razor-thin
+// grazing sliver. A confidence threshold is structurally blind to a join
+// between two well-seen views.
+//
+// We instead reconstruct per-texel ownership exactly as the composite does
+// (the first layer in application order to cover a texel owns it — see
+// resolveProjectionLayersIntoImageData), find the texels straddling an
+// ownership CHANGE, grow a band of `seamWidth` texels outward from those
+// boundaries, and feather a blurred copy of the covered texture across the
+// band. Works for both the GPU and CPU bakes since it only needs coverageMask.
+async function applySeamPostProcessing(textureCanvas, layerSnapshots, seamWidth, blurRadius, strength) {
   const w = textureCanvas.width
   const h = textureCanvas.height
   const pixelCount = w * h
+  if (!pixelCount || !Array.isArray(layerSnapshots) || layerSnapshots.length === 0) return
 
-  // Build per-pixel max confidence and coverage union from snapshot data
-  const maxConf = new Float32Array(pixelCount)
-  const anyCoverage = new Uint8Array(pixelCount)
+  // 1. Reconstruct ownership: first layer (in order) to cover a texel owns it.
+  const owner = new Int32Array(pixelCount).fill(-1)
   for (let li = 0; li < layerSnapshots.length; li++) {
-    const layer = layerSnapshots[li]
-    if (!layer?.coverageMask || !layer?.confidenceMap) continue
+    const cov = layerSnapshots[li]?.coverageMask
+    if (!cov) continue
     for (let i = 0; i < pixelCount; i++) {
-      if (layer.coverageMask[i]) {
-        anyCoverage[i] = 1
-        if (layer.confidenceMap[i] > maxConf[i]) maxConf[i] = layer.confidenceMap[i]
-      }
+      if (owner[i] < 0 && cov[i]) owner[i] = li
     }
   }
 
-  // Read current texture pixels
+  // 2. Seed seam texels: a covered texel whose 4-neighbour is owned by a
+  //    DIFFERENT view. Coverage-vs-hole borders are deliberately excluded — Fill
+  //    Holes owns those, and treating them as seams would soften the silhouette.
+  const frontier = []
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const o = owner[i]
+      if (o < 0) continue
+      if ((x > 0     && owner[i - 1] >= 0 && owner[i - 1] !== o)
+       || (x < w - 1 && owner[i + 1] >= 0 && owner[i + 1] !== o)
+       || (y > 0     && owner[i - w] >= 0 && owner[i - w] !== o)
+       || (y < h - 1 && owner[i + w] >= 0 && owner[i + w] !== o)) {
+        frontier.push(i)
+      }
+    }
+  }
+  if (frontier.length === 0) return  // single view / no inter-view joins to smooth
+
+  // 3. Multi-source BFS over covered texels → distance (in texels) from the
+  //    nearest seam, capped at the band radius. "Seam width" (0..1) maps to that
+  //    radius, scaled to texture resolution so it behaves the same at any size.
+  const bandRadius = Math.max(1, Math.min(64, Math.round(seamWidth * Math.max(w, h) / 64)))
+  const dist = new Int32Array(pixelCount).fill(-1)
+  for (let k = 0; k < frontier.length; k++) dist[frontier[k]] = 0
+  let cur = frontier
+  for (let d = 0; d < bandRadius && cur.length > 0; d++) {
+    const next = []
+    for (let k = 0; k < cur.length; k++) {
+      const i = cur[k]
+      const x = i % w
+      const y = (i / w) | 0
+      if (x > 0)     { const n = i - 1; if (owner[n] >= 0 && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (x < w - 1) { const n = i + 1; if (owner[n] >= 0 && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (y > 0)     { const n = i - w; if (owner[n] >= 0 && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (y < h - 1) { const n = i + w; if (owner[n] >= 0 && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+    }
+    cur = next
+  }
+
+  // 4. Blur a coverage-masked copy of the current texture (covered colours only),
+  //    so the blur near a boundary is the average of the two views that meet there.
   const ctx = textureCanvas.getContext('2d')
   const origData = ctx.getImageData(0, 0, w, h)
 
-  // Build a coverage-masked canvas (uncovered pixels are transparent)
   const maskCanvas = document.createElement('canvas')
   maskCanvas.width = w
   maskCanvas.height = h
   const maskCtx = maskCanvas.getContext('2d')
   const maskImg = maskCtx.createImageData(w, h)
   for (let i = 0; i < pixelCount; i++) {
+    if (owner[i] < 0) continue
     const j = i * 4
-    if (anyCoverage[i]) {
-      maskImg.data[j]     = origData.data[j]
-      maskImg.data[j + 1] = origData.data[j + 1]
-      maskImg.data[j + 2] = origData.data[j + 2]
-      maskImg.data[j + 3] = 255
-    }
-    // else leave transparent (0)
+    maskImg.data[j]     = origData.data[j]
+    maskImg.data[j + 1] = origData.data[j + 1]
+    maskImg.data[j + 2] = origData.data[j + 2]
+    maskImg.data[j + 3] = 255
   }
   maskCtx.putImageData(maskImg, 0, 0)
 
-  // Blur with CSS filter — GPU-accelerated, spreads covered colours into seam zone
+  // Blur with CSS filter — GPU-accelerated, spreads covered colours across the seam.
   const blurCanvas = document.createElement('canvas')
   blurCanvas.width = w
   blurCanvas.height = h
@@ -806,19 +859,20 @@ async function applySeamPostProcessing(textureCanvas, layerSnapshots, seamThresh
   blurCtx.filter = 'none'
   const blurData = blurCtx.getImageData(0, 0, w, h).data
 
-  // Blend blurred colours into seam pixels (low-confidence covered pixels)
+  // 5. Feather the blurred colour across the band: full strength at the boundary
+  //    (dist 0) ramping smoothly to 0 at bandRadius.
   const outData = new Uint8ClampedArray(origData.data)
   for (let i = 0; i < pixelCount; i++) {
-    if (!anyCoverage[i]) continue
-    const conf = maxConf[i]
-    if (conf >= seamThreshold) continue  // well-textured pixel — leave alone
+    const d = dist[i]
+    if (d < 0) continue
     const j = i * 4
     const blurAlpha = blurData[j + 3] / 255
     if (blurAlpha < 0.01) continue
 
-    const t = 1 - conf / seamThreshold  // 0 at threshold edge, 1 at conf=0
+    const t = 1 - d / bandRadius  // 1 at the seam → 0 at the band edge
     const smooth = t * t * (3 - 2 * t)
     const blendFactor = smooth * strength
+    if (blendFactor <= 1e-3) continue
 
     // Unpremultiply blur colour
     const bR = blurData[j]     / blurAlpha
@@ -831,8 +885,7 @@ async function applySeamPostProcessing(textureCanvas, layerSnapshots, seamThresh
     // alpha stays 255
   }
 
-  const outImg = new ImageData(outData, w, h)
-  ctx.putImageData(outImg, 0, 0)
+  ctx.putImageData(new ImageData(outData, w, h), 0, 0)
 }
 
 // 3D-aware hole filling. UV-space proximity is unreliable for AI-generated
