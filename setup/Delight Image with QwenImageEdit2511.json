@@ -3,7 +3,7 @@
     "inputs": {
       "shift": 3.1,
       "model": [
-        "173",
+        "178",
         0
       ]
     },
@@ -117,7 +117,7 @@
   },
   "148": {
     "inputs": {
-      "prompt": "Neutral uniform lighting Preserve identity and composition",
+      "prompt": "Neutral uniform lighting",
       "clip": [
         "154",
         0
@@ -305,6 +305,20 @@
     "class_type": "ImageCompositeMasked",
     "_meta": {
       "title": "Image Composite Masked"
+    }
+  },
+  "178": {
+    "inputs": {
+      "lora_name": "%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors",
+      "strength_model": 1,
+      "model": [
+        "173",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
     }
   }
 }

@@ -50,6 +50,12 @@ function buildFileList(config, selections, comfyPathsByCategory) {
     for (const loraEntry of loras) {
       addFile(comfyPathsByCategory.LoRA, loraEntry)
     }
+    const controlnets = Array.isArray(diffusion.ControlNet)
+      ? diffusion.ControlNet
+      : (diffusion.ControlNet ? [diffusion.ControlNet] : [])
+    for (const controlnetEntry of controlnets) {
+      addFile(comfyPathsByCategory.ControlNet, controlnetEntry)
+    }
   }
 
   return Array.from(map.values())

@@ -3,7 +3,8 @@
 		"DiffusionModels": "models/diffusion_models",
 		"VAE": "models/vae",
 		"TextEncoder": "models/text_encoders",
-		"LoRA": "models/loras"
+		"LoRA": "models/loras",
+		"ControlNet": "models/controlnet"
 	},
 	"DiffusionModels": [
 		{
@@ -22,7 +23,8 @@
 			"TextEncoder": { "FileName": "qwen_2.5_vl_7b_fp8_scaled.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/HunyuanVideo_1.5_repackaged/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors?download=true",       "Size": 9.4 },
 			"LoRA":[
 				{ "FileName": "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors", "Url": "https://huggingface.co/lightx2v/Qwen-Image-Edit-2511-Lightning/resolve/main/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors?download=true",        "Size": 0.9 },
-				{ "FileName": "QIE-2511-Studio-DeLight-5000.safetensors", "Url": "https://huggingface.co/prithivMLmods/QIE-2511-Studio-DeLight/resolve/main/QIE-2511-Studio-DeLight-5000.safetensors?download=true",        "Size": 0.2 }
+				{ "FileName": "QIE-2511-Studio-DeLight-5000.safetensors", "Url": "https://huggingface.co/prithivMLmods/QIE-2511-Studio-DeLight/resolve/main/QIE-2511-Studio-DeLight-5000.safetensors?download=true",        "Size": 0.2 },
+				{ "FileName": "%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors", "Url": "https://huggingface.co/dx8152/Qwen-Image-Edit-2509-Light_restoration/resolve/main/%E7%A7%BB%E9%99%A4%E5%85%89%E5%BD%B1V2.safetensors?download=true",        "Size": 0.2 }
 			],
 			"Workflows": [
 				{
@@ -33,7 +35,9 @@
 						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
-						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }
 					],
 					"Outputs": [
 						{ "Node": "35", "Name": "Save Image", "Type": "Image" }
@@ -48,7 +52,9 @@
 						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
 						{ "Node": "8",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
-						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "36", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }						
 					],
 					"Outputs": [
 						{ "Node": "35", "Name": "Save Image", "Type": "Image" }
@@ -86,7 +92,6 @@
 					"File": "setup/Delight Image with QwenImageEdit2511.json",
 					"Inputs": [
 						{ "Node": "146", "Input": "image",  "Name": "Source Image",    "Type": "Image"  },
-						{ "Node": "148",  "Input": "prompt", "Name": "Prompt",            "Type": "String" },
 						{ "Node": "143", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
 						{ "Node": "172", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
 					],
@@ -142,6 +147,12 @@
 			},
 			"VAE":         { "FileName": "flux2-vae.safetensors",                        "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors?download=true",                                     "Size": 0.3  },
 			"TextEncoder": { "FileName": "mistral_3_small_flux2_fp4_mixed.safetensors",  "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/text_encoders/mistral_3_small_flux2_fp4_mixed.safetensors?download=true",      "Size": 12.3 },
+			"ControlNet":[
+				{ "FileName": "FLUX.2-dev-Fun-Controlnet-Union.safetensors", "Url": "https://huggingface.co/alibaba-pai/FLUX.2-dev-Fun-Controlnet-Union/resolve/main/FLUX.2-dev-Fun-Controlnet-Union.safetensors?download=true", "Size": 8.2 }
+			],
+			"LoRA":[        				
+				{ "FileName": "Flux_2-Turbo-LoRA_comfyui.safetensors", "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/loras/Flux_2-Turbo-LoRA_comfyui.safetensors?download=true", "Size": 2.8 }
+			],			
 			"Workflows": [
 				{
 					"Name": "Gen Image with Flux2 Dev",
@@ -154,7 +165,23 @@
 					"Outputs": [
 						{ "Node": "9", "Name": "Save Image", "Type": "Image" }
 					]
-				}
+				},
+				{
+					"Name": "Mesh Projection with Flux2Dev",
+					"File": "setup/Mesh Projection with Flux2Dev.json",
+					"Inputs": [
+						{ "Node": "42", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "46", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "6",  "Input": "text", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "25", "Input": "noise_seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "76", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "75", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "75", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "9", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
 			]
 		},
 		{
@@ -185,7 +212,56 @@
 					]
 				}
 			]
-		}
+		},
+		{
+			"Name": "Flux2-Klein9B",
+			"Models": {				
+				"F16": { "FileName": "flux-2-klein-9b-F16.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-F16.gguf?download=true",   "Size": 18.2 },
+				"BF16":  { "FileName": "flux-2-klein-9b-BF16.gguf",    "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-BF16.gguf?download=true",    "Size": 18.2 },
+				"Q8": { "FileName": "flux-2-klein-9b-Q8_0.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q8_0.gguf?download=true",   "Size": 10.0 },
+				"Q6": { "FileName": "flux-2-klein-9b-Q6_K.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q6_K.gguf?download=true",   "Size": 7.9 },
+				"Q5": { "FileName": "flux-2-klein-9b-Q5_K_M.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q5_K_M.gguf?download=true",   "Size": 7.0 },
+				"Q4": { "FileName": "flux-2-klein-9b-Q4_K_M.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q4_K_M.gguf?download=true",   "Size": 5.9 },
+				"Q3": { "FileName": "flux-2-klein-9b-Q3_K_M.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q3_K_M.gguf?download=true",   "Size": 4.8 },
+				"Q2": { "FileName": "flux-2-klein-9b-Q2_K.gguf",   "Url": "https://huggingface.co/unsloth/FLUX.2-klein-9B-GGUF/resolve/main/flux-2-klein-9b-Q2_K.gguf?download=true",   "Size": 4.0 }
+			},
+			"VAE":         { "FileName": "flux2-vae.safetensors",                        "Url": "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors?download=true",                                     "Size": 0.3  },
+			"TextEncoder": { "FileName": "qwen_3_8b_fp8mixed.safetensors", "Url": "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-9b/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors?download=true",          "Size": 5.6 },
+			"LoRA":[        				
+				{ "FileName": "flux2-klein9b-canny5k-lora_000000500.safetensors", "Url": "https://huggingface.co/visualbruno/Flux2KleinLora/resolve/main/flux2-klein9b-canny5k-lora_000000500.safetensors?download=true", "Size": 331.0 },
+				{ "FileName": "flux2-klein9b-albedo-lora.safetensors", "Url": "https://huggingface.co/visualbruno/Flux2KleinLora/resolve/main/flux2-klein9b-albedo-lora.safetensors?download=true", "Size": 331.0 }
+			],			
+			"Workflows": [
+				{
+					"Name": "Gen Image with Flux2Klein9B",
+					"File": "setup/Gen Image with Flux2Klein9B.json",
+					"Inputs": [
+						{ "Node": "6", "Input": "text",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "7",  "Input": "noise_seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "8:17",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "65",  "Input": "value", "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "63", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection with Flux2Klein9B",
+					"File": "setup/Mesh Projection with Flux2Klein9B.json",
+					"Inputs": [
+						{ "Node": "1", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "6",  "Input": "text", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "7", "Input": "noise_seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "66", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "67", "Input": "mask_offset",  "Name": "RMBG - Mask Offset",  "Type": "Number" },
+						{ "Node": "67", "Input": "mask_blur",  "Name": "RMBG - Mask Blur",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "64", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
+			]
+		}		
 	],
 	"OtherWorkflows":[
 		{
@@ -193,7 +269,8 @@
 			"File": "setup/Remove Background with RMBG.json",
 			"Inputs": [
 				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
-				{ "Node": "2",  "Input": "mask_offset",  "Name": "Mask Offset",   "Type": "Number" }
+				{ "Node": "2",  "Input": "mask_offset",  "Name": "Mask Offset",   "Type": "Number" },
+				{ "Node": "2",  "Input": "mask_blur",  "Name": "Mask Blur",   "Type": "Number" }
 			],
 			"Outputs": [
 				{ "Node": "4", "Name": "Save Image", "Type": "Image" }

@@ -3,7 +3,7 @@
     "inputs": {
       "shift": 3.1,
       "model": [
-        "13",
+        "37",
         0
       ]
     },
@@ -384,7 +384,7 @@
       "sensitivity": 1,
       "process_res": 1024,
       "mask_blur": 0,
-      "mask_offset": -1,
+      "mask_offset": 0,
       "invert_output": false,
       "refine_foreground": false,
       "background": "Alpha",
@@ -397,6 +397,20 @@
     "class_type": "RMBG",
     "_meta": {
       "title": "Remove Background (RMBG)"
+    }
+  },
+  "37": {
+    "inputs": {
+      "lora_name": "QIE-2511-Studio-DeLight-5000.safetensors",
+      "strength_model": 1,
+      "model": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
     }
   }
 }
