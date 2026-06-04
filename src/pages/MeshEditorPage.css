@@ -792,6 +792,10 @@
   gap: 0.65rem;
   padding: 0.85rem 1rem;
   color: var(--primary);
+  /* Always rendered and given a constant height so showing/hiding a message
+     never resizes the canvas shell (which would shift a painted projection
+     mask). Empty and single-line states occupy the same height. */
+  min-height: 3.25rem;
 }
 
 .mesh-editor-feedback--error {
