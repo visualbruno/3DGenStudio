@@ -471,6 +471,35 @@ function getDepthMaterial() {
   return depthMaterial
 }
 
+// UV-occupancy material: rasterises every triangle into UV space (same placement
+// as the bake) and writes solid white, with NO facing / depth / projection test.
+// The result is the union of ALL triangles' texel footprints — i.e. which texels
+// belong to SOME island. Used to stop the gutter dilation from bleeding a view's
+// colour across a thin UV gutter onto a NEIGHBOURING island (the "front colour on
+// the back of the mesh" leak when UVs are poorly packed / AI-generated).
+let occupancyMaterial = null
+function getOccupancyMaterial() {
+  if (!occupancyMaterial) {
+    occupancyMaterial = new THREE.RawShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      vertexShader: /* glsl */`
+        in vec2 aTexUV;
+        void main() { gl_Position = vec4(aTexUV * 2.0 - 1.0, 0.0, 1.0); }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        out vec4 outColor;
+        void main() { outColor = vec4(1.0); }
+      `,
+      blending: THREE.NoBlending,
+      depthTest: false,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+  }
+  return occupancyMaterial
+}
+
 function getBakeMaterial() {
   if (!bakeMaterial) {
     bakeMaterial = new THREE.RawShaderMaterial({
@@ -555,6 +584,34 @@ function runDepthPrepass(renderer, depthRt, meshes, camera) {
   renderer.render(scene, camera)
   renderer.setRenderTarget(null)
   scene.clear()
+}
+
+// Rasterise EVERY triangle of every bake geometry into UV space and read back a
+// per-texel occupancy mask (1 = this texel belongs to some island). Computed at
+// the bake texture resolution so it aligns texel-for-texel with the coverage.
+function computeUvOccupancy(renderer, bakeGeoms, width, height) {
+  const target = makeByteTarget(width, height)
+  const mat = getOccupancyMaterial()
+  const scene = new THREE.Scene()
+  bakeGeoms.forEach(({ geom, matrixWorld }) => {
+    const proxy = new THREE.Mesh(geom, mat)
+    proxy.matrixAutoUpdate = false
+    proxy.matrixWorld.copy(matrixWorld)
+    proxy.frustumCulled = false
+    scene.add(proxy)
+  })
+  renderer.setRenderTarget(target)
+  renderer.setClearColor(0x000000, 0)
+  renderer.clear(true, true, false)
+  renderer.render(scene, getQuad().camera) // camera unused; vertex shader ignores it
+  renderer.setRenderTarget(null)
+  scene.clear()
+  const buf = new Uint8Array(width * height * 4)
+  renderer.readRenderTargetPixels(target, 0, 0, width, height, buf)
+  target.dispose()
+  const occ = new Uint8Array(width * height)
+  for (let i = 0; i < occ.length; i += 1) occ[i] = buf[i * 4 + 3] > 127 ? 1 : 0
+  return occ
 }
 
 // Render every source mesh's UV-space contribution for ONE view into `temp`.
@@ -691,9 +748,7 @@ function jfaDilate(renderer, width, height, colorTex, accumTex, maxDist, seedMin
 // rows bottom-up (GL order); the CPU bake's canvas row 0 corresponds to texture-V
 // 0, which is also GL row 0, so no vertical flip is needed to match the existing
 // pipeline. `flipY` is exposed for the checker-test gotcha noted in the analysis.
-function byteTargetToCanvas(renderer, target, width, height, flipY = false) {
-  const buf = new Uint8Array(width * height * 4)
-  renderer.readRenderTargetPixels(target, 0, 0, width, height, buf)
+function bufferToCanvas(buf, width, height, flipY = false) {
   const canvas = (typeof document !== 'undefined') ? document.createElement('canvas') : null
   if (!canvas) return null
   canvas.width = width
@@ -711,6 +766,12 @@ function byteTargetToCanvas(renderer, target, width, height, flipY = false) {
   }
   ctx.putImageData(img, 0, 0)
   return canvas
+}
+
+function byteTargetToCanvas(renderer, target, width, height, flipY = false) {
+  const buf = new Uint8Array(width * height * 4)
+  renderer.readRenderTargetPixels(target, 0, 0, width, height, buf)
+  return bufferToCanvas(buf, width, height, flipY)
 }
 
 function readStats(renderer, target, width, height) {
@@ -990,7 +1051,15 @@ export async function bakeViewToTextureGPU(params) {
       colorTarget = dilatedRt
     }
 
-    const canvas = byteTargetToCanvas(renderer, colorTarget, textureWidth, textureHeight, flipOutputY)
+    // UV-island occupancy: which texels belong to SOME triangle's footprint. The
+    // gutter dilation grows colour in 2D texture space, blind to island borders, so
+    // on a poorly-packed (e.g. AI-generated) UV layout a front-facing island's halo
+    // bleeds across a thin gutter onto a NEIGHBOURING island that belongs to the back
+    // of the mesh — front colour appears on untouched back faces. We allow the
+    // dilation to fill genuinely EMPTY gutter texels (occ == 0, kills white mip
+    // seams) but reject any dilated texel that lands on a DIFFERENT island
+    // (occ == 1 && not core), so a view can never paint a surface it doesn't own.
+    const uvOccupancyMask = computeUvOccupancy(renderer, bakeGeoms, textureWidth, textureHeight)
 
     // Coverage/confidence must include the padded gutter, or the layer composite
     // will not write those texels and the seam returns. Derive coverage from the
@@ -1005,23 +1074,39 @@ export async function bakeViewToTextureGPU(params) {
     const PAD_CONFIDENCE = 0.02
     let coverageMask = coreCoverage
     let confidenceMap = coreConfidence
+    let canvas
     if (dilatedRt) {
       const padBuf = new Uint8Array(textureWidth * textureHeight * 4)
       renderer.readRenderTargetPixels(dilatedRt, 0, 0, textureWidth, textureHeight, padBuf)
       coverageMask = new Uint8Array(textureWidth * textureHeight)
       confidenceMap = new Float32Array(textureWidth * textureHeight)
       for (let i = 0; i < coverageMask.length; i += 1) {
-        if (padBuf[i * 4 + 3] > 127) {
+        const isCore = coreCoverage[i] === 1
+        const isDilated = padBuf[i * 4 + 3] > 127
+        // Reject a dilated halo texel that bleeds onto a different island.
+        const bleedsOntoOtherIsland = isDilated && !isCore && uvOccupancyMask[i] === 1
+        if (isDilated && !bleedsOntoOtherIsland) {
           coverageMask[i] = 1
-          confidenceMap[i] = coreCoverage[i] ? coreConfidence[i] : PAD_CONFIDENCE
+          confidenceMap[i] = isCore ? coreConfidence[i] : PAD_CONFIDENCE
+        } else if (bleedsOntoOtherIsland) {
+          // Strip the bled colour from the canvas too, so the single-view reproject
+          // path (which draws gpu.canvas directly) does not paint it either.
+          padBuf[i * 4] = 0
+          padBuf[i * 4 + 1] = 0
+          padBuf[i * 4 + 2] = 0
+          padBuf[i * 4 + 3] = 0
         }
       }
+      canvas = bufferToCanvas(padBuf, textureWidth, textureHeight, flipOutputY)
+    } else {
+      canvas = byteTargetToCanvas(renderer, colorTarget, textureWidth, textureHeight, flipOutputY)
     }
 
     return {
       canvas,
       coverageMask,
       confidenceMap,
+      uvOccupancyMask,
       coveredTexels,
       occlusionModeUsed,
       durationMs: (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startedAt

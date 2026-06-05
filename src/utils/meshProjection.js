@@ -482,12 +482,13 @@ export function resolveProjectionSharedSeams(outputData, seamAccumColor, seamAcc
 // fills them. It runs on the FINAL composite (colours already resolved by
 // ownership), so it can never recreate that cross-view gray seam.
 export const PROJECTION_GUTTER_PAD_PX = 4
-export function dilateProjectionGutter(outputData, coverage, width, height, radius = PROJECTION_GUTTER_PAD_PX) {
+export function dilateProjectionGutter(outputData, coverage, width, height, radius = PROJECTION_GUTTER_PAD_PX, uvOccupancyMask = null) {
   if (!outputData || !coverage || !width || !height) {
     return
   }
   const passes = Math.max(1, Math.floor(radius))
   const grown = Uint8Array.from(coverage)
+  const useOccupancy = uvOccupancyMask && uvOccupancyMask.length === width * height
   for (let pass = 0; pass < passes; pass += 1) {
     const src = Uint8Array.from(grown)
     let changed = false
@@ -495,6 +496,12 @@ export function dilateProjectionGutter(outputData, coverage, width, height, radi
       for (let x = 0; x < width; x += 1) {
         const i = y * width + x
         if (src[i]) {
+          continue
+        }
+        // Only fill genuinely empty gutter texels. A texel that belongs to another
+        // island (occupancy == 1) but isn't covered must keep its own content — the
+        // dilation must not paint one chart's colour onto a different chart.
+        if (useOccupancy && uvOccupancyMask[i]) {
           continue
         }
         let sumR = 0
@@ -552,7 +559,7 @@ export function dilateProjectionGutter(outputData, coverage, width, height, radi
 //     so the "Blend overlap" slider widens the cross-fade WITHOUT removing coverage.
 // This matches the intent: front view owns what it sees; the next view fills the
 // rest and feathers across the join.
-export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width, height, viewGains = null) {
+export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width, height, viewGains = null, uvOccupancyMask = null) {
   if (!outputData || !Array.isArray(layerSnapshots) || layerSnapshots.length === 0 || !width || !height) {
     return
   }
@@ -659,8 +666,10 @@ export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots,
 
   // Pad the resolved colours past every covered island edge so display-time
   // bilinear sampling cannot pull the unpainted base across UV seams (the thin
-  // white "wireframe" lines).
-  dilateProjectionGutter(outputData, committed, width, height)
+  // white "wireframe" lines). Pass UV occupancy so the pad only fills genuinely
+  // empty gutter texels and never bleeds a view's colour across a thin gutter onto
+  // a neighbouring island (front colour leaking onto back-of-mesh charts).
+  dilateProjectionGutter(outputData, committed, width, height, undefined, uvOccupancyMask)
 }
 
 // Seam smoothing post-process.

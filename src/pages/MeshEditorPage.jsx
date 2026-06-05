@@ -250,6 +250,10 @@ export default function MeshEditorPage() {
   const patchedTextureRef = useRef(null)
   const projectionViewDataRef = useRef([])
   const projectionCoverageRef = useRef(null)
+  // Per-texel UV-island occupancy (1 = belongs to some chart). Computed by the GPU
+  // bake and reused so the final composite gutter dilation only fills empty gutters,
+  // never bleeds a view's colour across a thin gutter onto a neighbouring island.
+  const projectionUvOccupancyRef = useRef(null)
   const projectionFaceOwnershipRef = useRef(new Map())
   const projectionLayerDataRef = useRef(new Map())
   const projectionLayerCounterRef = useRef(0)
@@ -3380,6 +3384,7 @@ export default function MeshEditorPage() {
     setProjectionKeepTexture(false)
     projectionBaseTextureRef.current = null
     projectionCoverageRef.current = null
+    projectionUvOccupancyRef.current = null
     projectionFaceOwnershipRef.current.clear()
     projectionLayerDataRef.current.clear()
     projectionLayerCounterRef.current = 0
@@ -3445,7 +3450,12 @@ export default function MeshEditorPage() {
           `patch:${patchCanvas.width}x${patchCanvas.height}`,
           `crop:${effectiveCropBorder}`,
           `blend:${effectiveBlendPixels}`,
-          `feather:${effectiveMaskFeather}`
+          `feather:${effectiveMaskFeather}`,
+          // Occlusion/visibility behaviour version. Bump this whenever the bake's
+          // cullBackfaces / minFacing / bias change, so cached layer bakes are
+          // invalidated and re-baked with the new visibility rules (otherwise a
+          // re-apply silently reuses the stale canvas).
+          `occl:v3-cull-occ`
         ].join('|')
 
         const requiresRebake = (
@@ -3490,7 +3500,14 @@ export default function MeshEditorPage() {
                 // lines) so they never enter this view's coverage.
                 alpha: 6,
                 viewOpacity: 1,
-                cullBackfaces: false,
+                // Cull back faces. With culling OFF the shader uses abs(ndotv), so a
+                // face whose normal points away from the projector is treated as
+                // well-facing and is rejected only by depth occlusion. At silhouettes
+                // / folds the back face is the first (only) surface the projector ray
+                // hits, so depth can't reject it and the front view leaks onto the
+                // back (scattered speckles on the far side). Culling discards anything
+                // with ndotv <= minFacing — the correct projection-painting rule.
+                cullBackfaces: true,
                 minFacing: 0.12,
                 minMaskAlpha: 0.12
               })
@@ -3512,6 +3529,9 @@ export default function MeshEditorPage() {
                 layerData.ownershipMask = ownershipMask
                 layerData.sharedSeamMask = sharedSeamMask
                 layerData.confidenceMap = gpu.confidenceMap
+                if (gpu.uvOccupancyMask && gpu.uvOccupancyMask.length === texW * texH) {
+                  projectionUvOccupancyRef.current = gpu.uvOccupancyMask
+                }
                 accumulateStats = { occlusionModeUsed: `gpu:${gpu.occlusionModeUsed}`, appliedSamples: gpu.coveredTexels || 0 }
                 finalizeStats = { appliedPixels: 0 }
                 gpuBaked = true
@@ -3561,7 +3581,10 @@ export default function MeshEditorPage() {
             // Raycast is slower than depth-prepass, but it is more robust for
             // imported meshes that otherwise lose large surface areas.
             occlusionMode: 'raycast',
-            cullBackfaces: false,
+            // Cull back faces (matches the GPU path). At silhouettes/folds the back
+            // face is the first raycast hit, so occlusion alone can't reject it and
+            // the front projection leaks onto the far side.
+            cullBackfaces: true,
             onProgress: progress => {
               const overall = (layerIndex + progress) / totalVisibleLayers
               setProjectionRebuildProgress(overall)
@@ -3714,7 +3737,7 @@ export default function MeshEditorPage() {
         }
       }
 
-      resolveProjectionLayersIntoImageData(composedData, layerSnapshots, texW, texH, viewGains)
+      resolveProjectionLayersIntoImageData(composedData, layerSnapshots, texW, texH, viewGains, projectionUvOccupancyRef.current)
       textureContext.putImageData(composedImage, 0, 0)
       projectionLayerSnapshotsRef.current = layerSnapshots
       postProcBackupRef.current = null  // invalidate any prior post-proc backup on rebuild
@@ -4508,7 +4531,10 @@ export default function MeshEditorPage() {
               textureHeight,
               alpha: 6,
               viewOpacity: 1,
-              cullBackfaces: false,
+              // Cull back faces — see the rebuild path above. Without this the
+              // front projection leaks onto back-facing geometry at silhouettes
+              // and folds, which depth occlusion alone cannot reject.
+              cullBackfaces: true,
               minFacing: 0.12,
               minMaskAlpha: 0.12
             });
