@@ -1316,7 +1316,7 @@ export async function findAssetByFilePath(type, filePath) {
   );
 }
 
-export async function createAssetVersion({ assetId, name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
+export async function createAssetVersion({ assetId, name, type, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now(), inheritThumbnail = true }) {
   const sourceAsset = await getAssetRecordById(assetId);
 
   if (!sourceAsset) {
@@ -1333,7 +1333,7 @@ export async function createAssetVersion({ assetId, name, type, filePath, thumbn
     name: String(name || '').trim() || sourceAsset.name,
     type: type || String(sourceAsset.assetTypeName || '').toLowerCase(),
     filePath,
-    thumbnailPath: thumbnailPath ?? sourceAsset.thumbnail ?? null,
+    thumbnailPath: thumbnailPath ?? (inheritThumbnail ? sourceAsset.thumbnail : null) ?? null,
     width: Number(width) || sourceAsset.width || 0,
     height: Number(height) || sourceAsset.height || 0,
     metadata: {
@@ -1473,6 +1473,51 @@ export async function resolveProjectMeshSource(projectId, sourceReference) {
   const parsedReference = typeof sourceReference === 'string'
     ? sourceReference
     : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
+
+  if (typeof parsedReference === 'string' && parsedReference.startsWith('edit:')) {
+    const editFilePath = parsedReference.slice(5);
+    const db = await getDb();
+    const row = await get(
+      db,
+       `SELECT projectAsset.id AS assetId, c.projectId, projectAsset.name AS assetName, projectAsset.filePath AS assetFilePath,
+              child.name AS editName, child.filePath AS editFilePath, child.width AS editWidth, child.height AS editHeight,
+              child.creationDate, child.metadata AS editMetadata
+       FROM Assets child
+       JOIN Assets sourceAsset ON sourceAsset.id = child.parentId
+       JOIN Assets projectAsset ON projectAsset.filePath = sourceAsset.filePath
+         AND projectAsset.assetTypeId = sourceAsset.assetTypeId
+       JOIN Cards_Assets ca ON ca.assetId = projectAsset.id
+       JOIN Cards c ON c.id = ca.cardId
+       JOIN AssetTypes sourceType ON sourceType.id = sourceAsset.assetTypeId
+       JOIN AssetTypes childType ON childType.id = child.assetTypeId
+       WHERE c.projectId = ? AND child.filePath = ? AND sourceType.name = 'Mesh' AND childType.name = 'Mesh'
+       ORDER BY c.creationDate DESC, projectAsset.creationDate DESC, projectAsset.id DESC
+       LIMIT 1`,
+      [projectId, editFilePath]
+    );
+
+    if (!row) {
+      return null;
+    }
+
+    const asset = await getProjectAssetById(projectId, row.assetId);
+    if (!asset) {
+      return null;
+    }
+
+    const editMetadata = parseJson(row.editMetadata, {});
+
+    return {
+      asset,
+      inputFilePath: row.editFilePath,
+      inputFilename: toAssetUrlPath(row.editFilePath),
+      inputName: row.editName || `Version ${editMetadata?.editId || row.assetId}`,
+      width: row.editWidth ?? 0,
+      height: row.editHeight ?? 0,
+      isEdit: true,
+      editId: editMetadata?.editId || null
+    };
+  }
 
   const assetId = typeof parsedReference === 'string' && parsedReference.startsWith('asset:')
     ? Number(parsedReference.slice(6))
@@ -2095,8 +2140,17 @@ export async function listProjectAssets(projectId = null) {
 
   const uniqueImageFilePaths = [...new Set(imageFilePaths)];
 
-  const childAssetRows = await listChildAssetsByParentFilePaths(db, uniqueImageFilePaths, 'Image');
-  const childrenByFilePath = groupChildAssetsByParentFilePath(childAssetRows);
+  const meshFilePaths = rows
+    .filter(row => String(row.assetTypeName || '').toLowerCase() === 'mesh')
+    .map(row => row.filePath)
+    .filter(Boolean);
+
+  const uniqueMeshFilePaths = [...new Set(meshFilePaths)];
+
+  const imageChildAssetRows = await listChildAssetsByParentFilePaths(db, uniqueImageFilePaths, 'Image');
+  const meshChildAssetRows = await listChildAssetsByParentFilePaths(db, uniqueMeshFilePaths, 'Mesh');
+  // Image and mesh assets never share a filePath, so a single keyed map is safe.
+  const childrenByFilePath = groupChildAssetsByParentFilePath([...imageChildAssetRows, ...meshChildAssetRows]);
 
   return rows.map(row => {
     const canonicalAsset = canonicalAssetsByKey[`${row.assetTypeName}:${row.filePath}`];

@@ -2107,7 +2107,7 @@ async function saveGeneratedMeshAssets({
     // When the mesh was edited from a connected mesh, save it as a version (child)
     // of that mesh instead of creating a new root asset.
     savedAssets.push(normalizedParentAssetId
-      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...assetPayload })
+      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...assetPayload, inheritThumbnail: false })
       : await createProjectAsset({ projectId: Number(projectId), ...assetPayload }));
   }
 
@@ -2399,8 +2399,10 @@ app.post('/api/meshes/texture', async (req, res) => {
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, meshOutput.buffer);
 
-    const savedAsset = await createProjectAsset({
-      projectId: Number(projectId),
+    // The result was produced from an existing source mesh, so save it as a
+    // version (child) of that mesh instead of creating a new root asset.
+    const savedAsset = await createAssetVersion({
+      assetId: sourceAsset.id,
       type: 'mesh',
       name: trimmedName,
       filePath: storedFilePath,
@@ -2411,7 +2413,9 @@ app.post('/api/meshes/texture', async (req, res) => {
         prompt: trimmedPrompt,
         cardId: processingCardId
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      // The generated geometry differs from the parent, so render its own thumbnail.
+      inheritThumbnail: false
     });
 
     await clearCardProcessingState(processingProjectId, processingCardId, {
@@ -3069,7 +3073,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         // When a mesh output was edited from a connected mesh, store it as a
         // version (child) of that mesh instead of creating a new root asset.
         const persistedAsset = (normalizedParentAssetId && inferredAssetType === 'mesh')
-          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload })
+          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload, inheritThumbnail: false })
           : await createProjectAsset(generatedAssetPayload);
         generatedAssets.push({
           ...persistedAsset,
@@ -3478,7 +3482,7 @@ app.post('/api/meshes/generate', async (req, res) => {
     // When a mesh was connected to the node and used to edit it, save the
     // result as a version (child) of that mesh instead of a new root asset.
     const savedAsset = normalizedParentAssetId
-      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...meshAssetPayload })
+      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...meshAssetPayload, inheritThumbnail: false })
       : await createProjectAsset({ projectId: Number(projectId), ...meshAssetPayload });
 
     await clearCardProcessingState(processingProjectId, processingCardId, {
@@ -3833,8 +3837,10 @@ app.post('/api/meshes/edit', async (req, res) => {
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, meshOutput.buffer);
 
-    const savedAsset = await createProjectAsset({
-      projectId: Number(projectId),
+    // The result was produced from an existing source mesh, so save it as a
+    // version (child) of that mesh instead of creating a new root asset.
+    const savedAsset = await createAssetVersion({
+      assetId: sourceAsset.id,
       type: 'mesh',
       name: trimmedName,
       filePath: storedFilePath,
@@ -3845,7 +3851,9 @@ app.post('/api/meshes/edit', async (req, res) => {
         prompt: trimmedPrompt,
         cardId: processingCardId
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      // The generated geometry differs from the parent, so render its own thumbnail.
+      inheritThumbnail: false
     });
 
     await clearCardProcessingState(processingProjectId, processingCardId, {
@@ -3963,8 +3971,10 @@ app.post('/api/meshes/texture', async (req, res) => {
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, meshOutput.buffer);
 
-    const savedAsset = await createProjectAsset({
-      projectId: Number(projectId),
+    // The result was produced from an existing source mesh, so save it as a
+    // version (child) of that mesh instead of creating a new root asset.
+    const savedAsset = await createAssetVersion({
+      assetId: sourceAsset.id,
       type: 'mesh',
       name: trimmedName,
       filePath: storedFilePath,
@@ -3975,7 +3985,9 @@ app.post('/api/meshes/texture', async (req, res) => {
         prompt: trimmedPrompt,
         cardId: processingCardId
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      // The generated geometry differs from the parent, so render its own thumbnail.
+      inheritThumbnail: false
     });
 
     await clearCardProcessingState(processingProjectId, processingCardId, {

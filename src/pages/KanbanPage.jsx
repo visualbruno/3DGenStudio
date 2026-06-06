@@ -1019,7 +1019,13 @@ export default function KanbanPage() {
           label: asset.name,
           previewFilename: asset.thumbnail || asset.filename,
           isEdit: false
-        }
+        },
+        ...getAssetChildren(asset).map((version, index) => ({
+          value: `edit:${version.filePath}`,
+          label: version.name?.trim() || `Version ${index + 1}`,
+          previewFilename: version.thumbnail || version.filename,
+          isEdit: true
+        }))
       ]
     }))
   }
@@ -1075,15 +1081,26 @@ export default function KanbanPage() {
           asset
         }))
       )),
-      ...((card.meshAssets || []).map(asset => ({
-        key: `mesh:${asset.id}`,
-        name: asset.name,
-        filename: asset.filename,
-        previewFilename: asset.thumbnail || null,
-        assetType: 'mesh',
-        isEdit: false,
-        asset
-      })))
+      ...((card.meshAssets || []).flatMap(asset => ([
+        {
+          key: `mesh:${asset.id}`,
+          name: asset.name,
+          filename: asset.filename,
+          previewFilename: asset.thumbnail || null,
+          assetType: 'mesh',
+          isEdit: false,
+          asset
+        },
+        ...getAssetChildren(asset).map((version, index) => ({
+          key: `mesh-version:${version.filePath}`,
+          name: version.name?.trim() || `Version ${index + 1}`,
+          filename: version.filename,
+          previewFilename: version.thumbnail || null,
+          assetType: 'mesh',
+          isEdit: true,
+          asset: { ...version, type: 'mesh' }
+        }))
+      ])))
     ]
   }
 
@@ -1773,6 +1790,7 @@ export default function KanbanPage() {
 
         const inputValues = {}
         let primaryAssetId = null
+        let primaryMeshAssetId = null
 
         for (const parameter of workflow.parameters || []) {
           const valueType = getWorkflowParameterValueType(parameter)
@@ -1787,6 +1805,10 @@ export default function KanbanPage() {
             const matchingAssetGroup = getCardFileSourceGroups(card, valueType).find(group => group.options.some(option => option.value === resolvedValue))
             if (!isMeshWorkflowCard && valueType === 'image' && !primaryAssetId && matchingAssetGroup?.asset?.id) {
               primaryAssetId = matchingAssetGroup.asset.id
+            }
+            // Capture the source mesh so the result can be saved as its version.
+            if (valueType === 'mesh' && !primaryMeshAssetId && matchingAssetGroup?.asset?.id) {
+              primaryMeshAssetId = matchingAssetGroup.asset.id
             }
 
             inputValues[parameter.id] = { source: resolvedValue }
@@ -1874,7 +1896,10 @@ export default function KanbanPage() {
             name,
             inputs: inputValues,
             promptId,
-            clientId
+            clientId,
+            // Mesh Edit / Texturing operate on an existing mesh — save the result
+            // as a version (child) of that source mesh.
+            parentAssetId: (isMeshEditCard || isTexturingCard) ? primaryMeshAssetId : null
           })
 
           await ensureGeneratedMeshThumbnails(generatedMeshes)
