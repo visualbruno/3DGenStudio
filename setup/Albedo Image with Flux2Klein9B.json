@@ -66,7 +66,7 @@
   "61": {
     "inputs": {
       "lora_name": "flux2-klein9b-albedo-lora.safetensors",
-      "strength_model": 1,
+      "strength_model": 0.8,
       "model": [
         "63",
         0

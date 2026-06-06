@@ -2072,9 +2072,11 @@ async function saveGeneratedMeshAssets({
   provider = 'API',
   prompt = '',
   metadata = {},
-  downloadedFiles = []
+  downloadedFiles = [],
+  parentAssetId = null
 } = {}) {
   const savedAssets = [];
+  const normalizedParentAssetId = Number(parentAssetId) || null;
 
   for (const [index, downloadedFile] of downloadedFiles.entries()) {
     const extension = path.extname(downloadedFile.filename).replace('.', '') || getExtensionFromContentType(downloadedFile.contentType, 'glb');
@@ -2085,8 +2087,7 @@ async function saveGeneratedMeshAssets({
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
 
-    savedAssets.push(await createProjectAsset({
-      projectId: Number(projectId),
+    const assetPayload = {
       type: 'mesh',
       name: downloadedFiles.length > 1 ? `${name} ${index + 1}` : name,
       filePath: storedFilePath,
@@ -2101,7 +2102,13 @@ async function saveGeneratedMeshAssets({
         ...metadata
       },
       createdAt: Date.now() + index
-    }));
+    };
+
+    // When the mesh was edited from a connected mesh, save it as a version (child)
+    // of that mesh instead of creating a new root asset.
+    savedAssets.push(normalizedParentAssetId
+      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...assetPayload })
+      : await createProjectAsset({ projectId: Number(projectId), ...assetPayload }));
   }
 
   return savedAssets;
@@ -2838,10 +2845,11 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
   let executionPromptId = null;
 
   try {
-    const { projectId, workflowId, cardId, name } = req.body;
+    const { projectId, workflowId, cardId, name, parentAssetId } = req.body;
     const normalizedProjectId = Number(projectId);
     const hasProjectId = Number.isFinite(normalizedProjectId) && normalizedProjectId > 0;
     const trimmedName = String(name || '').trim();
+    const normalizedParentAssetId = Number(parentAssetId) || null;
     const inputValues = JSON.parse(req.body.inputValues || '{}');
     const persistProcessingCard = String(req.body.persistProcessingCard || '').toLowerCase() !== 'false';
     const persistGeneratedAssets = String(req.body.persistGeneratedAssets || '').toLowerCase() !== 'false';
@@ -3058,7 +3066,11 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
         await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
 
-        const persistedAsset = await createProjectAsset(generatedAssetPayload);
+        // When a mesh output was edited from a connected mesh, store it as a
+        // version (child) of that mesh instead of creating a new root asset.
+        const persistedAsset = (normalizedParentAssetId && inferredAssetType === 'mesh')
+          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload })
+          : await createProjectAsset(generatedAssetPayload);
         generatedAssets.push({
           ...persistedAsset,
           url: `http://localhost:${PORT}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,
@@ -3148,8 +3160,10 @@ app.post('/api/meshes/generate', async (req, res) => {
       enablePBR,
       faceCount,
       generationType,
-      polygonType
+      polygonType,
+      parentAssetId
     } = req.body;
+    const normalizedParentAssetId = Number(parentAssetId) || null;
     const trimmedName = String(name || '').trim();
     const trimmedPrompt = String(prompt || '').trim();
     const isTencentMeshApi = isTencentMeshGenerationApi(selectedApi);
@@ -3447,8 +3461,7 @@ app.post('/api/meshes/generate', async (req, res) => {
     await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
     await fs.writeFile(absoluteFilePath, meshOutput.buffer);
 
-    const savedAsset = await createProjectAsset({
-      projectId: Number(projectId),
+    const meshAssetPayload = {
       type: 'mesh',
       name: trimmedName,
       filePath: storedFilePath,
@@ -3460,7 +3473,13 @@ app.post('/api/meshes/generate', async (req, res) => {
         cardId: processingCardId
       },
       createdAt: Date.now()
-    });
+    };
+
+    // When a mesh was connected to the node and used to edit it, save the
+    // result as a version (child) of that mesh instead of a new root asset.
+    const savedAsset = normalizedParentAssetId
+      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...meshAssetPayload })
+      : await createProjectAsset({ projectId: Number(projectId), ...meshAssetPayload });
 
     await clearCardProcessingState(processingProjectId, processingCardId, {
       name: processingCardName
@@ -3490,7 +3509,7 @@ app.post('/api/meshes/generate', async (req, res) => {
 
 app.post('/api/meshes/generate/tencent/result', async (req, res) => {
   try {
-    const { projectId, jobId, region, name, prompt = '', cardId = null, selectedApi = TENCENT_MESH_GENERATION_API_ID } = req.body;
+    const { projectId, jobId, region, name, prompt = '', cardId = null, selectedApi = TENCENT_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
     const trimmedName = String(name || '').trim();
 
     if (!projectId || !jobId || !region || !trimmedName) {
@@ -3589,7 +3608,8 @@ app.post('/api/meshes/generate/tencent/result', async (req, res) => {
         selectedApi,
         jobId: String(jobId)
       },
-      downloadedFiles
+      downloadedFiles,
+      parentAssetId
     });
 
     if (cardId) {
@@ -3616,7 +3636,7 @@ app.post('/api/meshes/generate/tencent/result', async (req, res) => {
 
 app.post('/api/meshes/generate/tripo/result', async (req, res) => {
   try {
-    const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = TRIPO_MESH_GENERATION_API_ID } = req.body;
+    const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = TRIPO_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
     const trimmedName = String(name || '').trim();
 
     if (!projectId || !taskId || !trimmedName) {
@@ -3700,7 +3720,8 @@ app.post('/api/meshes/generate/tripo/result', async (req, res) => {
         sourceUrl: downloadedFile.url,
         isPbrModel: downloadedFile.isPbr
       },
-      downloadedFiles: [downloadedFile]
+      downloadedFiles: [downloadedFile],
+      parentAssetId
     });
 
     if (cardId) {

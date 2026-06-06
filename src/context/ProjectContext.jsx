@@ -802,6 +802,9 @@ export function ProjectProvider({ children }) {
     if (workflowData.name) {
       formData.append('name', workflowData.name)
     }
+    if (workflowData.parentAssetId) {
+      formData.append('parentAssetId', workflowData.parentAssetId)
+    }
     if (workflowData.persistProcessingCard === false) {
       formData.append('persistProcessingCard', 'false')
     }

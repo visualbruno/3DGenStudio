@@ -1568,6 +1568,11 @@ export default function GraphPage({ project }) {
         const targetInputSources = buildNodeInputSources(targetNodeId, nodes, edges)
 
         if (targetNode.data.nodeKind === 'meshGen') {
+          // When a mesh is connected to (and therefore used to edit) this node, the
+          // generated mesh should become a version (child) of that connected mesh
+          // instead of a brand-new root asset in the Assets page.
+          const connectedMeshAssetId = getInputSource(nodes, edges, targetNodeId, 'mesh')?.asset?.id || null
+
           if (targetDraft.mode === 'api') {
             const selectedApiSource = resolveImageSourceOption(targetDraft.selectedInputSource, targetInputSources, libraryImageOptions)
             const sourceAsset = selectedApiSource?.asset || getConnectedInputAssetFrom(nodes, edges, targetNodeId)
@@ -1615,6 +1620,7 @@ export default function GraphPage({ project }) {
                 enablePBR: Boolean(targetDraft.enablePBR),
                 faceCount: Number(targetDraft.faceCount) || 500000,
                 prompt: trimmedPrompt,
+                parentAssetId: connectedMeshAssetId,
                 jobStatus: 'WAIT',
                 detail: 'Submitting Tencent Cloud mesh generation job',
                 currentNodeLabel: 'Waiting for Tencent Cloud job id'
@@ -1703,6 +1709,7 @@ export default function GraphPage({ project }) {
                 selectedApi: targetDraft.selectedApi,
                 inputSource: effectiveSourceReference || null,
                 prompt: trimmedPrompt,
+                parentAssetId: connectedMeshAssetId,
                 modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
                 modelSeed: targetDraft.modelSeed,
                 enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
@@ -1813,7 +1820,8 @@ export default function GraphPage({ project }) {
                 imageSource: sourceReference,
                 name: targetDraft.name.trim(),
                 selectedApi: targetDraft.selectedApi,
-                prompt: targetDraft.prompt.trim()
+                prompt: targetDraft.prompt.trim(),
+                parentAssetId: connectedMeshAssetId
               })
               const savedMeshes = (Array.isArray(response) ? response : [response]).filter(asset => asset?.type === 'mesh')
               if (savedMeshes.length === 0) {
@@ -1908,7 +1916,11 @@ export default function GraphPage({ project }) {
                 name: targetDraft.name.trim(),
                 inputs: inputValues,
                 promptId,
-                clientId
+                clientId,
+                parentAssetId: connectedMeshAssetId,
+                // A version is nested under its parent mesh, so don't spawn a new
+                // standalone Kanban card for it (progress is tracked via the node).
+                persistProcessingCard: connectedMeshAssetId ? false : true
               })
               const meshAssets = (Array.isArray(generatedAssets) ? generatedAssets : [generatedAssets]).filter(asset => asset?.type === 'mesh')
               if (meshAssets.length === 0) {
@@ -2159,13 +2171,15 @@ export default function GraphPage({ project }) {
               region: runtimeMetadata.region,
               name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
               prompt: runtimeMetadata.prompt || '',
-              selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID
+              selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID,
+              parentAssetId: runtimeMetadata.parentAssetId || null
             })
             : await queryTripoMeshGenerationResult(project.id, {
               taskId: runtimeMetadata.taskId,
               name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
               prompt: runtimeMetadata.prompt || '',
-              selectedApi: runtimeMetadata.selectedApi || TRIPO_MESH_GENERATION_API_ID
+              selectedApi: runtimeMetadata.selectedApi || TRIPO_MESH_GENERATION_API_ID,
+              parentAssetId: runtimeMetadata.parentAssetId || null
             })
 
           if (response.status === 'processing') {
@@ -2234,6 +2248,7 @@ export default function GraphPage({ project }) {
             jobStatus: null,
             taskId: null,
             taskStatus: null,
+            parentAssetId: null,
             detail: null,
             currentNodeLabel: null,
             error: null
