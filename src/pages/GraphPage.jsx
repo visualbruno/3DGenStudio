@@ -2330,6 +2330,50 @@ export default function GraphPage({ project }) {
     }
   }, [project.id, replaceFlowNodeData, updateProjectNode, uploadAsset])
 
+  const handleCanvasFileDragOver = useCallback((event) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  // Import dropped image files into Assets and create an Image node at the drop
+  // position for each file, then bind the uploaded asset to that node.
+  const handleCanvasFileDrop = useCallback(async (event) => {
+    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'))
+    if (files.length === 0) return
+    event.preventDefault()
+
+    const flowPosition = reactFlowInstance?.screenToFlowPosition
+      ? reactFlowInstance.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      : { x: 96, y: 96 }
+
+    for (let index = 0; index < files.length; index += 1) {
+      const file = files[index]
+      try {
+        const createdNode = await handleCreateNode('Image', {
+          xPos: flowPosition.x + (index * 32),
+          yPos: flowPosition.y + (index * 32),
+          name: file.name?.replace(/\.[^.]+$/, '') || 'Image'
+        })
+        const uploadedAsset = await uploadAsset(project.id, file, 'image', {
+          resolution: 'Unknown',
+          format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+          source: 'IMPORT'
+        })
+        const updatedNode = await updateProjectNode(project.id, Number(createdNode.id), {
+          assetId: uploadedAsset.id,
+          name: uploadedAsset.name,
+          status: null,
+          progress: null,
+          metadata: { lastAction: 'local-upload' }
+        })
+        if (updatedNode) replaceFlowNodeData(updatedNode)
+      } catch (err) {
+        console.error('Failed to import dropped image to graph:', err)
+      }
+    }
+  }, [handleCreateNode, project.id, reactFlowInstance, replaceFlowNodeData, updateProjectNode, uploadAsset])
+
   const handleDeleteConnection = useCallback(async (edgeToDelete) => {
     if (!edgeToDelete) {
       return
@@ -2674,6 +2718,8 @@ export default function GraphPage({ project }) {
               isValidConnection={isValidConnection}
               onPaneClick={handlePaneClick}
               onPaneContextMenu={handlePaneContextMenu}
+              onDragOver={handleCanvasFileDragOver}
+              onDrop={handleCanvasFileDrop}
               onNodeDragStop={handleNodeDragStop}
               onEdgesDelete={handleEdgesDelete}
               defaultViewport={{ x: 0, y: 0, zoom: 0.9 }}

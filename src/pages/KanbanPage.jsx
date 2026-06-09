@@ -103,6 +103,7 @@ export default function KanbanPage() {
   const [cardAttributes, setCardAttributes] = useState([])
   const [draggedCard, setDraggedCard] = useState(null)
   const [dropTarget, setDropTarget] = useState(null)
+  const [fileDropColumnId, setFileDropColumnId] = useState(null)
   const [imageEditDraft, setImageEditDraft] = useState(null)
   const [imageEditPendingCardId, setImageEditPendingCardId] = useState(null)
   const [imageEditProgressByCardId, setImageEditProgressByCardId] = useState({})
@@ -2524,6 +2525,64 @@ export default function KanbanPage() {
     }
   }
 
+  // True while the browser is dragging files (not an internal card) over the page.
+  const isFileDrag = (event) => Array.from(event.dataTransfer?.types || []).includes('Files')
+
+  const handleColumnFileDragOver = (event, columnId) => {
+    if (draggedCard || !isFileDrag(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setFileDropColumnId(prev => (prev === columnId ? prev : columnId))
+  }
+
+  const handleColumnFileDragLeave = (event, columnId) => {
+    // Ignore leaves that move to a child element of the same column.
+    if (event.currentTarget.contains(event.relatedTarget)) return
+    setFileDropColumnId(prev => (prev === columnId ? null : prev))
+  }
+
+  // Import dropped image files into Assets and create a single image card in the
+  // column they were dropped on. New assets are created in the Images column
+  // server-side, so cards dropped elsewhere are relocated afterwards.
+  const handleColumnFileDrop = async (event, columnId) => {
+    if (draggedCard || !isFileDrag(event)) return
+    event.preventDefault()
+    setFileDropColumnId(null)
+
+    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'))
+    if (files.length === 0) {
+      showStatusMessage('Only image files can be dropped here', 'error')
+      return
+    }
+
+    const cardId = createImageCardId()
+
+    try {
+      setLoading(true)
+
+      for (const file of files) {
+        await uploadAsset(projectId, file, 'image', {
+          resolution: 'Unknown',
+          format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+          source: 'IMPORT',
+          cardId
+        })
+      }
+
+      if (columnId !== IMAGE_CARD_COLUMNS[0].dbId) {
+        const position = projectCards.filter(card => card.kanbanColumnId === columnId).length
+        await moveKanbanCard(projectId, cardId, columnId, position)
+      }
+
+      await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
+    } catch (err) {
+      console.error('Failed to import dropped image:', err)
+      showStatusMessage(err.message || 'Failed to import dropped image', 'error')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleAddCustomAttribute = async (cardId) => {
     try {
       await createCardAttribute(projectId, cardId, {
@@ -2673,7 +2732,12 @@ export default function KanbanPage() {
           <span className="kanban-col__badge font-label">{cards.length.toString().padStart(2, '0')} ITEMS</span>
         </div>
 
-        <div className="kanban-col__content">
+        <div
+          className={`kanban-col__content ${fileDropColumnId === column.dbId ? 'kanban-col__content--file-drop' : ''}`}
+          onDragOver={event => handleColumnFileDragOver(event, column.dbId)}
+          onDragLeave={event => handleColumnFileDragLeave(event, column.dbId)}
+          onDrop={event => handleColumnFileDrop(event, column.dbId)}
+        >
           {cards.length === 0 && renderDropZone(column.dbId, 0, true)}
 
           {cards.map((card, index) => (

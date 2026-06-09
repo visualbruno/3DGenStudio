@@ -273,6 +273,12 @@
   border-radius: var(--radius-sm);
 }
 
+.kanban-col__content--file-drop {
+  outline: 2px dashed var(--primary);
+  outline-offset: -2px;
+  background: rgba(143, 245, 255, 0.08);
+}
+
 .kanban-drop-zone {
   min-height: 10px;
   border-radius: var(--radius-md);
