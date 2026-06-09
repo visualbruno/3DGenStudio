@@ -131,6 +131,7 @@ import ModelingToolsPanel from '../components/meshEditor/ModelingToolsPanel'
 import BooleanToolsPanel from '../components/meshEditor/BooleanToolsPanel'
 import TexturingToolsPanel from '../components/meshEditor/TexturingToolsPanel'
 import ProjectionToolsPanel from '../components/meshEditor/ProjectionToolsPanel'
+import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 import PaintingToolsPanel from '../components/meshEditor/PaintingToolsPanel'
 
 export default function MeshEditorPage() {
@@ -138,6 +139,7 @@ export default function MeshEditorPage() {
   const [searchParams] = useSearchParams()
   const {
     getComfyWorkflows,
+    updateComfyWorkflow,
     runComfyWorkflow,
     saveMeshEdit,
     subscribeToComfyWorkflowProgress,
@@ -160,8 +162,10 @@ export default function MeshEditorPage() {
   const [comfyWorkflows, setComfyWorkflows] = useState([])
   const [textureWorkflowId, setTextureWorkflowId] = useState('')
   const [textureWorkflowInputs, setTextureWorkflowInputs] = useState({})
+  const [textureSetAsDefault, setTextureSetAsDefault] = useState(false)
   const [projectionWorkflowId, setProjectionWorkflowId] = useState('')
   const [projectionWorkflowInputs, setProjectionWorkflowInputs] = useState({})
+  const [projectionSetAsDefault, setProjectionSetAsDefault] = useState(false)
   const [projectionImageParamSources, setProjectionImageParamSources] = useState({})
   const [projectionStarted, setProjectionStarted] = useState(false)
   const [projectionKeepTexture, setProjectionKeepTexture] = useState(false)
@@ -4269,6 +4273,13 @@ export default function MeshEditorPage() {
       }
 
       setFeedback(`${layerName} added to the projection stack.`)
+      if (projectionSetAsDefault && await saveWorkflowDefaults(updateComfyWorkflow, selectedProjectionWorkflow, projectionWorkflowInputs)) {
+        try {
+          setComfyWorkflows(await getComfyWorkflows())
+        } catch (refreshErr) {
+          console.error('Failed to refresh ComfyUI workflows:', refreshErr)
+        }
+      }
     } catch (projectionError) {
       const failureMessage = projectionError?.message || 'Failed to project workflow result to texture.'
       setError(failureMessage)
@@ -4293,11 +4304,14 @@ export default function MeshEditorPage() {
     projectionStarted,
     projectionViewResolution,
     projectionWorkflowInputs,
+    projectionSetAsDefault,
     projecting,
+    getComfyWorkflows,
     runComfyWorkflow,
     selectedProjectionWorkflow,
     subscribeToComfyWorkflowProgress,
     texturableMesh,
+    updateComfyWorkflow,
     updateProjectNode
   ])
 
@@ -4651,6 +4665,13 @@ export default function MeshEditorPage() {
           ? `Patch ready (${cameras.length} views accumulated) — adjust per-view opacity, then Apply or Cancel.`
           : 'Patch ready — adjust the review sliders, then click Apply or Cancel.'
       );
+      if (textureSetAsDefault && await saveWorkflowDefaults(updateComfyWorkflow, selectedTextureWorkflow, textureWorkflowInputs)) {
+        try {
+          setComfyWorkflows(await getComfyWorkflows())
+        } catch (refreshErr) {
+          console.error('Failed to refresh ComfyUI workflows:', refreshErr)
+        }
+      }
     } catch (textureError) {
       const failureMessage = textureError.message || 'Failed to regenerate the mesh texture.'
       setError(failureMessage);
@@ -4669,7 +4690,8 @@ export default function MeshEditorPage() {
     patchNoise, patchSharpness, patchSaturation, projectionOpacities,
     projectId, runComfyWorkflow, selectedTextureWorkflow,
     subscribeToComfyWorkflowProgress, texturableMesh,
-    textureWorkflowInputs, texturing, updateProjectNode,
+    textureWorkflowInputs, textureSetAsDefault, texturing, updateProjectNode,
+    updateComfyWorkflow, getComfyWorkflows,
     updateMaskOverlay, imageParamSources, addNotification
   ]);
 
@@ -4889,7 +4911,8 @@ export default function MeshEditorPage() {
                     textureWorkflowParameters, textureWorkflowInputs, handleTextureWorkflowInputChange,
                     projectionOpacities, setProjectionOpacities, patchNoise, setPatchNoise,
                     patchSharpness, setPatchSharpness, patchSaturation, setPatchSaturation,
-                    handleApplyPatch, handleCancelPatch, handleRunTextureWorkflow, texturingReady
+                    handleApplyPatch, handleCancelPatch, handleRunTextureWorkflow, texturingReady,
+                    textureSetAsDefault, setTextureSetAsDefault
                   }} />
                 ) : activeMenu === 'projection' ? (
                   <ProjectionToolsPanel {...{
@@ -4901,7 +4924,8 @@ export default function MeshEditorPage() {
                     projectionWorkflows, selectedProjectionWorkflow, projectionImageParamSources,
                     handleProjectionImageParamSourceChange, setPendingAssetParamId,
                     setPendingAssetSelectorMode, setShowAssetSelector, projectionWorkflowParameters,
-                    projectionWorkflowInputs, setProjectionWorkflowInputs
+                    projectionWorkflowInputs, setProjectionWorkflowInputs,
+                    projectionSetAsDefault, setProjectionSetAsDefault
                   }} />
                 ) : activeMenu === 'sculpting' ? (
                   <>{/* SCULPTING */}

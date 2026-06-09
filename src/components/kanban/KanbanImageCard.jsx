@@ -615,6 +615,15 @@ export default function KanbanImageCard({
                               : 'No compatible ComfyUI workflow available for image edits.'}</span>
                         </div>
                       )}
+
+                      {(selectedActionWorkflow?.parameters || []).length > 0 && (
+                        <label className="params-card__checkbox-label" style={{ marginTop: '0.5rem' }}>
+                          <div className={`params-card__checkbox ${imageEditDraft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => handleImageEditDraftChange(card, 'setAsDefault', !imageEditDraft.setAsDefault)}>
+                            {imageEditDraft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Set as default</span>
+                        </label>
+                      )}
                     </>
                   )}
 

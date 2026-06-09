@@ -591,6 +591,17 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           <span>This workflow has no exposed parameters. Start it directly.</span>
                         </div>
                       )}
+                      {(selectedWorkflow?.parameters || []).length > 0 && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'setAsDefault', !draft.setAsDefault)}
+                          >
+                            {draft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Set as default</span>
+                        </label>
+                      )}
                       <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.name?.trim()}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW
@@ -962,6 +973,17 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           ? `${imageInputSources.length} compatible image input${imageInputSources.length === 1 ? '' : 's'} available`
                           : 'Use a connected image or upload a custom file for image parameters'}
                       </div>
+                      {(selectedWorkflow?.parameters || []).length > 0 && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'setAsDefault', !draft.setAsDefault)}
+                          >
+                            {draft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Set as default</span>
+                        </label>
+                      )}
                       <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)} disabled={!draft.name?.trim()}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW
@@ -1095,6 +1117,17 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           ? `${imageInputSources.length} compatible image input${imageInputSources.length === 1 ? '' : 's'} available`
                           : 'Use a connected image or upload a custom file for image parameters'}
                       </div>
+                      {(selectedWorkflow?.parameters || []).length > 0 && (
+                        <label className="params-card__checkbox-label nodrag">
+                          <div
+                            className={`params-card__checkbox ${draft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
+                            onClick={() => data.onDraftFieldChange?.(data.id, 'setAsDefault', !draft.setAsDefault)}
+                          >
+                            {draft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                          </div>
+                          <span>Set as default</span>
+                        </label>
+                      )}
                       <button className="gen-btn nodrag" onClick={() => data.onRunNodeAction?.(data.id)}>
                         <span className="material-symbols-outlined">bolt</span>
                         START WORKFLOW

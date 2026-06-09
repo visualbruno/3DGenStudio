@@ -33,6 +33,7 @@ import PaintControls from '../components/imageEditor/controls/PaintControls'
 import ComfyUIFullControls from '../components/imageEditor/controls/ComfyUIFullControls'
 import ComfyUIMaskControls from '../components/imageEditor/controls/ComfyUIMaskControls'
 import useImageEditorHistory from '../hooks/useImageEditorHistory'
+import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 import './ImageEditorPage.css'
 
 const DEFAULT_ADJUST_VALUES = { blackPoint: 0, whitePoint: 255, contrast: 0, saturation: 0 }
@@ -45,7 +46,7 @@ const ZOOM_STEP = 1.15
 export default function ImageEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { getComfyWorkflows, runComfyWorkflow, subscribeToComfyWorkflowProgress, saveImageEditorFile } = useProjects()
+  const { getComfyWorkflows, updateComfyWorkflow, runComfyWorkflow, subscribeToComfyWorkflowProgress, saveImageEditorFile } = useProjects()
   const { addNotification } = useNotifications()
 
   const [showSettings, setShowSettings] = useState(false)
@@ -93,6 +94,7 @@ export default function ImageEditorPage() {
   const [workflowLoading, setWorkflowLoading] = useState(true)
   const [selectedWorkflowId, setSelectedWorkflowId] = useState('')
   const [workflowValues, setWorkflowValues] = useState({})
+  const [setAsDefault, setSetAsDefault] = useState(false)
   const [imageParamSources, setImageParamSources] = useState({})
   const [showAssetSelector, setShowAssetSelector] = useState(false)
   const [pendingAssetParamId, setPendingAssetParamId] = useState(null)
@@ -1172,6 +1174,17 @@ export default function ImageEditorPage() {
       setSelectedLayerId(id)
       setFeedback('AI result applied to the masked region.')
       bumpRender()
+      if (setAsDefault && await saveWorkflowDefaults(updateComfyWorkflow, selectedWorkflow, workflowValues)) {
+        try {
+          const refreshed = await getComfyWorkflows()
+          setWorkflows((refreshed || []).filter(workflow =>
+            (workflow.parameters || []).some(param => getValueType(param) === 'image') &&
+            (workflow.outputs || []).some(output => getValueType(output) === 'image')
+          ))
+        } catch (refreshErr) {
+          console.error('Failed to refresh ComfyUI workflows:', refreshErr)
+        }
+      }
     } catch (err) {
       const failureMessage = err.message || 'ComfyUI execution failed.'
       setFeedback(failureMessage)
@@ -1185,7 +1198,7 @@ export default function ImageEditorPage() {
       stopProgress()
       setAiRunning(false)
     }
-  }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, imageName, imageParamSources, layers, loadAssetAsFile, maskHasPixels, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, subscribeToComfyWorkflowProgress, workflowValues])
+  }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, getComfyWorkflows, imageName, imageParamSources, layers, loadAssetAsFile, maskHasPixels, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, setAsDefault, subscribeToComfyWorkflowProgress, updateComfyWorkflow, workflowValues])
 
   const handleRunAiFull = useCallback(async () => {
     if (!selectedWorkflow) {
@@ -1318,6 +1331,17 @@ export default function ImageEditorPage() {
       setSelectedLayerId(id)
       setFeedback('AI result applied to the full image.')
       bumpRender()
+      if (setAsDefault && await saveWorkflowDefaults(updateComfyWorkflow, selectedWorkflow, workflowValues)) {
+        try {
+          const refreshed = await getComfyWorkflows()
+          setWorkflows((refreshed || []).filter(workflow =>
+            (workflow.parameters || []).some(param => getValueType(param) === 'image') &&
+            (workflow.outputs || []).some(output => getValueType(output) === 'image')
+          ))
+        } catch (refreshErr) {
+          console.error('Failed to refresh ComfyUI workflows:', refreshErr)
+        }
+      }
     } catch (err) {
       const failureMessage = err.message || 'ComfyUI execution failed.'
       setFeedback(failureMessage)
@@ -1331,7 +1355,7 @@ export default function ImageEditorPage() {
       stopProgress()
       setAiRunning(false)
     }
-  }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, imageName, imageParamSources, layers, loadAssetAsFile, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, subscribeToComfyWorkflowProgress, workflowValues])
+  }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, getComfyWorkflows, imageName, imageParamSources, layers, loadAssetAsFile, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, setAsDefault, subscribeToComfyWorkflowProgress, updateComfyWorkflow, workflowValues])
 
   const handleSaveImage = useCallback(async () => {
     if (!numericAssetId) return
@@ -1667,7 +1691,9 @@ export default function ImageEditorPage() {
     workflowValues,
     onWorkflowValueChange: handleWorkflowValueChange,
     imageParamSources,
-    aiRunning
+    aiRunning,
+    setAsDefault,
+    onToggleSetAsDefault: setSetAsDefault
   }
 
   const renderToolControls = () => {

@@ -15,7 +15,9 @@ export default function ComfyUIFullControls({ workflow, onChangeImageParamSource
     workflowValues,
     onWorkflowValueChange,
     imageParamSources,
-    aiRunning
+    aiRunning,
+    setAsDefault,
+    onToggleSetAsDefault
   } = workflow
 
   const allParameters = selectedWorkflow?.parameters || []
@@ -50,6 +52,17 @@ export default function ComfyUIFullControls({ workflow, onChangeImageParamSource
           onChange={onWorkflowValueChange}
         />
       ))}
+
+      {selectedWorkflow && nonImageParameters.length > 0 && (
+        <label className="image-editor-label image-editor-label--checkbox">
+          <input
+            type="checkbox"
+            checked={Boolean(setAsDefault)}
+            onChange={event => onToggleSetAsDefault?.(event.target.checked)}
+          />
+          <span>Set as default</span>
+        </label>
+      )}
 
       <button
         type="button"

@@ -46,6 +46,7 @@ import {
   isTripoMeshGenerationApi,
   normalizeCustomApiType
 } from '../utils/kanbanHelpers'
+import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 
 // Database id of the "Mesh Gen" kanban column (see IMAGE_CARD_COLUMNS).
 const MESH_GEN_COLUMN_ID = 3
@@ -78,6 +79,7 @@ export default function KanbanPage() {
     runImageEditComfy,
     generateImage,
     getComfyWorkflows,
+    updateComfyWorkflow,
     runComfyWorkflow,
     subscribeToComfyWorkflowProgress
   } = useProjects()
@@ -192,6 +194,21 @@ export default function KanbanPage() {
 
     loadComfyWorkflows()
   }, [getComfyWorkflows])
+
+  const refreshComfyWorkflows = async () => {
+    try {
+      setComfyWorkflows(await getComfyWorkflows())
+    } catch (err) {
+      console.error('Failed to refresh ComfyUI workflows:', err)
+    }
+  }
+
+  // Persist current field values as the workflow's defaults when "Set as default" is checked.
+  const persistWorkflowDefaultsIfRequested = async (draft, workflow) => {
+    if (!draft?.setAsDefault) return
+    const saved = await saveWorkflowDefaults(updateComfyWorkflow, workflow, draft.inputs || {})
+    if (saved) await refreshComfyWorkflows()
+  }
 
   const openImageSourceMenu = (cardId = null) => {
     setImageDraft({ mode: 'select', cardId })
@@ -516,6 +533,7 @@ export default function KanbanPage() {
           detail: 'Saving generated image',
           currentNodeLabel: 'Generated image received'
         } : prev)
+        await persistWorkflowDefaultsIfRequested(draft, workflow)
         await refreshProjectAssets()
       } catch (err) {
         console.error('ComfyUI workflow failed:', err)
@@ -1082,6 +1100,7 @@ export default function KanbanPage() {
           detail: 'Saving generated mesh',
           currentNodeLabel: 'Generated mesh received'
         } : prev)
+        await persistWorkflowDefaultsIfRequested(draft, workflow)
         await moveCardToMeshGen(cardId)
         await ensureGeneratedMeshThumbnails(generatedMeshes)
         await refreshProjectAssets()
@@ -2357,6 +2376,10 @@ export default function KanbanPage() {
               }
             : prev)
         }
+
+        if (imageEditDraft.setAsDefault && await saveWorkflowDefaults(updateComfyWorkflow, workflow, inputValues)) {
+          await refreshComfyWorkflows()
+        }
       }
 
       await refreshProjectAssets()
@@ -2778,6 +2801,15 @@ export default function KanbanPage() {
                           </div>
                         )}
 
+                        {(selectedComfyWorkflow?.parameters || []).length > 0 && (
+                          <label className="params-card__checkbox-label" style={{ marginTop: '0.5rem' }}>
+                            <div className={`params-card__checkbox ${imageDraft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => setImageDraft(prev => ({ ...prev, setAsDefault: !prev?.setAsDefault }))}>
+                              {imageDraft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                            </div>
+                            <span>Set as default</span>
+                          </label>
+                        )}
+
                         <button className="gen-btn" onClick={() => handleGenerateImage(imageDraft)}>
                           <span className="material-symbols-outlined">bolt</span>
                           START WORKFLOW
@@ -2988,6 +3020,15 @@ export default function KanbanPage() {
                             <span className="material-symbols-outlined">tune</span>
                             <span>This workflow has no exposed parameters. Start it directly.</span>
                           </div>
+                        )}
+
+                        {(selectedMeshComfyWorkflow?.parameters || []).length > 0 && (
+                          <label className="params-card__checkbox-label" style={{ marginTop: '0.5rem' }}>
+                            <div className={`params-card__checkbox ${meshDraft.setAsDefault ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`} onClick={() => setMeshDraft(prev => ({ ...prev, setAsDefault: !prev?.setAsDefault }))}>
+                              {meshDraft.setAsDefault && <span className="material-symbols-outlined" style={{ fontSize: '10px', color: 'var(--on-tertiary)', fontWeight: 700 }}>check</span>}
+                            </div>
+                            <span>Set as default</span>
+                          </label>
                         )}
 
                         <button className="gen-btn" onClick={() => handleGenerateMesh(meshDraft)}>

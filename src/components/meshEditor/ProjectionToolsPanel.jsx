@@ -30,7 +30,9 @@ export default function ProjectionToolsPanel({
   setShowAssetSelector,
   projectionWorkflowParameters,
   projectionWorkflowInputs,
-  setProjectionWorkflowInputs
+  setProjectionWorkflowInputs,
+  projectionSetAsDefault,
+  setProjectionSetAsDefault
 }) {
   return (
     <>{/* PROJECTION */}
@@ -227,6 +229,18 @@ export default function ProjectionToolsPanel({
             </label>
           )
         })}
+
+        {projectionWorkflowParameters.length > 0 && (
+          <label className="mesh-editor-workflow-field mesh-editor-workflow-field--checkbox">
+            <span>Set as default</span>
+            <input
+              type="checkbox"
+              checked={!!projectionSetAsDefault}
+              onChange={event => setProjectionSetAsDefault?.(event.target.checked)}
+              disabled={!!texturingUnavailableReason || projecting || projectionRebuilding}
+            />
+          </label>
+        )}
       </div>
 
       <div className="mesh-editor-panel__notes">

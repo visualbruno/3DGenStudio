@@ -87,6 +87,7 @@ import GraphAssetNode from '../components/graph/GraphAssetNode'
 import GraphDeleteEdge from '../components/graph/GraphDeleteEdge'
 import GraphImageCompareNode from '../components/graph/GraphImageCompareNode'
 import GraphValueNode from '../components/graph/GraphValueNode'
+import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 
 const flowNodeTypes = {
   image: GraphAssetNode,
@@ -118,6 +119,7 @@ export default function GraphPage({ project }) {
     getLibraryAssets,
     generateImage,
     getComfyWorkflows,
+    updateComfyWorkflow,
     runComfyWorkflow,
     subscribeToComfyWorkflowProgress,
     runImageEditApi,
@@ -591,6 +593,20 @@ export default function GraphPage({ project }) {
       setComfyLoading(false)
     }
   }, [comfyWorkflows, getComfyWorkflows])
+
+  // Persist current field values as the workflow's defaults when "Set as default" is checked,
+  // then refresh the in-memory workflow list so later nodes pick up the new defaults.
+  const persistWorkflowDefaultsIfRequested = useCallback(async (draft, workflow, values) => {
+    if (!draft?.setAsDefault) return
+    const saved = await saveWorkflowDefaults(updateComfyWorkflow, workflow, values)
+    if (saved) {
+      try {
+        setComfyWorkflows(await getComfyWorkflows())
+      } catch (err) {
+        console.error('Failed to refresh ComfyUI workflows:', err)
+      }
+    }
+  }, [getComfyWorkflows, updateComfyWorkflow])
 
   useEffect(() => {
     let cancelled = false
@@ -1403,6 +1419,7 @@ export default function GraphPage({ project }) {
               if (imageAssets.length > 1) {
                 await spawnAdditionalResultNodes('Image', imageAssets.slice(1))
               }
+              await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
             } finally {
@@ -1554,6 +1571,7 @@ export default function GraphPage({ project }) {
                   name: edit.name || targetDraft.name.trim()
                 })))
               }
+              await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
             } finally {
@@ -1937,6 +1955,7 @@ export default function GraphPage({ project }) {
               if (meshAssets.length > 1) {
                 await spawnAdditionalResultNodes('Mesh Gen', meshAssets.slice(1))
               }
+              await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI mesh generation failed', promptId })
             } finally {
@@ -2275,7 +2294,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, project.id, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, project.id, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]

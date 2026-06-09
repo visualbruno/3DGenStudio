@@ -660,6 +660,17 @@
   font-size: 0.78rem;
 }
 
+.mesh-editor-workflow-field--checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mesh-editor-workflow-field--checkbox input {
+  order: -1;
+  margin: 0;
+}
+
 .mesh-editor-range-field strong {
   color: var(--on-surface);
   font-size: 0.76rem;

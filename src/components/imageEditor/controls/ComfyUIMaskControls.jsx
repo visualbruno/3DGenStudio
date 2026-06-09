@@ -23,7 +23,9 @@ export default function ComfyUIMaskControls({
     workflowValues,
     onWorkflowValueChange,
     imageParamSources,
-    aiRunning
+    aiRunning,
+    setAsDefault,
+    onToggleSetAsDefault
   } = workflow
 
   const { maskMode, setMaskMode, maskSize, setMaskSize, maskHardness, setMaskHardness, maskHasPixels } = mask
@@ -106,6 +108,17 @@ export default function ComfyUIMaskControls({
           onChange={onWorkflowValueChange}
         />
       ))}
+
+      {selectedWorkflow && nonImageParameters.length > 0 && (
+        <label className="image-editor-label image-editor-label--checkbox">
+          <input
+            type="checkbox"
+            checked={Boolean(setAsDefault)}
+            onChange={event => onToggleSetAsDefault?.(event.target.checked)}
+          />
+          <span>Set as default</span>
+        </label>
+      )}
 
       <button
         type="button"

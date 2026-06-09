@@ -276,6 +276,7 @@ app.put('/api/library/comfy-workflows/:id', async (req, res) => {
     const existingWorkflow = await buildWorkflowResponse(existingWorkflowRecord);
     const availableParameters = new Map((existingWorkflow.availableInputs || []).map(input => [input.id, input]));
     const availableOutputs = new Map((existingWorkflow.availableOutputs || []).map(output => [output.nodeId, output]));
+    const existingParameters = new Map((existingWorkflow.parameters || []).map(parameter => [parameter.id, parameter]));
 
     const nextParameters = parameters.map(parameter => {
       const sourceParameter = availableParameters.get(parameter.id);
@@ -283,10 +284,23 @@ app.put('/api/library/comfy-workflows/:id', async (req, res) => {
         throw new Error(`Unknown workflow parameter: ${parameter.id}`);
       }
 
+      const storedParameter = existingParameters.get(parameter.id);
+      // Persist the saved default: prefer an incoming defaultValue (e.g. "Set as default"),
+      // otherwise keep any previously stored default, and finally fall back to the workflow file value.
+      let defaultValue;
+      if (Object.prototype.hasOwnProperty.call(parameter, 'defaultValue')) {
+        defaultValue = coerceComfyParameterValue(sourceParameter, parameter.defaultValue);
+      } else if (storedParameter && storedParameter.defaultValue !== undefined) {
+        defaultValue = cloneSerializable(storedParameter.defaultValue);
+      } else {
+        defaultValue = cloneSerializable(sourceParameter.defaultValue);
+      }
+
       return {
         ...sourceParameter,
         name: sanitizeDisplayName(parameter.name || sourceParameter.name, sourceParameter.name),
-        valueType: normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(sourceParameter))
+        valueType: normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(sourceParameter)),
+        defaultValue
       };
     });
 

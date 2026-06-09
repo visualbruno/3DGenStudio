@@ -40,7 +40,9 @@ export default function TexturingToolsPanel({
   handleApplyPatch,
   handleCancelPatch,
   handleRunTextureWorkflow,
-  texturingReady
+  texturingReady,
+  textureSetAsDefault,
+  setTextureSetAsDefault
 }) {
   return (
     <>{/* TEXTURING */}
@@ -274,9 +276,21 @@ export default function TexturingToolsPanel({
             </div>
           </div>
         ) : (
-          <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
-            {texturing ? 'Regenerating…' : 'Regenerate zone'}
-          </button>
+          <>
+            {textureWorkflowParameters.length > 0 && (
+              <label className="mesh-editor-workflow-field mesh-editor-workflow-field--checkbox">
+                <span>Set as default</span>
+                <input
+                  type="checkbox"
+                  checked={!!textureSetAsDefault}
+                  onChange={event => setTextureSetAsDefault?.(event.target.checked)}
+                />
+              </label>
+            )}
+            <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
+              {texturing ? 'Regenerating…' : 'Regenerate zone'}
+            </button>
+          </>
         )}
       </div>
 
