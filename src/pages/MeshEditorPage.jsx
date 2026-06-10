@@ -389,7 +389,10 @@ export default function MeshEditorPage() {
   const [projectionMaskEditLayerId, setProjectionMaskEditLayerId] = useState(null)
   const [projectionMaskErase, setProjectionMaskErase] = useState(false)
   const [projectionMaskBrushSize, setProjectionMaskBrushSize] = useState(40)
-  const [projectionMaskCursorPos, setProjectionMaskCursorPos] = useState(null)
+  // Cursor ring is positioned via direct DOM (ref), NOT React state: a brush stroke
+  // fires many pointer-moves, and re-rendering this huge page per move makes the ring
+  // visibly lag seconds behind the pointer. The ref update is synchronous and free.
+  const projectionMaskCursorRef = useRef(null)
   const projectionMaskStrokeRef = useRef(null)
   // Last gains solved by a full rebuild, reused by the live (cached) compose so the
   // colours don't shift while painting a mask.
@@ -3083,11 +3086,15 @@ export default function MeshEditorPage() {
     }
 
     if (activeMenu === 'projection' && projectionMaskEditLayerId) {
-      // Update brush cursor preview (always while pointer is over the canvas).
+      // Update the brush cursor preview via direct DOM so it tracks the pointer with
+      // zero React re-render latency (this fires on every pointer-move).
       const shell = canvasShellRef.current
-      if (shell) {
+      const cursorEl = projectionMaskCursorRef.current
+      if (shell && cursorEl) {
         const rect = shell.getBoundingClientRect()
-        setProjectionMaskCursorPos({ x: event.clientX - rect.left, y: event.clientY - rect.top })
+        cursorEl.style.left = `${event.clientX - rect.left}px`
+        cursorEl.style.top = `${event.clientY - rect.top}px`
+        cursorEl.style.display = 'block'
       }
 
       const stroke = projectionMaskStrokeRef.current
@@ -4211,7 +4218,6 @@ export default function MeshEditorPage() {
     if (activeMenu !== 'projection' && projectionMaskEditLayerId) {
       projectionMaskStrokeRef.current = null
       setProjectionMaskEditLayerId(null)
-      setProjectionMaskCursorPos(null)
     }
   }, [activeMenu, projectionMaskEditLayerId])
 
@@ -4234,13 +4240,11 @@ export default function MeshEditorPage() {
       ensureLayerMaskCanvas(layerId)
       return layerId
     })
-    setProjectionMaskCursorPos(null)
   }, [ensureLayerMaskCanvas])
 
   const handleExitProjectionMaskDraw = useCallback(() => {
     projectionMaskStrokeRef.current = null
     setProjectionMaskEditLayerId(null)
-    setProjectionMaskCursorPos(null)
   }, [])
 
   // Clear a layer's mask → the layer applies its whole view again (default).
@@ -4351,7 +4355,6 @@ export default function MeshEditorPage() {
     projectionLayerCounterRef.current = 0
     projectionViewGainsRef.current = null
     setProjectionMaskEditLayerId(null)
-    setProjectionMaskCursorPos(null)
     setProjectionLayers([])
     setProjectionKeepTexture(keepTexture)
     setProjectionStarted(true)
@@ -5470,7 +5473,7 @@ export default function MeshEditorPage() {
               onPointerMove={handleCanvasPointerMove}
               onPointerUp={handleCanvasPointerUp}
               onPointerCancel={handleCanvasPointerCancel}
-              onPointerLeave={() => { setPaintCursorPos(null); setSculptCursor(null); setProjectionMaskCursorPos(null); }}
+              onPointerLeave={() => { setPaintCursorPos(null); setSculptCursor(null); if (projectionMaskCursorRef.current) projectionMaskCursorRef.current.style.display = 'none'; }}
             >
               <canvas
                 ref={projectionMaskCanvasRef}
@@ -5644,14 +5647,16 @@ export default function MeshEditorPage() {
                   }}
                 />
               )}
-              {activeMenu === 'projection' && projectionMaskEditLayerId && projectionMaskCursorPos && (
+              {activeMenu === 'projection' && projectionMaskEditLayerId && (
                 <div
+                  ref={projectionMaskCursorRef}
                   className="mesh-editor-paint-cursor"
                   style={{
-                    left: projectionMaskCursorPos.x,
-                    top: projectionMaskCursorPos.y,
+                    left: 0,
+                    top: 0,
                     width: projectionMaskBrushSize,
-                    height: projectionMaskBrushSize
+                    height: projectionMaskBrushSize,
+                    display: 'none'
                   }}
                 />
               )}
@@ -5949,11 +5954,10 @@ export default function MeshEditorPage() {
                           </div>
 
                           {/* Per-layer mask: apply this view only where painted on the mesh. */}
-                          <div className="mesh-editor-layer-card__row" style={{ gap: '0.4rem' }}>
+                          <div className="mesh-editor-layer-card__btn-row">
                             <button
                               type="button"
                               className={`mesh-editor-btn ${projectionMaskEditLayerId === layer.id ? 'mesh-editor-btn--primary' : 'mesh-editor-btn--ghost'}`}
-                              style={{ flex: 1 }}
                               onClick={() => handleToggleProjectionMaskDraw(layer.id)}
                               disabled={projectionRebuilding}
                               title="Paint a mask on the mesh; the view is applied only where you draw"
@@ -5964,7 +5968,6 @@ export default function MeshEditorPage() {
                             <button
                               type="button"
                               className="mesh-editor-btn mesh-editor-btn--ghost"
-                              style={{ flex: 1 }}
                               onClick={() => handleClearProjectionLayerMask(layer.id)}
                               disabled={projectionRebuilding || !layer.hasMask}
                               title="Remove the mask so the whole view is applied again"
@@ -5985,11 +5988,10 @@ export default function MeshEditorPage() {
                                 />
                                 <strong>{projectionMaskBrushSize}px</strong>
                               </div>
-                              <div className="mesh-editor-layer-card__row" style={{ gap: '0.4rem' }}>
+                              <div className="mesh-editor-layer-card__btn-row">
                                 <button
                                   type="button"
                                   className={`mesh-editor-btn ${projectionMaskErase ? 'mesh-editor-btn--primary' : 'mesh-editor-btn--ghost'}`}
-                                  style={{ flex: 1 }}
                                   onClick={() => setProjectionMaskErase(value => !value)}
                                   title="Toggle erase: subtract from the mask to keep the view everywhere except the erased parts"
                                 >
@@ -5999,7 +6001,6 @@ export default function MeshEditorPage() {
                                 <button
                                   type="button"
                                   className="mesh-editor-btn mesh-editor-btn--secondary"
-                                  style={{ flex: 1 }}
                                   onClick={handleExitProjectionMaskDraw}
                                 >
                                   <span className="material-symbols-outlined">close</span>

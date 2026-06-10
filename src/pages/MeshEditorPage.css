@@ -341,6 +341,28 @@
   color: var(--on-surface, #eaeaee);
 }
 
+/* Equal-width button pairs in a layer card (Draw/Clear, Erase/Exit). The plain
+   __row above is a 64px|1fr grid, which squashed the first button into 64px and
+   overflowed its icon — these need a real flex row instead. */
+.mesh-editor-layer-card__btn-row {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+}
+
+.mesh-editor-layer-card__btn-row .mesh-editor-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.mesh-editor-layer-card__btn-row .mesh-editor-btn .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
 .mesh-editor-paint-cursor {
   position: absolute;
   pointer-events: none;
