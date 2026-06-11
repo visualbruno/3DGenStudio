@@ -5617,8 +5617,8 @@ export default function MeshEditorPage() {
                       frameKey={meshFrameKey}
                       onCameraReady={camera => { cameraRef.current = camera }}
                       controlsEnabled={activeMenu !== 'texturing' || !hasProjectionMask}
-                      allowPan={activeMenu !== 'projection'}
-                      lockToCenter={activeMenu === 'projection'}
+                      allowPan={activeMenu !== 'projection' || !!projectionMaskEditLayerId}
+                      lockToCenter={activeMenu === 'projection' && !projectionMaskEditLayerId}
                     />
                   </Canvas>
                   {selectionBox && activeMenu === 'modeling' && (
@@ -6058,7 +6058,7 @@ export default function MeshEditorPage() {
                                 </button>
                               </div>
                               <div className="mesh-editor-layer-card__dirty-note">
-                                Left-drag on the mesh to {projectionMaskErase ? 'erase' : 'draw'} the mask. Middle/right-drag still orbits.
+                                Left-drag on the mesh to {projectionMaskErase ? 'erase' : 'draw'} the mask. Middle-drag orbits, right-drag pans, scroll to zoom — move in close to reach tricky spots (this never changes the projected views).
                               </div>
                             </>
                           )}
