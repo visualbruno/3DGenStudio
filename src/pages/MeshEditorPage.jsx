@@ -2492,7 +2492,8 @@ export default function MeshEditorPage() {
       }
       layerSnapshots.push(snapshot)
     }
-    resolveProjectionLayersIntoImageData(composedImage.data, layerSnapshots, texW, texH, projectionViewGainsRef.current, projectionUvOccupancyRef.current)
+    const keepingBaseTexture = Boolean(baseSnapshot && baseSnapshot.width === texW && baseSnapshot.height === texH)
+    resolveProjectionLayersIntoImageData(composedImage.data, layerSnapshots, texW, texH, projectionViewGainsRef.current, projectionUvOccupancyRef.current, keepingBaseTexture)
     context.putImageData(composedImage, 0, 0)
     projectionLayerSnapshotsRef.current = layerSnapshots
     // Flag the texture for re-upload WITHOUT bumping textureRevision: the live mask
@@ -4197,7 +4198,8 @@ export default function MeshEditorPage() {
       // the colours stay stable while painting, instead of snapping to identity.
       projectionViewGainsRef.current = viewGains
 
-      resolveProjectionLayersIntoImageData(composedData, layerSnapshots, texW, texH, viewGains, projectionUvOccupancyRef.current)
+      const keepingBaseTexture = Boolean(baseSnapshot && baseSnapshot.width === texW && baseSnapshot.height === texH)
+      resolveProjectionLayersIntoImageData(composedData, layerSnapshots, texW, texH, viewGains, projectionUvOccupancyRef.current, keepingBaseTexture)
       textureContext.putImageData(composedImage, 0, 0)
       projectionLayerSnapshotsRef.current = layerSnapshots
       postProcBackupRef.current = null  // invalidate any prior post-proc backup on rebuild

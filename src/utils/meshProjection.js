@@ -61,6 +61,64 @@ export function computeProjectionDistanceInsideMask(mask, width, height) {
   return dist
 }
 
+// Distance (in texels, via BFS) from a layer's true VIEW border — the screen-space
+// silhouette / self-occlusion edge where the projected view stops seeing the
+// surface — measured inward through the layer's coverage. UNLIKE a plain coverage
+// distance transform, this ignores UV-island edges: a coverage-border texel only
+// seeds the BFS when an uncovered 4-neighbour is still INSIDE the UV layout
+// (`uvOccupancyMask` === 1, i.e. the same/another chart). A neighbour that falls in
+// a gutter (occupancy 0) is a UV-chart edge, NOT a view border, so it is never
+// seeded — that is what prevents a "blue line at every UV seam" when feathering a
+// projection into a kept base texture. Returns -1 for covered texels beyond
+// `maxRadius` (the interior — full projection) and for uncovered texels.
+export function computeProjectionViewBorderDistance(coverageMask, uvOccupancyMask, width, height, maxRadius) {
+  const pixelCount = width * height
+  const dist = new Int32Array(pixelCount).fill(-1)
+  if (
+    !coverageMask || coverageMask.length !== pixelCount
+    || !uvOccupancyMask || uvOccupancyMask.length !== pixelCount
+    || !width || !height
+  ) {
+    return dist
+  }
+
+  const radius = Math.max(1, Math.floor(maxRadius))
+  let frontier = []
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const i = y * width + x
+      if (!coverageMask[i]) {
+        continue
+      }
+      // View border = an uncovered 4-neighbour that is still part of the UV layout.
+      const left  = x > 0           && !coverageMask[i - 1]     && uvOccupancyMask[i - 1]
+      const right = x < width - 1   && !coverageMask[i + 1]     && uvOccupancyMask[i + 1]
+      const up    = y > 0           && !coverageMask[i - width] && uvOccupancyMask[i - width]
+      const down  = y < height - 1  && !coverageMask[i + width] && uvOccupancyMask[i + width]
+      if (left || right || up || down) {
+        dist[i] = 0
+        frontier.push(i)
+      }
+    }
+  }
+
+  for (let d = 0; d < radius && frontier.length > 0; d += 1) {
+    const next = []
+    for (let k = 0; k < frontier.length; k += 1) {
+      const i = frontier[k]
+      const x = i % width
+      const y = (i / width) | 0
+      if (x > 0)            { const n = i - 1;     if (coverageMask[n] && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (x < width - 1)    { const n = i + 1;     if (coverageMask[n] && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (y > 0)            { const n = i - width; if (coverageMask[n] && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+      if (y < height - 1)   { const n = i + width; if (coverageMask[n] && dist[n] < 0) { dist[n] = d + 1; next.push(n) } }
+    }
+    frontier = next
+  }
+
+  return dist
+}
+
 export function buildProjectionOverlapWeights(previousCoverage, previousSharedCoverage, layerCoverage, layerSharedMask, width, height, blendPixels = 0) {
   const pixelCount = width * height
   if (
@@ -559,7 +617,16 @@ export function dilateProjectionGutter(outputData, coverage, width, height, radi
 //     so the "Blend overlap" slider widens the cross-fade WITHOUT removing coverage.
 // This matches the intent: front view owns what it sees; the next view fills the
 // rest and feathers across the join.
-export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width, height, viewGains = null, uvOccupancyMask = null) {
+//
+// `blendWithBase` is set when the session kept the mesh's ORIGINAL texture as the
+// base (Keep texture). In that case `outputData` arrives pre-filled with real
+// texture everywhere, so a layer must NOT hard-overwrite the base at its true VIEW
+// border (its screen-space silhouette / self-occlusion edge) — it feathers across
+// `blendPixels` there into the base. The feather is seeded from the view border
+// only, NOT from UV-island edges (see computeProjectionViewBorderDistance), so it
+// does not paint the base over every UV seam. With a fresh checkerboard base this
+// stays off: the layer fully fills its footprint so the checker never bleeds in.
+export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots, width, height, viewGains = null, uvOccupancyMask = null, blendWithBase = false) {
   if (!outputData || !Array.isArray(layerSnapshots) || layerSnapshots.length === 0 || !width || !height) {
     return
   }
@@ -599,6 +666,15 @@ export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots,
       : null
     const denom = Math.max(1, blendPx * 10) // ORTHO step cost in the distance transform
 
+    // Distance from this layer's true VIEW border (silhouette/occlusion edge),
+    // inward through its coverage — 0 at the border, growing inward, -1 in the
+    // interior / on UV-chart edges. Used only when keeping the original texture, to
+    // feather the projection into the base at the view border WITHOUT touching UV
+    // seams. Requires the UV occupancy mask to tell view borders from chart edges.
+    const viewBorderDist = (blendWithBase && blendPx > 0 && uvOccupancyMask)
+      ? computeProjectionViewBorderDistance(layer.coverageMask, uvOccupancyMask, width, height, blendPx)
+      : null
+
     for (let i = 0; i < pixelCount; i += 1) {
       if (!layer.coverageMask[i]) {
         continue
@@ -611,10 +687,21 @@ export function resolveProjectionLayersIntoImageData(outputData, layerSnapshots,
 
       let influence
       if (!committed[i]) {
-        // Unowned → this layer fills the gap completely. Quality does not reduce the
-        // fill: it is the only data available here, so paint it fully (no checker
-        // bleed, never untextured).
-        influence = opacity
+        const dBorder = viewBorderDist ? viewBorderDist[i] : -1
+        if (dBorder >= 0) {
+          // Keep-texture mode, within blendPixels of the view's silhouette: the base
+          // under this texel is REAL texture, so feather — full base at the border
+          // (dBorder 0) ramping to full projection blendPixels inside. This is the
+          // "projections fade with the current texture at their seams" behaviour, and
+          // because dBorder is only set near the VIEW border (not UV-chart edges) it
+          // does not bleed the base across UV seams.
+          const t = clamp01(dBorder / blendPx)
+          influence = (t * t * (3 - 2 * t)) * opacity
+        } else {
+          // Interior of the view (or fresh-checkerboard mode): paint fully — it is the
+          // only data here, so no base/checker bleed and nothing is left untextured.
+          influence = opacity
+        }
       } else if (ownedDist) {
         // Owned by an earlier layer → keep the interior untouched; only blend within
         // blendPixels of the owned border, scaled by how well THIS view sees it.
