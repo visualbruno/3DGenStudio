@@ -87,6 +87,12 @@ import ExportMeshDialog from '../components/ExportMeshDialog';
 
 const AUTO_PROJECTION_SEAM_SAFE_CROP_PX = 0
 const AUTO_PROJECTION_SEAM_SAFE_BLEND_PX = 0
+// Per-view Brown–Lowe gain compensation recolours each view to equalise tones across
+// seams. It inherently shifts the views' ORIGINAL colours (the whole surface tints when
+// a second view is added), which is not wanted: every view must keep the colour ComfyUI
+// produced. Residual tonal steps between views are handled by the Seam post-process
+// instead. The solver is kept available but OFF.
+const PROJECTION_GAIN_COMPENSATION = false
 // GPU UV-space projection bake (see utils/gpuTextureBake.js and the projection
 // analysis). When the platform supports float render targets, each layer is baked
 // on the GPU: a native depth-map occlusion test + parallel per-texel projective
@@ -4160,7 +4166,7 @@ export default function MeshEditorPage() {
       // with different lighting/tint don't leave a visible colour step at the seam.
       // Solved across all visible layers; identity for a single layer.
       let viewGains = null
-      if (layerSnapshots.length > 1) {
+      if (PROJECTION_GAIN_COMPENSATION && layerSnapshots.length > 1) {
         try {
           viewGains = solveViewGains(
             layerSnapshots.map(l => l.pixelData),

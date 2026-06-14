@@ -556,12 +556,14 @@ export function dilateProjectionGutter(outputData, coverage, width, height, radi
         if (src[i]) {
           continue
         }
-        // Only fill genuinely empty gutter texels. A texel that belongs to another
-        // island (occupancy == 1) but isn't covered must keep its own content — the
-        // dilation must not paint one chart's colour onto a different chart.
-        if (useOccupancy && uvOccupancyMask[i]) {
-          continue
-        }
+        // An uncovered texel is either an island's OWN under-covered edge (occupancy
+        // == 1 — what produced the thin white UV-seam lines: no view's bake reached it)
+        // or an empty inter-island gutter (occupancy == 0). We now fill BOTH, but an
+        // island texel may only borrow colour from neighbours that are ALSO on an island
+        // (same-chart extension). Borrowing from a filled gutter (occupancy 0) is the
+        // gutter→neighbour-chart step that leaks one view's colour onto a DIFFERENT
+        // chart, so that single direction stays forbidden.
+        const fillingIsland = useOccupancy && uvOccupancyMask[i]
         let sumR = 0
         let sumG = 0
         let sumB = 0
@@ -581,6 +583,10 @@ export function dilateProjectionGutter(outputData, coverage, width, height, radi
             }
             const ni = ny * width + nx
             if (!src[ni]) {
+              continue
+            }
+            // Same-chart extension only when filling an island texel (see above).
+            if (fillingIsland && useOccupancy && !uvOccupancyMask[ni]) {
               continue
             }
             const no = ni * 4
