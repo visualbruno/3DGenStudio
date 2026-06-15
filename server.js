@@ -21,6 +21,7 @@ import {
   WIKI_ASSETS_DIR,
   THUMBNAIL_ASSETS_DIR,
   createProject,
+  updateProject,
   createLibraryAsset,
   createCardAttribute,
   createProjectAsset,
@@ -4046,6 +4047,16 @@ app.get('/api/projects/:id', async (req, res) => {
     res.json(project);
   } catch {
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/projects/:id', async (req, res) => {
+  try {
+    const updated = await updateProject(Number(req.params.id), req.body);
+    if (!updated) return res.status(404).json({ error: 'Project not found' });
+    res.json(updated);
+  } catch {
+    res.status(500).json({ error: 'Failed to update project' });
   }
 });
 

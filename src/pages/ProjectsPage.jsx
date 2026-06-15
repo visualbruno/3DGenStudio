@@ -6,18 +6,19 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import SetupWizardModal from '../components/SetupWizardModal'
+import graphPreview from '../assets/GraphPage.png'
+import kanbanPreview from '../assets/KanbanBoard.png'
 import './ProjectsPage.css'
+
+const PRESET_PREVIEWS = {
+  Graph: graphPreview,
+  Kanban: kanbanPreview,
+}
 
 const PRESETS = [
   'Kanban',
   'Graph',
 ]
-
-const STATUS_MAP = {
-  active: { label: 'Active', className: 'project-card__status--active' },
-  processing: { label: 'Processing', className: 'project-card__status--processing' },
-  complete: { label: 'Complete', className: 'project-card__status--complete' },
-}
 
 const CHANGE_LOG_ENTRIES = [
   {
@@ -257,7 +258,7 @@ const CHANGE_LOG_ENTRIES = [
 ]
 
 export default function ProjectsPage() {
-  const { projects, createProject, deleteProject } = useProjects()
+  const { projects, createProject, updateProject, deleteProject } = useProjects()
   const { settings, loading: settingsLoading } = useSettings()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
@@ -266,6 +267,8 @@ export default function ProjectsPage() {
   const [setupManualOpen, setSetupManualOpen] = useState(false)
   const [setupDismissed, setSetupDismissed] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState(null)
+  const [projectToEdit, setProjectToEdit] = useState(null)
+  const [editName, setEditName] = useState('')
 
   const showSetup = setupManualOpen
     || (!settingsLoading && !settings?.initialSetupComplete && !setupDismissed)
@@ -289,6 +292,19 @@ export default function ProjectsPage() {
     const id = projectToDelete.id
     setProjectToDelete(null)
     await deleteProject(id, { deleteAssets })
+  }
+
+  const openEdit = (project) => {
+    setProjectToEdit(project)
+    setEditName(project.name)
+  }
+
+  const handleConfirmEdit = async (e) => {
+    e.preventDefault()
+    if (!projectToEdit || !editName.trim()) return
+    const id = projectToEdit.id
+    setProjectToEdit(null)
+    await updateProject(id, { name: editName.trim() })
   }
 
   const handleCreate = async (e) => {
@@ -455,6 +471,50 @@ export default function ProjectsPage() {
           </div>
         )}
 
+        {projectToEdit && (
+          <div className="projects-page__modal-overlay" onClick={() => setProjectToEdit(null)}>
+            <div className="projects-page__modal" onClick={(e) => e.stopPropagation()}>
+              <div className="projects-page__modal-glow" />
+
+              <div className="projects-page__modal-header">
+                <h1 className="projects-page__modal-title font-headline">Rename Project</h1>
+                <p className="projects-page__modal-desc">Give your workspace a new name.</p>
+              </div>
+
+              <form className="projects-page__form" onSubmit={handleConfirmEdit}>
+                <div className="projects-page__field">
+                  <label className="projects-page__label font-label" htmlFor="edit-project-name">Project Name</label>
+                  <div className="projects-page__input-wrap">
+                    <input
+                      id="edit-project-name"
+                      type="text"
+                      className="projects-page__input"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      autoFocus
+                    />
+                    <div className="projects-page__input-underline" />
+                  </div>
+                </div>
+
+                <div className="projects-page__form-actions">
+                  <button type="submit" className="projects-page__btn-primary">
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>check</span>
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className="projects-page__btn-secondary"
+                    onClick={() => setProjectToEdit(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {showChangeLog && (
           <div className="projects-page__modal-overlay" onClick={() => setShowChangeLog(false)}>
             <div className="projects-page__modal projects-page__modal--changelog" onClick={(e) => e.stopPropagation()}>
@@ -518,7 +578,9 @@ export default function ProjectsPage() {
           </div>
 
           <div className="projects-page__grid">
-            {projects.map((project, i) => (
+            {[...projects]
+              .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+              .map((project, i) => (
               <div
                 key={project.id}
                 className="project-card"
@@ -528,14 +590,19 @@ export default function ProjectsPage() {
               >
                 {/* Thumbnail area */}
                 <div className="project-card__thumb">
-                  <div className="project-card__thumb-inner">
-                    <span className="material-symbols-outlined" style={{ fontSize: '40px', color: 'rgba(143, 245, 255, 0.15)' }}>
-                      view_in_ar
-                    </span>
-                  </div>
-                  <div className={`project-card__status ${STATUS_MAP[project.status]?.className || ''}`}>
-                    {STATUS_MAP[project.status]?.label || project.status}
-                  </div>
+                  {PRESET_PREVIEWS[project.preset] ? (
+                    <img
+                      className="project-card__thumb-img"
+                      src={PRESET_PREVIEWS[project.preset]}
+                      alt={`${project.preset} preview`}
+                    />
+                  ) : (
+                    <div className="project-card__thumb-inner">
+                      <span className="material-symbols-outlined" style={{ fontSize: '40px', color: 'rgba(143, 245, 255, 0.15)' }}>
+                        view_in_ar
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* Info */}
@@ -543,26 +610,22 @@ export default function ProjectsPage() {
                   <h3 className="project-card__name font-headline">{project.name}</h3>
                   <p className="project-card__desc">{project.description}</p>
 
-                  <div className="project-card__meta">
-                    <div className="project-card__meta-item">
-                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>image</span>
-                      <span>{project.imageCount} images</span>
-                    </div>
-                    <div className="project-card__meta-item">
-                      <span className="material-symbols-outlined" style={{ fontSize: '14px' }}>deployed_code</span>
-                      <span>{project.meshCount} meshes</span>
-                    </div>
-                  </div>
-
                   <div className="project-card__footer">
                     <span className="project-card__preset font-label">{project.preset}</span>
                     <span className="project-card__date">{formatDate(project.createdAt)}</span>
                   </div>
                 </div>
 
-                {/* Delete button */}
+                {/* Card actions */}
                 <button
-                  className="project-card__delete"
+                  className="project-card__action project-card__edit"
+                  onClick={(e) => { e.stopPropagation(); openEdit(project) }}
+                  title="Rename project"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>edit</span>
+                </button>
+                <button
+                  className="project-card__action project-card__delete"
                   onClick={(e) => { e.stopPropagation(); setProjectToDelete(project) }}
                   title="Delete project"
                 >

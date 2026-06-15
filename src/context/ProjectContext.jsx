@@ -327,6 +327,23 @@ export function ProjectProvider({ children }) {
     return await res.json()
   }
 
+  const updateProject = async (id, updates) => {
+    try {
+      const res = await fetch(`${API_BASE}/projects/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      })
+      const updated = await res.json()
+      if (!res.ok) throw new Error(updated?.error || 'Failed to update project')
+      await fetchProjects()
+      return updated
+    } catch (err) {
+      console.error('Failed to update project:', err)
+      throw err
+    }
+  }
+
   const deleteProject = async (id, { deleteAssets = false } = {}) => {
     const query = deleteAssets ? '?deleteAssets=true' : ''
     await fetch(`${API_BASE}/projects/${id}${query}`, { method: 'DELETE' })
@@ -961,8 +978,9 @@ export function ProjectProvider({ children }) {
     <ProjectContext.Provider value={{ 
       projects, 
       loading,
-      createProject, 
-      getProject, 
+      createProject,
+      updateProject,
+      getProject,
       deleteProject,
       getProjectAssets,
       getProjectCards,

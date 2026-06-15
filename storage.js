@@ -1568,6 +1568,27 @@ export async function createProject(projectData = {}) {
   return project;
 }
 
+export async function updateProject(projectId, updates = {}) {
+  const db = await getDb();
+  const existing = await get(db, 'SELECT * FROM Projects WHERE id = ?', [projectId]);
+  if (!existing) return null;
+
+  const fields = [];
+  const values = [];
+  if (updates.name !== undefined) { fields.push('name = ?'); values.push(updates.name); }
+  if (updates.description !== undefined) { fields.push('description = ?'); values.push(updates.description); }
+  if (updates.preset !== undefined) { fields.push('preset = ?'); values.push(updates.preset); }
+  if (updates.status !== undefined) { fields.push('status = ?'); values.push(updates.status); }
+
+  if (fields.length > 0) {
+    values.push(projectId);
+    await run(db, `UPDATE Projects SET ${fields.join(', ')} WHERE id = ?`, values);
+  }
+
+  const row = await get(db, 'SELECT * FROM Projects WHERE id = ?', [projectId]);
+  return row ? mapProjectRow(row) : null;
+}
+
 export async function getProjectById(projectId) {
   const db = await getDb();
   const row = await get(db, 'SELECT * FROM Projects WHERE id = ?', [projectId]);
