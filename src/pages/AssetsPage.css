@@ -178,6 +178,119 @@
   font-size: 0.8rem;
 }
 
+.assets-section__controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.assets-project-select {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-low);
+  border: 1px solid rgba(71, 72, 74, 0.25);
+  color: var(--on-surface-variant);
+}
+
+.assets-project-select .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
+.assets-project-select__input {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: 0.8rem;
+  outline: none;
+  cursor: pointer;
+  max-width: 180px;
+}
+
+.assets-project-select__input option {
+  color: initial;
+}
+
+.assets-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface-container-low);
+  border: 1px solid rgba(71, 72, 74, 0.25);
+  color: var(--on-surface-variant);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background var(--transition-base), color var(--transition-base), border-color var(--transition-base);
+}
+
+.assets-group-toggle .material-symbols-outlined {
+  font-size: 1.1rem;
+}
+
+.assets-group-toggle:hover {
+  border-color: var(--primary);
+}
+
+.assets-group-toggle--active {
+  background: var(--primary);
+  color: var(--on-primary, #fff);
+  border-color: var(--primary);
+}
+
+.assets-project-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.assets-project-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.assets-project-group__header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.5rem 0.25rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(71, 72, 74, 0.2);
+  color: var(--on-surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.assets-project-group__header .material-symbols-outlined {
+  font-size: 1.2rem;
+  color: var(--on-surface-variant);
+}
+
+.assets-project-group__chevron {
+  color: var(--on-surface-variant);
+}
+
+.assets-project-group__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.assets-project-group__count {
+  margin-left: auto;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  background: var(--surface-container-low);
+  color: var(--on-surface-variant);
+  font-size: 0.75rem;
+}
+
 .assets-page__feedback {
   display: flex;
   align-items: center;

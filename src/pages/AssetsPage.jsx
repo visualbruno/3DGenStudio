@@ -272,6 +272,7 @@ function WorkflowOptionSelector({
 
 export default function AssetsPage() {
   const {
+    projects,
     getLibraryAssets,
     importLibraryAssets,
     importBrushChildAssets,
@@ -317,6 +318,9 @@ export default function AssetsPage() {
   const [renamingEditKey, setRenamingEditKey] = useState(null)
   const [deletingEditKey, setDeletingEditKey] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [projectFilter, setProjectFilter] = useState('all')
+  const [groupByProject, setGroupByProject] = useState(false)
+  const [collapsedGroups, setCollapsedGroups] = useState({})
   const assetFileInputRef = useRef(null)
   const workflowFileInputRef = useRef(null)
 
@@ -351,7 +355,18 @@ export default function AssetsPage() {
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [activeSection, searchQuery])
+  }, [activeSection, searchQuery, projectFilter])
+
+  // Reset the project filter when switching type sections so a project
+  // selected for Images doesn't silently hide everything under Meshes.
+  useEffect(() => {
+    setProjectFilter('all')
+  }, [activeSection])
+
+  const projectNameById = useMemo(
+    () => new Map((projects || []).map(project => [String(project.id), project.name])),
+    [projects]
+  )
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
 
@@ -388,9 +403,61 @@ export default function AssetsPage() {
   const activeConfig = ASSET_SECTIONS.find(section => section.key === activeSection) || ASSET_SECTIONS[0]
   const isWorkflowSection = activeSection === 'workflows'
   const sectionAssets = isWorkflowSection ? [] : (libraryAssets[activeConfig.key] || [])
+
+  const getAssetProjectKey = useCallback((asset) => {
+    if (asset?.projectId === null || asset?.projectId === undefined) return '__unassigned__'
+    return String(asset.projectId)
+  }, [])
+
+  const matchesProjectFilter = useCallback((asset) => {
+    if (projectFilter === 'all') return true
+    return getAssetProjectKey(asset) === projectFilter
+  }, [projectFilter, getAssetProjectKey])
+
+  // Project options for the dropdown, derived from the assets actually present
+  // in this section (plus an "Unassigned" bucket when relevant) so it stays
+  // relevant per type and never lists projects with nothing to show here.
+  const buildProjectFilterOptions = () => {
+    if (isWorkflowSection) return []
+    const keys = new Set(sectionAssets.map(getAssetProjectKey))
+    const options = []
+    Array.from(keys)
+      .filter(key => key !== '__unassigned__')
+      .map(key => ({ key, label: projectNameById.get(key) || `Project ${key}` }))
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .forEach(option => options.push(option))
+    if (keys.has('__unassigned__')) options.push({ key: '__unassigned__', label: 'Unassigned' })
+    return options
+  }
+  const projectFilterOptions = buildProjectFilterOptions()
+
   const activeAssets = isWorkflowSection
     ? []
-    : sectionAssets.filter(asset => matchesSearch(asset.name))
+    : sectionAssets.filter(asset => matchesSearch(asset.name) && matchesProjectFilter(asset))
+
+  // When grouping is on we split the (already filtered) assets into one block
+  // per project, named projects first (alphabetical) and "Unassigned" last.
+  const buildGroupedAssets = () => {
+    if (!groupByProject || isWorkflowSection) return null
+    const buckets = new Map()
+    activeAssets.forEach(asset => {
+      const key = getAssetProjectKey(asset)
+      if (!buckets.has(key)) buckets.set(key, [])
+      buckets.get(key).push(asset)
+    })
+    const groups = []
+    Array.from(buckets.keys())
+      .filter(key => key !== '__unassigned__')
+      .map(key => ({ key, label: projectNameById.get(key) || `Project ${key}`, assets: buckets.get(key) }))
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .forEach(group => groups.push(group))
+    if (buckets.has('__unassigned__')) {
+      groups.push({ key: '__unassigned__', label: 'Unassigned', assets: buckets.get('__unassigned__') })
+    }
+    return groups
+  }
+  const groupedAssets = buildGroupedAssets()
+
   const totalPages = Math.max(1, Math.ceil(activeAssets.length / ASSETS_PER_PAGE))
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE
   const paginatedAssets = activeAssets.slice(pageStart, pageStart + ASSETS_PER_PAGE)
@@ -882,6 +949,130 @@ export default function AssetsPage() {
 
   const importButtonDisabled = isWorkflowSection ? workflowSaving : importing
 
+  const toggleGroupCollapse = (key) => {
+    setCollapsedGroups(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
+  const renderAssetCard = (asset) => (
+    <article key={asset.id} className={`asset-card ${activeSection === 'meshes' ? 'asset-card--mesh' : 'asset-card--image'}`}>
+      {activeSection === 'images' || activeSection === 'brushes' ? (
+        <div className={`asset-card__preview asset-card__preview--image ${activeSection === 'brushes' ? 'asset-card__preview--brush' : ''}`}>
+          <img src={asset.url} alt={asset.name} className="asset-card__image" />
+          {formatDimensions(asset.width, asset.height) && (
+            <span className="asset-card__dimensions font-label">{formatDimensions(asset.width, asset.height)}</span>
+          )}
+          {activeSection === 'brushes' && (
+            <span className="asset-card__mesh-tag font-label">BRUSH</span>
+          )}
+        </div>
+      ) : (
+        <div className={`asset-card__preview asset-card__preview--mesh ${asset.thumbnailUrl ? 'asset-card__preview--mesh-thumbnail' : ''}`}>
+          {asset.thumbnailUrl ? (
+            <>
+              <img src={asset.thumbnailUrl} alt={`${asset.name} thumbnail`} className="asset-card__image" />
+              <span className="asset-card__mesh-tag font-label">3D MESH</span>
+            </>
+          ) : (
+            <>
+              <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
+              <span className="asset-card__mesh-label font-label">3D MESH</span>
+            </>
+          )}
+        </div>
+      )}
+      <div className="asset-card__body">
+        <div className="asset-card__title-row">
+          <h3 className="asset-card__name">{asset.name}</h3>
+          {activeSection === 'images' && (
+            <button
+              type="button"
+              className="asset-card__icon-btn asset-card__icon-btn--edit"
+              onClick={() => handleStartRenameAsset(asset)}
+              disabled={renamingAssetKey === `${asset.type}:${asset.filename}`}
+              title="Rename asset"
+            >
+              <span className="material-symbols-outlined">edit</span>
+            </button>
+          )}
+        </div>
+        <div className="asset-card__meta">
+          <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
+          <div className="asset-card__actions">
+            {(activeSection === 'images' || activeSection === 'brushes') && getAssetChildren(asset).length > 0 && (
+              <button
+                type="button"
+                className="asset-card__edits-btn"
+                onClick={() => setEditPreviewAsset(asset)}
+                title={activeSection === 'brushes' ? 'Show brush variants' : 'Show edits'}
+              >
+                <span className="material-symbols-outlined">history</span>
+                {getAssetChildren(asset).length}
+              </button>
+            )}
+            {activeSection === 'meshes' && getAssetChildren(asset).length > 0 && (
+              <button
+                type="button"
+                className="asset-card__edits-btn"
+                onClick={() => setMeshVersionsAsset(asset)}
+                title="Show mesh versions"
+              >
+                <span className="material-symbols-outlined">history</span>
+                {getAssetChildren(asset).length}
+              </button>
+            )}
+            {activeSection === 'meshes' ? (
+              <>
+                <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
+                  OPEN
+                </button>
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => navigate(buildMeshEditorPath(asset))}
+                >
+                  EDIT
+                </button>
+              </>
+            ) : activeSection === 'images' ? (
+              <>
+                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => navigate(buildImageEditorPath(asset))}
+                >
+                  EDIT
+                </button>
+              </>
+            ) : (
+              <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+            )}
+            {activeSection !== 'images' && (
+              <button
+                type="button"
+                className="asset-card__icon-btn asset-card__icon-btn--edit"
+                onClick={() => handleStartRenameAsset(asset)}
+                disabled={renamingAssetKey === `${asset.type}:${asset.filename}`}
+                title="Rename asset"
+              >
+                <span className="material-symbols-outlined">edit</span>
+              </button>
+            )}
+            <button
+              type="button"
+              className="asset-card__icon-btn"
+              onClick={() => handleDeleteAsset(asset)}
+              disabled={deletingAssetKey === `${asset.type}:${asset.filename}`}
+              title="Delete asset"
+            >
+              <span className="material-symbols-outlined">delete</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </article>
+  )
+
   return (
     <div className="assets-layout">
       <Header
@@ -1210,7 +1401,34 @@ export default function AssetsPage() {
                   </div>
                   <div className="assets-section__summary">
                     <span>{isWorkflowSection ? `${filteredWorkflows.length} ${normalizedSearch ? 'matching' : 'total'} workflows` : `${activeAssets.length} ${normalizedSearch ? 'matching' : 'total'} assets`}</span>
-                    {!isWorkflowSection && <span>{pageRangeStart}-{pageRangeEnd || 0} shown</span>}
+                    {!isWorkflowSection && !groupByProject && <span>{pageRangeStart}-{pageRangeEnd || 0} shown</span>}
+                    {!isWorkflowSection && projectFilterOptions.length > 0 && (
+                      <div className="assets-section__controls">
+                        <label className="assets-project-select">
+                          <span className="material-symbols-outlined">filter_list</span>
+                          <select
+                            className="assets-project-select__input"
+                            value={projectFilter}
+                            onChange={event => setProjectFilter(event.target.value)}
+                          >
+                            <option value="all">All projects</option>
+                            {projectFilterOptions.map(option => (
+                              <option key={option.key} value={option.key}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className={`assets-group-toggle ${groupByProject ? 'assets-group-toggle--active' : ''}`}
+                          onClick={() => setGroupByProject(prev => !prev)}
+                          title="Group assets by project"
+                          aria-pressed={groupByProject}
+                        >
+                          <span className="material-symbols-outlined">dashboard</span>
+                          <span>Group by project</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1503,127 +1721,37 @@ export default function AssetsPage() {
 
                   </>
                 ) : activeAssets.length > 0 ? (
-                  <>
-                    <div className={`assets-grid ${activeSection === 'meshes' ? 'assets-grid--meshes' : 'assets-grid--images'}`}>
-                      {paginatedAssets.map(asset => (
-                        <article key={asset.id} className={`asset-card ${activeSection === 'meshes' ? 'asset-card--mesh' : 'asset-card--image'}`}>
-                          {activeSection === 'images' || activeSection === 'brushes' ? (
-                            <div className={`asset-card__preview asset-card__preview--image ${activeSection === 'brushes' ? 'asset-card__preview--brush' : ''}`}>
-                              <img src={asset.url} alt={asset.name} className="asset-card__image" />
-                              {formatDimensions(asset.width, asset.height) && (
-                                <span className="asset-card__dimensions font-label">{formatDimensions(asset.width, asset.height)}</span>
-                              )}
-                              {activeSection === 'brushes' && (
-                                <span className="asset-card__mesh-tag font-label">BRUSH</span>
-                              )}
-                            </div>
-                          ) : (
-                            <div className={`asset-card__preview asset-card__preview--mesh ${asset.thumbnailUrl ? 'asset-card__preview--mesh-thumbnail' : ''}`}>
-                              {asset.thumbnailUrl ? (
-                                <>
-                                  <img src={asset.thumbnailUrl} alt={`${asset.name} thumbnail`} className="asset-card__image" />
-                                  <span className="asset-card__mesh-tag font-label">3D MESH</span>
-                                </>
-                              ) : (
-                                <>
-                                  <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
-                                  <span className="asset-card__mesh-label font-label">3D MESH</span>
-                                </>
-                              )}
+                  groupByProject ? (
+                    <div className="assets-project-groups">
+                      {groupedAssets.map(group => (
+                        <section key={group.key} className="assets-project-group">
+                          <button
+                            type="button"
+                            className="assets-project-group__header"
+                            onClick={() => toggleGroupCollapse(group.key)}
+                            aria-expanded={!collapsedGroups[group.key]}
+                          >
+                            <span className="material-symbols-outlined assets-project-group__chevron">
+                              {collapsedGroups[group.key] ? 'chevron_right' : 'expand_more'}
+                            </span>
+                            <span className="material-symbols-outlined">
+                              {group.key === '__unassigned__' ? 'folder_off' : 'folder'}
+                            </span>
+                            <span className="assets-project-group__title">{group.label}</span>
+                            <span className="assets-project-group__count">{group.assets.length}</span>
+                          </button>
+                          {!collapsedGroups[group.key] && (
+                            <div className={`assets-grid ${activeSection === 'meshes' ? 'assets-grid--meshes' : 'assets-grid--images'}`}>
+                              {group.assets.map(renderAssetCard)}
                             </div>
                           )}
-                          <div className="asset-card__body">
-                            <div className="asset-card__title-row">
-                              <h3 className="asset-card__name">{asset.name}</h3>
-                              {activeSection === 'images' && (
-                                <button
-                                  type="button"
-                                  className="asset-card__icon-btn asset-card__icon-btn--edit"
-                                  onClick={() => handleStartRenameAsset(asset)}
-                                  disabled={renamingAssetKey === `${asset.type}:${asset.filename}`}
-                                  title="Rename asset"
-                                >
-                                  <span className="material-symbols-outlined">edit</span>
-                                </button>
-                              )}
-                            </div>
-                            <div className="asset-card__meta">
-                              <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
-                              <div className="asset-card__actions">
-                                {(activeSection === 'images' || activeSection === 'brushes') && getAssetChildren(asset).length > 0 && (
-                                  <button
-                                    type="button"
-                                    className="asset-card__edits-btn"
-                                    onClick={() => setEditPreviewAsset(asset)}
-                                    title={activeSection === 'brushes' ? 'Show brush variants' : 'Show edits'}
-                                  >
-                                    <span className="material-symbols-outlined">history</span>
-                                    {getAssetChildren(asset).length}
-                                  </button>
-                                )}
-                                {activeSection === 'meshes' && getAssetChildren(asset).length > 0 && (
-                                  <button
-                                    type="button"
-                                    className="asset-card__edits-btn"
-                                    onClick={() => setMeshVersionsAsset(asset)}
-                                    title="Show mesh versions"
-                                  >
-                                    <span className="material-symbols-outlined">history</span>
-                                    {getAssetChildren(asset).length}
-                                  </button>
-                                )}
-                                {activeSection === 'meshes' ? (
-                                  <>
-                                    <button type="button" className="asset-card__link asset-card__link-btn" onClick={() => setMeshPreviewAsset(asset)}>
-                                      OPEN
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="asset-card__link asset-card__link-btn"
-                                      onClick={() => navigate(buildMeshEditorPath(asset))}
-                                    >
-                                      EDIT
-                                    </button>
-                                  </>
-                                ) : activeSection === 'images' ? (
-                                  <>
-                                    <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
-                                    <button
-                                      type="button"
-                                      className="asset-card__link asset-card__link-btn"
-                                      onClick={() => navigate(buildImageEditorPath(asset))}
-                                    >
-                                      EDIT
-                                    </button>
-                                  </>
-                                ) : (
-                                  <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
-                                )}
-                                {activeSection !== 'images' && (
-                                  <button
-                                    type="button"
-                                    className="asset-card__icon-btn asset-card__icon-btn--edit"
-                                    onClick={() => handleStartRenameAsset(asset)}
-                                    disabled={renamingAssetKey === `${asset.type}:${asset.filename}`}
-                                    title="Rename asset"
-                                  >
-                                    <span className="material-symbols-outlined">edit</span>
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  className="asset-card__icon-btn"
-                                  onClick={() => handleDeleteAsset(asset)}
-                                  disabled={deletingAssetKey === `${asset.type}:${asset.filename}`}
-                                  title="Delete asset"
-                                >
-                                  <span className="material-symbols-outlined">delete</span>
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </article>
+                        </section>
                       ))}
+                    </div>
+                  ) : (
+                  <>
+                    <div className={`assets-grid ${activeSection === 'meshes' ? 'assets-grid--meshes' : 'assets-grid--images'}`}>
+                      {paginatedAssets.map(renderAssetCard)}
                     </div>
 
                     <div className="assets-pagination">
@@ -1641,6 +1769,7 @@ export default function AssetsPage() {
                       </div>
                     </div>
                   </>
+                  )
                 ) : (
                   <div className="assets-page__empty-state">
                     <span className="material-symbols-outlined">{activeConfig.emptyIcon}</span>
