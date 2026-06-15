@@ -19,6 +19,8 @@ const COMFY_VALUE_TYPES = [
   { value: 'mesh', label: 'Mesh' }
 ]
 
+const COMFY_TYPE_LABEL = Object.fromEntries(COMFY_VALUE_TYPES.map(option => [option.value, option.label]))
+
 const ASSET_SECTIONS = [
   {
     key: 'images',
@@ -302,7 +304,11 @@ export default function AssetsPage() {
   const [inspectedWorkflow, setInspectedWorkflow] = useState(null)
   const [selectedInputs, setSelectedInputs] = useState({})
   const [selectedOutputs, setSelectedOutputs] = useState({})
+  const [selectedInputOrder, setSelectedInputOrder] = useState([])
+  const [selectedOutputOrder, setSelectedOutputOrder] = useState([])
   const [editingWorkflowId, setEditingWorkflowId] = useState(null)
+  const [workflowEditorOpen, setWorkflowEditorOpen] = useState(false)
+  const [workflowTypeFilter, setWorkflowTypeFilter] = useState('all')
   const [workflowFeedback, setWorkflowFeedback] = useState('')
   const [deletingWorkflowId, setDeletingWorkflowId] = useState(null)
   const [deletingAssetKey, setDeletingAssetKey] = useState(null)
@@ -375,9 +381,39 @@ export default function AssetsPage() {
     return String(name || '').toLowerCase().includes(normalizedSearch)
   }, [normalizedSearch])
 
+  const getWorkflowOutputTypes = useCallback((workflow) => {
+    const types = new Set()
+    ;(workflow.outputs || []).forEach(output => types.add(getDefaultValueType(output, true)))
+    return Array.from(types)
+  }, [])
+
+  // Filter chips, ordered by COMFY_VALUE_TYPES, limited to output types that
+  // actually appear across the imported workflows (with a per-type count).
+  const workflowTypeOptions = useMemo(() => {
+    const counts = new Map()
+    workflows.forEach(workflow => {
+      getWorkflowOutputTypes(workflow).forEach(type => counts.set(type, (counts.get(type) || 0) + 1))
+    })
+    return COMFY_VALUE_TYPES
+      .filter(option => counts.has(option.value))
+      .map(option => ({ value: option.value, label: option.label, count: counts.get(option.value) }))
+  }, [workflows, getWorkflowOutputTypes])
+
+  // Drop a stale type filter (e.g. the last workflow of that type was deleted).
+  useEffect(() => {
+    if (workflowTypeFilter !== 'all' && !workflowTypeOptions.some(option => option.value === workflowTypeFilter)) {
+      setWorkflowTypeFilter('all')
+    }
+  }, [workflowTypeFilter, workflowTypeOptions])
+
   const filteredWorkflows = useMemo(
-    () => workflows.filter(workflow => matchesSearch(workflow.name)),
-    [workflows, matchesSearch]
+    () => workflows
+      .filter(workflow =>
+        matchesSearch(workflow.name) &&
+        (workflowTypeFilter === 'all' || getWorkflowOutputTypes(workflow).includes(workflowTypeFilter))
+      )
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || ''), undefined, { sensitivity: 'base' })),
+    [workflows, matchesSearch, workflowTypeFilter, getWorkflowOutputTypes]
   )
 
   const selectedInputCount = useMemo(
@@ -390,15 +426,21 @@ export default function AssetsPage() {
     [selectedOutputs]
   )
 
-  const selectedInputItems = useMemo(
-    () => (inspectedWorkflow?.inputs || []).filter(input => selectedInputs[input.id]?.selected),
-    [inspectedWorkflow, selectedInputs]
-  )
+  // Render selected inputs/outputs in explicit insertion order (newest first)
+  // rather than the workflow's source order, so a freshly added item appears on top.
+  const selectedInputItems = useMemo(() => {
+    const byId = new Map((inspectedWorkflow?.inputs || []).map(input => [input.id, input]))
+    return selectedInputOrder
+      .map(id => byId.get(id))
+      .filter(input => input && selectedInputs[input.id]?.selected)
+  }, [inspectedWorkflow, selectedInputOrder, selectedInputs])
 
-  const selectedOutputItems = useMemo(
-    () => (inspectedWorkflow?.outputs || []).filter(output => selectedOutputs[output.nodeId]?.selected),
-    [inspectedWorkflow, selectedOutputs]
-  )
+  const selectedOutputItems = useMemo(() => {
+    const byId = new Map((inspectedWorkflow?.outputs || []).map(output => [output.nodeId, output]))
+    return selectedOutputOrder
+      .map(nodeId => byId.get(nodeId))
+      .filter(output => output && selectedOutputs[output.nodeId]?.selected)
+  }, [inspectedWorkflow, selectedOutputOrder, selectedOutputs])
 
   const activeConfig = ASSET_SECTIONS.find(section => section.key === activeSection) || ASSET_SECTIONS[0]
   const isWorkflowSection = activeSection === 'workflows'
@@ -476,13 +518,50 @@ export default function AssetsPage() {
     setInspectedWorkflow(null)
     setSelectedInputs({})
     setSelectedOutputs({})
+    setSelectedInputOrder([])
+    setSelectedOutputOrder([])
     setEditingWorkflowId(null)
+  }
+
+  const closeWorkflowEditor = () => {
+    resetWorkflowState()
+    setWorkflowEditorOpen(false)
   }
 
   const applySelectionToAll = (setter, selected) => {
     setter(prev => Object.fromEntries(
       Object.entries(prev).map(([key, value]) => [key, { ...value, selected }])
     ))
+  }
+
+  const handleAddInput = (input) => {
+    selectWorkflowItem(setSelectedInputs, input.id, input.name, getDefaultValueType(input))
+    setSelectedInputOrder(prev => (prev.includes(input.id) ? prev : [input.id, ...prev]))
+  }
+
+  const handleRemoveInput = (id) => {
+    deselectWorkflowItem(setSelectedInputs, id)
+    setSelectedInputOrder(prev => prev.filter(key => key !== id))
+  }
+
+  const handleAddOutput = (output) => {
+    selectWorkflowItem(setSelectedOutputs, output.nodeId, output.nodeTitle, getDefaultValueType(output, true))
+    setSelectedOutputOrder(prev => (prev.includes(output.nodeId) ? prev : [output.nodeId, ...prev]))
+  }
+
+  const handleRemoveOutput = (nodeId) => {
+    deselectWorkflowItem(setSelectedOutputs, nodeId)
+    setSelectedOutputOrder(prev => prev.filter(key => key !== nodeId))
+  }
+
+  const handleSelectAllInputs = (selected) => {
+    applySelectionToAll(setSelectedInputs, selected)
+    setSelectedInputOrder(selected ? (inspectedWorkflow?.inputs || []).map(input => input.id) : [])
+  }
+
+  const handleSelectAllOutputs = (selected) => {
+    applySelectionToAll(setSelectedOutputs, selected)
+    setSelectedOutputOrder(selected ? (inspectedWorkflow?.outputs || []).map(output => output.nodeId) : [])
   }
 
   const handleImportClick = () => {
@@ -849,7 +928,10 @@ export default function AssetsPage() {
       setInspectedWorkflow(inspection)
       setSelectedInputs(createSelectionMap(inspection.inputs, item => item.name))
       setSelectedOutputs(createSelectionMap(inspection.outputs, item => item.nodeTitle, true))
+      setSelectedInputOrder([])
+      setSelectedOutputOrder([])
       setEditingWorkflowId(null)
+      setWorkflowEditorOpen(true)
       setWorkflowFeedback('')
     } catch (err) {
       console.error('Failed to inspect workflow file:', err)
@@ -870,9 +952,11 @@ export default function AssetsPage() {
     })
     setSelectedInputs(hydratedSelection.inputs)
     setSelectedOutputs(hydratedSelection.outputs)
+    setSelectedInputOrder((workflow.parameters || []).map(parameter => parameter.id))
+    setSelectedOutputOrder((workflow.outputs || []).map(output => output.nodeId))
     setEditingWorkflowId(workflow.id)
+    setWorkflowEditorOpen(true)
     setWorkflowFeedback('')
-    document.querySelector('.assets-page')?.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const buildWorkflowPayload = () => {
@@ -926,6 +1010,7 @@ export default function AssetsPage() {
       }
 
       resetWorkflowState()
+      setWorkflowEditorOpen(false)
       await loadWorkflows()
     } catch (err) {
       console.error('Failed to save workflow:', err)
@@ -1321,6 +1406,221 @@ export default function AssetsPage() {
 
       {meshPreviewAsset && <MeshPreviewDialog asset={meshPreviewAsset} onClose={() => setMeshPreviewAsset(null)} />}
 
+      {workflowEditorOpen && inspectedWorkflow && (
+        <div className="assets-dialog-overlay" role="presentation" onClick={closeWorkflowEditor}>
+          <div className="assets-dialog assets-dialog--workflow" role="dialog" aria-modal="true" aria-labelledby="workflow-editor-title" onClick={event => event.stopPropagation()}>
+            <div className="assets-dialog__header workflow-editor__header">
+              <div className="workflow-editor__heading">
+                <span className="material-symbols-outlined">account_tree</span>
+                <h2 id="workflow-editor-title" className="assets-dialog__title font-headline">{editingWorkflowId ? 'Edit Workflow' : 'Import Workflow'}</h2>
+              </div>
+              <div className="workflow-editor__topactions">
+                <button
+                  type="button"
+                  className="library-btn library-btn--primary"
+                  onClick={handleSaveWorkflow}
+                  disabled={workflowSaving || !workflowName.trim()}
+                >
+                  {workflowSaving ? (editingWorkflowId ? 'Saving...' : 'Importing...') : (editingWorkflowId ? 'Update Workflow' : 'Save Workflow')}
+                </button>
+                <button type="button" className="assets-dialog__close" onClick={closeWorkflowEditor} title="Close">
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="assets-dialog__body">
+              {workflowFeedback && <div className="library-feedback">{workflowFeedback}</div>}
+
+              <div className="library-field">
+                <label className="library-label">Workflow Name</label>
+                <input
+                  className="library-input"
+                  value={workflowName}
+                  onChange={event => setWorkflowName(event.target.value)}
+                  placeholder="Portrait Studio"
+                  autoFocus
+                />
+              </div>
+
+              <div className="library-config-grid">
+                <section className="library-config-card">
+                  <div className="library-config-card__header">
+                    <div>
+                      <h4>Inputs as Parameters</h4>
+                      <span>{selectedInputCount} selected</span>
+                    </div>
+                    <div className="library-config-actions">
+                      <button type="button" className="library-link-btn" onClick={() => handleSelectAllInputs(true)}>Select All</button>
+                      <button type="button" className="library-link-btn" onClick={() => handleSelectAllInputs(false)}>Unselect All</button>
+                    </div>
+                  </div>
+
+                  {inspectedWorkflow.inputs.length > 0 ? (
+                    <div className="library-config-list">
+                      <WorkflowOptionSelector
+                        title="Add input"
+                        items={inspectedWorkflow.inputs}
+                        selectedMap={selectedInputs}
+                        getKey={input => input.id}
+                        getPrimaryText={input => input.label || input.name}
+                        getSecondaryText={input => `${input.type} • default: ${formatDefaultValue(input.defaultValue)}`}
+                        onSelect={handleAddInput}
+                        emptyMessage="All inputs have already been selected."
+                        searchPlaceholder="Search inputs"
+                      />
+
+                      {selectedInputItems.length > 0 ? (
+                        <div className="library-selected-list">
+                          {selectedInputItems.map(input => (
+                            <div key={input.id} className="library-selected-item">
+                              <div className="library-selected-item__header">
+                                <div>
+                                  <strong>{input.label || input.name}</strong>
+                                  <span>{input.type} • default: {formatDefaultValue(input.defaultValue)}</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="library-icon-btn"
+                                  onClick={() => handleRemoveInput(input.id)}
+                                  title="Remove input"
+                                >
+                                  <span className="material-symbols-outlined">delete</span>
+                                </button>
+                              </div>
+
+                              <div className="library-config-fields">
+                                <input
+                                  className="library-input"
+                                  value={selectedInputs[input.id]?.name || ''}
+                                  onChange={event => setSelectedInputs(prev => ({
+                                    ...prev,
+                                    [input.id]: {
+                                      ...prev[input.id],
+                                      name: event.target.value
+                                    }
+                                  }))}
+                                  placeholder="Parameter label"
+                                />
+                                <select
+                                  className="library-input"
+                                  value={selectedInputs[input.id]?.valueType || getDefaultValueType(input)}
+                                  onChange={event => setSelectedInputs(prev => ({
+                                    ...prev,
+                                    [input.id]: {
+                                      ...prev[input.id],
+                                      valueType: event.target.value
+                                    }
+                                  }))}
+                                >
+                                  {COMFY_VALUE_TYPES.map(option => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="library-empty-inline">No inputs selected yet.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="library-empty-inline">No editable workflow inputs were detected.</p>
+                  )}
+                </section>
+
+                <section className="library-config-card">
+                  <div className="library-config-card__header">
+                    <div>
+                      <h4>Outputs to Save</h4>
+                      <span>{selectedOutputCount} selected</span>
+                    </div>
+                    <div className="library-config-actions">
+                      <button type="button" className="library-link-btn" onClick={() => handleSelectAllOutputs(true)}>Select All</button>
+                      <button type="button" className="library-link-btn" onClick={() => handleSelectAllOutputs(false)}>Unselect All</button>
+                    </div>
+                  </div>
+
+                  {inspectedWorkflow.outputs.length > 0 ? (
+                    <div className="library-config-list">
+                      <WorkflowOptionSelector
+                        title="Add output"
+                        items={inspectedWorkflow.outputs}
+                        selectedMap={selectedOutputs}
+                        getKey={output => output.nodeId}
+                        getPrimaryText={output => output.label || output.nodeTitle}
+                        getSecondaryText={output => output.classType}
+                        onSelect={handleAddOutput}
+                        emptyMessage="All outputs have already been selected."
+                        searchPlaceholder="Search outputs"
+                      />
+
+                      {selectedOutputItems.length > 0 ? (
+                        <div className="library-selected-list">
+                          {selectedOutputItems.map(output => (
+                            <div key={output.nodeId} className="library-selected-item">
+                              <div className="library-selected-item__header">
+                                <div>
+                                  <strong>{output.label || output.nodeTitle}</strong>
+                                  <span>{output.classType}</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="library-icon-btn"
+                                  onClick={() => handleRemoveOutput(output.nodeId)}
+                                  title="Remove output"
+                                >
+                                  <span className="material-symbols-outlined">delete</span>
+                                </button>
+                              </div>
+
+                              <div className="library-config-fields">
+                                <input
+                                  className="library-input"
+                                  value={selectedOutputs[output.nodeId]?.name || ''}
+                                  onChange={event => setSelectedOutputs(prev => ({
+                                    ...prev,
+                                    [output.nodeId]: {
+                                      ...prev[output.nodeId],
+                                      name: event.target.value
+                                    }
+                                  }))}
+                                  placeholder="Output label"
+                                />
+                                <select
+                                  className="library-input"
+                                  value={selectedOutputs[output.nodeId]?.valueType || getDefaultValueType(output, true)}
+                                  onChange={event => setSelectedOutputs(prev => ({
+                                    ...prev,
+                                    [output.nodeId]: {
+                                      ...prev[output.nodeId],
+                                      valueType: event.target.value
+                                    }
+                                  }))}
+                                >
+                                  {COMFY_VALUE_TYPES.map(option => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="library-empty-inline">No outputs selected yet.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="library-empty-inline">No output nodes were detected.</p>
+                  )}
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="assets-page">
         <div className="assets-page__container">
           <div className="assets-page__header">
@@ -1400,7 +1700,7 @@ export default function AssetsPage() {
                     <span className="assets-section__path font-label">{activeConfig.path}</span>
                   </div>
                   <div className="assets-section__summary">
-                    <span>{isWorkflowSection ? `${filteredWorkflows.length} ${normalizedSearch ? 'matching' : 'total'} workflows` : `${activeAssets.length} ${normalizedSearch ? 'matching' : 'total'} assets`}</span>
+                    <span>{isWorkflowSection ? `${filteredWorkflows.length} ${normalizedSearch || workflowTypeFilter !== 'all' ? 'matching' : 'total'} workflows` : `${activeAssets.length} ${normalizedSearch ? 'matching' : 'total'} assets`}</span>
                     {!isWorkflowSection && !groupByProject && <span>{pageRangeStart}-{pageRangeEnd || 0} shown</span>}
                     {!isWorkflowSection && projectFilterOptions.length > 0 && (
                       <div className="assets-section__controls">
@@ -1445,279 +1745,91 @@ export default function AssetsPage() {
                   <>
                     {workflowFeedback && <div className="library-feedback">{workflowFeedback}</div>}
 
-                    <div className="library-grid">
-                      <article className="library-panel library-panel--import">
-                        <div className="library-panel__header">
-                          <h3 className="library-panel__title">{editingWorkflowId ? 'Edit Workflow' : 'Import Workflow'}</h3>
-                          <span className="library-panel__badge">Setup</span>
+                    {workflowTypeOptions.length > 0 && (
+                      <div className="workflow-filterbar">
+                        <span className="workflow-filterbar__label">
+                          <span className="material-symbols-outlined">filter_list</span>
+                          Output type
+                        </span>
+                        <div className="workflow-typefilter">
+                          <button
+                            type="button"
+                            className={`workflow-typechip ${workflowTypeFilter === 'all' ? 'workflow-typechip--active' : ''}`}
+                            onClick={() => setWorkflowTypeFilter('all')}
+                          >
+                            All <span className="workflow-typechip__count">{workflows.length}</span>
+                          </button>
+                          {workflowTypeOptions.map(option => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              className={`workflow-typechip ${workflowTypeFilter === option.value ? 'workflow-typechip--active' : ''}`}
+                              onClick={() => setWorkflowTypeFilter(option.value)}
+                            >
+                              {option.label} <span className="workflow-typechip__count">{option.count}</span>
+                            </button>
+                          ))}
                         </div>
+                      </div>
+                    )}
 
-                        {inspectedWorkflow ? (
-                          <div className="library-import-form">
-                            <div className="library-field">
-                              <label className="library-label">Workflow Name</label>
-                              <input
-                                className="library-input"
-                                value={workflowName}
-                                onChange={event => setWorkflowName(event.target.value)}
-                                placeholder="Portrait Studio"
-                              />
-                            </div>
-
-                            <div className="library-config-grid">
-                              <section className="library-config-card">
-                                <div className="library-config-card__header">
-                                  <div>
-                                    <h4>Inputs as Parameters</h4>
-                                    <span>{selectedInputCount} selected</span>
-                                  </div>
-                                  <div className="library-config-actions">
-                                    <button type="button" className="library-link-btn" onClick={() => applySelectionToAll(setSelectedInputs, true)}>Select All</button>
-                                    <button type="button" className="library-link-btn" onClick={() => applySelectionToAll(setSelectedInputs, false)}>Unselect All</button>
-                                  </div>
+                    {workflowLoading ? (
+                      <div className="library-empty-state">
+                        <span className="material-symbols-outlined library-spinner">progress_activity</span>
+                        <span>Loading workflows...</span>
+                      </div>
+                    ) : filteredWorkflows.length > 0 ? (
+                      <div className="workflow-grid">
+                        {filteredWorkflows.map(workflow => {
+                          const outputTypes = getWorkflowOutputTypes(workflow)
+                          return (
+                            <article key={workflow.id} className="workflow-card">
+                              <div className="workflow-card__top">
+                                <div className="workflow-card__heading">
+                                  <span className="material-symbols-outlined workflow-card__icon">account_tree</span>
+                                  <h4 className="workflow-card__name" title={workflow.name}>{workflow.name}</h4>
                                 </div>
+                                <div className="workflow-card__buttons">
+                                  <button type="button" className="library-icon-btn" onClick={() => handleEditWorkflow(workflow)} title="Edit workflow">
+                                    <span className="material-symbols-outlined">edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="library-icon-btn"
+                                    onClick={() => handleDeleteWorkflow(workflow)}
+                                    title="Delete workflow"
+                                    disabled={deletingWorkflowId === workflow.id}
+                                  >
+                                    <span className="material-symbols-outlined">delete</span>
+                                  </button>
+                                </div>
+                              </div>
 
-                                {inspectedWorkflow.inputs.length > 0 ? (
-                                  <div className="library-config-list">
-                                    <WorkflowOptionSelector
-                                      title="Add input"
-                                      items={inspectedWorkflow.inputs}
-                                      selectedMap={selectedInputs}
-                                      getKey={input => input.id}
-                                      getPrimaryText={input => input.label || input.name}
-                                      getSecondaryText={input => `${input.type} • default: ${formatDefaultValue(input.defaultValue)}`}
-                                      onSelect={input => selectWorkflowItem(setSelectedInputs, input.id, input.name, getDefaultValueType(input))}
-                                      emptyMessage="All inputs have already been selected."
-                                      searchPlaceholder="Search inputs"
-                                    />
-
-                                    {selectedInputItems.length > 0 ? (
-                                      <div className="library-selected-list">
-                                        {selectedInputItems.map(input => (
-                                          <div key={input.id} className="library-selected-item">
-                                            <div className="library-selected-item__header">
-                                              <div>
-                                                <strong>{input.label || input.name}</strong>
-                                                <span>{input.type} • default: {formatDefaultValue(input.defaultValue)}</span>
-                                              </div>
-                                              <button
-                                                type="button"
-                                                className="library-icon-btn"
-                                                onClick={() => deselectWorkflowItem(setSelectedInputs, input.id)}
-                                                title="Remove input"
-                                              >
-                                                <span className="material-symbols-outlined">delete</span>
-                                              </button>
-                                            </div>
-
-                                            <div className="library-config-fields">
-                                              <input
-                                                className="library-input"
-                                                value={selectedInputs[input.id]?.name || ''}
-                                                onChange={event => setSelectedInputs(prev => ({
-                                                  ...prev,
-                                                  [input.id]: {
-                                                    ...prev[input.id],
-                                                    name: event.target.value
-                                                  }
-                                                }))}
-                                                placeholder="Parameter label"
-                                              />
-                                              <select
-                                                className="library-input"
-                                                value={selectedInputs[input.id]?.valueType || getDefaultValueType(input)}
-                                                onChange={event => setSelectedInputs(prev => ({
-                                                  ...prev,
-                                                  [input.id]: {
-                                                    ...prev[input.id],
-                                                    valueType: event.target.value
-                                                  }
-                                                }))}
-                                              >
-                                                {COMFY_VALUE_TYPES.map(option => (
-                                                  <option key={option.value} value={option.value}>{option.label}</option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <p className="library-empty-inline">No inputs selected yet.</p>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <p className="library-empty-inline">No editable workflow inputs were detected.</p>
+                              <div className="workflow-card__types">
+                                {outputTypes.length > 0 ? outputTypes.map(type => (
+                                  <span key={type} className={`workflow-type-badge workflow-type-badge--${type}`}>
+                                    {COMFY_TYPE_LABEL[type] || type}
+                                  </span>
+                                )) : (
+                                  <span className="workflow-type-badge workflow-type-badge--muted">No outputs</span>
                                 )}
-                              </section>
+                              </div>
 
-                              <section className="library-config-card">
-                                <div className="library-config-card__header">
-                                  <div>
-                                    <h4>Outputs to Save</h4>
-                                    <span>{selectedOutputCount} selected</span>
-                                  </div>
-                                  <div className="library-config-actions">
-                                    <button type="button" className="library-link-btn" onClick={() => applySelectionToAll(setSelectedOutputs, true)}>Select All</button>
-                                    <button type="button" className="library-link-btn" onClick={() => applySelectionToAll(setSelectedOutputs, false)}>Unselect All</button>
-                                  </div>
-                                </div>
-
-                                {inspectedWorkflow.outputs.length > 0 ? (
-                                  <div className="library-config-list">
-                                    <WorkflowOptionSelector
-                                      title="Add output"
-                                      items={inspectedWorkflow.outputs}
-                                      selectedMap={selectedOutputs}
-                                      getKey={output => output.nodeId}
-                                      getPrimaryText={output => output.label || output.nodeTitle}
-                                      getSecondaryText={output => output.classType}
-                                      onSelect={output => selectWorkflowItem(setSelectedOutputs, output.nodeId, output.nodeTitle, getDefaultValueType(output, true))}
-                                      emptyMessage="All outputs have already been selected."
-                                      searchPlaceholder="Search outputs"
-                                    />
-
-                                    {selectedOutputItems.length > 0 ? (
-                                      <div className="library-selected-list">
-                                        {selectedOutputItems.map(output => (
-                                          <div key={output.nodeId} className="library-selected-item">
-                                            <div className="library-selected-item__header">
-                                              <div>
-                                                <strong>{output.label || output.nodeTitle}</strong>
-                                                <span>{output.classType}</span>
-                                              </div>
-                                              <button
-                                                type="button"
-                                                className="library-icon-btn"
-                                                onClick={() => deselectWorkflowItem(setSelectedOutputs, output.nodeId)}
-                                                title="Remove output"
-                                              >
-                                                <span className="material-symbols-outlined">delete</span>
-                                              </button>
-                                            </div>
-
-                                            <div className="library-config-fields">
-                                              <input
-                                                className="library-input"
-                                                value={selectedOutputs[output.nodeId]?.name || ''}
-                                                onChange={event => setSelectedOutputs(prev => ({
-                                                  ...prev,
-                                                  [output.nodeId]: {
-                                                    ...prev[output.nodeId],
-                                                    name: event.target.value
-                                                  }
-                                                }))}
-                                                placeholder="Output label"
-                                              />
-                                              <select
-                                                className="library-input"
-                                                value={selectedOutputs[output.nodeId]?.valueType || getDefaultValueType(output, true)}
-                                                onChange={event => setSelectedOutputs(prev => ({
-                                                  ...prev,
-                                                  [output.nodeId]: {
-                                                    ...prev[output.nodeId],
-                                                    valueType: event.target.value
-                                                  }
-                                                }))}
-                                              >
-                                                {COMFY_VALUE_TYPES.map(option => (
-                                                  <option key={option.value} value={option.value}>{option.label}</option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <p className="library-empty-inline">No outputs selected yet.</p>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <p className="library-empty-inline">No output nodes were detected.</p>
-                                )}
-                              </section>
-                            </div>
-
-                            <div className="library-actions">
-                              <button type="button" className="library-btn library-btn--secondary" onClick={resetWorkflowState}>Clear</button>
-                              <button type="button" className="library-btn library-btn--primary" onClick={handleSaveWorkflow} disabled={workflowSaving || !workflowName.trim()}>
-                                {workflowSaving ? (editingWorkflowId ? 'Saving...' : 'Importing...') : (editingWorkflowId ? 'Update Workflow' : 'Save Workflow')}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="library-empty-state">
-                            <span className="material-symbols-outlined">upload_file</span>
-                            <span>Select a ComfyUI workflow JSON file to inspect its inputs and outputs.</span>
-                          </div>
-                        )}
-                      </article>
-
-                      <article className="library-panel">
-                        <div className="library-panel__header">
-                          <h3 className="library-panel__title">Imported Workflows</h3>
-                          <span className="library-panel__badge">Ready</span>
-                        </div>
-
-                        {workflowLoading ? (
-                          <div className="library-empty-state">
-                            <span className="material-symbols-outlined library-spinner">progress_activity</span>
-                            <span>Loading workflows...</span>
-                          </div>
-                        ) : filteredWorkflows.length > 0 ? (
-                          <div className="library-workflow-list">
-                            {filteredWorkflows.map(workflow => (
-                              <article key={workflow.id} className="library-workflow-card">
-                                <div className="library-workflow-card__header">
-                                  <div>
-                                    <h4>{workflow.name}</h4>
-                                    <p>{workflow.parameters?.length || 0} parameters • {workflow.outputs?.length || 0} outputs</p>
-                                  </div>
-                                  <div className="library-workflow-card__actions">
-                                    <span className="library-workflow-card__badge">ComfyUI</span>
-                                    <button type="button" className="library-icon-btn" onClick={() => handleEditWorkflow(workflow)} title="Edit workflow">
-                                      <span className="material-symbols-outlined">edit</span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="library-icon-btn"
-                                      onClick={() => handleDeleteWorkflow(workflow)}
-                                      title="Delete workflow"
-                                      disabled={deletingWorkflowId === workflow.id}
-                                    >
-                                      <span className="material-symbols-outlined">delete</span>
-                                    </button>
-                                  </div>
-                                </div>
-
-                                <div className="library-workflow-card__section">
-                                  <span className="library-workflow-card__label">Parameters</span>
-                                  <div className="library-chip-list">
-                                    {(workflow.parameters || []).length > 0 ? workflow.parameters.map(parameter => (
-                                      <span key={parameter.id} className="library-chip">{parameter.name} · {getDefaultValueType(parameter)}</span>
-                                    )) : <span className="library-chip library-chip--muted">No exposed parameters</span>}
-                                  </div>
-                                </div>
-
-                                <div className="library-workflow-card__section">
-                                  <span className="library-workflow-card__label">Outputs</span>
-                                  <div className="library-chip-list">
-                                    {(workflow.outputs || []).map(output => (
-                                      <span key={output.nodeId} className="library-chip library-chip--secondary">{output.name || output.nodeTitle} · {getDefaultValueType(output, true)}</span>
-                                    ))}
-                                  </div>
-                                </div>
-                              </article>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="library-empty-state">
-                            <span className="material-symbols-outlined">account_tree</span>
-                            <span>{normalizedSearch && workflows.length > 0 ? 'No workflows match your search.' : 'No ComfyUI workflows imported yet.'}</span>
-                          </div>
-                        )}
-                      </article>
-                    </div>
+                              <div className="workflow-card__meta">
+                                <span><strong>{workflow.parameters?.length || 0}</strong> params</span>
+                                <span aria-hidden="true">·</span>
+                                <span><strong>{workflow.outputs?.length || 0}</strong> outputs</span>
+                              </div>
+                            </article>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="library-empty-state">
+                        <span className="material-symbols-outlined">account_tree</span>
+                        <span>{(normalizedSearch || workflowTypeFilter !== 'all') && workflows.length > 0 ? 'No workflows match your filters.' : 'No ComfyUI workflows imported yet.'}</span>
+                      </div>
+                    )}
 
                   </>
                 ) : activeAssets.length > 0 ? (
