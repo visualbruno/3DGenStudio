@@ -16,12 +16,13 @@ function getAssetPreviewUrl(filename) {
 const ASSETS_PER_PAGE = 20;
 
 export default function AssetSelectorModal({ assetType, onSelect, onClose, showEdits = false }) {
-  const { getLibraryAssets } = useProjects();
+  const { getLibraryAssets, projects } = useProjects();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAssetKey, setSelectedAssetKey] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [projectFilter, setProjectFilter] = useState('all');
 
   // Valid types: 'image', 'mesh', or 'brush'
   const validType = assetType === 'mesh' ? 'mesh' : (assetType === 'brush' ? 'brush' : 'image');
@@ -59,6 +60,9 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
                 parentName: asset.name,
                 // Ensure child has same asset type as parent
                 type: asset.type,
+                // Inherit the parent's project links so edits/versions filter with it
+                projectId: child.projectId ?? asset.projectId,
+                projectIds: child.projectIds ?? asset.projectIds,
                 selectorKey: getAssetSelectorKey({ ...child, isChild: true })
               });
             });
@@ -78,17 +82,59 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
+  const projectNameById = useMemo(
+    () => new Map((projects || []).map(project => [String(project.id), project.name])),
+    [projects]
+  );
+
+  // An asset can be linked to multiple projects, so resolve every project key it
+  // belongs to (falling back to the single projectId, then "Unassigned").
+  const getAssetProjectKeys = (asset) => {
+    const ids = Array.isArray(asset?.projectIds) ? asset.projectIds : [];
+    const keys = [...new Set(
+      ids.filter(id => id !== null && id !== undefined).map(id => String(id))
+    )];
+    if (keys.length > 0) return keys;
+    if (asset?.projectId !== null && asset?.projectId !== undefined) return [String(asset.projectId)];
+    return ['__unassigned__'];
+  };
+
+  // Project options derived from the assets actually present, so the dropdown
+  // never lists projects with nothing to show here.
+  const projectFilterOptions = useMemo(() => {
+    const keys = new Set();
+    assets.forEach(asset => getAssetProjectKeys(asset).forEach(key => keys.add(key)));
+    const options = Array.from(keys)
+      .filter(key => key !== '__unassigned__')
+      .map(key => ({ key, label: projectNameById.get(key) || `Project ${key}` }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+    if (keys.has('__unassigned__')) options.push({ key: '__unassigned__', label: 'Unassigned' });
+    return options;
+  }, [assets, projectNameById]);
+
+  // Drop a stale project filter when the available options no longer include it.
+  useEffect(() => {
+    if (projectFilter !== 'all' && !projectFilterOptions.some(option => option.key === projectFilter)) {
+      setProjectFilter('all');
+    }
+  }, [projectFilter, projectFilterOptions]);
+
   const filteredAssets = useMemo(() => {
-    if (!normalizedSearch) return assets;
     return assets.filter(asset => {
-      const haystack = `${asset.name || ''} ${asset.parentName || ''}`.toLowerCase();
-      return haystack.includes(normalizedSearch);
+      if (normalizedSearch) {
+        const haystack = `${asset.name || ''} ${asset.parentName || ''}`.toLowerCase();
+        if (!haystack.includes(normalizedSearch)) return false;
+      }
+      if (projectFilter !== 'all' && !getAssetProjectKeys(asset).includes(projectFilter)) {
+        return false;
+      }
+      return true;
     });
-  }, [assets, normalizedSearch]);
+  }, [assets, normalizedSearch, projectFilter]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [normalizedSearch]);
+  }, [normalizedSearch, projectFilter]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAssets.length / ASSETS_PER_PAGE));
   const pageStart = (currentPage - 1) * ASSETS_PER_PAGE;
@@ -137,25 +183,42 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
         </div>
 
         {!loading && assets.length > 0 && (
-          <div className="asset-selector-search">
-            <span className="material-symbols-outlined">search</span>
-            <input
-              type="text"
-              className="asset-selector-search-input"
-              value={searchQuery}
-              onChange={event => setSearchQuery(event.target.value)}
-              placeholder={`Search ${pluralLabel}`}
-              autoFocus
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="asset-selector-search-clear"
-                onClick={() => setSearchQuery('')}
-                title="Clear search"
-              >
-                <span className="material-symbols-outlined">close</span>
-              </button>
+          <div className="asset-selector-toolbar">
+            <div className="asset-selector-search">
+              <span className="material-symbols-outlined">search</span>
+              <input
+                type="text"
+                className="asset-selector-search-input"
+                value={searchQuery}
+                onChange={event => setSearchQuery(event.target.value)}
+                placeholder={`Search ${pluralLabel}`}
+                autoFocus
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="asset-selector-search-clear"
+                  onClick={() => setSearchQuery('')}
+                  title="Clear search"
+                >
+                  <span className="material-symbols-outlined">close</span>
+                </button>
+              )}
+            </div>
+            {projectFilterOptions.length > 0 && (
+              <label className="asset-selector-project-select">
+                <span className="material-symbols-outlined">filter_list</span>
+                <select
+                  className="asset-selector-project-select__input"
+                  value={projectFilter}
+                  onChange={event => setProjectFilter(event.target.value)}
+                >
+                  <option value="all">All projects</option>
+                  {projectFilterOptions.map(option => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
             )}
           </div>
         )}
@@ -174,7 +237,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
           ) : filteredAssets.length === 0 ? (
             <div className="asset-selector-empty">
               <span className="material-symbols-outlined">search_off</span>
-              <span>No {pluralLabel} match your search.</span>
+              <span>No {pluralLabel} match your filters.</span>
             </div>
           ) : (
             <>
