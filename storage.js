@@ -3049,6 +3049,37 @@ export async function listLibraryAssetsByType(type, port) {
     return accumulator;
   }, {});
 
+  // Every project an asset is linked to (an asset can belong to several), so the
+  // library UI can show it under each project when filtering/grouping by project.
+  const projectLinkRows = candidateStoredPaths.length > 0
+    ? await all(
+      db,
+      `SELECT DISTINCT a.filePath, c.projectId
+       FROM Assets a
+       JOIN AssetTypes at ON at.id = a.assetTypeId
+       JOIN Cards_Assets ca ON ca.assetId = a.id
+       JOIN Cards c ON c.id = ca.cardId
+       WHERE at.name = ?
+         AND a.parentId IS NULL
+         AND a.filePath IN (${candidateStoredPaths.map(() => '?').join(', ')})
+         AND c.projectId IS NOT NULL
+       ORDER BY c.projectId`,
+      [normalizeAssetTypeName(type), ...candidateStoredPaths]
+    )
+    : [];
+
+  const projectIdsByFilePath = projectLinkRows.reduce((accumulator, row) => {
+    if (!accumulator[row.filePath]) {
+      accumulator[row.filePath] = [];
+    }
+
+    if (!accumulator[row.filePath].includes(row.projectId)) {
+      accumulator[row.filePath].push(row.projectId);
+    }
+
+    return accumulator;
+  }, {});
+
   const childAssetRows = await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type));
 
   const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, port);
@@ -3084,6 +3115,7 @@ export async function listLibraryAssetsByType(type, port) {
       filename,
       filePath: row.filePath,
       projectId: canonicalAsset?.projectId ?? null,
+      projectIds: projectIdsByFilePath[row.filePath] || [],
       type,
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
       url: `http://localhost:${port}/assets/${encodeURI(filename)}`,

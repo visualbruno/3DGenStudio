@@ -446,22 +446,30 @@ export default function AssetsPage() {
   const isWorkflowSection = activeSection === 'workflows'
   const sectionAssets = isWorkflowSection ? [] : (libraryAssets[activeConfig.key] || [])
 
-  const getAssetProjectKey = useCallback((asset) => {
-    if (asset?.projectId === null || asset?.projectId === undefined) return '__unassigned__'
-    return String(asset.projectId)
+  // An asset can be linked to multiple projects, so resolve every project key it
+  // belongs to (falling back to the single projectId, then "Unassigned").
+  const getAssetProjectKeys = useCallback((asset) => {
+    const ids = Array.isArray(asset?.projectIds) ? asset.projectIds : []
+    const keys = [...new Set(
+      ids.filter(id => id !== null && id !== undefined).map(id => String(id))
+    )]
+    if (keys.length > 0) return keys
+    if (asset?.projectId !== null && asset?.projectId !== undefined) return [String(asset.projectId)]
+    return ['__unassigned__']
   }, [])
 
   const matchesProjectFilter = useCallback((asset) => {
     if (projectFilter === 'all') return true
-    return getAssetProjectKey(asset) === projectFilter
-  }, [projectFilter, getAssetProjectKey])
+    return getAssetProjectKeys(asset).includes(projectFilter)
+  }, [projectFilter, getAssetProjectKeys])
 
   // Project options for the dropdown, derived from the assets actually present
   // in this section (plus an "Unassigned" bucket when relevant) so it stays
   // relevant per type and never lists projects with nothing to show here.
   const buildProjectFilterOptions = () => {
     if (isWorkflowSection) return []
-    const keys = new Set(sectionAssets.map(getAssetProjectKey))
+    const keys = new Set()
+    sectionAssets.forEach(asset => getAssetProjectKeys(asset).forEach(key => keys.add(key)))
     const options = []
     Array.from(keys)
       .filter(key => key !== '__unassigned__')
@@ -483,9 +491,15 @@ export default function AssetsPage() {
     if (!groupByProject || isWorkflowSection) return null
     const buckets = new Map()
     activeAssets.forEach(asset => {
-      const key = getAssetProjectKey(asset)
-      if (!buckets.has(key)) buckets.set(key, [])
-      buckets.get(key).push(asset)
+      // An asset linked to several projects appears once under each of them
+      // (duplicated across groups). When a project filter is active we keep only
+      // that project's bucket so grouping doesn't reintroduce the others.
+      const keys = getAssetProjectKeys(asset)
+      const bucketKeys = projectFilter === 'all' ? keys : keys.filter(key => key === projectFilter)
+      bucketKeys.forEach(key => {
+        if (!buckets.has(key)) buckets.set(key, [])
+        buckets.get(key).push(asset)
+      })
     })
     const groups = []
     Array.from(buckets.keys())
