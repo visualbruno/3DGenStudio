@@ -27,7 +27,9 @@ const CHANGE_LOG_ENTRIES = [
     items: [
 			'Assets page: Can group by project',
 			'Assets page: Reworked on Workflows layout',
+			'Assets Selector modal: Can filter by project',
 			'Projects page: Cleaned the layout and added rename button',
+			'MeshEditor - Projection: Drawing mask is asynchronous'
     ],
   },
   {

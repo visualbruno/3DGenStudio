@@ -19,7 +19,7 @@
 
 | Date | Description |
 | --- | --- |
-| **2026-06-16** | Assets page: Can group by project and improved Workflows layout<br>Cleaned Projects page and added rename button |
+| **2026-06-16** | Assets page: Can group by project and improved Workflows layout<br>Cleaned Projects page and added rename button<br>MeshEditor Projection: Drawing mask is asynchronous |
 | **2026-06-15** | Can export mesh from MeshPreviewer and MeshEditor<br>Improved Projection in MeshEditor<br>Added/Updated example workflows |
 | **2026-06-12** | MeshEditor - Projection : Can use a Mask<br>Textbox : Can use a ComfyUI workflow to generate a text |
 | **2026-06-09** | Can drag and drop images directly from your computer into your project<br>Added "Set as default" checkbox for ComfyUI Workflows<br>Kanban page: Can add a mesh directly in Mesh Gen column<br>Generated mesh is now a child of parent mesh |
