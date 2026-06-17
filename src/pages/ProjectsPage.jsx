@@ -22,6 +22,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.1.1',
+    date: '2026-06-17',
+    items: [
+			'GraphPage: Info icon to see the last parameters used',
+			'ComfyUI Workflows: They are sorted by name everywhere',
+			'MeshEditor : Fixed bug when ComfyUI crashes',
+			'Fixed: ComfyUI workflows are correctly deleted'
+    ],
+  },
+  {
     version: 'v1.1.0',
     date: '2026-06-16',
     items: [
