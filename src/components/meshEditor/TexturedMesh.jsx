@@ -3,7 +3,14 @@ import * as THREE from 'three'
 import { getTextureKeyFromMaterial } from '../../utils/meshTexturing'
 
 // R3F scene helper extracted from MeshEditorPage.jsx (behaviour-preserving move).
-export default function TexturedMesh({ root, textureKey, displayTexture, showShadows = false, showAlbedo = false }) {
+export default function TexturedMesh({
+  root,
+  textureKey,
+  displayTexture,
+  showShadows = false,
+  displayMode = 'pbr',
+  showWireframe = false,
+  }) {
   const baseObject = useMemo(() => {
     if (!root || !displayTexture) {
       return null
@@ -15,7 +22,7 @@ export default function TexturedMesh({ root, textureKey, displayTexture, showSha
     const buildMaterial = sourceMaterial => {
       const isTargetTexture = sourceMaterial && getTextureKeyFromMaterial(sourceMaterial) === textureKey
 
-      if (showAlbedo) {
+      if (displayMode === 'albedo') {
         const params = {}
         if (sourceMaterial?.color?.isColor) {
           params.color = sourceMaterial.color.clone()
@@ -36,6 +43,17 @@ export default function TexturedMesh({ root, textureKey, displayTexture, showSha
           params.side = sourceMaterial.side
         }
         return new THREE.MeshBasicMaterial(params)
+      }
+
+      if (displayMode === 'sculpt') {
+        const params = {
+          color: new THREE.Color('#6f6f6f'),
+          roughness: 0.78,
+          metalness: 0,
+          wireframe: showWireframe,
+        }
+
+        return new THREE.MeshStandardMaterial(params)
       }
 
       const nextMaterial = sourceMaterial?.clone?.() || sourceMaterial
@@ -74,7 +92,7 @@ export default function TexturedMesh({ root, textureKey, displayTexture, showSha
 
     object.userData.meshEditorMaterials = materials
     return object
-  }, [displayTexture, root, showAlbedo, showShadows, textureKey])
+  }, [displayMode, displayTexture, root, showShadows, textureKey])
 
   useEffect(() => () => {
     baseObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())

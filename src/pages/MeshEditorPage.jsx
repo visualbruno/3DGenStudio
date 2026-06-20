@@ -309,7 +309,8 @@ export default function MeshEditorPage() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showShadows, setShowShadows] = useState(false)
-  const [showAlbedo, setShowAlbedo] = useState(false)
+  const [displayMode, setDisplayMode] = useState('pbr')
+  const [showWireframe, setShowWireframe] = useState(false)
   const [activeMenu, setActiveMenu] = useState('modeling')
   const [geometry, setGeometry] = useState(null)
   const [texturableMesh, setTexturableMesh] = useState(null)
@@ -488,6 +489,14 @@ export default function MeshEditorPage() {
   // layer PNGs. Reset only when the asset under edit changes.
   const paintDocDirtyForAssetIdRef = useRef(null);
   const [paintCursorPos, setPaintCursorPos] = useState(null); // { x, y } in canvasShell coords
+
+  const cycleDisplayMode = () => {
+    setDisplayMode(current => {
+      if (current === 'pbr') return 'albedo'
+      if (current === 'albedo') return 'sculpt'
+      return 'pbr'
+    })
+  }
 
   // --- Sculpting mode state ---
   // Brush kind: 'standard' is the only kernel wired up in this step. Smooth
@@ -5524,14 +5533,25 @@ export default function MeshEditorPage() {
                   {showShadows ? 'Shadows on' : 'Shadows off'}
                 </button>
                 <button
-                  type="button"
-                  className={`mesh-editor-btn ${showAlbedo ? 'mesh-editor-btn--secondary' : 'mesh-editor-btn--ghost'}`}
-                  onClick={() => setShowAlbedo(current => !current)}
-                  aria-pressed={showAlbedo}
-                  title="Toggle albedo (unlit) / PBR shading"
+                  onClick={cycleDisplayMode}
+                  aria-label={`Display mode: ${displayMode}`}
+                  title="Cycle PBR, Albedo, and Sculpt viewport shading"
                 >
-                  {showAlbedo ? 'Albedo' : 'PBR'}
+                  {displayMode === 'pbr'
+                    ? 'PBR'
+                    : displayMode === 'albedo'
+                      ? 'Albedo'
+                      : 'Sculpt'}
                 </button>
+                {displayMode === 'sculpt' && (
+                <button
+                  onClick={() => setShowWireframe(current => !current)}
+                  aria-pressed={showWireframe}
+                  title={showWireframe ? 'Hide wireframe overlay' : 'Show wireframe overlay'}
+                >
+                  {showWireframe ? 'Wireframe: On' : 'Wireframe: Off'}
+                </button>
+              )}
               </div>
             </div>
             <div className="mesh-editor-toolbar__stats">
@@ -5781,20 +5801,27 @@ export default function MeshEditorPage() {
                       canvas.addEventListener('webglcontextrestored', handleRestored, false)
                     }}
                   >
-                    <PerspectiveCamera makeDefault position={[3, 3, 5]} near={0.0001} far={4000} />
-                    <ambientLight intensity={1.25} />
-                    <directionalLight
-                      position={[5, 7, 9]}
-                      intensity={2}
-                      castShadow={showShadows}
-                      shadow-mapSize-width={2048}
-                      shadow-mapSize-height={2048}
-                      shadow-bias={-0.00015}
-                      shadow-normalBias={0.04}
-                      shadow-camera-near={0.5}
-                      shadow-camera-far={120}
-                    />
-                    <directionalLight position={[-5, 3, -4]} intensity={0.6} color="#8ff5ff" />
+                  <PerspectiveCamera makeDefault position={[3, 3, 5]} near={0.0001} far={4000} />
+
+                  <ambientLight intensity={displayMode === 'sculpt' ? 0.42 : 1.25} />
+
+                  <directionalLight
+                    position={displayMode === 'sculpt' ? [5, 7, 4] : [5, 7, 9]}
+                    intensity={displayMode === 'sculpt' ? 2.2 : 2}
+                    castShadow={showShadows}
+                    shadow-mapSize-width={2048}
+                    shadow-mapSize-height={2048}
+                    shadow-bias={-0.00015}
+                    shadow-normalBias={0.04}
+                    shadow-camera-near={0.5}
+                    shadow-camera-far={120}
+                  />
+
+                  <directionalLight
+                    position={displayMode === 'sculpt' ? [-4, 2, -5] : [-5, 3, -4]}
+                    intensity={displayMode === 'sculpt' ? 0.7 : 0.6}
+                    color={displayMode === 'sculpt' ? '#ffffff' : '#8ff5ff'}
+                  />
                     {(activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || maskTextureRef.current) ? (
                       <TexturedMesh
                         key={textureRevision}
@@ -5802,7 +5829,8 @@ export default function MeshEditorPage() {
                         textureKey={texturableMesh.textureKey}
                         displayTexture={displayTextureRef.current}
                         showShadows={showShadows}
-                        showAlbedo={showAlbedo}
+                        displayMode={displayMode}
+                        showWireframe={showWireframe}
                       />
                     ) : activeMenu === 'boolean' && booleanHasPreview && booleanMaskTexture ? (
                       <BooleanPreviewMesh
@@ -5822,10 +5850,11 @@ export default function MeshEditorPage() {
                     ) : (
                       <EditorMesh
                         geometry={geometry}
-                        selectedFaceIndices={activeMenu === 'modeling' ? selectedFaceIndices : []}
-                        selectedVertexIndices={activeMenu === 'modeling' ? selectedVertexIndices : []}
+                        selectedFaceIndices={selectedFaceIndices}
+                        selectedVertexIndices={selectedVertexIndices}
                         showShadows={showShadows}
-                        showAlbedo={showAlbedo}
+                        displayMode={displayMode}
+                        showWireframe={showWireframe}
                       />
                     )}
                     {activeMenu === 'boolean' && booleanHasPreview && (!booleanMaskTexture || booleanPlaceMode) && (
