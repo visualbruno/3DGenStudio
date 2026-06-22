@@ -22,6 +22,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.1.2',
+    date: '2026-06-22',
+    items: [
+			'Assets page: Can delete a mesh version (sub mesh)',
+			'Mesh Editor - Projection: Fixed "Seam Smoothing"',
+			'Setup Wizard: Added Flux2Klein 4B',
+			'Workflows: Using Flux2Klein 4B for Albedo lora'
+    ],
+  },
+  {
     version: 'v1.1.1',
     date: '2026-06-17',
     items: [

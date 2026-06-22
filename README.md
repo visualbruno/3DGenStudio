@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-06-22** | Can delete Mesh Versions in Assets page<br>Fixed "Seam Smoothing" in MeshEditor Projection<br>Added Flux2Klein 4B |
 | **2026-06-17** | Added Info Icon in GraphPage: Last Parameters used<br>ComfyUI workflows are sorted by name everywhere<br>Fixed bug in MeshEditor when ComfyUI crashes |
 | **2026-06-16** | Assets page: Can group by project and improved Workflows layout<br>Cleaned Projects page and added rename button<br>MeshEditor Projection: Drawing mask is asynchronous |
 | **2026-06-15** | Can export mesh from MeshPreviewer and MeshEditor<br>Improved Projection in MeshEditor<br>Added/Updated example workflows |
