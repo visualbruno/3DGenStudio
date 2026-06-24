@@ -19,7 +19,7 @@
 
 | Date | Description |
 | --- | --- |
-| **2026-06-25** | Mesh Editor: Added Wireframe toggle<br>Workflows: Can be shared<br>Tripo AI: Updated to v3<br>Graph Page: Fixed name used to save a mesh from an API<br>Run.bat: Fixed slowness |
+| **2026-06-24** | Mesh Editor: Added Wireframe toggle<br>Workflows: Can be shared<br>Tripo AI: Updated to v3<br>Graph Page: Fixed name used to save a mesh from an API<br>Run.bat: Fixed slowness |
 | **2026-06-22** | Can delete Mesh Versions in Assets page<br>Fixed "Seam Smoothing" in MeshEditor Projection<br>Added Flux2Klein 4B |
 | **2026-06-17** | Added Info Icon in GraphPage: Last Parameters used<br>ComfyUI workflows are sorted by name everywhere<br>Fixed bug in MeshEditor when ComfyUI crashes |
 | **2026-06-16** | Assets page: Can group by project and improved Workflows layout<br>Cleaned Projects page and added rename button<br>MeshEditor Projection: Drawing mask is asynchronous |

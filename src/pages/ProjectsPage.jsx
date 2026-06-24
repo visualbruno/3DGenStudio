@@ -23,7 +23,7 @@ const PRESETS = [
 const CHANGE_LOG_ENTRIES = [
   {
     version: 'v1.1.3',
-    date: '2026-06-25',
+    date: '2026-06-24',
     items: [
 			'Mesh Editor: Added Wireframe toggle',
 			'Workflows: Can be shared',
