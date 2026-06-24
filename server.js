@@ -109,7 +109,7 @@ const TENCENT_MODEL_VERSIONS = new Set(['3.0', '3.1']);
 const TENCENT_GENERATION_TYPES = new Set(['Normal', 'LowPoly', 'Geometry']);
 const TENCENT_POLYGON_TYPES = new Set(['triangle', 'quadrilaterial']);
 const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration';
-const TRIPO_API_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
+const TRIPO_API_BASE_URL = 'https://openapi.tripo3d.ai/v3';
 const TRIPO_MODEL_VERSIONS = new Set(['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']);
 const TRIPO_TEXTURE_ALIGNMENT_OPTIONS = new Set(['original_image', 'geometry']);
 const TRIPO_TEXTURE_QUALITY_OPTIONS = new Set(['standard', 'detailed']);
@@ -1613,13 +1613,13 @@ async function uploadTripoImageAndGetToken(apiKey, imageBuffer, inputFilePath = 
   const formData = new FormData();
   formData.append('file', new Blob([imageBuffer], { type: mimeType }), uploadFilename);
 
-  console.log('[TripoAI][UploadSTS] request payload:', JSON.stringify({
+  console.log('[TripoAI][UploadFile] request payload:', JSON.stringify({
     filename: uploadFilename,
     mimeType,
     sizeBytes: imageBuffer.length
   }, null, 2));
 
-  const response = await fetch(`${TRIPO_API_BASE_URL}/upload/sts`, {
+  const response = await fetch(`${TRIPO_API_BASE_URL}/files`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`
@@ -1628,19 +1628,19 @@ async function uploadTripoImageAndGetToken(apiKey, imageBuffer, inputFilePath = 
   });
 
   const responseBody = await response.json().catch(() => ({}));
-  console.log('[TripoAI][UploadSTS] raw response:', JSON.stringify(responseBody || {}, null, 2));
+  console.log('[TripoAI][UploadFile] raw response:', JSON.stringify(responseBody || {}, null, 2));
 
   if (!response.ok || Number(responseBody?.code) !== 0) {
     throw new Error(responseBody?.message || responseBody?.msg || 'Failed to upload source image to Tripo AI');
   }
 
-  const imageToken = String(responseBody?.data?.image_token || '').trim();
+  const fileToken = String(responseBody?.data?.file_token || '').trim();
 
-  if (!imageToken) {
-    throw new Error('Tripo AI image upload succeeded but image_token was missing');
+  if (!fileToken) {
+    throw new Error('Tripo AI image upload succeeded but file_token was missing');
   }
 
-  return imageToken;
+  return fileToken;
 }
 
 async function submitTripoMeshGenerationTask(settings, {
@@ -1690,9 +1690,9 @@ async function submitTripoMeshGenerationTask(settings, {
     geometryQuality
   });
 
-  let imageToken = null;
+  let fileToken = null;
   if (validatedInput.hasImageSource) {
-    imageToken = await uploadTripoImageAndGetToken(providerConfig.apiKey, imageBuffer, inputFilePath);
+    fileToken = await uploadTripoImageAndGetToken(providerConfig.apiKey, imageBuffer, inputFilePath);
   }
 
   const taskPayload = {
@@ -1717,7 +1717,7 @@ async function submitTripoMeshGenerationTask(settings, {
   if (validatedInput.hasImageSource) {
     taskPayload.file = {
       type: path.extname(String(inputFilePath || '')).toLowerCase().includes('jpg') ? 'jpg' : 'png',
-      file_token: imageToken
+      file_token: fileToken
     };
   } else {
     taskPayload.prompt = validatedInput.trimmedPrompt;
@@ -1730,9 +1730,15 @@ async function submitTripoMeshGenerationTask(settings, {
     taskPayload.geometry_quality = validatedInput.normalizedGeometryQuality;
   }
 
+  // v3 routes text vs image generation to separate endpoints (v2 used a single
+  // /task endpoint discriminated by the `type` field).
+  const submitEndpoint = validatedInput.hasImageSource
+    ? `${TRIPO_API_BASE_URL}/generation/image-to-model`
+    : `${TRIPO_API_BASE_URL}/generation/text-to-model`;
+
   console.log('[TripoAI][SubmitTask] request payload:', JSON.stringify(createTripoDebugPayload(taskPayload), null, 2));
 
-  const response = await fetch(`${TRIPO_API_BASE_URL}/task`, {
+  const response = await fetch(submitEndpoint, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${providerConfig.apiKey}`,
@@ -1756,7 +1762,7 @@ async function submitTripoMeshGenerationTask(settings, {
 
   return {
     taskId,
-    imageToken,
+    fileToken,
     requestPayload: taskPayload,
     validatedInput
   };
@@ -1772,7 +1778,7 @@ async function queryTripoMeshGenerationTask(settings, { taskId } = {}) {
     taskId: String(taskId || '').trim()
   }, null, 2));
 
-  const response = await fetch(`${TRIPO_API_BASE_URL}/task/${encodeURIComponent(String(taskId || '').trim())}`, {
+  const response = await fetch(`${TRIPO_API_BASE_URL}/tasks/${encodeURIComponent(String(taskId || '').trim())}`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${providerConfig.apiKey}`
@@ -1803,10 +1809,12 @@ async function queryTripoMeshGenerationTask(settings, { taskId } = {}) {
 }
 
 async function downloadTripoMeshResult(output = {}) {
+  // v3 returns a single `model_url`; the older v2 fields are kept as fallbacks.
+  const modelUrlV3 = String(output?.model_url || '').trim();
   const pbrModelUrl = String(output?.pbr_model || '').trim();
   const modelUrl = String(output?.model || '').trim();
   const baseModelUrl = String(output?.base_model || '').trim();
-  const selectedUrl = pbrModelUrl || modelUrl || baseModelUrl;
+  const selectedUrl = modelUrlV3 || pbrModelUrl || modelUrl || baseModelUrl;
 
   if (!selectedUrl) {
     throw new Error('Tripo AI task succeeded but no model URL was returned');

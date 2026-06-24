@@ -27,3 +27,5 @@ Thumbs.db
 .idea/
 *.local
 .vs/
+
+dev.log
