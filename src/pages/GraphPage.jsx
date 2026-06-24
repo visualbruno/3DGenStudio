@@ -1713,6 +1713,7 @@ export default function GraphPage({ project }) {
                   enablePBR: Boolean(targetDraft.enablePBR),
                   faceCount: Number(targetDraft.faceCount) || 500000,
                   prompt: trimmedPrompt,
+                  meshName: targetDraft.name.trim(),
                   jobId: response.jobId,
                   promptId: response.jobId,
                   jobStatus: 'WAIT',
@@ -1855,6 +1856,7 @@ export default function GraphPage({ project }) {
                   generateParts: Boolean(targetDraft.generateParts),
                   exportUv: Boolean(targetDraft.exportUv),
                   geometryQuality: targetDraft.geometryQuality || 'standard',
+                  meshName: targetDraft.name.trim(),
                   taskId: response.taskId,
                   promptId: response.taskId,
                   taskStatus: 'queued',
@@ -2276,14 +2278,14 @@ export default function GraphPage({ project }) {
             ? await queryTencentMeshGenerationResult(project.id, {
               jobId: runtimeMetadata.jobId,
               region: runtimeMetadata.region,
-              name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
+              name: runtimeMetadata.meshName || targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
               prompt: runtimeMetadata.prompt || '',
               selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID,
               parentAssetId: runtimeMetadata.parentAssetId || null
             })
             : await queryTripoMeshGenerationResult(project.id, {
               taskId: runtimeMetadata.taskId,
-              name: targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
+              name: runtimeMetadata.meshName || targetNode.data.name || targetNode.data.asset?.name || 'Generated Mesh',
               prompt: runtimeMetadata.prompt || '',
               selectedApi: runtimeMetadata.selectedApi || TRIPO_MESH_GENERATION_API_ID,
               parentAssetId: runtimeMetadata.parentAssetId || null
