@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
 import { useNotifications } from '../context/NotificationContext'
+import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import Viewer from '../components/Viewer'
@@ -86,7 +87,8 @@ export default function KanbanPage() {
   } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
-  
+  const { jobs: workflowJobs, registerJob, completeJob } = useWorkflowJobs()
+
   const [project, setProject] = useState(null)
   const [assets, setAssets] = useState([])
   const [projectCards, setProjectCards] = useState([])
@@ -507,10 +509,11 @@ export default function KanbanPage() {
         }
       }
 
-      try {
-        const comfyClientId = createComfyExecutionId('comfy-client')
-        const promptId = createComfyExecutionId('comfy-prompt')
+      const cardId = draft.cardId || createImageCardId()
+      const comfyClientId = createComfyExecutionId('comfy-client')
+      const promptId = createComfyExecutionId('comfy-prompt')
 
+      try {
         setPendingImageGeneration({
           title: workflow.name,
           source: 'ComfyUI',
@@ -521,11 +524,20 @@ export default function KanbanPage() {
         })
         setImageDraft(null)
         setLoading(true)
+        registerJob({
+          id: promptId,
+          projectId,
+          projectName: project?.name || '',
+          page: 'kanban',
+          targetId: cardId,
+          kind: 'image',
+          label: workflow.name
+        })
         openPendingComfyProgressSubscription(promptId)
         await runComfyWorkflow(projectId, {
           workflowId: draft.workflowId,
           inputs: draft.inputs || {},
-          cardId: draft.cardId || createImageCardId(),
+          cardId,
           clientId: comfyClientId,
           promptId
         })
@@ -537,10 +549,12 @@ export default function KanbanPage() {
         } : prev)
         await persistWorkflowDefaultsIfRequested(draft, workflow)
         await refreshProjectAssets()
+        completeJob(promptId, { status: 'completed' })
       } catch (err) {
         console.error('ComfyUI workflow failed:', err)
         setImageDraft(draft)
         showStatusMessage(err.message || 'ComfyUI workflow failed', 'error')
+        completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
         await refreshProjectAssets().catch(refreshErr => {
           console.error('Failed to refresh project assets after ComfyUI workflow error:', refreshErr)
         })
@@ -841,6 +855,27 @@ export default function KanbanPage() {
     })
   }, [imageCards, imageEditProgressByCardId, projectId, getProjectAssets, getProjectCards, subscribeToComfyWorkflowProgress])
 
+  // A workflow tracked by the app-level store may finish while this page is
+  // unmounted (or after returning to it). When one reaches a terminal state,
+  // refresh the board once so the persisted "processing" snapshot clears, the
+  // card unlocks, and the new result is shown.
+  const handledTerminalJobsRef = useRef(new Set())
+  useEffect(() => {
+    const finished = workflowJobs.filter(job => (
+      job.page === 'kanban'
+      && job.projectId === projectId
+      && (job.status === 'completed' || job.status === 'error')
+      && !handledTerminalJobsRef.current.has(job.id)
+    ))
+    if (finished.length === 0) {
+      return
+    }
+    finished.forEach(job => handledTerminalJobsRef.current.add(job.id))
+    refreshProjectAssets().catch(err => {
+      console.error('Failed to refresh project assets after workflow completion:', err)
+    })
+  }, [workflowJobs, projectId, refreshProjectAssets])
+
   const cardAttributesByCardId = useMemo(() => {
     return cardAttributes.reduce((accumulator, attribute) => {
       if (!accumulator[attribute.cardId]) {
@@ -1073,11 +1108,10 @@ export default function KanbanPage() {
       }
 
       const cardId = draft.cardId || createImageCardId()
+      const comfyClientId = createComfyExecutionId('comfy-client')
+      const promptId = createComfyExecutionId('comfy-prompt')
 
       try {
-        const comfyClientId = createComfyExecutionId('comfy-client')
-        const promptId = createComfyExecutionId('comfy-prompt')
-
         setPendingMeshGeneration({
           title: workflow.name,
           source: 'ComfyUI',
@@ -1088,6 +1122,15 @@ export default function KanbanPage() {
         })
         setMeshDraft(null)
         setLoading(true)
+        registerJob({
+          id: promptId,
+          projectId,
+          projectName: project?.name || '',
+          page: 'kanban',
+          targetId: cardId,
+          kind: 'mesh',
+          label: workflow.name
+        })
         openPendingMeshProgressSubscription(promptId)
         const generatedMeshes = await runComfyWorkflow(projectId, {
           workflowId: draft.workflowId,
@@ -1106,10 +1149,12 @@ export default function KanbanPage() {
         await moveCardToMeshGen(cardId)
         await ensureGeneratedMeshThumbnails(generatedMeshes)
         await refreshProjectAssets()
+        completeJob(promptId, { status: 'completed' })
       } catch (err) {
         console.error('ComfyUI mesh workflow failed:', err)
         setMeshDraft(draft)
         showStatusMessage(err.message || 'ComfyUI workflow failed', 'error')
+        completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
         await refreshProjectAssets().catch(refreshErr => {
           console.error('Failed to refresh project assets after ComfyUI workflow error:', refreshErr)
         })
@@ -1989,6 +2034,7 @@ export default function KanbanPage() {
     const existingSourceChildCount = selectedImageSourceGroup ? getAssetChildren(selectedImageSourceGroup.asset).length : 0
 
     let keepRuntimeState = false
+    let comfyEditPromptId = null
 
     try {
       setImageEditPendingCardId(card.id)
@@ -2277,6 +2323,17 @@ export default function KanbanPage() {
 
         const promptId = createComfyExecutionId('comfy-edit-prompt')
         const clientId = createComfyExecutionId('comfy-edit-client')
+        comfyEditPromptId = promptId
+
+        registerJob({
+          id: promptId,
+          projectId,
+          projectName: project?.name || '',
+          page: 'kanban',
+          targetId: card.id,
+          kind: isMeshWorkflowCard ? 'mesh' : 'imageEdit',
+          label: name || actionLabel
+        })
 
         setImageEditProgressByCardId(prev => ({
           ...prev,
@@ -2386,6 +2443,9 @@ export default function KanbanPage() {
 
       await refreshProjectAssets()
       closeImageEditActionMenu()
+      if (comfyEditPromptId) {
+        completeJob(comfyEditPromptId, { status: 'completed' })
+      }
       showStatusMessage(isMeshGenCard
         ? 'Mesh generation completed successfully.'
         : isMeshEditCard
@@ -2407,6 +2467,10 @@ export default function KanbanPage() {
           : 'Failed to run image edit')
 
       showStatusMessage(failureMessage, 'error')
+
+      if (comfyEditPromptId) {
+        completeJob(comfyEditPromptId, { status: 'error', error: failureMessage })
+      }
 
       if (imageEditDraft?.mode === 'api') {
         if (isMeshGenCard) {
@@ -2456,16 +2520,53 @@ export default function KanbanPage() {
     }
   }
 
+  // ComfyUI jobs still running in the app-level store, keyed by the card they
+  // belong to. This survives leaving and returning to the page, so a card stays
+  // locked until its workflow finishes even though the page-local progress
+  // state was discarded on unmount.
+  const activeStoreJobsByCardId = useMemo(() => {
+    const map = new Map()
+    workflowJobs.forEach(job => {
+      if (
+        job.page === 'kanban'
+        && job.projectId === projectId
+        && job.targetId
+        && (job.status === 'queued' || job.status === 'processing')
+      ) {
+        map.set(String(job.targetId), job)
+      }
+    })
+    return map
+  }, [workflowJobs, projectId])
+
   const getCardRuntimeState = (card) => {
     const liveState = imageEditProgressByCardId[card.id]
     if (liveState?.status === 'completed') {
       return null
     }
 
-    return liveState || card.processing || null
+    if (liveState) {
+      return liveState
+    }
+
+    const storeJob = activeStoreJobsByCardId.get(String(card.id))
+    if (storeJob) {
+      return {
+        status: 'processing',
+        source: 'ComfyUI',
+        progressPercent: storeJob.progressPercent,
+        detail: storeJob.detail,
+        currentNodeLabel: storeJob.currentNodeLabel
+      }
+    }
+
+    return card.processing || null
   }
 
-  const isCardLocked = (card) => getCardRuntimeState(card)?.status === 'processing'
+  const isCardLocked = (card) => {
+    const status = getCardRuntimeState(card)?.status
+    return status === 'processing' || status === 'queued'
+  }
 
   const getCardInsertPosition = (cardId, destinationColumnId, destinationIndex) => {
     const sourceColumnId = draggedCard?.columnId

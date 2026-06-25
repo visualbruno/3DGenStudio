@@ -18,6 +18,7 @@ import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
 import { useNotifications } from '../context/NotificationContext'
+import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import '@xyflow/react/dist/style.css'
 import './KanbanPage.css'
@@ -123,7 +124,6 @@ export default function GraphPage({ project }) {
     getComfyWorkflows,
     updateComfyWorkflow,
     runComfyWorkflow,
-    subscribeToComfyWorkflowProgress,
     runImageEditApi,
     runImageEditComfy,
     runMeshGenerationApi,
@@ -132,6 +132,7 @@ export default function GraphPage({ project }) {
   } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
+  const { jobs: workflowJobs, registerJob, completeJob, removeJobsForTarget } = useWorkflowJobs()
 
   const [showSettings, setShowSettings] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -154,7 +155,6 @@ export default function GraphPage({ project }) {
   const pendingUploadNodeIdRef = useRef(null)
   const pendingConnectionRef = useRef(null)
   const skipNextPaneClickRef = useRef(false)
-  const progressSubscriptionsRef = useRef(new Map())
   const libraryLoadedRef = useRef(false)
   const workflowsLoadedRef = useRef(false)
   const graphCanvasRef = useRef(null)
@@ -379,11 +379,6 @@ export default function GraphPage({ project }) {
     }
   }, [meshGenerationApis, meshGenerationWorkflows])
 
-  const closeNodeProgressSubscription = useCallback((nodeId) => {
-    progressSubscriptionsRef.current.get(String(nodeId))?.()
-    progressSubscriptionsRef.current.delete(String(nodeId))
-  }, [])
-
   const replaceFlowNodeData = useCallback((updatedNode) => {
     setNodes(currentNodes => currentNodes.map(node => (
       node.id === String(updatedNode.id)
@@ -494,16 +489,59 @@ export default function GraphPage({ project }) {
     }
   }, [nodes, project.id, replaceFlowNodeData, setNodes, updateProjectNode])
 
+  // Live workflow progress is owned by the app-level WorkflowJobs store so it
+  // survives navigating away from this page. While the page is mounted, mirror
+  // the progress of any in-flight job onto its node for display.
   useEffect(() => {
-    const subscriptions = progressSubscriptionsRef.current
-    return () => {
-      subscriptions.forEach(unsubscribe => unsubscribe?.())
-      subscriptions.clear()
+    if (!project?.id) {
+      return
     }
-  }, [])
+    const activeJobs = workflowJobs.filter(job => (
+      job.projectId === project.id
+      && job.page === 'graph'
+      && job.targetId
+      && (job.status === 'queued' || job.status === 'processing')
+    ))
+    if (activeJobs.length === 0) {
+      return
+    }
+    setNodes(current => {
+      let changed = false
+      const next = current.map(item => {
+        const job = activeJobs.find(candidate => candidate.targetId === item.id)
+        if (!job) {
+          return item
+        }
+        const nextStatus = job.status === 'error' ? 'error' : 'processing'
+        const nextProgress = Math.max(Number(item.data.progress) || 0, Number(job.progressPercent) || 0)
+        const nextDetail = job.detail || item.data.progressDetail || null
+        const nextLabel = job.currentNodeLabel || item.data.currentNodeLabel || null
+        if (
+          item.data.status === nextStatus
+          && item.data.progress === nextProgress
+          && item.data.progressDetail === nextDetail
+          && item.data.currentNodeLabel === nextLabel
+        ) {
+          return item
+        }
+        changed = true
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            status: nextStatus,
+            progress: nextProgress,
+            progressDetail: nextDetail,
+            currentNodeLabel: nextLabel
+          }
+        }
+      })
+      return changed ? next : current
+    })
+  }, [workflowJobs, project?.id, setNodes])
 
   const handleDeleteNode = useCallback(async (nodeId) => {
-    closeNodeProgressSubscription(nodeId)
+    removeJobsForTarget(project.id, nodeId)
     await deleteProjectNode(project.id, Number(nodeId))
     setNodes(currentNodes => currentNodes.filter(node => node.id !== String(nodeId)))
     setEdges(currentEdges => currentEdges.filter(edge => edge.source !== String(nodeId) && edge.target !== String(nodeId)))
@@ -512,7 +550,7 @@ export default function GraphPage({ project }) {
       delete nextDrafts[String(nodeId)]
       return nextDrafts
     })
-  }, [closeNodeProgressSubscription, deleteProjectNode, project.id, setEdges, setNodes])
+  }, [removeJobsForTarget, deleteProjectNode, project.id, setEdges, setNodes])
 
   const ensureGeneratedMeshThumbnail = useCallback(async (asset) => {
     if (!asset || asset.type !== 'mesh' || asset.thumbnail) {
@@ -1241,26 +1279,15 @@ export default function GraphPage({ project }) {
           const promptId = createComfyExecutionId('graph-text-prompt')
           const clientId = createComfyExecutionId('graph-text-client')
           setActionDraftsByNodeId({})
-          closeNodeProgressSubscription(targetNodeId)
-          progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
-            onMessage: payload => {
-              setNodes(current => current.map(item => (
-                item.id === String(targetNodeId)
-                  ? {
-                      ...item,
-                      data: {
-                        ...item.data,
-                        status: payload?.status === 'error' ? 'error' : 'processing',
-                        progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
-                        progressDetail: payload?.detail || item.data.progressDetail || null,
-                        currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
-                      }
-                    }
-                  : item
-              )))
-            },
-            onError: () => {}
-          }))
+          registerJob({
+            id: promptId,
+            projectId: project.id,
+            projectName: project.name,
+            page: 'graph',
+            targetId: targetNodeId,
+            kind: 'text',
+            label: targetNode.data.name || workflow.name
+          })
 
           await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
             progressDetail: 'Preparing ComfyUI workflow',
@@ -1305,10 +1332,10 @@ export default function GraphPage({ project }) {
               progressDetail: null,
               currentNodeLabel: null
             })
+            completeJob(promptId, { status: 'completed' })
           } catch (err) {
             await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
-          } finally {
-            closeNodeProgressSubscription(targetNodeId)
+            completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
           }
           return
         }
@@ -1392,26 +1419,15 @@ export default function GraphPage({ project }) {
             const promptId = createComfyExecutionId('graph-image-prompt')
             const clientId = createComfyExecutionId('graph-image-client')
             setActionDraftsByNodeId({})
-            closeNodeProgressSubscription(targetNodeId)
-            progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
-              onMessage: payload => {
-                setNodes(current => current.map(item => (
-                  item.id === String(targetNodeId)
-                    ? {
-                        ...item,
-                        data: {
-                          ...item.data,
-                          status: payload?.status === 'error' ? 'error' : 'processing',
-                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
-                          progressDetail: payload?.detail || item.data.progressDetail || null,
-                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
-                        }
-                      }
-                    : item
-                )))
-              },
-              onError: () => {}
-            }))
+            registerJob({
+              id: promptId,
+              projectId: project.id,
+              projectName: project.name,
+              page: 'graph',
+              targetId: targetNodeId,
+              kind: 'image',
+              label: targetDraft.name.trim() || workflow.name
+            })
 
             await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
               progressDetail: 'Preparing ComfyUI workflow',
@@ -1448,10 +1464,10 @@ export default function GraphPage({ project }) {
                 await spawnAdditionalResultNodes('Image', imageAssets.slice(1))
               }
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
+              completeJob(promptId, { status: 'completed' })
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
-            } finally {
-              closeNodeProgressSubscription(targetNodeId)
+              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
             }
             return
           }
@@ -1552,26 +1568,15 @@ export default function GraphPage({ project }) {
             const promptId = createComfyExecutionId('graph-image-edit-prompt')
             const clientId = createComfyExecutionId('graph-image-edit-client')
             setActionDraftsByNodeId({})
-            closeNodeProgressSubscription(targetNodeId)
-            progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
-              onMessage: payload => {
-                setNodes(current => current.map(item => (
-                  item.id === String(targetNodeId)
-                    ? {
-                        ...item,
-                        data: {
-                          ...item.data,
-                          status: payload?.status === 'error' ? 'error' : 'processing',
-                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
-                          progressDetail: payload?.detail || item.data.progressDetail || null,
-                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
-                        }
-                      }
-                    : item
-                )))
-              },
-              onError: () => {}
-            }))
+            registerJob({
+              id: promptId,
+              projectId: project.id,
+              projectName: project.name,
+              page: 'graph',
+              targetId: targetNodeId,
+              kind: 'imageEdit',
+              label: targetDraft.name.trim() || 'Image edit'
+            })
 
             await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
               progressDetail: 'Preparing ComfyUI image edit',
@@ -1613,10 +1618,10 @@ export default function GraphPage({ project }) {
                 })))
               }
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
+              completeJob(promptId, { status: 'completed' })
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
-            } finally {
-              closeNodeProgressSubscription(targetNodeId)
+              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI image edit failed' })
             }
             return
           }
@@ -1985,26 +1990,15 @@ export default function GraphPage({ project }) {
             const promptId = createComfyExecutionId('graph-mesh-gen-prompt')
             const clientId = createComfyExecutionId('graph-mesh-gen-client')
             setActionDraftsByNodeId({})
-            closeNodeProgressSubscription(targetNodeId)
-            progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
-              onMessage: payload => {
-                setNodes(current => current.map(item => (
-                  item.id === String(targetNodeId)
-                    ? {
-                        ...item,
-                        data: {
-                          ...item.data,
-                          status: payload?.status === 'error' ? 'error' : 'processing',
-                          progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
-                          progressDetail: payload?.detail || item.data.progressDetail || null,
-                          currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
-                        }
-                      }
-                    : item
-                )))
-              },
-              onError: () => {}
-            }))
+            registerJob({
+              id: promptId,
+              projectId: project.id,
+              projectName: project.name,
+              page: 'graph',
+              targetId: targetNodeId,
+              kind: 'mesh',
+              label: targetDraft.name.trim() || workflow.name
+            })
 
             await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
               progressDetail: 'Preparing ComfyUI mesh generation',
@@ -2046,10 +2040,10 @@ export default function GraphPage({ project }) {
                 await spawnAdditionalResultNodes('Mesh Gen', meshAssets.slice(1))
               }
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
+              completeJob(promptId, { status: 'completed' })
             } catch (err) {
               await setProcessingState('error', null, { error: err.message || 'ComfyUI mesh generation failed', promptId })
-            } finally {
-              closeNodeProgressSubscription(targetNodeId)
+              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI mesh generation failed' })
             }
             return
           }
@@ -2143,26 +2137,15 @@ export default function GraphPage({ project }) {
           const promptId = createComfyExecutionId('graph-image-edit-prompt')
           const clientId = createComfyExecutionId('graph-image-edit-client')
           setActionDraftsByNodeId({})
-          closeNodeProgressSubscription(targetNodeId)
-          progressSubscriptionsRef.current.set(String(targetNodeId), subscribeToComfyWorkflowProgress(promptId, {
-            onMessage: payload => {
-              setNodes(current => current.map(item => (
-                item.id === String(targetNodeId)
-                  ? {
-                      ...item,
-                      data: {
-                        ...item.data,
-                        status: payload?.status === 'error' ? 'error' : 'processing',
-                        progress: Math.max(Number(item.data.progress) || 0, Number(payload?.progressPercent) || 0),
-                        progressDetail: payload?.detail || item.data.progressDetail || null,
-                        currentNodeLabel: payload?.currentNodeLabel || item.data.currentNodeLabel || null
-                      }
-                    }
-                  : item
-              )))
-            },
-            onError: () => {}
-          }))
+          registerJob({
+            id: promptId,
+            projectId: project.id,
+            projectName: project.name,
+            page: 'graph',
+            targetId: targetNodeId,
+            kind: 'imageEdit',
+            label: targetDraft.name.trim() || 'Image edit'
+          })
 
           await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
             progressDetail: 'Preparing ComfyUI image edit',
@@ -2198,10 +2181,10 @@ export default function GraphPage({ project }) {
                 name: edit.name || targetDraft.name.trim()
               })))
             }
+            completeJob(promptId, { status: 'completed' })
           } catch (err) {
             await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
-          } finally {
-            closeNodeProgressSubscription(targetNodeId)
+            completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI image edit failed' })
           }
         }
       },
@@ -2384,7 +2367,7 @@ export default function GraphPage({ project }) {
       },
       onCloseAction: () => setActionDraftsByNodeId({})
     }
-  })}), [actionDraftsByNodeId, attachExistingAsset, closeNodeProgressSubscription, comfyLoading, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, project.id, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, subscribeToComfyWorkflowProgress, updateProjectNode])
+  })}), [actionDraftsByNodeId, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]

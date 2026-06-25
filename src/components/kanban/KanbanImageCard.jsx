@@ -67,7 +67,7 @@ export default function KanbanImageCard({
   handleDeleteCustomAttribute
 }) {
   const runtimeState = getCardRuntimeState(card)
-  const cardLocked = runtimeState?.status === 'processing'
+  const cardLocked = runtimeState?.status === 'processing' || runtimeState?.status === 'queued'
   const canFetchAsyncResult = canFetchTencentMeshResult(runtimeState) || canFetchTripoMeshResult(runtimeState)
   const displaySourceLabel = runtimeState?.source
     ? String(runtimeState.source).toUpperCase()

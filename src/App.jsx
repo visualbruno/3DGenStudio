@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { ProjectProvider } from './context/ProjectContext'
 import { SettingsProvider } from './context/SettingsContext'
 import { NotificationProvider } from './context/NotificationContext'
+import { WorkflowJobsProvider } from './context/WorkflowJobsContext'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectWorkspacePage from './pages/ProjectWorkspacePage'
 import AssetsPage from './pages/AssetsPage'
@@ -32,7 +33,9 @@ export default function App() {
     <NotificationProvider>
       <SettingsProvider>
         <ProjectProvider>
-          <AppRoutes />
+          <WorkflowJobsProvider>
+            <AppRoutes />
+          </WorkflowJobsProvider>
         </ProjectProvider>
       </SettingsProvider>
     </NotificationProvider>
