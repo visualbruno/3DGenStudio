@@ -516,18 +516,18 @@ async function migrateLegacyAssetEditsToAssets(db) {
   }
 }
 
-function groupChildAssetsByParentFilePath(rows = [], port = null) {
+function groupChildAssetsByParentFilePath(rows = [], baseUrl = null) {
   return rows.reduce((accumulator, row) => {
     if (!accumulator[row.parentFilePath]) {
       accumulator[row.parentFilePath] = [];
     }
 
     const childAsset = mapChildAssetRow(row);
-    const childWithUrl = port
+    const childWithUrl = baseUrl
       ? {
         ...childAsset,
-        url: `http://localhost:${port}/assets/${encodeURI(childAsset.filename)}`,
-        thumbnailUrl: childAsset.thumbnail ? `http://localhost:${port}/assets/${encodeURI(childAsset.thumbnail)}` : null
+        url: `${baseUrl}/assets/${encodeURI(childAsset.filename)}`,
+        thumbnailUrl: childAsset.thumbnail ? `${baseUrl}/assets/${encodeURI(childAsset.thumbnail)}` : null
       }
       : childAsset;
 
@@ -3145,7 +3145,7 @@ export async function getWikiPage(id) {
   return row ? mapWikiPageRow(row) : null;
 }
 
-export async function listLibraryAssetsByType(type, port) {
+export async function listLibraryAssetsByType(type, baseUrl) {
   const db = await getDb();
   const assetDirectory = getAssetDirectory(type);
   await fs.mkdir(assetDirectory, { recursive: true });
@@ -3225,7 +3225,7 @@ export async function listLibraryAssetsByType(type, port) {
 
   const childAssetRows = await listChildAssetsByParentFilePaths(db, candidateStoredPaths, normalizeAssetTypeName(type));
 
-  const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, port);
+  const childrenBySourceFilePath = groupChildAssetsByParentFilePath(childAssetRows, baseUrl);
 
   const dbAssets = rows.reduce((accumulator, row) => {
     const filename = toAssetUrlPath(row.filePath);
@@ -3261,11 +3261,11 @@ export async function listLibraryAssetsByType(type, port) {
       projectIds: projectIdsByFilePath[row.filePath] || [],
       type,
       extension: path.extname(filename).replace('.', '').toUpperCase() || type.toUpperCase(),
-      url: `http://localhost:${port}/assets/${encodeURI(filename)}`,
+      url: `${baseUrl}/assets/${encodeURI(filename)}`,
       width: canonicalAsset?.width ?? row.width ?? 0,
       height: canonicalAsset?.height ?? row.height ?? 0,
       thumbnailPath,
-      thumbnailUrl: thumbnailFilename ? `http://localhost:${port}/assets/${encodeURI(thumbnailFilename)}` : null,
+      thumbnailUrl: thumbnailFilename ? `${baseUrl}/assets/${encodeURI(thumbnailFilename)}` : null,
       children: assetChildren,
       childCount: assetChildren.length,
       edits: assetChildren,

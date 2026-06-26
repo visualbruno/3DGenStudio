@@ -1,6 +1,7 @@
 // components/AssetSelectorModal.jsx
 import { useEffect, useMemo, useState } from 'react';
 import { useProjects } from '../context/ProjectContext';
+import { assetUrl } from '../config';
 import './AssetSelectorModal.css'; // we'll create a separate CSS or reuse AssetsPage.css
 
 function formatDimensions(width, height) {
@@ -10,7 +11,7 @@ function formatDimensions(width, height) {
 
 function getAssetPreviewUrl(filename) {
   if (!filename) return null;
-  return `http://localhost:3001/assets/${encodeURI(filename)}`;
+  return assetUrl(filename);
 }
 
 const ASSETS_PER_PAGE = 20;

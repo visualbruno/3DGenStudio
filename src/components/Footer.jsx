@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { API_BASE } from '../config'
 import './Footer.css'
 
 export default function Footer({ variant = 'default', onChangeLogClick }) {
@@ -7,7 +8,7 @@ export default function Footer({ variant = 'default', onChangeLogClick }) {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const response = await fetch('http://localhost:3001/api/system/stats');
+        const response = await fetch(`${API_BASE}/system/stats`);
         if (!response.ok) return; // stats not ready yet — keep showing previous value
         const data = await response.json();
         setStats(data);

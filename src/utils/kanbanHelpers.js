@@ -1,5 +1,6 @@
 // Pure helpers and config constants for the Kanban board page (KanbanPage).
 // Extracted from KanbanPage.jsx — no React, no component state.
+import { assetUrl } from '../config'
 
 export const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
@@ -156,7 +157,7 @@ export function buildMeshEditorPath(asset, projectId, returnTo) {
   const query = new URLSearchParams({
     assetId: String(asset?.id || ''),
     filePath: asset?.filePath || asset?.filename || '',
-    url: asset?.filename ? `http://localhost:3001/assets/${encodeURI(asset.filename)}` : '',
+    url: asset?.filename ? assetUrl(asset.filename) : '',
     name: asset?.name || 'Mesh',
     projectId: projectId ? String(projectId) : '',
     returnTo: returnTo || ''

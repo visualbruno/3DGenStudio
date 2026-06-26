@@ -9,6 +9,7 @@ import SettingsModal from '../components/SettingsModal'
 import { useProjects } from '../context/ProjectContext'
 import { useNotifications } from '../context/NotificationContext'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
+import { assetUrl } from '../config'
 import {
   bridgeSelectedHoleSegments,
   bridgeAndFillSelectedHole,
@@ -658,7 +659,7 @@ export default function MeshEditorPage() {
       if (paintBrushSource === 'asset' && paintBrushAsset) {
         sourceUrl = paintBrushAsset.url
           || (paintBrushAsset.filename
-            ? `http://localhost:3001/assets/${encodeURI(paintBrushAsset.filename)}`
+            ? assetUrl(paintBrushAsset.filename)
             : null);
       } else if (paintBrushSource === 'computer' && paintBrushFile) {
         objectUrl = URL.createObjectURL(paintBrushFile);
@@ -1433,7 +1434,7 @@ export default function MeshEditorPage() {
       if (sculptStampSource === 'asset' && sculptStampAsset) {
         sourceUrl = sculptStampAsset.url
           || (sculptStampAsset.filename
-            ? `http://localhost:3001/assets/${encodeURI(sculptStampAsset.filename)}`
+            ? assetUrl(sculptStampAsset.filename)
             : null);
       } else if (sculptStampSource === 'computer' && sculptStampFile) {
         objectUrl = URL.createObjectURL(sculptStampFile);
@@ -3892,8 +3893,8 @@ export default function MeshEditorPage() {
       })
 
       try {
-        const assetUrl = savedAsset?.filename ? `http://localhost:3001/assets/${encodeURI(savedAsset.filename)}` : ''
-        const response = assetUrl ? await fetch(assetUrl) : null
+        const savedAssetUrl = savedAsset?.filename ? assetUrl(savedAsset.filename) : ''
+        const response = savedAssetUrl ? await fetch(savedAssetUrl) : null
         if (response?.ok) {
           const blob = await response.blob()
           const meshFile = new File([blob], savedAsset.filename?.split('/').pop() || `${savedAsset.name || 'mesh'}.glb`, {
@@ -3968,7 +3969,7 @@ export default function MeshEditorPage() {
       if (saveMode === 'version' && savedAsset?.id) {
         const nextSearchParams = new URLSearchParams(searchParams)
         const savedFilename = savedAsset.filename || (savedAsset.filePath ? savedAsset.filePath.replace(/^data\/assets\//, '') : '')
-        const savedUrl = savedFilename ? `http://localhost:3001/assets/${encodeURI(savedFilename)}` : modelUrl
+        const savedUrl = savedFilename ? assetUrl(savedFilename) : modelUrl
 
         nextSearchParams.set('assetId', String(savedAsset.id))
         nextSearchParams.set('filePath', savedAsset.filePath || '')
@@ -5141,7 +5142,7 @@ export default function MeshEditorPage() {
         let file = null;
         if (config.type === 'asset') {
           // Build asset URL
-          const url = config.filePath ? `http://localhost:3001/assets/${encodeURI(config.filePath.replace(/^data\/assets\//, ''))}` : null;
+          const url = config.filePath ? assetUrl(config.filePath.replace(/^data\/assets\//, '')) : null;
           if (!url) throw new Error(`Asset ${config.assetName} has no file path`);
           const response = await fetch(url);
           if (!response.ok) throw new Error(`Failed to load asset ${config.assetName}`);

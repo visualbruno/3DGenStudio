@@ -1,5 +1,6 @@
 // Pure helpers and config constants for the node-graph editor (GraphPage).
 // Extracted from GraphPage.jsx — no React, no component state.
+import { assetUrl } from '../config'
 
 export const DEFAULT_OUTPUT_ID = 'output-0'
 export const DEFAULT_INPUT_ID = 'input-0'
@@ -324,7 +325,7 @@ export function getAssetPreviewUrl(filename) {
     return null
   }
 
-  return `http://localhost:3001/assets/${encodeURI(filename)}`
+  return assetUrl(filename)
 }
 
 export function appendCacheBust(url, cacheKey) {

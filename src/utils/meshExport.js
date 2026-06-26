@@ -8,8 +8,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { PLYExporter } from 'three/examples/jsm/exporters/PLYExporter.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
-
-const API_BASE = 'http://localhost:3001/api'
+import { API_BASE } from '../config'
 
 // Formats we can reliably serialize with three.js. FBX has no official
 // exporter, so it is intentionally excluded.

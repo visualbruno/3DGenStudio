@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { assetUrl } from '../config'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
@@ -1484,7 +1485,7 @@ export function buildAssetUrl(asset) {
     .replace(/^data\/assets\//, '')
     .replace(/^assets\//, '')
 
-  return `http://localhost:3001/assets/${encodeURI(normalizedPath)}`
+  return assetUrl(normalizedPath)
 }
 
 export function createTexturePaintWorkflowDraft(workflow) {

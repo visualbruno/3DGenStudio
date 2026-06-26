@@ -15,13 +15,6 @@ data/
 .DS_Store
 Thumbs.db
 
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
 # Vite / IDE
 .vscode/
 .idea/

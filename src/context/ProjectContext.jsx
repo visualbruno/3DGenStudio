@@ -1,8 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { API_BASE } from '../config'
 
 const ProjectContext = createContext(null)
-const API_BASE = 'http://localhost:3001/api'
 
 export function ProjectProvider({ children }) {
   const [projects, setProjects] = useState([])

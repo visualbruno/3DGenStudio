@@ -12,6 +12,7 @@ import SettingsModal from '../components/SettingsModal'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import './KanbanPage.css'
 import AssetSelectorModal from '../components/AssetSelectorModal';
+import { assetUrl } from '../config'
 import KanbanImageCard from '../components/kanban/KanbanImageCard'
 import MeshGenApiOptions from '../components/kanban/MeshGenApiOptions'
 import ComfyTextButton from '../components/comfy/ComfyTextButton'
@@ -283,8 +284,8 @@ export default function KanbanPage() {
       return asset
     }
 
-    const assetUrl = `http://localhost:3001/assets/${encodeURI(asset.filename)}`
-    const response = await fetch(assetUrl)
+    const meshAssetUrl = assetUrl(asset.filename)
+    const response = await fetch(meshAssetUrl)
 
     if (!response.ok) {
       throw new Error(`Failed to download generated mesh ${asset.name || asset.filename}`)
@@ -1598,7 +1599,7 @@ export default function KanbanPage() {
       return null
     }
 
-    return `http://localhost:3001/assets/${encodeURI(filename)}`
+    return assetUrl(filename)
   }
 
   const formatAssetDimensions = (width, height) => {

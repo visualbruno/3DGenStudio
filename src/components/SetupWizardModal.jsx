@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSettings } from '../context/SettingsContext.shared'
 import './SetupWizardModal.css'
-
-const API_BASE = 'http://localhost:3001/api'
+import { API_BASE } from '../config'
 
 const STEPS = [
   { id: 'comfy-path', label: 'ComfyUI' },

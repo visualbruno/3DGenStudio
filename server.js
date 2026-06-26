@@ -96,7 +96,15 @@ import {
 } from './wikiStorage.js';
 
 const app = express();
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
+
+// Build the externally-reachable base URL ("http://host:port") from the
+// incoming request so generated asset/media URLs point back at whatever host
+// and port the client actually used to reach us — works on another machine or
+// another port without baking "localhost" into responses.
+function getRequestBaseUrl(req) {
+  return `${req.protocol}://${req.get('host')}`;
+}
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp']);
 const MESH_EXTENSIONS = new Set(['.glb', '.gltf', '.obj', '.fbx', '.stl', '.ply']);
 const comfyProgressSubscribers = new Map();
@@ -538,7 +546,7 @@ app.post('/api/wiki/media', requireWikiAuthor, wikiMediaUpload.single('file'), a
 
     const isVideo = ['.mp4', '.webm', '.ogg', '.mov', '.m4v'].includes(extension);
     res.status(201).json({
-      url: `http://localhost:${PORT}/wiki-media/${encodeURIComponent(uniqueName)}`,
+      url: `${getRequestBaseUrl(req)}/wiki-media/${encodeURIComponent(uniqueName)}`,
       kind: isVideo ? 'video' : 'image',
       name: req.file.originalname
     });
@@ -3159,7 +3167,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           : await createProjectAsset(generatedAssetPayload);
         generatedAssets.push({
           ...persistedAsset,
-          url: `http://localhost:${PORT}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,
+          url: `${getRequestBaseUrl(req)}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,
           outputKey: workflowFile.outputKey,
           outputNodeId: workflowFile.nodeId,
           expectedType: workflowFile.expectedType,
@@ -4313,9 +4321,9 @@ app.delete('/api/graph/connections', async (req, res) => {
 app.get('/api/assets/library', async (req, res) => {
   try {
     const [images, meshes, brushes] = await Promise.all([
-      listLibraryAssetsByType('image', PORT),
-      listLibraryAssetsByType('mesh', PORT),
-      listLibraryAssetsByType('brush', PORT)
+      listLibraryAssetsByType('image', getRequestBaseUrl(req)),
+      listLibraryAssetsByType('mesh', getRequestBaseUrl(req)),
+      listLibraryAssetsByType('brush', getRequestBaseUrl(req))
     ]);
     res.json({ images, meshes, brushes });
   } catch (err) {
@@ -4549,20 +4557,20 @@ app.post('/api/assets/library/brush-edits', libraryImportUpload.any(), async (re
 // Paint documents — sidecar layer data for painted meshes
 // -------------------------------------------------------------------------
 
-function buildPaintDocumentResponse(doc, assetId) {
+function buildPaintDocumentResponse(doc, assetId, baseUrl) {
   if (!doc) return null;
-  const baseUrl = doc.baseFilePath
-    ? `http://localhost:${PORT}/assets/${encodeURI(doc.baseFilePath.replace(/^data\/assets\//, ''))}`
+  const baseTextureUrl = doc.baseFilePath
+    ? `${baseUrl}/assets/${encodeURI(doc.baseFilePath.replace(/^data\/assets\//, ''))}`
     : null;
   return {
     assetId,
     textureWidth: doc.textureWidth,
     textureHeight: doc.textureHeight,
-    base: doc.baseFilePath ? { filePath: doc.baseFilePath, url: baseUrl } : null,
+    base: doc.baseFilePath ? { filePath: doc.baseFilePath, url: baseTextureUrl } : null,
     layers: (doc.layers || []).map(layer => ({
       ...layer,
       url: layer.filePath
-        ? `http://localhost:${PORT}/assets/${encodeURI(layer.filePath.replace(/^data\/assets\//, ''))}`
+        ? `${baseUrl}/assets/${encodeURI(layer.filePath.replace(/^data\/assets\//, ''))}`
         : null
     })),
     updatedAt: doc.updatedAt
@@ -4581,7 +4589,7 @@ app.get('/api/assets/:assetId/paint-document', async (req, res) => {
       return res.status(404).json({ error: 'Paint document not found' });
     }
 
-    res.json(buildPaintDocumentResponse(doc, assetId));
+    res.json(buildPaintDocumentResponse(doc, assetId, getRequestBaseUrl(req)));
   } catch (err) {
     console.error('Failed to load paint document:', err);
     res.status(500).json({ error: err.message || 'Failed to load paint document' });
@@ -4695,7 +4703,7 @@ app.put('/api/assets/:assetId/paint-document', paintDocumentUpload.any(), async 
       layers: persistedLayers
     });
 
-    res.status(200).json(buildPaintDocumentResponse(saved, assetId));
+    res.status(200).json(buildPaintDocumentResponse(saved, assetId, getRequestBaseUrl(req)));
   } catch (err) {
     console.error('Failed to save paint document:', err);
     res.status(500).json({ error: err.message || 'Failed to save paint document' });
