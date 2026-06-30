@@ -263,6 +263,36 @@ export function loadEditableGeometryFromObject(object) {
   return createIndexedGeometry(positions, indices, uvs)
 }
 
+// Parse an in-memory GLB (ArrayBuffer) into an editable BufferGeometry without
+// going through a URL. Used for results returned by the Python mesh-tools
+// service (Auto UV / Auto Retopo), which arrive as binary blobs with no
+// file extension for the URL-based loaders to key off.
+export function loadEditableGeometryFromGlbBuffer(arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    try {
+      new GLTFLoader().parse(
+        arrayBuffer,
+        '',
+        gltf => {
+          const scene = gltf?.scene || (Array.isArray(gltf?.scenes) ? gltf.scenes[0] : null)
+          if (!scene) {
+            reject(new Error('The returned mesh did not contain a scene.'))
+            return
+          }
+          try {
+            resolve(loadEditableGeometryFromObject(scene))
+          } catch (err) {
+            reject(err instanceof Error ? err : new Error('Failed to read the returned mesh geometry.'))
+          }
+        },
+        error => reject(error instanceof Error ? error : new Error('Failed to parse the returned GLB mesh.')),
+      )
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error('Failed to parse the returned GLB mesh.'))
+    }
+  })
+}
+
 async function loadGeometryFromUrl(url) {
   const extension = getExtensionFromUrl(url)
 

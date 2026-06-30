@@ -1,0 +1,38 @@
+"""Configuration for the Auto-Retopo pipeline."""
+from __future__ import annotations
+from dataclasses import dataclass, asdict
+
+
+@dataclass
+class RetopoConfig:
+    # --- target ---
+    target_faces: int = 6000          # approximate face budget of the output
+    quads: bool = False               # convert the final triangle mesh to quad-dominant
+
+    # --- base generation ("the new watertight layer") ---
+    watertight: bool = True           # True: build a unified SDF/voxel shell (robust to messy input)
+                                      # False: remesh the original surface directly (keeps open boundaries)
+    shell_resolution: int = 256       # voxel grid cells along the longest bbox axis (silhouette fidelity)
+    shell_close_iter: int = 1         # morphological closing to bridge cracks in non-watertight input
+    shell_smooth: float = 0.6         # gaussian sigma on the occupancy field (lower = sharper, more stairs)
+    shell_samples_per_pitch: float = 2.0  # surface sampling density (>=2 guarantees gap-free voxel coverage)
+    max_memory_gb: float = 4.0        # auto-lower shell_resolution so the voxel grid fits this budget
+
+    # --- clean topology (field-adaptive isotropic remeshing) ---
+    adaptive: bool = True             # curvature-adaptive density (more faces where the surface bends)
+    remesh_iters: int = 10
+    feature_deg: float = 30.0         # crease angle preserved as a feature
+    calibrate_passes: int = 1         # rough edge-length correction; decimation sets exact count
+
+    # --- silhouette projection ("follow the original surface") ---
+    project: bool = True
+    project_iters: int = 10
+    project_clamp: float = 1.5        # max per-vertex move as a multiple of local edge length
+    relax_strength: float = 0.4       # tangential relaxation factor per iteration (0..1)
+
+    # --- misc ---
+    seed: int = 0
+    verbose: bool = True
+
+    def to_dict(self):
+        return asdict(self)

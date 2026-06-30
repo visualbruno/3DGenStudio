@@ -843,6 +843,21 @@ function buildComfyUiBaseUrl(settings = {}) {
   return parsedUrl.toString().replace(/\/$/, '');
 }
 
+function buildMeshToolsBaseUrl(settings = {}) {
+  const meshSettings = settings?.apis?.meshtools || {};
+  const rawUrl = String(meshSettings.url || 'http://127.0.0.1').trim();
+  const normalizedUrl = /^https?:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`;
+  const parsedUrl = new URL(normalizedUrl);
+  const port = String(meshSettings.port || parsedUrl.port || '8200').trim();
+
+  parsedUrl.port = port;
+  parsedUrl.pathname = '';
+  parsedUrl.search = '';
+  parsedUrl.hash = '';
+
+  return parsedUrl.toString().replace(/\/$/, '');
+}
+
 function buildComfyUiWebSocketUrl(baseUrl, clientId) {
   const parsedUrl = new URL(baseUrl);
   const currentPath = parsedUrl.pathname && parsedUrl.pathname !== '/' ? parsedUrl.pathname.replace(/\/$/, '') : '';
@@ -4960,6 +4975,80 @@ app.get('/api/filesystem/folders', async (req, res) => {
 });
 
 // Write exported mesh files (mesh + companions) into a user-chosen folder.
+// --- Python mesh-tools proxy (Auto UV / Auto Retopo) -------------------------
+// The browser uploads a mesh to one of these routes; Node forwards it to the
+// configurable Python service (Settings > Mesh Tools) and relays the JSON
+// envelope it returns ({ mesh_b64, stats, preview_b64 }). Mirrors how the
+// ComfyUI integration proxies external compute.
+const meshToolsUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 512 * 1024 * 1024 },
+});
+
+async function proxyMeshTool(operationPath, req, res) {
+  const meshFile = req.file;
+  if (!meshFile?.buffer?.length) {
+    return res.status(400).json({ error: 'meshFile is required' });
+  }
+
+  const settings = await getSettings();
+  const baseUrl = buildMeshToolsBaseUrl(settings);
+
+  const form = new FormData();
+  form.append(
+    'meshFile',
+    new Blob([meshFile.buffer], { type: meshFile.mimetype || 'model/gltf-binary' }),
+    meshFile.originalname || 'mesh.glb',
+  );
+  if (typeof req.body?.options === 'string' && req.body.options.length) {
+    form.append('options', req.body.options);
+  }
+  if (typeof req.body?.format === 'string' && req.body.format.length) {
+    form.append('format', req.body.format);
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(`${baseUrl}${operationPath}`, { method: 'POST', body: form });
+  } catch (err) {
+    console.error(`Mesh tool proxy (${operationPath}) could not reach the Python service:`, err);
+    return res.status(502).json({
+      error: `Could not reach the Mesh Tools (Python) service at ${baseUrl}. Is it running?`,
+    });
+  }
+
+  if (!upstream.ok) {
+    const detail = await upstream.text().catch(() => '');
+    return res.status(upstream.status).json({
+      error: `Mesh tool failed (${upstream.status})`,
+      detail: detail.slice(0, 2000),
+    });
+  }
+
+  // Relay the JSON envelope verbatim (mesh_b64 + stats + preview_b64).
+  const body = await upstream.text();
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/json');
+  return res.status(200).send(body);
+}
+
+app.post('/api/meshes/auto-uv', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/auto-uv', req, res);
+  } catch (err) {
+    console.error('Auto UV proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Auto UV failed' });
+  }
+});
+
+app.post('/api/meshes/auto-retopo', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/auto-retopo', req, res);
+  } catch (err) {
+    console.error('Auto Retopo proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Auto Retopo failed' });
+  }
+});
+
 app.post('/api/export/mesh', multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024 * 1024 } }).array('files'), async (req, res) => {
   try {
     const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';

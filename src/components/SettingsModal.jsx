@@ -66,6 +66,12 @@ export default function SettingsModal({ onClose }) {
             >
               ComfyUI
             </button>
+            <button
+              className={`settings-tab ${activeTab === 'meshtools' ? 'settings-tab--active' : ''}`}
+              onClick={() => setActiveTab('meshtools')}
+            >
+              Mesh Tools
+            </button>
           </div>
 
           {activeTab === 'apis' && (
@@ -371,6 +377,65 @@ export default function SettingsModal({ onClose }) {
 
                 <p className="settings-helper-text">
                   The Kanban page will use this connection to queue workflows, poll every second, and download generated images.
+                </p>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'meshtools' && (
+            <section className="settings-section">
+              <h3 className="settings-section-title font-label">Mesh Tools (Python) Connection</h3>
+              <div className="settings-api-card">
+                <div className="settings-api-header">
+                  <div className="settings-api-icon">
+                    <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>deployed_code</span>
+                  </div>
+                  <span className="settings-api-name">Mesh Tools</span>
+                </div>
+
+                <div className="settings-grid settings-grid--triple">
+                  <div className="settings-input-group">
+                    <label className="settings-label">Url</label>
+                    <input
+                      className="settings-input"
+                      placeholder="http://127.0.0.1"
+                      value={localSettings?.apis?.meshtools?.url || ''}
+                      onChange={e => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: {
+                          ...prev?.apis,
+                          meshtools: {
+                            ...prev?.apis?.meshtools,
+                            url: e.target.value
+                          }
+                        }
+                      }))}
+                    />
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label">Port</label>
+                    <input
+                      className="settings-input"
+                      placeholder="8200"
+                      value={localSettings?.apis?.meshtools?.port || ''}
+                      onChange={e => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: {
+                          ...prev?.apis,
+                          meshtools: {
+                            ...prev?.apis?.meshtools,
+                            port: e.target.value
+                          }
+                        }
+                      }))}
+                    />
+                  </div>
+                </div>
+
+                <p className="settings-helper-text">
+                  The Python mesh-processing service (Auto UV, Auto Retopo). Start it from
+                  python-server/run.bat. Can run on another machine or port.
                 </p>
               </div>
             </section>

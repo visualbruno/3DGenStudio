@@ -22,6 +22,7 @@ import {
   getGeometryHoleLoops,
   getSelectedHoleLoops,
   loadEditableGeometryFromObject,
+  loadEditableGeometryFromGlbBuffer,
   mergeSelectedVertices,
   smoothSelectedVertices,
   subdivideSelectedFaces
@@ -143,6 +144,49 @@ import TexturingToolsPanel from '../components/meshEditor/TexturingToolsPanel'
 import ProjectionToolsPanel from '../components/meshEditor/ProjectionToolsPanel'
 import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 import PaintingToolsPanel from '../components/meshEditor/PaintingToolsPanel'
+import AutoUvToolsPanel from '../components/meshEditor/AutoUvToolsPanel'
+import AutoRetopoToolsPanel from '../components/meshEditor/AutoRetopoToolsPanel'
+import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService } from '../utils/meshTools'
+
+// Default option sets for the Python mesh-tools panels. These mirror the
+// defaults of autouv.unwrap() and autoretopo.RetopoConfig 1:1 (see
+// python-server/app/schemas.py).
+const DEFAULT_AUTO_UV_OPTIONS = {
+  max_cone_deg: 50,
+  sharp_weight: 0.35,
+  min_faces: 20,
+  min_area_frac: 0.004,
+  fold_cap_deg: 88,
+  refine: true,
+  refine_target_faces: 80,
+  refine_ad_thresh: 1.32,
+  method: 'auto',
+  arap_iters: 4,
+  resolution: 1024,
+  padding_texels: 4,
+  weld: true,
+  weld_tol_frac: 0.1,
+}
+
+const DEFAULT_AUTO_RETOPO_OPTIONS = {
+  target_faces: 6000,
+  quads: false,
+  watertight: true,
+  shell_resolution: 256,
+  shell_close_iter: 1,
+  shell_smooth: 0.6,
+  shell_samples_per_pitch: 2,
+  max_memory_gb: 4,
+  adaptive: true,
+  remesh_iters: 10,
+  feature_deg: 30,
+  calibrate_passes: 1,
+  project: true,
+  project_iters: 10,
+  project_clamp: 1.5,
+  relax_strength: 0.4,
+  seed: 0,
+}
 
 // ── Projection per-layer mask helpers ───────────────────────────────────────
 // A projection layer can carry a user-drawn UV-space mask so the layer's view is
@@ -316,6 +360,9 @@ export default function MeshEditorPage() {
   const [geometry, setGeometry] = useState(null)
   const [texturableMesh, setTexturableMesh] = useState(null)
   const [textureRevision, setTextureRevision] = useState(0)
+  // Resolution used when a UV-only mesh (no baked texture) starts from a blank
+  // texture, so painting/texturing/projection can be enabled.
+  const [blankTextureSize, setBlankTextureSize] = useState(1024)
   const [contextRevision, setContextRevision] = useState(0)
   const [comfyLoading, setComfyLoading] = useState(false)
   const [comfyWorkflows, setComfyWorkflows] = useState([])
@@ -345,6 +392,13 @@ export default function MeshEditorPage() {
   const [modelingCanRedo, setModelingCanRedo] = useState(false)
   const modelingUndoStackRef = useRef([])
   const modelingRedoStackRef = useRef([])
+  // Auto UV / Auto Retopo (Python mesh-tools service)
+  const [autoUvOptions, setAutoUvOptions] = useState(DEFAULT_AUTO_UV_OPTIONS)
+  const [autoRetopoOptions, setAutoRetopoOptions] = useState(DEFAULT_AUTO_RETOPO_OPTIONS)
+  const [autoUvRunning, setAutoUvRunning] = useState(false)
+  const [autoRetopoRunning, setAutoRetopoRunning] = useState(false)
+  const [autoUvResult, setAutoUvResult] = useState(null)
+  const [autoRetopoResult, setAutoRetopoResult] = useState(null)
   const [booleanOperation, setBooleanOperation] = useState('out')
   const [booleanPlaceMode, setBooleanPlaceMode] = useState(false)
   const [booleanBrushSource, setBooleanBrushSource] = useState('asset')
@@ -1760,7 +1814,7 @@ export default function MeshEditorPage() {
           return loadedGeometry
         })
 
-        const texturableMeshPromise = loadTexturableMeshFromRoot(loadedRoot, { url: modelUrl, startedAt: texturableStartedAt })
+        const texturableMeshPromise = loadTexturableMeshFromRoot(loadedRoot, { url: modelUrl, startedAt: texturableStartedAt, blankTextureSize })
           .then(loadedTexturableMesh => {
             return loadedTexturableMesh
           })
@@ -3656,6 +3710,130 @@ export default function MeshEditorPage() {
     setModelingCanRedo(redoStack.length > 0)
     setFeedback('Redo.')
   }, [geometry])
+
+  // Rebuild the texturable-mesh state from a (possibly UV-only) geometry, so the
+  // painting/texturing/projection modes stay in sync after a topology change.
+  // A UV-only mesh yields a blank-texture texturable (loadTexturableMeshFromRoot);
+  // a UV-less one yields a supportError that correctly disables those modes.
+  const buildTexturableFromGeometry = useCallback(async (geom, size) => {
+    if (!geom) return null
+    const root = new THREE.Mesh(
+      geom.clone(),
+      new THREE.MeshStandardMaterial({ color: '#cfd8ff', metalness: 0.08, roughness: 0.62 })
+    )
+    root.name = 'MeshEditorResult'
+    const loaded = await loadTexturableMeshFromRoot(root, { url: modelUrl, blankTextureSize: size })
+    if (loaded?.textureCanvas) {
+      return {
+        ...loaded,
+        maskCanvas: Object.assign(document.createElement('canvas'), {
+          width: loaded.textureCanvas.width,
+          height: loaded.textureCanvas.height,
+        }),
+      }
+    }
+    return loaded
+  }, [modelUrl])
+
+  const handleBlankTextureSizeChange = useCallback(async (size) => {
+    setBlankTextureSize(size)
+    if (texturableMesh?.isBlank && geometry) {
+      const next = await buildTexturableFromGeometry(geometry, size)
+      setTexturableMesh(next)
+      setTextureRevision(0)
+      setPaintLayers([])
+      setSelectedLayerId(null)
+    }
+  }, [texturableMesh, geometry, buildTexturableFromGeometry])
+
+  // ── Auto UV / Auto Retopo (Python mesh-tools service) ────────────────────
+  // Both run the same round-trip: export the current geometry to GLB, POST it
+  // to the Node proxy (which forwards to the Python service), then load the
+  // returned GLB back as editable geometry. applyGeometryUpdate pushes the
+  // pre-op mesh onto the modeling undo stack, so "Revert" is just an undo.
+  // After applying, the texturable-mesh state is rebuilt so the new UVs (Auto
+  // UV) immediately enable painting/texturing/projection.
+  const runMeshTool = useCallback(async (service, options, { setRunning, setResult, buildRows, label }) => {
+    if (!geometry || autoUvRunning || autoRetopoRunning) {
+      return
+    }
+    setRunning(true)
+    setResult(null)
+    setError('')
+    setFeedback(`${label}…`)
+    try {
+      const glbBuffer = await exportGeometryToGlb(geometry)
+      const meshBlob = new Blob([glbBuffer], { type: 'model/gltf-binary' })
+      const { blob, stats, previewUrl } = await service(meshBlob, { options, fileName: 'mesh.glb' })
+      const resultBuffer = await blob.arrayBuffer()
+      const nextGeometry = await loadEditableGeometryFromGlbBuffer(resultBuffer)
+      applyGeometryUpdate(nextGeometry, [], { pushUndo: true })
+      // Resync texture editing to the new topology/UVs (enables the texture
+      // modes when the result carries UVs, disables them otherwise).
+      const nextTexturable = await buildTexturableFromGeometry(nextGeometry, blankTextureSize)
+      setTexturableMesh(nextTexturable)
+      setTextureRevision(0)
+      setPaintLayers([])
+      setSelectedLayerId(null)
+      setResult({ rows: buildRows(stats), previewUrl })
+      setFeedback(`${label} complete.`)
+    } catch (err) {
+      console.error(`${label} failed:`, err)
+      setError(err?.message || `${label} failed.`)
+    } finally {
+      setRunning(false)
+    }
+  }, [geometry, autoUvRunning, autoRetopoRunning, applyGeometryUpdate, buildTexturableFromGeometry, blankTextureSize])
+
+  const handleRunAutoUv = useCallback(() => {
+    runMeshTool(runAutoUvService, autoUvOptions, {
+      setRunning: setAutoUvRunning,
+      setResult: setAutoUvResult,
+      label: 'Auto UV',
+      buildRows: stats => {
+        const t = stats?.tool || {}
+        const rows = []
+        if (t.n_charts != null) rows.push({ label: 'UV islands', value: t.n_charts })
+        if (t.fill_ratio != null) rows.push({ label: 'Atlas fill', value: `${(t.fill_ratio * 100).toFixed(0)}%` })
+        if (t.flipped_triangles != null) rows.push({ label: 'Flipped tris', value: t.flipped_triangles })
+        if (t.mean_angle_distortion != null) rows.push({ label: 'Angle distortion', value: t.mean_angle_distortion.toFixed(3) })
+        return rows
+      },
+    })
+  }, [runMeshTool, autoUvOptions])
+
+  const handleRunAutoRetopo = useCallback(() => {
+    runMeshTool(runAutoRetopoService, autoRetopoOptions, {
+      setRunning: setAutoRetopoRunning,
+      setResult: setAutoRetopoResult,
+      label: 'Auto Retopo',
+      buildRows: stats => {
+        const m = stats?.tool?.metrics || {}
+        const rows = [
+          { label: 'Vertices', value: stats?.vertexCount ?? '—' },
+          { label: 'Faces', value: stats?.faceCount ?? '—' },
+        ]
+        const haus = m?.fidelity?.hausdorff_pct_diag
+        if (haus != null) rows.push({ label: 'Hausdorff', value: `${haus.toFixed(2)}% diag` })
+        const wellShaped = m?.triangle_quality?.pct_well_shaped
+        if (wellShaped != null) rows.push({ label: 'Well-shaped tris', value: `${wellShaped.toFixed(0)}%` })
+        if (stats?.tool?.quad_face_count != null) rows.push({ label: 'Quad faces', value: stats.tool.quad_face_count })
+        return rows
+      },
+    })
+  }, [runMeshTool, autoRetopoOptions])
+
+  const setAutoUvOption = useCallback((key, value) => {
+    setAutoUvOptions(prev => ({ ...prev, [key]: value }))
+  }, [])
+  const setAutoRetopoOption = useCallback((key, value) => {
+    setAutoRetopoOptions(prev => ({ ...prev, [key]: value }))
+  }, [])
+
+  const handleRevertMeshTool = useCallback((clearResult) => {
+    handleModelingUndo()
+    clearResult(null)
+  }, [handleModelingUndo])
 
   // Keyboard shortcuts within modeling mode: Ctrl/Cmd+Z = undo,
   // Ctrl/Cmd+Shift+Z and Ctrl+Y = redo.
@@ -5654,7 +5832,47 @@ export default function MeshEditorPage() {
                     <span className="material-symbols-outlined">back_hand</span>
                     <span>Sculpting</span>
                   </button>
+                  <button
+                    type="button"
+                    className={`mesh-editor-mode-btn ${activeMenu === 'autouv' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('autouv')}
+                    title="Automatic UV unwrapping (Python service)"
+                  >
+                    <span className="material-symbols-outlined">dashboard_customize</span>
+                    <span>Auto UV</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mesh-editor-mode-btn ${activeMenu === 'autoretopo' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('autoretopo')}
+                    title="Automatic retopology (Python service)"
+                  >
+                    <span className="material-symbols-outlined">grid_4x4</span>
+                    <span>Auto Retopo</span>
+                  </button>
                 </div>
+
+                {texturableMesh?.isBlank && (
+                  <div className="mesh-editor-panel__section">
+                    <span className="mesh-editor-panel__section-title">Base texture</span>
+                    <div className="mesh-editor-workflow-field">
+                      <span>Resolution</span>
+                      <select
+                        className="mesh-editor-panel__input mesh-editor-panel__select"
+                        value={String(blankTextureSize)}
+                        onChange={event => handleBlankTextureSizeChange(Number(event.target.value))}
+                      >
+                        {[512, 1024, 2048, 4096].map(n => (
+                          <option key={n} value={String(n)}>{n} × {n}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <span className="mesh-editor-panel__hint">
+                      This mesh has UVs but no texture yet — painting/texturing/projection
+                      start from a blank {blankTextureSize}×{blankTextureSize} canvas.
+                    </span>
+                  </div>
+                )}
 
                 {activeMenu === 'modeling' ? (
                   <ModelingToolsPanel {...{
@@ -5703,6 +5921,24 @@ export default function MeshEditorPage() {
                     setPendingAssetSelectorMode, setShowAssetSelector, projectionWorkflowParameters,
                     projectionWorkflowInputs, setProjectionWorkflowInputs,
                     projectionSetAsDefault, setProjectionSetAsDefault
+                  }} />
+                ) : activeMenu === 'autouv' ? (
+                  <AutoUvToolsPanel {...{
+                    options: autoUvOptions, setOption: setAutoUvOption,
+                    running: autoUvRunning, result: autoUvResult,
+                    onRun: handleRunAutoUv,
+                    onKeepResult: () => setAutoUvResult(null),
+                    onRevertResult: () => handleRevertMeshTool(setAutoUvResult),
+                    disabled: !geometry
+                  }} />
+                ) : activeMenu === 'autoretopo' ? (
+                  <AutoRetopoToolsPanel {...{
+                    options: autoRetopoOptions, setOption: setAutoRetopoOption,
+                    running: autoRetopoRunning, result: autoRetopoResult,
+                    onRun: handleRunAutoRetopo,
+                    onKeepResult: () => setAutoRetopoResult(null),
+                    onRevertResult: () => handleRevertMeshTool(setAutoRetopoResult),
+                    disabled: !geometry
                   }} />
                 ) : activeMenu === 'sculpting' ? (
                   <>{/* SCULPTING */}

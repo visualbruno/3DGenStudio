@@ -165,6 +165,10 @@ export const DEFAULT_SETTINGS = {
       url: 'http://127.0.0.1',
       port: '8188'
     },
+    meshtools: {
+      url: 'http://127.0.0.1',
+      port: '8200'
+    },
     custom: []
   }
 };

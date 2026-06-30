@@ -1,0 +1,17 @@
+# --- Web framework -----------------------------------------------------------
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9   # required by FastAPI for multipart/form-data uploads
+
+# --- Mesh I/O ----------------------------------------------------------------
+trimesh>=4.4
+numpy>=1.26
+
+# --- autouv / autoretopo pipeline dependencies -------------------------------
+scipy>=1.11               # sparse solvers (LSCM/ARAP), KD-trees, ndimage
+scikit-image>=0.22        # marching cubes for the watertight voxel shell
+pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
+
+# --- Optional ----------------------------------------------------------------
+matplotlib>=3.8         # only needed for the CLI's UV-layout / compare PNGs
+retree

@@ -615,7 +615,7 @@ export async function loadTexturableMeshFromUrl(url) {
   return loadTexturableMeshFromRoot(root, { url, startedAt })
 }
 
-export async function loadTexturableMeshFromRoot(root, { url = '', startedAt: explicitStartedAt = null } = {}) {
+export async function loadTexturableMeshFromRoot(root, { url = '', startedAt: explicitStartedAt = null, blankTextureSize = 1024 } = {}) {
   const startedAt = explicitStartedAt ?? (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
 
   if (!root) {
@@ -654,12 +654,64 @@ export async function loadTexturableMeshFromRoot(root, { url = '', startedAt: ex
   }
 
   if (texturedMaterials.length === 0) {
+    // The mesh has UVs but no baked texture map yet (e.g. fresh from Auto UV, or
+    // a UV-only GLB). Painting onto a blank texture is perfectly valid, so start
+    // from a clean white canvas at the requested resolution instead of refusing.
+    const size = Math.max(64, Math.round(blankTextureSize) || 1024)
+    const textureCanvas = document.createElement('canvas')
+    textureCanvas.width = size
+    textureCanvas.height = size
+    const ctx = textureCanvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, size, size)
+
+    // glTF convention (matches GLTFLoader-loaded textures): flipY = false.
+    const textureConfig = {
+      wrapS: THREE.ClampToEdgeWrapping,
+      wrapT: THREE.ClampToEdgeWrapping,
+      repeat: new THREE.Vector2(1, 1),
+      offset: new THREE.Vector2(0, 0),
+      center: new THREE.Vector2(0, 0),
+      rotation: 0,
+      flipY: false,
+      colorSpace: THREE.SRGBColorSpace,
+      minFilter: THREE.LinearMipmapLinearFilter,
+      magFilter: THREE.LinearFilter
+    }
+
+    // The display pipeline (TexturedMesh) only binds the live painted texture to
+    // materials whose map key matches `textureKey`. A UV-only mesh has no map, so
+    // we attach this blank texture as the materials' map and derive the key from
+    // it — otherwise painting/projection would update the canvas but never show.
+    const placeholderTexture = createCanvasTexture(textureCanvas, textureConfig)
+    const textureKey = getTextureKey(placeholderTexture)
+
+    const paintTargetsByMeshUuid = {}
+    root.traverse(child => {
+      if (!child.isMesh || !child.geometry?.attributes?.uv?.count) {
+        return
+      }
+      getMaterialList(child.material).forEach(material => {
+        if (material) {
+          material.map = placeholderTexture
+          material.needsUpdate = true
+        }
+      })
+      const paintTarget = buildUvPaintTarget(child.geometry, size, size, textureConfig)
+      if (paintTarget) {
+        paintTargetsByMeshUuid[child.uuid] = paintTarget
+      }
+    })
+
     return {
       root,
-      textureCanvas: null,
-      textureKey: '',
-      textureConfig: null,
-      supportError: 'This mesh has no texture map to edit.'
+      textureCanvas,
+      textureKey,
+      isBlank: true,
+      blankTextureSize: size,
+      paintTargetsByMeshUuid,
+      textureConfig,
+      supportError: ''
     }
   }
 
