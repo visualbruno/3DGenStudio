@@ -839,21 +839,40 @@ export default function GraphPage({ project }) {
 
 		const assetType = assetSelectorType; // 'image' or 'mesh'
 		try {
-			// 1. Attach the library asset to the current project
-			const attachedAsset = await attachExistingAsset(project.id, {
-				filename: asset.filename || asset.filePath,
-				type: assetType,
-				name: asset.name,
-				metadata: {
-					format: asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase(),
-					source: 'ASSET LIB'
-				}
-			});
+			// A library version/edit (child asset) already exists as its own row and
+			// owns a unique file. Reference it directly instead of attaching it: going
+			// through attachExistingAsset would mint a NEW root-level asset pointing at
+			// the version's file, which (a) surfaces a duplicate at the root of the
+			// asset library, (b) has no thumbnail (the link lookup only finds roots),
+			// and (c) shares the file, so deleting that root nukes the version's mesh.
+			const versionAssetId = (asset.isChild || asset.isEdit) ? Number(asset.id) : NaN;
+			const isLibraryVersion = Number.isFinite(versionAssetId) && versionAssetId > 0;
 
-			// 2. Update the graph node – IMPORTANT: use the returned updated node directly
+			let resolvedAssetId;
+			let resolvedName;
+
+			if (isLibraryVersion) {
+				resolvedAssetId = versionAssetId;
+				resolvedName = asset.name;
+			} else {
+				// Root library asset: attach a project-scoped reference as before.
+				const attachedAsset = await attachExistingAsset(project.id, {
+					filename: asset.filename || asset.filePath,
+					type: assetType,
+					name: asset.name,
+					metadata: {
+						format: asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase(),
+						source: 'ASSET LIB'
+					}
+				});
+				resolvedAssetId = attachedAsset.id;
+				resolvedName = attachedAsset.name;
+			}
+
+			// Update the graph node – IMPORTANT: use the returned updated node directly
 			const updatedNode = await updateProjectNode(project.id, Number(pendingAssetNodeId), {
-				assetId: attachedAsset.id,
-				name: attachedAsset.name,
+				assetId: resolvedAssetId,
+				name: resolvedName,
 				status: null,
 				progress: null,
 				metadata: { lastAction: 'asset-library' }
