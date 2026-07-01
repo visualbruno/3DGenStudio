@@ -22,6 +22,15 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.2.0',
+    date: '2026-07-01',
+    items: [
+			'Added a python server',
+			'Mesh Editor : Added experimental "Auto UV" and "Auto Retopo"',
+			'Graph Page: Fixed Mesh node when selecting a sub-mesh from Assets'
+    ],
+  },
+  {
     version: 'v1.1.4',
     date: '2026-06-28',
     items: [

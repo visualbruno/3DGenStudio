@@ -1,4 +1,4 @@
 {
-	"version": "1.1.4",
-	"message": "Can navigate on different pages during a ComfyUI workflow execution"
+	"version": "1.2.0",
+	"message": "Python server with experimental 'Auto UV' and 'Auto Retopo' in MeshEditor"
 }

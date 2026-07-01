@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-07-01** | Added a python server<br>Mesh Editor : Added experimental "Auto UV" and "Auto Retopo" |
 | **2026-06-28** | Can navigate on different pages during a ComfyUI workflow execution<br>SetupWizard: Added Krea2 Turbo<br>Server can be configured on another machine/port |
 | **2026-06-24** | Mesh Editor: Added Wireframe toggle<br>Workflows: Can be shared<br>Tripo AI: Updated to v3<br>Graph Page: Fixed name used to save a mesh from an API<br>Run.bat: Fixed slowness |
 | **2026-06-22** | Can delete Mesh Versions in Assets page<br>Fixed "Seam Smoothing" in MeshEditor Projection<br>Added Flux2Klein 4B |
@@ -164,6 +165,13 @@ npm install
 
 # 3. Start the application
 npm run dev
+
+# 4. From another command line, configure and start python server in python-server folder
+cd python-server
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python main.py
 ```
 
 > [!NOTE] 
