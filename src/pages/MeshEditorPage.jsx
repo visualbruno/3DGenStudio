@@ -6042,6 +6042,7 @@ export default function MeshEditorPage() {
                 ) : activeMenu === 'optimize' ? (
                   <OptimizeToolsPanel {...{
                     options: optimizeOptions, setOption: setOptimizeOption,
+                    currentFaces: stats.faces,
                     running: optimizeRunning, result: optimizeResult, progress: optimizeProgress,
                     onRun: handleRunOptimize,
                     onKeepResult: () => setOptimizeResult(null),

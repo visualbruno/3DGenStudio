@@ -8,6 +8,7 @@ import MeshToolProgress from './MeshToolProgress'
 export default function OptimizeToolsPanel({
   options,
   setOption,
+  currentFaces = 0,
   running,
   result,
   progress,
@@ -18,6 +19,7 @@ export default function OptimizeToolsPanel({
 }) {
   const o = options
   const fieldsDisabled = disabled || running
+  const targetFaces = currentFaces ? Math.max(1, Math.round(currentFaces * o.simplify_ratio)) : null
 
   return (
     <>{/* OPTIMIZE */}
@@ -52,6 +54,12 @@ export default function OptimizeToolsPanel({
         <RangeField label="Simplify ratio" min={0.001} max={1} step={0.001} decimals={3}
           value={o.simplify_ratio} onChange={v => setOption('simplify_ratio', v)} disabled={fieldsDisabled}
           hint="Target triangle count as a fraction of the original (1 = no simplification)" />
+        {currentFaces ? (
+          <div className="mesh-editor-texture-workflow-meta">
+            <span><strong>Current faces:</strong> {currentFaces.toLocaleString()}</span>
+            <span><strong>Target faces:</strong> ~{targetFaces.toLocaleString()}</span>
+          </div>
+        ) : null}
       </div>
 
       <div className="mesh-editor-panel__notes">
