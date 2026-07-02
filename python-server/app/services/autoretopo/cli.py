@@ -19,7 +19,8 @@ def build_parser():
     p.add_argument("-o", "--output", default="retopo.glb", help="output mesh path")
     p.add_argument("--faces", type=int, default=6000, help="target face budget")
     p.add_argument("--shell-res", type=int, default=256, help="voxel grid resolution")
-    p.add_argument("--shell-smooth", type=float, default=0.6, help="occupancy blur sigma")
+    p.add_argument("--shell-smooth", type=float, default=1.4,
+                   help="SDF blur sigma in voxels (kills voxel ripple; lower = crisper)")
     p.add_argument("--max-memory", type=float, default=4.0,
                    help="GB budget; auto-lowers shell resolution to fit (0 disables)")
     p.add_argument("--no-watertight", action="store_true",

@@ -86,8 +86,20 @@ def bounded_surface_voxelize(mesh, pitch, samples_per_pitch=2.0, kmax=128, chunk
 
 
 def voxel_shell(mesh: trimesh.Trimesh, resolution: int = 256,
-                close_iter: int = 1, smooth_sigma: float = 0.6,
-                samples_per_pitch: float = 2.0):
+                close_iter: int = 1, smooth_sigma: float = 1.4,
+                samples_per_pitch: float = 2.0, taubin_steps: int = 10):
+    """Watertight shell via an EDT signed-distance field.
+
+    Earlier versions extracted the iso-surface from a *blurred binary* occupancy,
+    which leaves voxel staircase ripple ("orange peel") that high face budgets then
+    faithfully reproduce. Instead we build a signed distance field with two Euclidean
+    distance transforms (outside minus inside): the zero level set is sub-voxel
+    smooth, and because a distance field is locally linear, blurring it does not
+    erode the shape the way blurring occupancy does - so `smooth_sigma` (in voxels)
+    can be large enough (~1.5) to kill lattice ripple while belts, folds and other
+    real features survive. A few Taubin passes on the dense shell remove what's
+    left; the projection stage later restores exact geometry from the original.
+    """
     diag = float(np.linalg.norm(mesh.extents))
     pitch = diag / max(32, int(resolution))
 
@@ -102,14 +114,27 @@ def voxel_shell(mesh: trimesh.Trimesh, resolution: int = 256,
     solid |= dense
     del dense
 
-    # blur in place-ish, then free the bool volume before marching cubes allocates
-    field = ndimage.gaussian_filter(solid.astype(np.float32), float(smooth_sigma))
+    # signed distance: positive outside, negative inside; zero level = surface
+    sdf = ndimage.distance_transform_edt(~solid).astype(np.float32)
+    sdf -= ndimage.distance_transform_edt(solid).astype(np.float32)
     del solid
-    verts, faces, _, _ = measure.marching_cubes(field, level=0.5)
-    del field
+    if smooth_sigma:
+        sdf = ndimage.gaussian_filter(sdf, float(smooth_sigma))
+    verts, faces, _, _ = measure.marching_cubes(sdf, level=0.0)
+    del sdf
 
     V = verts * pitch + origin
-    return np.ascontiguousarray(V), np.ascontiguousarray(faces.astype(np.int64))
+    F = np.ascontiguousarray(faces.astype(np.int64))
+
+    if taubin_steps:
+        import pymeshlab as ml
+        ms = ml.MeshSet()
+        ms.add_mesh(ml.Mesh(np.asarray(V, float), F))
+        ms.apply_coord_taubin_smoothing(lambda_=0.5, mu=-0.53,
+                                        stepsmoothnum=int(taubin_steps))
+        mm = ms.current_mesh()
+        V, F = mm.vertex_matrix(), mm.face_matrix().astype(np.int64)
+    return np.ascontiguousarray(V), np.ascontiguousarray(F)
 
 
 def estimate_grid_voxels(mesh, resolution):
@@ -120,10 +145,10 @@ def estimate_grid_voxels(mesh, resolution):
     return int(np.prod(dims)), pitch
 
 
-# The shell stage's peak memory is dominated by a handful of full-grid arrays
-# (bool occupancy + dilations + fill + a float32 field + marching-cubes output).
-# Empirically that is ~12 bytes per voxel of peak working set.
-_BYTES_PER_VOXEL = 12.0
+# The shell stage's peak memory is dominated by a handful of full-grid arrays.
+# With the EDT signed-distance path (bool solid + one float64 EDT transient + the
+# float32 sdf + marching cubes output) the peak working set is ~28 bytes per voxel.
+_BYTES_PER_VOXEL = 28.0
 _SHELL_RESERVE_MB = 260.0           # base interpreter + later pymeshlab working set
 
 

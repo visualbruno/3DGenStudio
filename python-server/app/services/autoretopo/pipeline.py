@@ -81,7 +81,8 @@ class AutoRetopo:
                 self._log(f"[shell] resolution {res} -> {fitted} to fit "
                           f"{cfg.max_memory_gb:.1f} GB budget (est. peak {peak_mb:.0f} MB)")
             V, F = shell.voxel_shell(original, fitted, cfg.shell_close_iter,
-                                     cfg.shell_smooth, cfg.shell_samples_per_pitch)
+                                     cfg.shell_smooth, cfg.shell_samples_per_pitch,
+                                     taubin_steps=cfg.shell_taubin)
             V, F = shell.largest_component(V, F)
             self._log(f"[shell] {len(F)} faces (watertight base)")
         else:
@@ -92,9 +93,10 @@ class AutoRetopo:
         # Stage 2: clean topology
         t0 = time.time()
         report("remesh", 0.38, "Building clean topology")
-        # Pre-decimate very large inputs so remeshing stays fast and robust (avoids
-        # quadric spikes on raw soup). Skipped for the watertight shell (already coarse).
-        if not cfg.watertight and len(F) > cfg.work_face_cap:
+        # Pre-decimate very large inputs so remeshing stays fast and robust. Only in
+        # feature mode (its purpose: huge hard-surface scans); on fragmented organic
+        # meshes it chews component boundaries and the remesher then can't coarsen.
+        if not cfg.watertight and cfg.preserve_features and len(F) > cfg.work_face_cap:
             V, F = remesh.pre_decimate(V, F, cfg.work_face_cap, verbose=cfg.verbose)
             self._log(f"[pre-decimate] {len(F)} faces")
 
@@ -112,12 +114,14 @@ class AutoRetopo:
         self._log(f"[remesh] {len(F)} faces")
 
         # Stage 3: silhouette projection
-        # Feature mode relies on the remesher's own reprojection; an extra closest-point
-        # snap onto a noisy hard-surface mesh (stone texture, thin parts) hurts more than
-        # it helps, so it is skipped there.
+        # Watertight mode MUST project: the remesher's reprojection targets the shell
+        # (its own input), so only this stage pulls the mesh onto the true original
+        # surface and removes residual voxel bias. The preserve_features skip applies
+        # only in surface mode, where the remesher already reprojects onto the
+        # original and a closest-point snap on noisy hard surfaces hurts.
         t0 = time.time()
         report("project", 0.72, "Projecting to surface")
-        if cfg.project and not cfg.preserve_features:
+        if cfg.project and (cfg.watertight or not cfg.preserve_features):
             V = project.project_to_surface(
                 V, F, original, iters=cfg.project_iters,
                 clamp=cfg.project_clamp, relax_strength=cfg.relax_strength)

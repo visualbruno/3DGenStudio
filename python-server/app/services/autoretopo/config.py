@@ -14,7 +14,8 @@ class RetopoConfig:
                                       # False: remesh the original surface directly (keeps open boundaries)
     shell_resolution: int = 256       # voxel grid cells along the longest bbox axis (silhouette fidelity)
     shell_close_iter: int = 1         # morphological closing to bridge cracks in non-watertight input
-    shell_smooth: float = 0.6         # gaussian sigma on the occupancy field (lower = sharper, more stairs)
+    shell_smooth: float = 1.4         # gaussian sigma (voxels) on the signed-distance field; kills voxel ripple
+    shell_taubin: int = 10            # Taubin polish steps on the dense shell (0 disables)
     shell_samples_per_pitch: float = 2.0  # surface sampling density (>=2 guarantees gap-free voxel coverage)
     max_memory_gb: float = 4.0        # auto-lower shell_resolution so the voxel grid fits this budget
 

@@ -103,6 +103,15 @@ def decimate_to_target(V, F, target_faces, preserve_boundary=True):
         qualitythr=0.5, preserveboundary=bool(preserve_boundary),
         preservenormal=True, preservetopology=True, optimalplacement=True,
         planarquadric=True, autoclean=True)
+    # Topology preservation can get stuck far above the budget on fragmented
+    # multi-component meshes (no more legal collapses). Retry without it; the
+    # finalize stage cleans up any local non-manifoldness this introduces.
+    if ms.current_mesh().face_number() > target_faces * 1.2:
+        ms.meshing_decimation_quadric_edge_collapse(
+            targetfacenum=int(target_faces),
+            qualitythr=0.5, preserveboundary=bool(preserve_boundary),
+            preservenormal=True, preservetopology=False, optimalplacement=True,
+            planarquadric=True, autoclean=True)
     mm = ms.current_mesh()
     return np.ascontiguousarray(mm.vertex_matrix()), \
         np.ascontiguousarray(mm.face_matrix().astype(np.int64))

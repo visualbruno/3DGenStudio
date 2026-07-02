@@ -20,6 +20,7 @@ def run_auto_retopo(mesh: trimesh.Trimesh, options: AutoRetopoOptions, progress=
         shell_resolution=options.shell_resolution,
         shell_close_iter=options.shell_close_iter,
         shell_smooth=options.shell_smooth,
+        shell_taubin=options.shell_taubin,
         shell_samples_per_pitch=options.shell_samples_per_pitch,
         max_memory_gb=options.max_memory_gb,
         adaptive=options.adaptive,

@@ -73,7 +73,11 @@ export default function AutoRetopoToolsPanel({
         <RangeField label="Smooth (sigma)" min={0} max={5} step={0.05} decimals={2}
           value={o.shell_smooth} onChange={v => setOption('shell_smooth', v)}
           disabled={fieldsDisabled || !o.watertight}
-          hint="Gaussian sigma on the occupancy field (lower = sharper)" />
+          hint="SDF blur sigma in voxels; kills voxel ripple (lower = crisper)" />
+        <RangeField label="Taubin polish" min={0} max={100} step={1}
+          value={o.shell_taubin} onChange={v => setOption('shell_taubin', v)}
+          disabled={fieldsDisabled || !o.watertight}
+          hint="Taubin smoothing steps on the dense shell (0 disables)" />
         <RangeField label="Samples / pitch" min={1} max={8} step={0.5} decimals={1}
           value={o.shell_samples_per_pitch} onChange={v => setOption('shell_samples_per_pitch', v)}
           disabled={fieldsDisabled || !o.watertight}

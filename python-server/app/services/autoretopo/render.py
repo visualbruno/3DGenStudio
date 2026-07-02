@@ -55,7 +55,16 @@ def render_mesh(verts, faces, azim=35.0, elev=20.0, res=900, zoom=1.0,
 
     sx, sy = px[F], py[F]    # (nf,3)
 
-    if mode in ("shaded", "shaded_wire"):
+    # per-vertex Lambert shade for smooth (Gouraud) mode
+    if mode in ("smooth", "smooth_wire"):
+        vn = np.zeros_like(V)
+        np.add.at(vn, F[:, 0], n); np.add.at(vn, F[:, 1], n); np.add.at(vn, F[:, 2], n)
+        vn /= (np.linalg.norm(vn, axis=1, keepdims=True) + 1e-12)
+        # rotate face normals were computed in camera space; vn is built from them, ok
+        vshade = np.clip(np.abs(vn @ L), 0.0, 1.0) * 0.75 + 0.25
+
+    if mode in ("shaded", "shaded_wire", "smooth", "smooth_wire"):
+        gouraud = mode in ("smooth", "smooth_wire")
         # scanline-ish: rasterize each triangle with a bounding-box test (vectorized per-tri)
         for fi in order:
             x0, x1, x2 = sx[fi]; y0, y1, y2 = sy[fi]
@@ -78,7 +87,13 @@ def render_mesh(verts, faces, azim=35.0, elev=20.0, res=900, zoom=1.0,
             better = zval < zbuf[yI, xI]
             yb, xb = yI[better], xI[better]
             zbuf[yb, xb] = zval
-            img[yb, xb] = fc * shade[fi]
+            if gouraud:
+                i0, i1, i2 = F[fi]
+                sh = (wa[inside][better] * vshade[i0] + wb[inside][better] * vshade[i1]
+                      + wc[inside][better] * vshade[i2])
+                img[yb, xb] = fc[None, :] * sh[:, None]
+            else:
+                img[yb, xb] = fc * shade[fi]
 
     if mode in ("wire", "shaded_wire"):
         # draw front-facing edges; in pure-wire mode keep bg

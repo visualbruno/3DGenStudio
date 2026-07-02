@@ -1,21 +1,28 @@
-"""Stage 3 - silhouette projection ("walk the surface, don't just shrinkwrap").
+"""Stage 3 - silhouette projection via a smoothed displacement field.
 
-The shell+remesh result has clean topology but rides slightly outside the true
-surface and rounds sharp features. We pull it back onto the *original* surface
-while keeping the topology and watertightness intact.
+The shell+remesh result has clean topology but rides slightly off the true surface.
+We pull it onto the *original* surface while keeping topology and watertightness
+intact (connectivity never changes).
 
-Each iteration:
-  1. Tangential relaxation: move every vertex toward its neighbours' centroid, but
-     remove the component along the vertex normal so the vertex slides *along* the
-     surface rather than sinking into it. This is the "Relax" behaviour from manual
-     retopo tools - it evens out quad/triangle spacing without denting the form.
-  2. Clamped closest-point snap: project each vertex onto the nearest point of the
-     original surface, but cap the move at `clamp x local_edge_length`. The clamp is
-     what makes this robust on fragmented input: a vertex can never be yanked across
-     a gap onto a distant internal shell, which is the classic failure of naive
-     shrinkwrap.
+Why not plain closest-point snapping: in concave creases (cloth folds, around a
+belt) the nearest-point direction is discontinuous - adjacent vertices snap to
+opposite walls of the crease, imprinting zigzag noise; and on thin double-sided
+geometry (a robe, a cape) the nearest point can lie on the far side, punching
+dents. Both artifacts scale with the face budget, which is why high-poly retopo
+looked "weird" while low-poly hid it.
 
-Because connectivity never changes, a watertight input stays watertight.
+Method, per iteration:
+  1. closest-point query against the original;
+  2. normal-consistency guard: drop moves whose target surface faces away from the
+     vertex (fixes thin-geometry punch-through);
+  3. Laplacian-smooth the *displacement field* over the mesh graph (a few rounds)
+     and apply it. Smoothing the field kills the zigzag while low-frequency
+     conformance accumulates over iterations, so the mesh settles into fold
+     valleys without imprinting crease-wall flip-flop.
+Finally one normal-direction micro-snap (tightly clamped, lightly smoothed)
+firms up creases without reintroducing noise.
+
+All graph ops are vectorized with reduceat over a CSR-style adjacency.
 """
 from __future__ import annotations
 import numpy as np
@@ -31,6 +38,13 @@ def _vertex_adjacency(n_verts, F):
     return [np.unique(np.asarray(n, int)) for n in nbr]
 
 
+def _csr(adjacency):
+    idx = np.concatenate(adjacency) if adjacency else np.zeros(0, int)
+    ptr = np.cumsum([0] + [len(a) for a in adjacency])
+    deg = np.diff(ptr).astype(float)
+    return idx, ptr, np.maximum(deg, 1.0)
+
+
 def _vertex_edge_length(V, F):
     e = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
     d = np.linalg.norm(V[e[:, 0]] - V[e[:, 1]], axis=1)
@@ -40,28 +54,55 @@ def _vertex_edge_length(V, F):
     return s / np.maximum(c, 1.0)
 
 
-def _tangential_relax(V, F, normals, adjacency, strength):
-    Q = V.copy()
-    for i, nb in enumerate(adjacency):
-        if len(nb) == 0:
-            continue
-        d = V[nb].mean(0) - V[i]
-        d = d - normals[i] * np.dot(d, normals[i])   # project onto tangent plane
-        Q[i] = V[i] + strength * d
-    return Q
+def _lap_smooth(D, idx, ptr, deg, rounds, alpha=0.7):
+    for _ in range(int(rounds)):
+        S = np.add.reduceat(D[idx], ptr[:-1], axis=0)
+        D = (1.0 - alpha) * D + alpha * (S / deg[:, None])
+    return D
 
 
-def project_to_surface(V, F, target_mesh, iters=10, clamp=1.5, relax_strength=0.4):
+def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4,
+                       field_smooth_rounds=3, final_snap_clamp=0.4):
+    """Project (V,F) onto target_mesh.
+
+    Per iteration: (1) tangential relaxation - slide each vertex toward its
+    neighbours' centroid within the tangent plane, which regularises triangle
+    shape (especially after quadric decimation) without denting the form;
+    (2) closest-point displacement with a normal-consistency guard, Laplacian-
+    smoothed as a field before applying (kills crease zigzag and thin-geometry
+    punch-through). A final clamped normal-only micro-snap firms up creases.
+    `clamp` is kept for API compatibility."""
     pq = trimesh.proximity.ProximityQuery(target_mesh)
+    tgt_fn = np.asarray(target_mesh.face_normals)
     adjacency = _vertex_adjacency(len(V), F)
+    idx, ptr, deg = _csr(adjacency)
     Vc = np.asarray(V, float).copy()
+
     for _ in range(int(iters)):
         normals = trimesh.Trimesh(Vc, F, process=False).vertex_normals
-        Vc = _tangential_relax(Vc, F, normals, adjacency, relax_strength)
-        elen = _vertex_edge_length(Vc, F)
-        closest, _, _ = pq.on_surface(Vc)
-        move = closest - Vc
-        mlen = np.linalg.norm(move, axis=1) + 1e-12
-        scale = np.minimum(1.0, (clamp * elen) / mlen)
-        Vc = Vc + move * scale[:, None]
+        # tangential relax (vectorized)
+        if relax_strength:
+            centroid = np.add.reduceat(Vc[idx], ptr[:-1], axis=0) / deg[:, None]
+            d = centroid - Vc
+            d -= normals * np.sum(d * normals, axis=1)[:, None]
+            Vc = Vc + relax_strength * d
+        # smoothed displacement toward the original surface
+        closest, _, tid = pq.on_surface(Vc)
+        D = closest - Vc
+        agree = np.sum(normals * tgt_fn[tid], axis=1) >= 0.0
+        D *= agree[:, None]
+        D = _lap_smooth(D, idx, ptr, deg, field_smooth_rounds)
+        Vc = Vc + D
+
+    if final_snap_clamp:
+        normals = trimesh.Trimesh(Vc, F, process=False).vertex_normals
+        closest, _, tid = pq.on_surface(Vc)
+        D = closest - Vc
+        agree = np.sum(normals * tgt_fn[tid], axis=1) >= 0.0
+        D *= agree[:, None]
+        dn = np.sum(D * normals, axis=1)                 # normal (depth) component
+        el = _vertex_edge_length(Vc, F)
+        dn = np.clip(dn, -final_snap_clamp * el, final_snap_clamp * el)
+        Dn = _lap_smooth(dn[:, None] * normals, idx, ptr, deg, 1)
+        Vc = Vc + Dn
     return np.ascontiguousarray(Vc)
