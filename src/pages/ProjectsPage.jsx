@@ -22,6 +22,17 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.2.1',
+    date: '2026-07-03',
+    items: [
+			'Mesh Editor: Added Optimize mode',
+			'Setup Wizard: Added Boogu Image and Image Editor',
+			'Kanban: Added a Name field for Image Generation',
+			'Image Editor: Can choose a name for saved image',
+			'OpenAI: Added gpt-image-2 model'
+    ],
+  },
+  {
     version: 'v1.2.0',
     date: '2026-07-01',
     items: [
