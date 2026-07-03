@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:citeseerx.ist.psu.edu)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:tympanus.net)",
+      "WebFetch(domain:www.gcc.tu-darmstadt.de)",
+      "WebFetch(domain:ndotl.wordpress.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:learnopengl.com)",
+      "WebFetch(domain:www.cs.jhu.edu)",
+      "WebFetch(domain:webglfundamentals.org)",
+      "WebFetch(domain:www.semanticscholar.org)",
+      "WebFetch(domain:developer.download.nvidia.com)",
+      "WebFetch(domain:discourse.threejs.org)",
+      "WebFetch(domain:www.pauldebevec.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:ar5iv.labs.arxiv.org)",
+      "WebFetch(domain:en.m.wikipedia.org)",
+      "WebFetch(domain:www.yumpu.com)",
+      "WebFetch(domain:www.creativeshrimp.com)",
+      "WebFetch(domain:en.wikipedia.org)",
+      "WebFetch(domain:webgpufundamentals.org)",
+      "WebFetch(domain:wiki.polycount.com)",
+      "WebFetch(domain:nvlabs.github.io)",
+      "WebFetch(domain:blog.maximeheckel.com)"
+    ]
+  }
+}

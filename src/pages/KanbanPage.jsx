@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useMemo, useRef, useCallback  } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
 import { useNotifications } from '../context/NotificationContext'
@@ -57,6 +57,7 @@ const MESH_GEN_COLUMN_ID = 3
 export default function KanbanPage() {
   const { projectId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const {
     getProject,
     getProjectAssets,
@@ -1382,6 +1383,32 @@ export default function KanbanPage() {
       { id: 'custom', label: 'Custom', value: '' }
     ]
   }
+
+  // Deep-link focus: when the user clicks a workflow notification, the Header
+  // navigates here with a focus target in router state. Once the cards have
+  // loaded, scroll the originating card into view and flash it.
+  const handledFocusNonceRef = useRef(null)
+  useEffect(() => {
+    const focus = location.state
+    const focusTargetId = focus?.focusTargetId != null ? String(focus.focusTargetId) : null
+    if (!focusTargetId) return
+    if (handledFocusNonceRef.current === focus.focusNonce) return
+
+    const targetCard = imageCards.find(card => String(card.id) === focusTargetId)
+    if (!targetCard) return // cards still loading — retry once imageCards updates
+
+    handledFocusNonceRef.current = focus.focusNonce
+
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`image-card-${targetCard.id}`)
+        if (!el) return
+        el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+        el.classList.add('image-card--focus-flash')
+        window.setTimeout(() => el.classList.remove('image-card--focus-flash'), 1800)
+      })
+    })
+  }, [location.key, location.state, imageCards])
 
   useEffect(() => {
     const pendingFocus = pendingResultFocusRef.current

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useNotifications } from '../context/NotificationContext'
 import './Header.css'
 import localVersionInfo from '../../version.json'
@@ -57,7 +57,8 @@ function getNotificationIcon(tone) {
 
 export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false, searchValue = '', onSearchChange, searchPlaceholder = 'Search Assets' }) {
   const location = useLocation()
-  const { notifications, clearNotifications } = useNotifications()
+  const navigate = useNavigate()
+  const { notifications, clearNotifications, removeNotification } = useNotifications()
   const [showNotifications, setShowNotifications] = useState(false)
   const [isCheckingVersion, setIsCheckingVersion] = useState(true)
   const [versionCheckError, setVersionCheckError] = useState('')
@@ -112,6 +113,18 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
       document.removeEventListener('mousedown', onPointerDown)
     }
   }, [showNotifications])
+
+  const handleNotificationClick = (notification) => {
+    if (!notification.projectId) return
+    // Dismiss the alert, close the panel, then deep-link to the project. The
+    // focus target travels in router state so the destination page can center
+    // (Graph) or scroll to (Kanban) the originating card once it has loaded.
+    removeNotification(notification.id)
+    setShowNotifications(false)
+    navigate(`/projects/${notification.projectId}`, {
+      state: { focusTargetId: notification.targetId ?? null, focusNonce: Date.now() }
+    })
+  }
 
   return (
     <header className="header" id="main-header">
@@ -211,20 +224,38 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
               </div>
             </div>
 
-            {notifications.map(notification => (
-              <div key={notification.id} className={`header__notifications-card ${getNotificationCardToneClass(notification.tone)}`}>
-                <span className="material-symbols-outlined">{getNotificationIcon(notification.tone)}</span>
-                <div>
-                  <p className="header__notifications-card-title">{notification.title}</p>
-                  {notification.source && (
-                    <p className="header__notifications-card-text">{notification.source}</p>
-                  )}
-                  {notification.message && (
-                    <p className="header__notifications-card-text">{notification.message}</p>
-                  )}
+            {notifications.map(notification => {
+              const isClickable = Boolean(notification.projectId)
+              return (
+                <div
+                  key={notification.id}
+                  className={`header__notifications-card ${getNotificationCardToneClass(notification.tone)}${isClickable ? ' header__notifications-card--clickable' : ''}`}
+                  onClick={isClickable ? () => handleNotificationClick(notification) : undefined}
+                  role={isClickable ? 'button' : undefined}
+                  tabIndex={isClickable ? 0 : undefined}
+                  onKeyDown={isClickable ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      handleNotificationClick(notification)
+                    }
+                  } : undefined}
+                >
+                  <span className="material-symbols-outlined">{getNotificationIcon(notification.tone)}</span>
+                  <div>
+                    <p className="header__notifications-card-title">{notification.title}</p>
+                    {notification.source && (
+                      <p className="header__notifications-card-text">{notification.source}</p>
+                    )}
+                    {notification.message && (
+                      <p className="header__notifications-card-text">{notification.message}</p>
+                    )}
+                    {isClickable && (
+                      <p className="header__notifications-card-hint">Click to open the card</p>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
 
             {isCheckingVersion && (
               <div className="header__notifications-card header__notifications-card--neutral">

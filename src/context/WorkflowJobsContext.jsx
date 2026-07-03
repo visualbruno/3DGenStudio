@@ -106,6 +106,9 @@ export function WorkflowJobsProvider({ children }) {
     const label = current?.label || result.label || 'Workflow'
     const projectName = current?.projectName || result.projectName || ''
     const suffix = projectName ? ` — ${projectName}` : ''
+    // Carry the job's origin so the notification can deep-link back to the card.
+    const projectId = current?.projectId ?? result.projectId ?? null
+    const targetId = current?.targetId ?? (result.targetId != null ? String(result.targetId) : null)
 
     if (current) {
       store.set(id, {
@@ -124,14 +127,18 @@ export function WorkflowJobsProvider({ children }) {
         title: 'Workflow completed',
         message: `${label}${suffix}`,
         source: 'ComfyUI',
-        tone: 'success'
+        tone: 'success',
+        projectId,
+        targetId
       })
     } else {
       addNotification({
         title: 'Workflow failed',
         message: `${result.error || label}${suffix}`,
         source: 'ComfyUI',
-        tone: 'error'
+        tone: 'error',
+        projectId,
+        targetId
       })
     }
   }, [store, closeSubscription, addNotification])

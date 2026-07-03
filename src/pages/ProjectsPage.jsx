@@ -24,6 +24,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.3.0',
+    date: '2026-07-05',
+    items: [
+			'Projects can be exported/imported',
+			'DB has been restructured and simplified',
+			'SetupWizard: Added Sam3.1 Segmentation + Gen Mesh with Hy2.1',
+			'Notification: Click on it to be redirected to the project'
+    ],
+  },
+  {
     version: 'v1.2.1',
     date: '2026-07-03',
     items: [

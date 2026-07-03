@@ -297,6 +297,30 @@
   color: var(--on-surface-variant);
 }
 
+.header__notifications-card-hint {
+  margin: 0.35rem 0 0 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--primary, #9cc3ff);
+  opacity: 0.85;
+}
+
+.header__notifications-card--clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, filter 0.12s ease;
+}
+
+.header__notifications-card--clickable:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.22);
+  filter: brightness(1.08);
+}
+
+.header__notifications-card--clickable:focus-visible {
+  outline: 2px solid var(--primary, #9cc3ff);
+  outline-offset: 2px;
+}
+
 .header__notifications-card--success {
   background: linear-gradient(145deg, rgba(49, 93, 101, 0.28), rgba(18, 29, 34, 0.65));
 }

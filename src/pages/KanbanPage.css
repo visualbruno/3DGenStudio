@@ -333,6 +333,26 @@
   opacity: 0.45;
 }
 
+/* Brief highlight when a card is focused via a workflow notification. */
+.image-card--focus-flash {
+  animation: image-card-focus-flash 1.8s ease-out;
+}
+
+@keyframes image-card-focus-flash {
+  0% {
+    border-color: rgba(143, 245, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(143, 245, 255, 0.55), 0 12px 28px rgba(0, 0, 0, 0.35);
+  }
+  70% {
+    border-color: rgba(143, 245, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(143, 245, 255, 0.3), 0 12px 28px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    border-color: rgba(71, 72, 74, 0.05);
+    box-shadow: none;
+  }
+}
+
 .image-card__actions {
   position: absolute;
   top: 0.75rem;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   addEdge,
   BaseEdge,
@@ -132,6 +133,7 @@ export default function GraphPage({ project }) {
   } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
+  const location = useLocation()
   const { jobs: workflowJobs, registerJob, completeJob, removeJobsForTarget } = useWorkflowJobs()
 
   const [showSettings, setShowSettings] = useState(false)
@@ -2680,6 +2682,13 @@ export default function GraphPage({ project }) {
       return
     }
 
+    // If we arrived via a workflow notification, let the focus effect center on
+    // the target node instead of doing a generic fit-all-nodes on load.
+    if (location.state?.focusTargetId != null) {
+      hasAutoFitOnLoadRef.current = true
+      return
+    }
+
     hasAutoFitOnLoadRef.current = true
 
     const fitWorkflow = () => {
@@ -2701,7 +2710,58 @@ export default function GraphPage({ project }) {
       window.cancelAnimationFrame(frameId)
       window.clearTimeout(timeoutId)
     }
-  }, [edges.length, loading, nodes.length, project.id, reactFlowInstance])
+  }, [edges.length, loading, nodes.length, project.id, reactFlowInstance, location.state?.focusTargetId])
+
+  // Deep-link focus: when the user clicks a workflow notification, the Header
+  // navigates here with a focus target in router state. Once the graph and its
+  // nodes are ready, center the viewport on the originating node.
+  //
+  // The guard is keyed on both the notification nonce AND the React Flow
+  // instance identity. React 18 StrictMode remounts <ReactFlow>, which
+  // re-applies defaultViewport (jumping back to the origin) and hands us a new
+  // instance; keying on the instance lets us re-center on that fresh instance
+  // instead of a one-shot guard leaving the viewport stuck at the origin.
+  const focusAppliedRef = useRef({ nonce: null, instance: null })
+  useEffect(() => {
+    const focus = location.state
+    const focusTargetId = focus?.focusTargetId != null ? String(focus.focusTargetId) : null
+    if (!focusTargetId || !reactFlowInstance || nodes.length === 0) return
+
+    // Guard on nonce + instance identity: StrictMode remounts <ReactFlow> and
+    // hands over a fresh instance, so re-center on the new one instead of a
+    // one-shot guard leaving the viewport stuck.
+    const applied = focusAppliedRef.current
+    if (applied.nonce === focus.focusNonce && applied.instance === reactFlowInstance) return
+
+    const targetNode = nodes.find(node => String(node.id) === focusTargetId)
+    if (!targetNode) return // nodes still loading — retry once they update
+
+    const instance = reactFlowInstance
+    // setCenter is deterministic: it uses the node's stored position, so it works
+    // even with onlyRenderVisibleElements (the target node may be off-screen and
+    // thus unmeasured, which breaks fitView). Estimate the centre from its size.
+    const width = targetNode.measured?.width ?? targetNode.width ?? 260
+    const height = targetNode.measured?.height ?? targetNode.height ?? 140
+    const centerX = targetNode.position.x + width / 2
+    const centerY = targetNode.position.y + height / 2
+
+    const centerOnNode = () => {
+      focusAppliedRef.current = { nonce: focus.focusNonce, instance }
+      try {
+        instance.setCenter(centerX, centerY, { zoom: 1, duration: 500 })
+      } catch {
+        // Instance was torn down (e.g. StrictMode remount) before this fired.
+      }
+    }
+
+    const frameId = window.requestAnimationFrame(centerOnNode)
+    const timeoutIds = [260, 700].map(delay => window.setTimeout(centerOnNode, delay))
+
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      timeoutIds.forEach(window.clearTimeout)
+    }
+  }, [location.key, location.state, nodes, reactFlowInstance])
 
   const showEmptyState = !loading && nodes.length === 0
   const minimapNodeColor = useCallback((node) => {

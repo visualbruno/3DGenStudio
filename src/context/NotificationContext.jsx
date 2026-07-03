@@ -31,6 +31,10 @@ export function NotificationProvider({ children }) {
       message: String(notification.message || '').trim(),
       tone: normalizeTone(notification.tone),
       source: String(notification.source || '').trim(),
+      // Optional navigation metadata: lets the notifications panel deep-link
+      // back to the project and focus the originating card/graph node on click.
+      projectId: notification.projectId ?? null,
+      targetId: notification.targetId != null ? String(notification.targetId) : null,
       createdAt: Date.now()
     }
 
