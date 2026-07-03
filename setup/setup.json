@@ -660,6 +660,17 @@
 			"Outputs": [
 				{ "Node": "11", "Name": "Save Mesh", "Type": "Mesh" }
 			]
-		}		
+		},
+		{
+			"Name": "Remove Background and Centered",
+			"File": "setup/Remove Background and Centered.json",
+			"Inputs": [
+				{ "Node": "5", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "2",  "Input": "padding",  "Name": "Padding",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "4", "Name": "Save Image", "Type": "Image" }
+			]
+		}			
 	]
 }

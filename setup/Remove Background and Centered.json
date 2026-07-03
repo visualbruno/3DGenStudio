@@ -1,0 +1,60 @@
+{
+  "2": {
+    "inputs": {
+      "padding": 0,
+      "remove_background": true,
+      "max_size": 2048,
+      "image": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "Trellis2PreProcessImage",
+    "_meta": {
+      "title": "Trellis2 - PreProcess Image"
+    }
+  },
+  "3": {
+    "inputs": {
+      "model": "RMBG-2.0",
+      "sensitivity": 1,
+      "process_res": 1024,
+      "mask_blur": 0,
+      "mask_offset": 0,
+      "invert_output": false,
+      "refine_foreground": false,
+      "background": "Alpha",
+      "background_color": "#222222",
+      "image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "RMBG",
+    "_meta": {
+      "title": "Remove Background (RMBG)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioCentered",
+      "images": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  }
+}
