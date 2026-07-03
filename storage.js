@@ -3423,3 +3423,645 @@ export async function deletePaintDocument(assetId) {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Project import / export (.3dgp bundles)
+//
+// A .3dgp bundle is a self-contained folder holding a JSON manifest plus copies
+// of every asset file the project references (and their sub-assets, thumbnails
+// and paint documents). Export gathers the project graph and returns both the
+// manifest and a list of files to copy; import replays it into a brand-new
+// project, allocating fresh asset IDs/filenames and remapping every reference.
+// ---------------------------------------------------------------------------
+
+export const PROJECT_EXPORT_SCHEMA_VERSION = 1;
+
+// Map an AssetTypes.name ("Image", "Mesh", …) to its on-disk subdirectory.
+function assetSubdirForTypeName(typeName) {
+  return getAssetSubdirectory(String(typeName || 'image').toLowerCase());
+}
+
+// Deep-walk parsed metadata collecting every `asset:<id>` reference so exports
+// pull in assets that are only referenced from a card/node's metadata (e.g. the
+// "last action" params or a Tripo input source), not just its primary link.
+function collectAssetIdsFromValue(value, out) {
+  if (typeof value === 'string') {
+    const match = value.match(/^asset:(\d+)$/);
+    if (match) out.add(Number(match[1]));
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach(item => collectAssetIdsFromValue(item, out));
+    return;
+  }
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(item => collectAssetIdsFromValue(item, out));
+  }
+}
+
+// Order assets so a parent always precedes its children (needed to remap
+// parentId during import). Assets whose parent is absent from the set are
+// treated as roots.
+function orderAssetsParentFirst(assets) {
+  const byRefId = new Map(assets.map(asset => [asset.refId, asset]));
+  const ordered = [];
+  const visited = new Set();
+
+  const visit = (asset) => {
+    if (!asset || visited.has(asset.refId)) return;
+    visited.add(asset.refId);
+    const parent = asset.parentRefId != null ? byRefId.get(asset.parentRefId) : null;
+    if (parent) visit(parent);
+    ordered.push(asset);
+  };
+
+  assets.forEach(visit);
+  return ordered;
+}
+
+// Build the export manifest + the list of files to copy for a single project.
+// Returns { manifest, files } where files is [{ source: absPath, dest: relPathInBundle }].
+export async function buildProjectExport(projectId, { appVersion = '' } = {}) {
+  const db = await getDb();
+  const project = await get(db, 'SELECT * FROM Projects WHERE id = ?', [Number(projectId)]);
+  if (!project) {
+    throw new Error('Project not found');
+  }
+
+  // `mode` drives which UI the project opens in, but a project's asset↔project
+  // association always lives in Cards_Assets (graph projects keep backing
+  // "Images" cards per node asset). So we always export cards + card links, and
+  // additionally export nodes + connections for graph projects.
+  const mode = String(project.preset || '').toLowerCase() === 'graph' ? 'graph' : 'kanban';
+  const seedAssetIds = new Set();
+
+  const nodes = await all(
+    db,
+    `SELECT n.*, nt.name AS nodeTypeName
+     FROM Nodes n JOIN NodeTypes nt ON nt.id = n.nodeTypeId
+     WHERE n.projectId = ? ORDER BY n.id ASC`,
+    [project.id]
+  );
+  nodes.forEach(node => {
+    if (node.assetId != null) seedAssetIds.add(node.assetId);
+    collectAssetIdsFromValue(parseJson(node.metadata, {}), seedAssetIds);
+  });
+
+  let connections = [];
+  const nodeIds = nodes.map(node => node.id);
+  if (nodeIds.length) {
+    const placeholders = nodeIds.map(() => '?').join(', ');
+    connections = await all(
+      db,
+      `SELECT * FROM Connections
+       WHERE sourceNodeId IN (${placeholders}) AND targetNodeId IN (${placeholders})`,
+      [...nodeIds, ...nodeIds]
+    );
+  }
+
+  const cards = await all(
+    db,
+    `SELECT c.*, kc.name AS columnName
+     FROM Cards c JOIN KanbanColumns kc ON kc.id = c.kanbanColumnId
+     WHERE c.projectId = ? ORDER BY c.kanbanColumnId ASC, c.position ASC`,
+    [project.id]
+  );
+  cards.forEach(card => collectAssetIdsFromValue(parseJson(card.metadata, {}), seedAssetIds));
+
+  const cardAssetRows = await all(
+    db,
+    `SELECT DISTINCT ca.assetId AS assetId
+     FROM Cards_Assets ca JOIN Cards c ON c.id = ca.cardId
+     WHERE c.projectId = ?`,
+    [project.id]
+  );
+  cardAssetRows.forEach(row => seedAssetIds.add(row.assetId));
+
+  // Expand the seed set: include every ancestor (up the parentId chain) and
+  // every descendant so the full version/edit tree travels with the project.
+  const collectedIds = new Set();
+  const pending = [...seedAssetIds].filter(id => Number.isFinite(Number(id)));
+
+  // Walk up to roots first.
+  const withAncestors = new Set();
+  for (const id of pending) {
+    let current = Number(id);
+    let guard = 0;
+    while (Number.isFinite(current) && !withAncestors.has(current) && guard < 1000) {
+      withAncestors.add(current);
+      guard += 1;
+      const row = await get(db, 'SELECT parentId FROM Assets WHERE id = ?', [current]);
+      current = row && row.parentId != null ? Number(row.parentId) : NaN;
+    }
+  }
+
+  // Then walk down to collect all descendants.
+  let frontier = [...withAncestors];
+  frontier.forEach(id => collectedIds.add(id));
+  while (frontier.length) {
+    const placeholders = frontier.map(() => '?').join(', ');
+    const children = await all(
+      db,
+      `SELECT id FROM Assets WHERE parentId IN (${placeholders})`,
+      frontier
+    );
+    frontier = [];
+    for (const child of children) {
+      if (!collectedIds.has(child.id)) {
+        collectedIds.add(child.id);
+        frontier.push(child.id);
+      }
+    }
+  }
+
+  const files = [];
+  const seenDest = new Set();
+  const addFile = (source, dest) => {
+    if (!source || !dest || seenDest.has(dest)) return;
+    seenDest.add(dest);
+    files.push({ source, dest });
+  };
+
+  const assets = [];
+  for (const assetId of collectedIds) {
+    const row = await get(
+      db,
+      `SELECT a.*, at.name AS typeName FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId WHERE a.id = ?`,
+      [assetId]
+    );
+    if (!row || !row.filePath) continue;
+
+    const subdir = assetSubdirForTypeName(row.typeName);
+    const fileBase = path.basename(row.filePath);
+    const relPath = `assets/${subdir}/${fileBase}`;
+    addFile(toAbsoluteStoragePath(row.filePath), relPath);
+
+    let thumbnailRelPath = null;
+    if (row.thumbnail) {
+      const thumbBase = path.basename(row.thumbnail);
+      thumbnailRelPath = `assets/thumbnails/${thumbBase}`;
+      addFile(toAbsoluteStoragePath(row.thumbnail), thumbnailRelPath);
+    }
+
+    // Paint document (base + layer textures live under paintdocs/<assetId>/).
+    let paintDoc = null;
+    const doc = await getPaintDocumentByAssetId(assetId);
+    if (doc) {
+      const paintRel = (storedPath) => {
+        if (!storedPath) return null;
+        const rel = `assets/paintdocs/${row.id}/${path.basename(storedPath)}`;
+        addFile(toAbsoluteStoragePath(storedPath), rel);
+        return rel;
+      };
+      paintDoc = {
+        baseRelPath: paintRel(doc.baseFilePath),
+        textureWidth: doc.textureWidth || 0,
+        textureHeight: doc.textureHeight || 0,
+        layers: (doc.layers || []).map(layer => ({
+          id: layer.id,
+          name: layer.name || '',
+          opacity: Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 1,
+          blendMode: layer.blendMode || 'source-over',
+          color: layer.color || '#ffffff',
+          visible: layer.visible !== false,
+          relPath: paintRel(layer.filePath)
+        }))
+      };
+    }
+
+    // Workflow config sidecar (parameters/outputs for workflow assets).
+    let workflowConfig = null;
+    const wc = await get(db, 'SELECT parametersJson, outputsJson FROM WorkflowConfigs WHERE assetId = ?', [assetId]);
+    if (wc) {
+      workflowConfig = {
+        parameters: parseJson(wc.parametersJson, []),
+        outputs: parseJson(wc.outputsJson, [])
+      };
+    }
+
+    assets.push({
+      refId: row.id,
+      name: row.name,
+      typeName: row.typeName,
+      subdir,
+      relPath,
+      thumbnailRelPath,
+      originalFilePath: String(row.filePath || '').replace(/\\/g, '/'),
+      width: row.width || 0,
+      height: row.height || 0,
+      metadata: parseJson(row.metadata, {}),
+      parentRefId: row.parentId != null ? Number(row.parentId) : null,
+      paintDoc,
+      workflowConfig
+    });
+  }
+
+  const manifest = {
+    schemaVersion: PROJECT_EXPORT_SCHEMA_VERSION,
+    app: '3DGenStudio',
+    appVersion: String(appVersion || ''),
+    project: {
+      name: project.name,
+      description: project.description || '',
+      preset: project.preset || '',
+      status: project.status || 'active'
+    },
+    mode,
+    assets,
+    cards: cards.map(card => ({
+      refKey: card.id,
+      columnName: card.columnName,
+      name: card.name,
+      position: card.position,
+      status: card.status,
+      progress: card.progress,
+      metadata: parseJson(card.metadata, {}),
+      assetRefIds: [], // filled below
+      attributes: []   // filled below
+    })),
+    nodes: nodes.map(node => ({
+      refId: node.id,
+      nodeTypeName: node.nodeTypeName,
+      name: node.name,
+      xPos: node.xPos,
+      yPos: node.yPos,
+      assetRefId: node.assetId != null ? Number(node.assetId) : null,
+      status: node.status,
+      progress: node.progress,
+      metadata: parseJson(node.metadata, {})
+    })),
+    connections: connections.map(conn => ({
+      sourceRefId: conn.sourceNodeId,
+      targetRefId: conn.targetNodeId,
+      inputId: conn.inputId,
+      outputId: conn.outputId
+    }))
+  };
+
+  // Fill in each card's asset links + attributes.
+  for (const card of manifest.cards) {
+    const assetRows = await all(
+      db,
+      'SELECT assetId, position FROM Cards_Assets WHERE cardId = ? ORDER BY position ASC',
+      [card.refKey]
+    );
+    card.assetRefIds = assetRows
+      .filter(r => collectedIds.has(r.assetId))
+      .map(r => ({ assetRefId: r.assetId, position: r.position }));
+
+    const attrRows = await all(
+      db,
+      `SELECT ca.position, ca.attributeValue, a.name AS typeName
+       FROM Cards_Attributes ca JOIN Attributes a ON a.id = ca.attributeTypeId
+       WHERE ca.cardId = ? ORDER BY ca.position ASC`,
+      [card.refKey]
+    );
+    card.attributes = attrRows.map(r => ({
+      position: r.position,
+      typeName: r.typeName,
+      value: r.attributeValue
+    }));
+  }
+
+  return { manifest, files };
+}
+
+// Replace `asset:<id>` and `edit:<filePath>` references inside a parsed
+// metadata value using the maps built during import. Unknown references are
+// left untouched so partial bundles degrade gracefully.
+function remapReferencesDeep(value, assetIdMap, editPathMap) {
+  if (typeof value === 'string') {
+    const assetMatch = value.match(/^asset:(\d+)$/);
+    if (assetMatch) {
+      const mapped = assetIdMap.get(Number(assetMatch[1]));
+      return mapped != null ? `asset:${mapped}` : value;
+    }
+    const editMatch = value.match(/^edit:([\s\S]+)$/);
+    if (editMatch) {
+      const key = editMatch[1].replace(/\\/g, '/');
+      const mapped = editPathMap.get(key);
+      return mapped ? `edit:${mapped}` : value;
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(item => remapReferencesDeep(item, assetIdMap, editPathMap));
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      out[key] = remapReferencesDeep(item, assetIdMap, editPathMap);
+    }
+    return out;
+  }
+  return value;
+}
+
+// Workflows are per-user library items and are never exported, so an imported
+// project must not carry the exporter's workflow references or live run state.
+// This strips the transient `processing` block and nulls any `workflowId`
+// (a plain number that would otherwise point at an unrelated local asset id)
+// while leaving informational history like `lastActionParams`/`workflowName`.
+// Returns the cleaned value and whether a `processing` block was removed.
+function stripWorkflowState(value) {
+  let removedProcessing = false;
+
+  const walk = (val) => {
+    if (Array.isArray(val)) {
+      return val.map(walk);
+    }
+    if (val && typeof val === 'object') {
+      const out = {};
+      for (const [key, item] of Object.entries(val)) {
+        if (key === 'processing') {
+          removedProcessing = true;
+          continue;
+        }
+        if (key === 'workflowId') {
+          out[key] = null;
+          continue;
+        }
+        out[key] = walk(item);
+      }
+      return out;
+    }
+    return val;
+  };
+
+  return { cleaned: walk(value), removedProcessing };
+}
+
+// Allocate a Projects.id that isn't already taken (ids are Date.now()-based).
+async function allocateProjectId(db) {
+  let candidate = Date.now();
+  // eslint-disable-next-line no-await-in-loop
+  while (await get(db, 'SELECT 1 FROM Projects WHERE id = ?', [candidate])) {
+    candidate += 1;
+  }
+  return candidate;
+}
+
+let importFilenameCounter = 0;
+function makeUniqueAssetFilename(originalBasename) {
+  importFilenameCounter += 1;
+  const safe = String(originalBasename || 'file').replace(/[^a-zA-Z0-9._-]+/g, '_');
+  return `imp-${Date.now()}-${importFilenameCounter}-${safe}`;
+}
+
+// Recreate a project from a parsed .3dgp manifest + the folder that holds its
+// asset files. Runs in a single transaction; everything rolls back on error.
+export async function importProjectExport(manifest, bundleDir, { name } = {}) {
+  if (!manifest || typeof manifest !== 'object') {
+    throw new Error('The .3dgp file is empty or invalid.');
+  }
+  if (Number(manifest.schemaVersion) !== PROJECT_EXPORT_SCHEMA_VERSION) {
+    throw new Error(`Unsupported .3dgp version: ${manifest.schemaVersion}`);
+  }
+
+  const db = await getDb();
+  const proj = manifest.project || {};
+  const mode = manifest.mode === 'graph' ? 'graph' : 'kanban';
+  const projectName = String(name || proj.name || 'Imported Project').trim() || 'Imported Project';
+
+  await exec(db, 'BEGIN');
+  try {
+    const newProjectId = await allocateProjectId(db);
+    const createdAt = Date.now();
+    await run(
+      db,
+      'INSERT INTO Projects (id, name, description, preset, creationDate, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [newProjectId, projectName, proj.description || '', proj.preset || '', createdAt, proj.status || 'active']
+    );
+
+    const assetIdMap = new Map();   // original refId -> new asset id
+    const editPathMap = new Map();  // original stored filePath -> new stored filePath
+    const insertedAssets = [];      // { newId, metadata } for the post-remap pass
+
+    // --- Phase A: copy files + insert asset rows (raw metadata) ---
+    const orderedAssets = orderAssetsParentFirst(manifest.assets || []);
+    for (const asset of orderedAssets) {
+      const subdir = asset.subdir || assetSubdirForTypeName(asset.typeName);
+      const source = path.join(bundleDir, asset.relPath || '');
+      try {
+        await fs.access(source);
+      } catch {
+        console.warn(`Skipping asset "${asset.name}" — missing bundle file: ${asset.relPath}`);
+        continue;
+      }
+
+      const uniqueName = makeUniqueAssetFilename(path.basename(asset.relPath));
+      const destDir = path.join(ASSETS_DIR, subdir);
+      await fs.mkdir(destDir, { recursive: true });
+      await fs.copyFile(source, path.join(destDir, uniqueName));
+      const newStoredPath = `${DATA_ASSETS_PREFIX}${subdir}/${uniqueName}`;
+
+      let thumbnailStored = null;
+      if (asset.thumbnailRelPath) {
+        const thumbSource = path.join(bundleDir, asset.thumbnailRelPath);
+        try {
+          await fs.access(thumbSource);
+          const thumbName = makeUniqueAssetFilename(path.basename(asset.thumbnailRelPath));
+          await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
+          await fs.copyFile(thumbSource, path.join(THUMBNAIL_ASSETS_DIR, thumbName));
+          thumbnailStored = `${DATA_ASSETS_PREFIX}thumbnails/${thumbName}`;
+        } catch {
+          thumbnailStored = null;
+        }
+      }
+
+      const parentNewId = asset.parentRefId != null ? (assetIdMap.get(asset.parentRefId) ?? null) : null;
+      const assetTypeId = await getAssetTypeIdByName(asset.typeName);
+      const result = await run(
+        db,
+        'INSERT INTO Assets (name, filePath, assetTypeId, creationDate, metadata, thumbnail, width, height, parentId) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          asset.name || 'Asset',
+          newStoredPath,
+          assetTypeId,
+          Date.now(),
+          JSON.stringify(asset.metadata || {}),
+          thumbnailStored,
+          Number(asset.width) || 0,
+          Number(asset.height) || 0,
+          parentNewId
+        ]
+      );
+      const newId = result.lastID;
+      assetIdMap.set(asset.refId, newId);
+      if (asset.originalFilePath) {
+        editPathMap.set(String(asset.originalFilePath).replace(/\\/g, '/'), newStoredPath);
+      }
+      insertedAssets.push({ newId, metadata: asset.metadata || {} });
+
+      // Paint document.
+      if (asset.paintDoc) {
+        const docDir = paintDocSubdirForAsset(newId);
+        await fs.mkdir(docDir, { recursive: true });
+        const copyPaintFile = async (relPath) => {
+          if (!relPath) return null;
+          const src = path.join(bundleDir, relPath);
+          try {
+            await fs.access(src);
+          } catch {
+            return null;
+          }
+          const base = path.basename(relPath);
+          await fs.copyFile(src, path.join(docDir, base));
+          return toStoredPaintDocPath(newId, base);
+        };
+
+        const baseFilePath = await copyPaintFile(asset.paintDoc.baseRelPath);
+        const layers = [];
+        for (const layer of asset.paintDoc.layers || []) {
+          const filePath = await copyPaintFile(layer.relPath);
+          if (!filePath) continue;
+          layers.push({
+            id: layer.id,
+            name: layer.name || '',
+            opacity: Number.isFinite(Number(layer.opacity)) ? Number(layer.opacity) : 1,
+            blendMode: layer.blendMode || 'source-over',
+            color: layer.color || '#ffffff',
+            visible: layer.visible !== false,
+            filePath
+          });
+        }
+        await run(
+          db,
+          `INSERT INTO PaintDocuments (assetId, baseFilePath, textureWidth, textureHeight, layersJson, updatedAt)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [newId, baseFilePath, asset.paintDoc.textureWidth || 0, asset.paintDoc.textureHeight || 0, JSON.stringify(layers), Date.now()]
+        );
+      }
+
+      // Workflow config.
+      if (asset.workflowConfig) {
+        await run(
+          db,
+          'INSERT INTO WorkflowConfigs (assetId, parametersJson, outputsJson) VALUES (?, ?, ?)',
+          [newId, JSON.stringify(asset.workflowConfig.parameters || []), JSON.stringify(asset.workflowConfig.outputs || [])]
+        );
+      }
+    }
+
+    // --- Phase B: maps are complete — remap asset metadata references ---
+    for (const entry of insertedAssets) {
+      const remapped = remapReferencesDeep(entry.metadata, assetIdMap, editPathMap);
+      await run(db, 'UPDATE Assets SET metadata = ? WHERE id = ?', [JSON.stringify(remapped), entry.newId]);
+    }
+
+    // --- Phase C: recreate cards + Cards_Assets (the asset↔project links used
+    // by the Assets page). Present for both presets: graph projects keep backing
+    // cards per node asset, so this must run regardless of mode.
+    {
+      const columns = await all(db, 'SELECT id, name, position FROM KanbanColumns ORDER BY position ASC');
+      const columnByName = new Map(columns.map(c => [c.name, c.id]));
+      const fallbackColumnId = columns.length ? columns[0].id : null;
+
+      for (const card of manifest.cards || []) {
+        const columnId = columnByName.get(card.columnName) ?? fallbackColumnId;
+        if (columnId == null) continue;
+        const remapped = remapReferencesDeep(card.metadata || {}, assetIdMap, editPathMap);
+        const { cleaned: metadata, removedProcessing } = stripWorkflowState(remapped);
+        // A card whose live run state was stripped must not stay "processing".
+        const cardStatus = removedProcessing ? null : (card.status ?? null);
+        const cardProgress = removedProcessing ? null : (card.progress ?? null);
+        const result = await run(
+          db,
+          `INSERT INTO Cards (projectId, kanbanColumnId, clientKey, name, position, creationDate, status, progress, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newProjectId,
+            columnId,
+            null,
+            card.name ?? null,
+            Number(card.position) || 0,
+            Date.now(),
+            cardStatus,
+            cardProgress,
+            JSON.stringify(metadata)
+          ]
+        );
+        const newCardId = result.lastID;
+
+        for (const link of card.assetRefIds || []) {
+          const newAssetId = assetIdMap.get(link.assetRefId);
+          if (newAssetId == null) continue;
+          await run(
+            db,
+            'INSERT INTO Cards_Assets (cardId, assetId, position) VALUES (?, ?, ?)',
+            [newCardId, newAssetId, Number(link.position) || 0]
+          );
+        }
+
+        for (const attr of card.attributes || []) {
+          let attributeTypeId = null;
+          try {
+            const attrRow = await get(db, 'SELECT id FROM Attributes WHERE name = ?', [attr.typeName]);
+            attributeTypeId = attrRow ? attrRow.id : null;
+          } catch {
+            attributeTypeId = null;
+          }
+          if (attributeTypeId == null) continue;
+          await run(
+            db,
+            'INSERT INTO Cards_Attributes (cardId, position, attributeTypeId, attributeValue) VALUES (?, ?, ?, ?)',
+            [newCardId, Number(attr.position) || 0, attributeTypeId, attr.value ?? null]
+          );
+        }
+      }
+    }
+
+    // --- Phase D: recreate graph nodes + connections (empty for kanban). ---
+    {
+      const nodeIdMap = new Map();
+      for (const node of manifest.nodes || []) {
+        const nodeTypeId = await getNodeTypeIdByName(node.nodeTypeName);
+        const assetId = node.assetRefId != null ? (assetIdMap.get(node.assetRefId) ?? null) : null;
+        const remapped = remapReferencesDeep(node.metadata || {}, assetIdMap, editPathMap);
+        const { cleaned: metadata, removedProcessing } = stripWorkflowState(remapped);
+        // A node whose live run state was stripped must not stay "processing".
+        const nodeStatus = removedProcessing ? null : (node.status ?? null);
+        const nodeProgress = removedProcessing ? null : (node.progress ?? null);
+        const result = await run(
+          db,
+          `INSERT INTO Nodes (projectId, nodeTypeId, name, xPos, yPos, assetId, creationDate, status, progress, metadata)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newProjectId,
+            nodeTypeId,
+            node.name ?? null,
+            Number(node.xPos) || 0,
+            Number(node.yPos) || 0,
+            assetId,
+            Date.now(),
+            nodeStatus,
+            nodeProgress,
+            JSON.stringify(metadata)
+          ]
+        );
+        nodeIdMap.set(node.refId, result.lastID);
+      }
+
+      for (const conn of manifest.connections || []) {
+        const sourceId = nodeIdMap.get(conn.sourceRefId);
+        const targetId = nodeIdMap.get(conn.targetRefId);
+        if (sourceId == null || targetId == null) continue;
+        await run(
+          db,
+          `INSERT INTO Connections (sourceNodeId, targetNodeId, inputId, outputId) VALUES (?, ?, ?, ?)`,
+          [sourceId, targetId, conn.inputId, conn.outputId]
+        );
+      }
+    }
+
+    await exec(db, 'COMMIT');
+    return mapProjectRow(await get(db, 'SELECT * FROM Projects WHERE id = ?', [newProjectId]));
+  } catch (err) {
+    try {
+      await exec(db, 'ROLLBACK');
+    } catch (rollbackErr) {
+      console.error('Failed to roll back project import:', rollbackErr);
+    }
+    throw err;
+  }
+}

@@ -23,6 +23,8 @@ import {
   THUMBNAIL_ASSETS_DIR,
   createProject,
   updateProject,
+  buildProjectExport,
+  importProjectExport,
   createLibraryAsset,
   createCardAttribute,
   createProjectAsset,
@@ -4167,6 +4169,115 @@ app.delete('/api/projects/:id', async (req, res) => {
     res.status(204).end();
   } catch {
     res.status(500).json({ error: 'Deletion failed' });
+  }
+});
+
+// Turn a filesystem-unsafe name into a folder base name (letters, digits,
+// spaces, dot, dash, underscore) so it can name the export folder + .3dgp file.
+function sanitizeProjectExportName(name, fallback = 'project') {
+  const cleaned = String(name || '').trim().replace(/[<>:"/\\|?* -]+/g, '_').replace(/\.+$/, '').trim();
+  return cleaned || fallback;
+}
+
+async function readAppVersion() {
+  try {
+    const raw = await fs.readFile(path.join(process.cwd(), 'version.json'), 'utf8');
+    return JSON.parse(raw)?.version || '';
+  } catch {
+    return '';
+  }
+}
+
+// Export a project as a self-contained .3dgp bundle folder under `folder`.
+app.post('/api/projects/:id/export', async (req, res) => {
+  try {
+    const projectId = Number(req.params.id);
+    const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+    const requestedName = typeof req.body?.name === 'string' ? req.body.name : '';
+
+    if (!folder) {
+      return res.status(400).json({ error: 'A destination folder is required.' });
+    }
+    if (!path.isAbsolute(folder)) {
+      return res.status(400).json({ error: 'The destination folder must be an absolute path.' });
+    }
+
+    const { manifest, files } = await buildProjectExport(projectId, { appVersion: await readAppVersion() });
+    const bundleName = sanitizeProjectExportName(requestedName || manifest.project.name, 'project');
+    const bundleDir = path.join(path.resolve(folder), bundleName);
+
+    await fs.mkdir(bundleDir, { recursive: true });
+
+    let copied = 0;
+    for (const file of files) {
+      const destination = path.join(bundleDir, file.dest);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      try {
+        await fs.copyFile(file.source, destination);
+        copied += 1;
+      } catch (copyErr) {
+        console.warn(`Failed to copy export file ${file.source}:`, copyErr.message);
+      }
+    }
+
+    await fs.writeFile(path.join(bundleDir, `${bundleName}.3dgp`), JSON.stringify(manifest, null, 2), 'utf8');
+
+    res.status(201).json({
+      folder: bundleDir,
+      name: bundleName,
+      assetCount: manifest.assets.length,
+      fileCount: copied
+    });
+  } catch (err) {
+    console.error('Failed to export project:', err);
+    const message = err.code === 'EACCES'
+      ? 'Access to the destination folder is denied.'
+      : (err.message || 'Failed to export project');
+    res.status(err.message === 'Project not found' ? 404 : 500).json({ error: message });
+  }
+});
+
+// Import a project from a previously exported bundle folder (contains a .3dgp).
+app.post('/api/projects/import', async (req, res) => {
+  try {
+    const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    if (!folder) {
+      return res.status(400).json({ error: 'A source folder is required.' });
+    }
+    if (!path.isAbsolute(folder)) {
+      return res.status(400).json({ error: 'The source folder must be an absolute path.' });
+    }
+
+    const bundleDir = path.resolve(folder);
+    const stats = await fs.stat(bundleDir).catch(() => null);
+    if (!stats || !stats.isDirectory()) {
+      return res.status(400).json({ error: 'The selected path is not a folder.' });
+    }
+
+    const entries = await fs.readdir(bundleDir);
+    const manifestFiles = entries.filter(entry => entry.toLowerCase().endsWith('.3dgp'));
+    if (manifestFiles.length === 0) {
+      return res.status(400).json({ error: 'No .3dgp file was found in the selected folder.' });
+    }
+    if (manifestFiles.length > 1) {
+      return res.status(400).json({ error: 'The selected folder contains more than one .3dgp file.' });
+    }
+
+    const manifestRaw = await fs.readFile(path.join(bundleDir, manifestFiles[0]), 'utf8');
+    let manifest;
+    try {
+      manifest = JSON.parse(manifestRaw);
+    } catch {
+      return res.status(400).json({ error: 'The .3dgp file is not valid JSON.' });
+    }
+
+    const project = await importProjectExport(manifest, bundleDir, { name });
+    res.status(201).json(project);
+  } catch (err) {
+    console.error('Failed to import project:', err);
+    res.status(500).json({ error: err.message || 'Failed to import project' });
   }
 });
 

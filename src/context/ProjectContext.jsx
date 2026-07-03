@@ -375,6 +375,33 @@ export function ProjectProvider({ children }) {
     await fetchProjects()
   }
 
+  const exportProject = async (id, { folder, name }) => {
+    const res = await fetch(`${API_BASE}/projects/${id}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, name })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to export project')
+    }
+    return data
+  }
+
+  const importProject = async ({ folder, name }) => {
+    const res = await fetch(`${API_BASE}/projects/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folder, name })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to import project')
+    }
+    await fetchProjects()
+    return data
+  }
+
   const getProjectAssets = async (projectId) => {
     const res = await fetch(`${API_BASE}/assets?projectId=${projectId}`)
     return await res.json()
@@ -1007,6 +1034,8 @@ export function ProjectProvider({ children }) {
       updateProject,
       getProject,
       deleteProject,
+      exportProject,
+      importProject,
       getProjectAssets,
       getProjectCards,
       getProjectNodes,

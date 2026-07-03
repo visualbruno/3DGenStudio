@@ -6,6 +6,8 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import SetupWizardModal from '../components/SetupWizardModal'
+import ExportProjectDialog from '../components/ExportProjectDialog'
+import ImportProjectDialog from '../components/ImportProjectDialog'
 import graphPreview from '../assets/GraphPage.png'
 import kanbanPreview from '../assets/KanbanBoard.png'
 import './ProjectsPage.css'
@@ -339,6 +341,8 @@ export default function ProjectsPage() {
   const [setupDismissed, setSetupDismissed] = useState(false)
   const [projectToDelete, setProjectToDelete] = useState(null)
   const [projectToEdit, setProjectToEdit] = useState(null)
+  const [projectToExport, setProjectToExport] = useState(null)
+  const [showImport, setShowImport] = useState(false)
   const [editName, setEditName] = useState('')
 
   const showSetup = setupManualOpen
@@ -639,6 +643,15 @@ export default function ProjectsPage() {
               <button
                 type="button"
                 className="projects-page__setup-btn"
+                onClick={() => setShowImport(true)}
+                id="open-import-modal"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>upload</span>
+                Import
+              </button>
+              <button
+                type="button"
+                className="projects-page__setup-btn"
                 onClick={openSetup}
                 id="open-setup-modal"
               >
@@ -702,6 +715,13 @@ export default function ProjectsPage() {
                 >
                   <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>delete</span>
                 </button>
+                <button
+                  className="project-card__action project-card__export"
+                  onClick={(e) => { e.stopPropagation(); setProjectToExport(project) }}
+                  title="Export project"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>ios_share</span>
+                </button>
               </div>
             ))}
 
@@ -721,6 +741,23 @@ export default function ProjectsPage() {
           </div>
         </div>
       </main>
+
+      {projectToExport && (
+        <ExportProjectDialog
+          project={projectToExport}
+          onClose={() => setProjectToExport(null)}
+        />
+      )}
+
+      {showImport && (
+        <ImportProjectDialog
+          onClose={() => setShowImport(false)}
+          onImported={(project) => {
+            setShowImport(false)
+            if (project?.id) navigate(`/projects/${project.id}`)
+          }}
+        />
+      )}
 
       <Footer onChangeLogClick={() => setShowChangeLog(true)} />
     </div>
