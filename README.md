@@ -19,7 +19,7 @@
 
 | Date | Description |
 | --- | --- |
-| **2026-07-05** | Projects can be exported/imported<br>DB has been restructured and simplified<br>SetupWizard: Added Sam3.1 Segmentation + Gen Mesh with Hy2.1 |
+| **2026-07-04** | Projects can be exported/imported<br>DB has been restructured and simplified<br>SetupWizard: Added Sam3.1 Segmentation + Gen Mesh with Hy2.1 |
 | **2026-07-03** | Mesh Editor: Added Optimize mode<br>Setup Wizard: Added Boogu Image and Image Editor<br>Kanban: Added a Name field for Image Generation<br>Image Editor: Can choose a name for saved image<br>OpenAI: Added gpt-image-2 model |
 | **2026-07-01** | Added a python server<br>Mesh Editor : Added experimental "Auto UV" and "Auto Retopo" |
 | **2026-06-28** | Can navigate on different pages during a ComfyUI workflow execution<br>SetupWizard: Added Krea2 Turbo<br>Server can be configured on another machine/port |

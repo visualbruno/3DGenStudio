@@ -25,7 +25,7 @@ const PRESETS = [
 const CHANGE_LOG_ENTRIES = [
   {
     version: 'v1.3.0',
-    date: '2026-07-05',
+    date: '2026-07-04',
     items: [
 			'Projects can be exported/imported',
 			'DB has been restructured and simplified',
