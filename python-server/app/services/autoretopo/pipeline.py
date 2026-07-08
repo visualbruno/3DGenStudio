@@ -125,7 +125,7 @@ class AutoRetopo:
             V = project.project_to_surface(
                 V, F, original, iters=cfg.project_iters,
                 clamp=cfg.project_clamp, relax_strength=cfg.relax_strength)
-        V, F = remesh.finalize_watertight(V, F) if cfg.watertight else remesh.clean_slivers(V, F)
+        V, F = remesh.finalize_watertight(V, F, verbose=cfg.verbose) if cfg.watertight else remesh.clean_slivers(V, F)
         t["project"] = time.time() - t0
 
         result_mesh = trimesh.Trimesh(V, F, process=False)

@@ -3907,6 +3907,8 @@ export default function MeshEditorPage() {
         if (haus != null) rows.push({ label: 'Hausdorff', value: `${haus.toFixed(2)}% diag` })
         const wellShaped = m?.triangle_quality?.pct_well_shaped
         if (wellShaped != null) rows.push({ label: 'Well-shaped tris', value: `${wellShaped.toFixed(0)}%` })
+        const wt = m?.topology?.watertight
+        if (wt != null) rows.push({ label: 'Watertight', value: wt ? 'Yes' : 'No — has holes' })
         if (stats?.tool?.quad_face_count != null) rows.push({ label: 'Quad faces', value: stats.tool.quad_face_count })
         return rows
       },

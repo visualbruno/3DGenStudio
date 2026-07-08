@@ -117,32 +117,91 @@ def decimate_to_target(V, F, target_faces, preserve_boundary=True):
         np.ascontiguousarray(mm.face_matrix().astype(np.int64))
 
 
-def finalize_watertight(V, F, close_holes=200):
+def finalize_watertight(V, F, close_holes=1000, verbose=False):
     """Clean up after decimation + projection while preserving connectivity.
 
-    Projection never changes topology, so the mesh arrives as one component. We only
-    drop exactly-degenerate (zero-area) faces and weld, then - if a few boundary edges
-    appeared - seal them by *adding* faces (close_holes). We deliberately do NOT run
-    face-removing non-manifold repair: on multi-part figures (a warrior + weapon +
-    shield) it cuts thin bridges and shatters the single shell into many pieces.
+    The marching-cubes shell is watertight by construction, but two later stages can
+    poke small holes in it: decimate_to_target drops `preservetopology` on stubborn
+    fragmented meshes (which can leave a non-manifold edge/vertex), and projection can
+    fold a tight concave crease (between fingers, say) into a local self-intersection.
+    We seal those without shredding the shell:
+
+      1. drop zero-area faces, weld coincident verts, remove orphans;
+      2. if already closed -> done;
+      3. *split* (never delete) non-manifold edges/vertices so every hole boundary
+         becomes a clean manifold loop close_holes can identify. Splitting duplicates
+         a vertex but keeps all faces, so - unlike face-removing non-manifold repair -
+         it never cuts the thin bridges that hold a multi-part figure (warrior + weapon
+         + shield) together as one shell;
+      4. close holes by *adding* faces, escalating from refusing self-intersections to
+         tolerating them (the crease case above only closes on the tolerant pass);
+      5. trimesh fill_holes as a final fallback for anything pymeshlab left open.
     """
     import trimesh as _tm
-    m = _tm.Trimesh(np.asarray(V, float), np.asarray(F, np.int64), process=False)
-    m.update_faces(m.nondegenerate_faces())
-    m.merge_vertices()
-    m.remove_unreferenced_vertices()
-    if m.is_watertight:
+
+    def _wrap(v, f):
+        m = _tm.Trimesh(np.asarray(v, float), np.asarray(f, np.int64), process=False)
+        m.update_faces(m.nondegenerate_faces())
+        m.merge_vertices()
+        m.remove_unreferenced_vertices()
+        return m
+
+    def _boundary_edges(m):
+        try:
+            _, counts = np.unique(m.edges_sorted, axis=0, return_counts=True)
+            return int((counts == 1).sum())
+        except Exception:
+            return -1
+
+    def _out(m):
         return np.ascontiguousarray(m.vertices), np.ascontiguousarray(m.faces.astype(np.int64))
+
+    m = _wrap(V, F)
+    if m.is_watertight:
+        return _out(m)
+    if verbose:
+        print(f"    [finalize] {_boundary_edges(m)} boundary edges before sealing")
 
     ms = ml.MeshSet()
     ms.add_mesh(ml.Mesh(np.asarray(m.vertices, float), np.asarray(m.faces, np.int64)))
-    try:
-        ms.meshing_close_holes(maxholesize=int(close_holes), selfintersection=False)
-    except Exception:
-        pass
+
+    # Split (do NOT remove) non-manifold elements so hole boundaries are clean loops.
+    # Only the vertex-splitting variants are attempted; we never fall through to the
+    # face-removing default.
+    for fn, variants in (
+        ("meshing_repair_non_manifold_edges", ({"method": "Split Vertices"}, {"method": 1})),
+        ("meshing_repair_non_manifold_vertices", ({},)),
+    ):
+        filt = getattr(ms, fn, None)
+        if filt is None:
+            continue
+        for kwargs in variants:
+            try:
+                filt(**kwargs)
+                break
+            except Exception:
+                continue
+
+    for selfintersection in (False, True):
+        try:
+            ms.meshing_close_holes(maxholesize=int(close_holes),
+                                   selfintersection=selfintersection)
+        except Exception:
+            pass
+
     mm = ms.current_mesh()
-    return np.ascontiguousarray(mm.vertex_matrix()), \
-        np.ascontiguousarray(mm.face_matrix().astype(np.int64))
+    m = _wrap(mm.vertex_matrix(), mm.face_matrix())
+    if not m.is_watertight:
+        try:
+            m.fill_holes()
+            m.remove_unreferenced_vertices()
+        except Exception:
+            pass
+    if verbose:
+        remaining = _boundary_edges(m)
+        print(f"    [finalize] watertight={m.is_watertight}"
+              + ("" if m.is_watertight else f", {remaining} boundary edges remain"))
+    return _out(m)
 
 
 def clean_slivers(V, F, min_quality=0.02):
