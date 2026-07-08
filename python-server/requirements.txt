@@ -14,4 +14,4 @@ pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
 
 # --- Optional ----------------------------------------------------------------
 matplotlib>=3.8         # only needed for the CLI's UV-layout / compare PNGs
-retree
+rtree
