@@ -10,6 +10,7 @@ import trimesh
 
 from ..schemas import AutoRetopoOptions
 from .autoretopo import AutoRetopo, RetopoConfig
+from .autoretopo import gpu
 
 
 def run_auto_retopo(mesh: trimesh.Trimesh, options: AutoRetopoOptions, progress=None) -> tuple[trimesh.Trimesh, dict, None]:
@@ -33,11 +34,18 @@ def run_auto_retopo(mesh: trimesh.Trimesh, options: AutoRetopoOptions, progress=
         project_iters=options.project_iters,
         project_clamp=options.project_clamp,
         relax_strength=options.relax_strength,
+        device=options.device,
         seed=options.seed,
         verbose=False,
     )
 
-    result = AutoRetopo(cfg).run(mesh, progress=progress)
+    try:
+        result = AutoRetopo(cfg).run(mesh, progress=progress)
+    finally:
+        # Long-running server: hand each run's GPU pool back to the driver so the
+        # footprint doesn't accumulate across Auto Retopo requests. Also runs on
+        # the error path (e.g. a shell-stage OOM) so a failed run cleans up too.
+        gpu.free_gpu_memory()
 
     stats = {
         "metrics": result.metrics,

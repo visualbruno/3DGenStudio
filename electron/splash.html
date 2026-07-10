@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root {
+    --bg: #0d0f14;
+    --card: #141821;
+    --text: #e8eaf0;
+    --muted: #8b91a3;
+    --accent1: #7c5cff;
+    --accent2: #22d3ee;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: transparent; overflow: hidden; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none;
+  }
+  .card {
+    position: relative;
+    width: 500px; height: 300px;
+    background: radial-gradient(120% 140% at 50% 0%, #1a1f2b 0%, var(--card) 45%, var(--bg) 100%);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 20px;
+    box-shadow: 0 24px 70px rgba(0,0,0,0.55);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  /* Soft animated glow behind the mark */
+  .glow {
+    position: absolute; top: -40px; width: 260px; height: 260px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(124,92,255,0.35), transparent 65%);
+    filter: blur(14px);
+    animation: pulse 3.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:.55;transform:scale(1)} 50%{opacity:1;transform:scale(1.12)} }
+
+  .mark { position: relative; width: 72px; height: 72px; margin-bottom: 18px; }
+  .ring {
+    position: absolute; inset: 0; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.08);
+    border-top-color: var(--accent1);
+    border-right-color: var(--accent2);
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .orb {
+    position: absolute; inset: 16px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    box-shadow: 0 0 22px rgba(124,92,255,0.55);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+  }
+  .title {
+    font-size: 26px; font-weight: 700; letter-spacing: .3px;
+    background: linear-gradient(90deg, #ffffff, #c9c2ff 60%, #9be9ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .status { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .dots::after { content: ""; animation: dots 1.6s steps(4,end) infinite; }
+  @keyframes dots { 0%{content:""} 25%{content:"."} 50%{content:".."} 75%{content:"..."} }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="glow"></div>
+    <div class="mark">
+      <div class="ring"></div>
+      <div class="orb">🌌</div>
+    </div>
+    <div class="title">3D Gen Studio</div>
+    <div class="status">Starting local services<span class="dots"></span></div>
+  </div>
+</body>
+</html>

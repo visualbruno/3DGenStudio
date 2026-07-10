@@ -36,6 +36,12 @@ class RetopoConfig:
     project_clamp: float = 1.5        # max per-vertex move as a multiple of local edge length
     relax_strength: float = 0.4       # tangential relaxation factor per iteration (0..1)
 
+    # --- compute backend (shell stage only) ---
+    device: str = "auto"              # "auto": GPU if an NVIDIA CUDA device + CuPy are
+                                      # present, else CPU. "cpu" forces CPU; "cuda" forces
+                                      # GPU (errors if unavailable). Only the watertight
+                                      # shell stage is GPU-accelerated; everything else is CPU.
+
     # --- misc ---
     seed: int = 0
     verbose: bool = True

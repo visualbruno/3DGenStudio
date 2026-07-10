@@ -24,6 +24,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.3.3',
+    date: '2026-07-10',
+    items: [
+			'Desktop App Installer',
+			'Speed up Auto Retopo',
+			'Updated Wiki about Auto UV, Auto Retopo and Optimize',
+			'Added Clean Non-Manifold Edges in Auto Retopo'
+    ],
+  },
+  {
     version: 'v1.3.2',
     date: '2026-07-08',
     items: [

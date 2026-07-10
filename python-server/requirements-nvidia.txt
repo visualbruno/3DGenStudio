@@ -1,0 +1,22 @@
+# GPU acceleration for Auto Retopo on NVIDIA cards.
+#
+# run.bat installs this automatically (on first-time setup) when it detects an
+# NVIDIA GPU, alongside a `cupy-cudaXXx` wheel chosen to match your CUDA version.
+# Both accelerators are optional and auto-detected at runtime — the service falls
+# back to CPU when they are absent.
+#
+# Manual install:
+#     pip install -r requirements-nvidia.txt
+#     pip install cupy-cuda13x        # match your CUDA major: 11x / 12x / 13x
+#
+# Which stage each package accelerates:
+#   warp-lang  -> "Projecting to surface" (GPU closest-point queries)
+#   cupy       -> "Building watertight shell" (voxelize / morphology / EDT / blur)
+# The "Building clean topology" (remesh) stage has no GPU port and always runs
+# on the CPU.
+
+warp-lang>=1.0
+
+# NOTE: CuPy is intentionally NOT listed here — the correct wheel depends on your
+# CUDA version (cupy-cuda11x / cupy-cuda12x / cupy-cuda13x), so run.bat detects
+# and installs it separately. Install it yourself when setting up manually.

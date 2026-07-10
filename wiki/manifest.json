@@ -251,6 +251,33 @@
       "position": 0,
       "createdAt": 1781199836841,
       "updatedAt": 1781200537712
+    },
+    {
+      "id": 29,
+      "parentId": 12,
+      "title": "Auto UV",
+      "icon": "description",
+      "position": 4,
+      "createdAt": 1783517996757,
+      "updatedAt": 1783518006773
+    },
+    {
+      "id": 30,
+      "parentId": 12,
+      "title": "Auto Retopo",
+      "icon": "description",
+      "position": 5,
+      "createdAt": 1783518011595,
+      "updatedAt": 1783518024054
+    },
+    {
+      "id": 31,
+      "parentId": 12,
+      "title": "Optimize",
+      "icon": "description",
+      "position": 6,
+      "createdAt": 1783518027458,
+      "updatedAt": 1783518036189
     }
   ]
 }

@@ -950,6 +950,84 @@ export function geometryFaceCount(geometry) {
   return geometry?.index ? geometry.index.count / 3 : 0
 }
 
+// Fast client-side watertightness test that mirrors trimesh's `is_watertight`:
+// weld vertices by position, then require every edge to be shared by exactly two
+// faces (no boundary edges with count 1, no non-manifold edges with count > 2).
+//
+// The editable geometry is welded with mergeVertices(1e-5), but that also splits
+// vertices along normal/UV seams, which would report false boundaries. So we
+// re-weld by quantized position only, independent of the index attribute, to
+// match how the Python service (trimesh) evaluates topology.
+// Weld vertices by quantized position onto a mesh-scaled grid so coincident
+// vertices collapse to one canonical id regardless of float noise or the
+// normal/UV seams that split the editable index. Returns a per-vertex id array
+// indexed like geometry.attributes.position. Shared by the watertight check and
+// the non-manifold cleaner so both agree on which corners are the "same point".
+function buildCanonicalVertexIds(geometry) {
+  const positions = geometry.attributes.position.array
+  geometry.computeBoundingBox()
+  const box = geometry.boundingBox
+  const diag = box
+    ? Math.hypot(box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z)
+    : 1
+  const tol = Math.max(diag * 1e-6, 1e-9)
+  const invTol = 1 / tol
+
+  const canonicalByKey = new Map()
+  const vertexCount = positions.length / 3
+  const canonicalOfVertex = new Int32Array(vertexCount)
+  for (let v = 0; v < vertexCount; v += 1) {
+    const kx = Math.round(positions[v * 3] * invTol)
+    const ky = Math.round(positions[v * 3 + 1] * invTol)
+    const kz = Math.round(positions[v * 3 + 2] * invTol)
+    const key = `${kx}:${ky}:${kz}`
+    let id = canonicalByKey.get(key)
+    if (id === undefined) {
+      id = canonicalByKey.size
+      canonicalByKey.set(key, id)
+    }
+    canonicalOfVertex[v] = id
+  }
+  return canonicalOfVertex
+}
+
+export function getGeometryWatertight(geometry) {
+  if (!geometry?.index?.count || !geometry.attributes?.position) {
+    return null
+  }
+
+  const indices = geometry.index.array
+  const canonicalOfVertex = buildCanonicalVertexIds(geometry)
+
+  const edgeCounts = new Map()
+  const faceCount = indices.length / 3
+  for (let f = 0; f < faceCount; f += 1) {
+    const a = canonicalOfVertex[indices[f * 3]]
+    const b = canonicalOfVertex[indices[f * 3 + 1]]
+    const c = canonicalOfVertex[indices[f * 3 + 2]]
+    const edges = [[a, b], [b, c], [c, a]]
+    for (let e = 0; e < 3; e += 1) {
+      const [s, t] = edges[e]
+      if (s === t) continue // degenerate edge
+      const key = s < t ? `${s}:${t}` : `${t}:${s}`
+      edgeCounts.set(key, (edgeCounts.get(key) || 0) + 1)
+    }
+  }
+
+  let boundaryEdges = 0
+  let nonManifoldEdges = 0
+  edgeCounts.forEach(count => {
+    if (count === 1) boundaryEdges += 1
+    else if (count > 2) nonManifoldEdges += 1
+  })
+
+  return {
+    watertight: faceCount > 0 && boundaryEdges === 0 && nonManifoldEdges === 0,
+    boundaryEdges,
+    nonManifoldEdges,
+  }
+}
+
 function resolveBooleanOperation(operation = 'union') {
   const normalized = String(operation || 'union').toLowerCase()
 

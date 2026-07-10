@@ -33,8 +33,9 @@ input triangle count or size.
 from __future__ import annotations
 import numpy as np
 import trimesh
-from scipy import ndimage
 from skimage import measure
+
+from .gpu import resolve_backend
 
 
 def _lattice_bary(k: int) -> np.ndarray:
@@ -45,25 +46,35 @@ def _lattice_bary(k: int) -> np.ndarray:
     return np.stack([a, b, 1.0 - a - b], axis=1)            # (P, 3)
 
 
-def bounded_surface_voxelize(mesh, pitch, samples_per_pitch=2.0, kmax=128, chunk=200_000):
+def bounded_surface_voxelize(mesh, pitch, samples_per_pitch=2.0, kmax=128,
+                             chunk=200_000, backend=None):
     """Memory-bounded surface voxelization.
 
     Returns (occupancy_grid: bool[X,Y,Z], origin: float[3]). The occupancy is the set
     of voxels touched by the surface, sampled densely enough (lattice spacing <=
     pitch/samples_per_pitch) that flood-fill cannot leak through. Peak memory is
     O(grid + chunk), independent of triangle size distribution.
+
+    The grid lives on `backend`'s array module (CuPy on GPU, NumPy on CPU); the
+    barycentric lattice, einsum scatter and clamp all run there. `origin` stays a
+    NumPy array — it is consumed on the host after marching cubes.
     """
+    be = backend or resolve_backend("cpu")
+    xp = be.xp
     lo = mesh.bounds[0].astype(np.float64)
     hi = mesh.bounds[1].astype(np.float64)
     pad = 3
     dims = (np.ceil((hi - lo) / pitch).astype(int) + 1 + 2 * pad)
     origin = lo - pad * pitch
-    grid = np.zeros(tuple(int(d) for d in dims), dtype=bool)
-    dmax = np.array(dims, np.int32) - 1
+    grid = xp.zeros(tuple(int(d) for d in dims), dtype=bool)
+    dmax = xp.asarray(np.array(dims, np.int32) - 1)
+    origin_x = xp.asarray(origin)
 
     tris = np.asarray(mesh.triangles, np.float64)           # (F, 3, 3)
     if len(tris) == 0:
         return grid, origin
+    # Edge lengths / subdivision level `k` are cheap and stay on the host so the
+    # np.unique bucketing below drives the (GPU or CPU) scatter loop identically.
     edges = np.stack([
         np.linalg.norm(tris[:, 1] - tris[:, 0], axis=1),
         np.linalg.norm(tris[:, 2] - tris[:, 1], axis=1),
@@ -73,21 +84,22 @@ def bounded_surface_voxelize(mesh, pitch, samples_per_pitch=2.0, kmax=128, chunk
 
     for kk in np.unique(k):
         sel = np.where(k == kk)[0]
-        bary = _lattice_bary(int(kk))                       # (P, 3)
+        bary = xp.asarray(_lattice_bary(int(kk)))           # (P, 3)
         P = len(bary)
         step = max(1, chunk // max(P, 1))                   # rows per chunk so rows*P<=chunk
         for s in range(0, len(sel), step):
-            T = tris[sel[s:s + step]]                       # (m, 3, 3)
-            pts = np.einsum("pj,mjc->mpc", bary, T).reshape(-1, 3)
-            vi = np.floor((pts - origin) / pitch).astype(np.int32)
-            np.clip(vi, 0, dmax, out=vi)
+            T = xp.asarray(tris[sel[s:s + step]])           # (m, 3, 3)
+            pts = xp.einsum("pj,mjc->mpc", bary, T).reshape(-1, 3)
+            vi = xp.floor((pts - origin_x) / pitch).astype(xp.int32)
+            vi = xp.clip(vi, 0, dmax)
             grid[vi[:, 0], vi[:, 1], vi[:, 2]] = True
     return grid, origin
 
 
 def voxel_shell(mesh: trimesh.Trimesh, resolution: int = 256,
                 close_iter: int = 1, smooth_sigma: float = 1.4,
-                samples_per_pitch: float = 2.0, taubin_steps: int = 10):
+                samples_per_pitch: float = 2.0, taubin_steps: int = 10,
+                device: str = "auto"):
     """Watertight shell via an EDT signed-distance field.
 
     Earlier versions extracted the iso-surface from a *blurred binary* occupancy,
@@ -100,26 +112,32 @@ def voxel_shell(mesh: trimesh.Trimesh, resolution: int = 256,
     real features survive. A few Taubin passes on the dense shell remove what's
     left; the projection stage later restores exact geometry from the original.
     """
+    be = resolve_backend(device)
+    xp, ndi = be.xp, be.ndi
     diag = float(np.linalg.norm(mesh.extents))
     pitch = diag / max(32, int(resolution))
 
-    dense, origin = bounded_surface_voxelize(mesh, pitch, samples_per_pitch)
-    if not dense.any():
+    # Grid ops (voxelize -> close -> EDT -> blur) run on the resolved backend;
+    # marching cubes and Taubin below have no CUDA drop-in, so the field is
+    # brought back to host memory before them.
+    dense, origin = bounded_surface_voxelize(mesh, pitch, samples_per_pitch, backend=be)
+    if not bool(dense.any()):
         raise RuntimeError("Voxelization produced an empty volume; lower shell_resolution.")
 
-    solid = ndimage.binary_dilation(dense, iterations=close_iter) if close_iter else dense.copy()
-    solid = ndimage.binary_fill_holes(solid)
+    solid = ndi.binary_dilation(dense, iterations=close_iter) if close_iter else dense.copy()
+    solid = ndi.binary_fill_holes(solid)
     if close_iter:
-        solid = ndimage.binary_erosion(solid, iterations=close_iter)
+        solid = ndi.binary_erosion(solid, iterations=close_iter)
     solid |= dense
     del dense
 
     # signed distance: positive outside, negative inside; zero level = surface
-    sdf = ndimage.distance_transform_edt(~solid).astype(np.float32)
-    sdf -= ndimage.distance_transform_edt(solid).astype(np.float32)
+    sdf = ndi.distance_transform_edt(~solid).astype(xp.float32)
+    sdf -= ndi.distance_transform_edt(solid).astype(xp.float32)
     del solid
     if smooth_sigma:
-        sdf = ndimage.gaussian_filter(sdf, float(smooth_sigma))
+        sdf = ndi.gaussian_filter(sdf, float(smooth_sigma))
+    sdf = be.tonumpy(sdf)
     verts, faces, _, _ = measure.marching_cubes(sdf, level=0.0)
     del sdf
 

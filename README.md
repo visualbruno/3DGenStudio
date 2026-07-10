@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-07-10** | Desktop App Installer<br>Speed up Auto Retopo<br>Added Clean Non-Manifold Edges in Auto Retopo |
 | **2026-07-08** | Added Hitem3D API v1 |
 | **2026-07-07** | Fixed slowness when queuing multiple ComfyUI workflows<br>SetupWizard: Added Gen Mesh with Hy2.0<br>MeshEditor - Projection: Fixed Blend overlap seams with original texture |
 | **2026-07-04** | Projects can be exported/imported<br>DB has been restructured and simplified<br>SetupWizard: Added Sam3.1 Segmentation + Gen Mesh with Hy2.1 |

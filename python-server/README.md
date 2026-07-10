@@ -36,7 +36,28 @@ run.bat
 ```
 
 First run creates `.venv`, installs `requirements.txt`, and serves on
-`0.0.0.0:8200`. Override with env vars:
+`0.0.0.0:8200`.
+
+### GPU acceleration (NVIDIA)
+
+On first setup `run.bat` runs `detect_cuda.py`: if an NVIDIA GPU is present it
+installs `requirements-nvidia.txt` (NVIDIA Warp) plus the `cupy-cudaXXx` wheel
+matching the CUDA version reported by `nvidia-smi` (e.g. CUDA 13.x → `cupy-cuda13x`).
+These accelerate the Auto Retopo **watertight-shell** (CuPy) and **surface-projection**
+(Warp) stages; the **remesh** stage has no GPU port and always runs on the CPU.
+Both are auto-detected at runtime, so the service falls back to CPU when they are
+absent. Two setup env vars:
+
+| Variable                   | Effect                                              |
+| -------------------------- | --------------------------------------------------- |
+| `MESHTOOLS_SKIP_GPU=1`     | Skip GPU detection/install (CPU-only setup)         |
+| `MESHTOOLS_CUPY_PACKAGE`   | Force a specific CuPy wheel, e.g. `cupy-cuda12x`     |
+
+To add GPU support to an existing `.venv`, activate it and run
+`pip install -r requirements-nvidia.txt` then `pip install cupy-cuda13x` (match
+your CUDA major).
+
+Override host/port etc. with env vars:
 
 | Variable                   | Default                  |
 | -------------------------- | ------------------------ |

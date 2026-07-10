@@ -28,6 +28,35 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
+from . import gpu
+
+
+class _TrimeshSurfaceQuery:
+    """CPU closest-point query wrapper matching WarpSurfaceQuery's 2-tuple return
+    (drops trimesh's distance term, which this stage does not use)."""
+
+    def __init__(self, target_mesh):
+        self._pq = trimesh.proximity.ProximityQuery(target_mesh)
+
+    def on_surface(self, pts):
+        closest, _dist, tid = self._pq.on_surface(pts)
+        return np.asarray(closest), np.asarray(tid)
+
+
+def _make_surface_query(target_mesh, device):
+    """Build a closest-point query, GPU-accelerated (NVIDIA Warp) when the device
+    request allows and a Warp+CUDA runtime is present; CPU (trimesh) otherwise.
+
+    Both backends expose `.on_surface(pts) -> (closest_points, face_ids)`.
+    """
+    if device != "cpu" and gpu.warp_cuda_available():
+        try:
+            from .warp_proximity import WarpSurfaceQuery
+            return WarpSurfaceQuery(target_mesh)
+        except Exception:
+            pass   # fall back to CPU if Warp construction/compile fails
+    return _TrimeshSurfaceQuery(target_mesh)
+
 
 def _vertex_adjacency(n_verts, F):
     e = np.vstack([F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]])
@@ -62,7 +91,7 @@ def _lap_smooth(D, idx, ptr, deg, rounds, alpha=0.7):
 
 
 def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4,
-                       field_smooth_rounds=3, final_snap_clamp=0.4):
+                       field_smooth_rounds=3, final_snap_clamp=0.4, device="auto"):
     """Project (V,F) onto target_mesh.
 
     Per iteration: (1) tangential relaxation - slide each vertex toward its
@@ -72,7 +101,19 @@ def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4
     smoothed as a field before applying (kills crease zigzag and thin-geometry
     punch-through). A final clamped normal-only micro-snap firms up creases.
     `clamp` is kept for API compatibility."""
-    pq = trimesh.proximity.ProximityQuery(target_mesh)
+    pq = _make_surface_query(target_mesh, device)
+    try:
+        return _project(pq, V, F, target_mesh, iters, relax_strength,
+                        field_smooth_rounds, final_snap_clamp)
+    finally:
+        # Release the (GPU) BVH as soon as projection is done, regardless of how
+        # we exit, so it doesn't linger until the next garbage-collection cycle.
+        if hasattr(pq, "free"):
+            pq.free()
+
+
+def _project(pq, V, F, target_mesh, iters, relax_strength,
+             field_smooth_rounds, final_snap_clamp):
     tgt_fn = np.asarray(target_mesh.face_normals)
     adjacency = _vertex_adjacency(len(V), F)
     idx, ptr, deg = _csr(adjacency)
@@ -87,7 +128,7 @@ def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4
             d -= normals * np.sum(d * normals, axis=1)[:, None]
             Vc = Vc + relax_strength * d
         # smoothed displacement toward the original surface
-        closest, _, tid = pq.on_surface(Vc)
+        closest, tid = pq.on_surface(Vc)
         D = closest - Vc
         agree = np.sum(normals * tgt_fn[tid], axis=1) >= 0.0
         D *= agree[:, None]
@@ -96,7 +137,7 @@ def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4
 
     if final_snap_clamp:
         normals = trimesh.Trimesh(Vc, F, process=False).vertex_normals
-        closest, _, tid = pq.on_surface(Vc)
+        closest, tid = pq.on_surface(Vc)
         D = closest - Vc
         agree = np.sum(normals * tgt_fn[tid], axis=1) >= 0.0
         D *= agree[:, None]

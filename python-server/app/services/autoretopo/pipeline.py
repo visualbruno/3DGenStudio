@@ -15,7 +15,7 @@ import numpy as np
 import trimesh
 
 from .config import RetopoConfig
-from . import ingest, shell, remesh, project, metrics, meshutil
+from . import ingest, shell, remesh, project, metrics, meshutil, gpu
 
 
 class RetopoResult:
@@ -73,8 +73,13 @@ class AutoRetopo:
 
         # Stage 1: base layer
         t0 = time.time()
-        report("shell", 0.08, "Building watertight shell" if cfg.watertight else "Preparing surface")
+        backend = gpu.resolve_backend(cfg.device)   # cached probe; also used for the UI message
+        report("shell",
+               0.08,
+               (f"Building watertight shell ({backend.name})" if cfg.watertight
+                else "Preparing surface"))
         if cfg.watertight:
+            self._log(f"[shell] backend={backend.name} (device={cfg.device})")
             res = cfg.shell_resolution
             fitted, peak_mb = shell.fit_resolution_to_budget(original, res, cfg.max_memory_gb)
             if fitted != res:
@@ -82,7 +87,7 @@ class AutoRetopo:
                           f"{cfg.max_memory_gb:.1f} GB budget (est. peak {peak_mb:.0f} MB)")
             V, F = shell.voxel_shell(original, fitted, cfg.shell_close_iter,
                                      cfg.shell_smooth, cfg.shell_samples_per_pitch,
-                                     taubin_steps=cfg.shell_taubin)
+                                     taubin_steps=cfg.shell_taubin, device=cfg.device)
             V, F = shell.largest_component(V, F)
             self._log(f"[shell] {len(F)} faces (watertight base)")
         else:
@@ -120,12 +125,18 @@ class AutoRetopo:
         # only in surface mode, where the remesher already reprojects onto the
         # original and a closest-point snap on noisy hard surfaces hurts.
         t0 = time.time()
-        report("project", 0.72, "Projecting to surface")
-        if cfg.project and (cfg.watertight or not cfg.preserve_features):
+        do_project = cfg.project and (cfg.watertight or not cfg.preserve_features)
+        proj_backend = ("GPU (Warp)" if (do_project and cfg.device != "cpu"
+                                         and gpu.warp_cuda_available()) else "CPU")
+        report("project", 0.72,
+               f"Projecting to surface ({proj_backend})" if do_project else "Projecting to surface")
+        if do_project:
+            self._log(f"[project] backend={proj_backend}")
             V = project.project_to_surface(
                 V, F, original, iters=cfg.project_iters,
-                clamp=cfg.project_clamp, relax_strength=cfg.relax_strength)
-        V, F = remesh.finalize_watertight(V, F) if cfg.watertight else remesh.clean_slivers(V, F)
+                clamp=cfg.project_clamp, relax_strength=cfg.relax_strength,
+                device=cfg.device)
+        V, F = remesh.finalize_watertight(V, F, verbose=cfg.verbose) if cfg.watertight else remesh.clean_slivers(V, F)
         t["project"] = time.time() - t0
 
         result_mesh = trimesh.Trimesh(V, F, process=False)

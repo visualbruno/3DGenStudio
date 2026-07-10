@@ -4,6 +4,9 @@ node_modules/
 # Build outputs
 dist/
 
+# Electron packaged installers
+release/
+
 # Local database and assets (Portable Data)
 data/
 

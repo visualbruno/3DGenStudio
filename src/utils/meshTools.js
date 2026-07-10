@@ -108,6 +108,12 @@ export function autoRetopo(meshBlob, opts = {}) {
   return callMeshTool('/meshes/auto-retopo', meshBlob, opts)
 }
 
+// Non-manifold / topology repair. Same SSE contract as Auto UV / Auto Retopo;
+// the tool stats carry before/after non-manifold + boundary edge counts.
+export function repairMesh(meshBlob, opts = {}) {
+  return callMeshTool('/meshes/repair', meshBlob, opts)
+}
+
 // Runs the bundled gltfpack binary server-side (not the Python service). Unlike
 // the SSE-based tools above, this returns a single JSON envelope with the
 // simplified GLB as base64. Same { blob, stats, previewUrl } contract so it

@@ -15,3 +15,10 @@ pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
 # --- Optional ----------------------------------------------------------------
 matplotlib>=3.8         # only needed for the CLI's UV-layout / compare PNGs
 rtree
+
+# --- Optional GPU acceleration (Auto Retopo) ---------------------------------
+# GPU packages live in requirements-nvidia.txt and are NOT installed from this
+# file. run.bat auto-detects an NVIDIA GPU on first setup and installs them
+# (Warp + the cupy-cudaXXx wheel matching your CUDA version); both are also
+# auto-detected at runtime with a CPU fallback when absent. See
+# requirements-nvidia.txt to install them manually.

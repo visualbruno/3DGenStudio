@@ -101,6 +101,16 @@ import {
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 
+// Last-resort safety net: a single dropped stream or stray async error should
+// never take the whole server down (which forced a full restart before). Log
+// and keep serving; individual requests still fail on their own if broken.
+process.on('uncaughtException', err => {
+  console.error('Uncaught exception (server kept alive):', err);
+});
+process.on('unhandledRejection', reason => {
+  console.error('Unhandled promise rejection (server kept alive):', reason);
+});
+
 // Build the externally-reachable base URL ("http://host:port") from the
 // incoming request so generated asset/media URLs point back at whatever host
 // and port the client actually used to reach us — works on another machine or
@@ -5774,7 +5784,27 @@ async function proxyMeshTool(operationPath, req, res) {
     res.end();
     return undefined;
   }
-  return Readable.fromWeb(upstream.body).pipe(res);
+
+  // Stream the upstream SSE to the browser. An aborted/failed upstream (e.g. the
+  // Python service dies, or undici's fetch body timeout fires on a long silent
+  // stage) makes this Readable emit 'error'. `.pipe()` does NOT forward source
+  // errors, so without this handler the unhandled 'error' would crash the whole
+  // Node process — taking every other endpoint (footer /system/stats, etc.) with
+  // it. Handle it: log, send a terminal SSE error so the browser stops waiting,
+  // and close cleanly.
+  const source = Readable.fromWeb(upstream.body);
+  source.on('error', err => {
+    console.error(`Mesh tool proxy (${operationPath}) upstream stream error:`, err);
+    if (!res.writableEnded) {
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'error', detail: 'The mesh service connection was lost.' })}\n\n`);
+      } catch { /* response already gone */ }
+      res.end();
+    }
+  });
+  // If the browser hangs up, stop reading the upstream.
+  res.on('close', () => { if (!source.destroyed) source.destroy(); });
+  return source.pipe(res);
 }
 
 app.post('/api/meshes/auto-uv', meshToolsUpload.single('meshFile'), async (req, res) => {
@@ -5792,6 +5822,15 @@ app.post('/api/meshes/auto-retopo', meshToolsUpload.single('meshFile'), async (r
   } catch (err) {
     console.error('Auto Retopo proxy failed:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message || 'Auto Retopo failed' });
+  }
+});
+
+app.post('/api/meshes/repair', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/repair', req, res);
+  } catch (err) {
+    console.error('Repair proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Repair failed' });
   }
 });
 

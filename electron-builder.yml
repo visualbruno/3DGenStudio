@@ -1,0 +1,88 @@
+# electron-builder configuration for 3D Gen Studio desktop builds.
+# Produces installers for Windows, macOS and Linux.
+#
+# Prereq: run `npm run build` (vite build → dist/) BEFORE packaging — the
+# backend serves dist/ and the packaged app loads it. `npm run dist` does both.
+#
+# Native modules (sqlite3): electron-builder rebuilds them against Electron's
+# ABI automatically (npmRebuild). CI runners have the required build tools; on a
+# local machine you need platform build tools (VS Build Tools on Windows,
+# Xcode CLT on macOS, build-essential/python3 on Linux).
+
+appId: com.3dgenstudio.app
+productName: 3D Gen Studio
+copyright: Copyright © 2026 3D Gen Studio
+
+directories:
+  output: release
+  buildResources: build
+
+# asar:false keeps files on disk unpacked so the Express backend can require
+# its modules and serve dist/ with plain fs paths (no asar path shims).
+asar: false
+
+# Explicit include list — the repo has large dirs (.kilo, data/, docs/,
+# designs/, python-server/.venv) we must NOT ship. node_modules production
+# deps are always included by electron-builder automatically.
+files:
+  - server.js
+  - storage.js
+  - wikiStorage.js
+  - version.json
+  - package.json
+  - dist/**/*
+  - electron/**/*
+  - comfyui_workflows/**/*
+  - setup/**/*
+  - tools/**/*
+  - wiki/**/*
+  - python-server/**/*
+  - "!python-server/.venv/**"
+  - "!python-server/**/__pycache__/**"
+  - "!python-server/*.log"
+  - "!**/*.map"
+
+win:
+  icon: public/3dgenstudio.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  # TODO: add build/icon.icns for a branded icon (falls back to default now).
+  category: public.app-category.graphics-design
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+  # Signing/notarization: set CSC_LINK + CSC_KEY_PASSWORD (Developer ID cert)
+  # and APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID env vars in CI.
+  # Without them the .dmg is unsigned and macOS shows a Gatekeeper warning.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+
+linux:
+  # TODO: add build/icon.png (512x512) for a branded icon.
+  category: Graphics
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+
+# Optional auto-update feed. Point at your GitHub releases to enable
+# electron-updater later (pairs with your existing version.json flow).
+# publish:
+#   provider: github
+#   owner: visualbruno
+#   repo: 3DGenStudio
