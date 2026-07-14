@@ -268,11 +268,18 @@ async function boot() {
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
 }
 
+let didShutdown = false;
 function shutdown() {
+  if (didShutdown) return;
+  didShutdown = true;
   shuttingDown = true;
+  // Kill each service's whole process tree (the rigging service spawns a
+  // bpy_server child that a plain kill would orphan — leaving a python.exe
+  // running that holds the rig venv).
   for (const h of [pythonHandle, rigHandle]) {
     if (h && typeof h.stop === 'function') { try { h.stop(); } catch { /* ignore */ } }
   }
+  // Backend is a lone Node process (no long-lived children) → a plain kill is fine.
   if (backendProc && !backendProc.killed) { try { backendProc.kill(); } catch { /* ignore */ } }
 }
 

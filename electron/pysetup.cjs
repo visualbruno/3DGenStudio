@@ -250,6 +250,22 @@ function scaled(evt, lo, hi) {
   return evt;
 }
 
+// Kill a process AND its descendants. The rigging service is a tree —
+// rig_server.py spawns bpy_server.py as a child — and a plain proc.kill() only
+// terminates the direct child, orphaning bpy_server (which then keeps holding
+// the rig venv). On Windows `taskkill /T` walks the whole PID tree; on POSIX we
+// signal the process group.
+function killTree(pid) {
+  if (!pid) return;
+  try {
+    if (IS_WIN) {
+      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      try { process.kill(-pid, 'SIGTERM'); } catch { process.kill(pid, 'SIGTERM'); }
+    }
+  } catch { /* already gone */ }
+}
+
 // ---- Launchers -------------------------------------------------------------
 function startPythonServer({ serviceDir, venvDir, port, logStream, log }) {
   return startService({
@@ -287,8 +303,13 @@ function startService({ name, serviceDir, venvDir, script, env, logStream, log }
   } catch (err) {
     log && log(`${name} service failed to start: ${err.message}`);
   }
+  let stopped = false;
   return {
-    stop() { if (proc && !proc.killed) { try { proc.kill(); } catch { /* ignore */ } } },
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      if (proc && proc.pid) killTree(proc.pid);
+    },
   };
 }
 
@@ -301,4 +322,5 @@ module.exports = {
   setupSkintokens,
   startPythonServer,
   startSkintokens,
+  killTree,
 };
