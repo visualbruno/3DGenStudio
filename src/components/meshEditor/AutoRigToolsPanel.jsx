@@ -129,6 +129,9 @@ export default function AutoRigToolsPanel({
         <ToggleField label="Voxel-skin postprocess" value={o.use_postprocess}
           onChange={v => setOption('use_postprocess', v)} disabled={fieldsDisabled}
           hint="Clean up skin weights with a voxel pass to reduce bleed across disconnected parts" />
+        <ToggleField label="Keep model loaded in memory" value={o.keep_loaded}
+          onChange={v => setOption('keep_loaded', v)} disabled={fieldsDisabled}
+          hint="Keep the rig model in (GPU) memory for fast repeat rigs. Uncheck to free memory after each rig — the next rig reloads it (slower first run)." />
       </div>
 
       <div className="mesh-editor-panel__section">

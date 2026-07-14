@@ -196,6 +196,39 @@ class RigPipeline:
         print("[rig] model loaded")
         return self
 
+    def unload(self) -> None:
+        """Free the model from (GPU) memory. A subsequent rig() reloads it.
+
+        Note: this returns the model's allocations to CUDA's caching allocator and
+        empties that cache, but the process's CUDA context + library workspaces
+        (cuDNN/cuBLAS/flash-attn) stay resident for the process lifetime — so some
+        GPU memory (typically ~1 GB) remains in use until the service exits.
+        """
+        import gc
+
+        # Drop every reference to the model / its submodules first.
+        self.model = None
+        self.tokenizer = None
+        self.transform = None
+
+        # Collect BEFORE emptying the cache — torch module graphs contain
+        # reference cycles that only gc breaks; freeing them first lets
+        # empty_cache actually reclaim their blocks. A second pass mops up
+        # anything the first pass resurrected via finalizers.
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                gc.collect()
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        print("[rig] model unloaded")
+
     def rig(
         self,
         input_path,
@@ -389,6 +422,21 @@ class RigPipeline:
                 raise RuntimeError(f"bpy_server returned: {res}")
             print(f"[rig] exported: {out_path}")
             results_out.append(out_path)
+
+            # Drop this iteration's GPU tensors so they don't pile up across a
+            # multi-mesh run (preds/batch hold the generated tensors + inputs).
+            del preds, asset, batch
+
+        # Release everything that references the model before returning, so a
+        # subsequent unload() can actually free it. The DataLoader + dataset
+        # module hold the model via process_fn (and a num_workers loader keeps a
+        # worker alive), so tear them down explicitly rather than waiting on GC.
+        try:
+            if hasattr(dataloader, "_iterator") and dataloader._iterator is not None:
+                dataloader._iterator._shutdown_workers()
+        except Exception:
+            pass
+        del dataloader, module, dataset_config
 
         report("done", 1.0, "Rigging complete.")
         return results_out

@@ -171,6 +171,9 @@ def _parse_options(raw: str | None) -> dict:
         temperature=_num("temperature", 1.0, float),
         repetition_penalty=_num("repetition_penalty", 2.0, float),
         num_beams=_num("num_beams", 10, int),
+        # Not a rig() argument — popped off before the call. When False, the model
+        # is freed from memory after the rig (next request reloads it).
+        keep_loaded=bool(data.get("keep_loaded", True)),
     )
 
 
@@ -190,6 +193,7 @@ async def rig(
     format: str = Form("glb"),
 ) -> StreamingResponse:
     opts = _parse_options(options)
+    keep_loaded = opts.pop("keep_loaded", True)
     data = await meshFile.read()
     if not data:
         raise HTTPException(status_code=400, detail="meshFile is empty.")
@@ -222,6 +226,14 @@ async def rig(
                     progress=emit,
                     **opts,
                 )
+                # Free the model unless the user asked to keep it warm. Done under
+                # the lock so no other request sees a half-unloaded pipeline; the
+                # next rig reloads it via _ensure_ready.
+                if not keep_loaded:
+                    global _pipeline
+                    emit("unload", 0.99, "Unloading model from memory…")
+                    pipeline.unload()
+                    _pipeline = None
             payload = out_path.read_bytes()
             holder["payload"] = {
                 "format": "glb",

@@ -203,6 +203,7 @@ const DEFAULT_AUTO_RIG_OPTIONS = {
   use_transfer: true,
   use_postprocess: false,
   rename_bones: 'mixamo',
+  keep_loaded: true,
   top_k: 5,
   top_p: 0.95,
   temperature: 1.0,
