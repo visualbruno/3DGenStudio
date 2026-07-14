@@ -238,6 +238,31 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
                 </span>
                 <span>Auto-align to floor</span>
               </button>
+
+              {animation?.canAdjustArms && (
+                <div className="mesh-editor-anim__arms">
+                  <div className="mesh-editor-anim__arms-head">
+                    <span className="mesh-editor-panel__hint">Expand / Contract arms</span>
+                    <button
+                      type="button"
+                      className="mesh-editor-anim__arms-reset"
+                      onClick={() => animation.onArmExtensionChange(0)}
+                      title="Reset arm spread"
+                    >
+                      <span className="material-symbols-outlined">restart_alt</span>
+                    </button>
+                  </div>
+                  <div className="mesh-editor-anim__arms-row">
+                    <input
+                      type="range" min="-100" max="100" step="1"
+                      value={animation.armExtension}
+                      onChange={e => animation.onArmExtensionChange(Number(e.target.value))}
+                    />
+                    <span className="mesh-editor-anim__arms-val">{animation.armExtension}%</span>
+                  </div>
+                </div>
+              )}
+
               <div className="mesh-editor-layers-panel__header">
                 <span className="mesh-editor-layers-panel__title">Animations</span>
                 <span className="mesh-editor-panel__hint">{animation?.clips?.length || 0}</span>

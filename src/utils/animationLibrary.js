@@ -9,7 +9,7 @@
 //   2. map the source bones to the user's mesh bones (auto + manual),
 //   3. retarget each clip from the source skeleton to the target skeleton with
 //      three's SkeletonUtils.retargetClip, then play it on the target SkinnedMesh.
-import { AnimationClip, AnimationMixer, Box3, Quaternion, QuaternionKeyframeTrack } from 'three'
+import { AnimationClip, AnimationMixer, Box3, Matrix4, Quaternion, QuaternionKeyframeTrack, Vector3, VectorKeyframeTrack } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { resourceUrl } from '../config'
 
@@ -118,8 +118,10 @@ export async function loadTargetScene({ riggedBuffer, modelUrl }) {
   if (!skinnedMesh) throw new Error('The current mesh is not skinned (no bones to animate).')
   skinnedMesh.skeleton.pose()
   gltf.scene.updateMatrixWorld(true)
-  // Bind-pose floor offset: how far to lift the scene so its lowest point sits
-  // on y=0 (the grid). Used by the "Auto-align to floor" toggle.
+  // One-time "auto-align to floor" offset: how far to lift the rest pose so its
+  // lowest point sits on y=0 (the grid). Applied as a constant during playback —
+  // NOT a per-frame foot lock — so animations keep their natural motion (jumps
+  // leave the ground, crouches lower, etc.).
   const box = new Box3().setFromObject(gltf.scene)
   const floorOffset = Number.isFinite(box.min.y) ? -box.min.y : 0
   return {
@@ -288,6 +290,12 @@ export function retargetAnimationClip({
   const targetBones = []
   targetScene.traverse(o => { if (o.isBone) targetBones.push(o) })
 
+  // Hip bone (drives vertical body motion): the target bone mapped from the
+  // source's hip. Its position IS retargeted (scaled) so crouches/pushups lower
+  // the body and the feet stay planted — everything else is rotation-only.
+  const sourceHipName = detectHipBone(sourceSkeleton.bones.map(b => b.name))
+  const hipTargetName = Object.keys(mapping).find(t => mapping[t] === sourceHipName) || null
+
   // Capture bind-pose world quaternions for both rigs.
   sourceSkeleton.pose(); sourceScene.updateMatrixWorld(true)
   targetSkinnedMesh.skeleton.pose(); targetScene.updateMatrixWorld(true)
@@ -295,6 +303,18 @@ export function retargetAnimationClip({
   sourceSkeleton.bones.forEach(b => srcBindWorldInv.set(b.name, b.getWorldQuaternion(new Quaternion()).invert()))
   const tgtBindWorld = new Map()
   targetBones.forEach(b => tgtBindWorld.set(b.name, b.getWorldQuaternion(new Quaternion())))
+
+  // Hip position bind state + size scale (target hip height / source hip height),
+  // so the source's hip translation maps to the target's proportions.
+  const srcHipBone = sourceByName.get(sourceHipName) || null
+  const hipTargetBone = hipTargetName ? targetBones.find(b => b.name === hipTargetName) : null
+  const srcHipBindPos = srcHipBone ? srcHipBone.getWorldPosition(new Vector3()) : null
+  const tgtHipBindPos = hipTargetBone ? hipTargetBone.getWorldPosition(new Vector3()) : null
+  const hipParentBindInv = hipTargetBone ? new Matrix4().copy(hipTargetBone.parent.matrixWorld).invert() : null
+  let hipScale = 1
+  if (srcHipBindPos && tgtHipBindPos && Math.abs(srcHipBindPos.y) > 1e-6) {
+    hipScale = tgtHipBindPos.y / srcHipBindPos.y
+  }
 
   // Only target bones that map to an existing source bone get animated.
   const mapped = targetBones.filter(b => mapping[b.name] && sourceByName.has(mapping[b.name]))
@@ -304,11 +324,13 @@ export function retargetAnimationClip({
   const dt = frameCount > 1 ? duration / (frameCount - 1) : 0
   const times = new Float32Array(frameCount)
   const values = new Map(mapped.map(b => [b.name, new Float32Array(frameCount * 4)]))
+  const hipPosValues = hipTargetBone ? new Float32Array(frameCount * 3) : null
 
   const mixer = new AnimationMixer(sourceScene)
   mixer.clipAction(clip).play()
 
   const sAnimW = new Quaternion(), deltaW = new Quaternion(), desiredW = new Quaternion(), parentWInv = new Quaternion(), local = new Quaternion()
+  const sHipAnim = new Vector3(), hipWorld = new Vector3(), hipLocal = new Vector3()
 
   for (let f = 0; f < frameCount; f++) {
     const t = f * dt
@@ -321,6 +343,14 @@ export function retargetAnimationClip({
     targetSkinnedMesh.skeleton.pose()
     targetScene.updateMatrixWorld(true)
     for (const tb of mapped) {
+      // Hip position: bind + scaled source-hip delta, converted to hip-local.
+      if (tb === hipTargetBone) {
+        srcHipBone.getWorldPosition(sHipAnim)
+        hipWorld.subVectors(sHipAnim, srcHipBindPos).multiplyScalar(hipScale).add(tgtHipBindPos)
+        hipLocal.copy(hipWorld).applyMatrix4(hipParentBindInv)
+        tb.position.copy(hipLocal)
+        hipLocal.toArray(hipPosValues, f * 3)
+      }
       const sName = mapping[tb.name]
       sourceByName.get(sName).getWorldQuaternion(sAnimW)
       deltaW.multiplyQuaternions(sAnimW, srcBindWorldInv.get(sName))
@@ -341,5 +371,23 @@ export function retargetAnimationClip({
 
   const tracks = mapped.map(tb =>
     new QuaternionKeyframeTrack(`.bones[${tb.name}].quaternion`, times, values.get(tb.name)))
+  if (hipTargetBone && hipPosValues) {
+    tracks.push(new VectorKeyframeTrack(`.bones[${hipTargetBone.name}].position`, times, hipPosValues))
+  }
   return new AnimationClip(clip.name, duration, tracks)
+}
+
+// Target bones that correspond to the left/right UPPER ARM (for the
+// Expand/Contract Arms control). Derived from the saved mapping: the source
+// upper-arm bones are `upperarm_l` / `upperarm_r` (humanoid references).
+export function findUpperArmTargets(mapping) {
+  const left = []
+  const right = []
+  for (const [target, source] of Object.entries(mapping || {})) {
+    const s = String(source).toLowerCase()
+    if (!s.includes('upperarm') && !(s.includes('arm') && !s.includes('fore') && !s.includes('lower') && !s.includes('hand'))) continue
+    if (/_l$|left|lupperarm|upperarml/.test(s) || s.endsWith('l')) left.push(target)
+    else if (/_r$|right|rupperarm|upperarmr/.test(s) || s.endsWith('r')) right.push(target)
+  }
+  return { left, right }
 }

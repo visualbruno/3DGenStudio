@@ -155,7 +155,7 @@ import SkeletonOverlay from '../components/meshEditor/SkeletonOverlay'
 import SkeletonPanel from '../components/meshEditor/SkeletonPanel'
 import AnimatedMeshPreview from '../components/meshEditor/AnimatedMeshPreview'
 import BoneMappingModal from '../components/meshEditor/BoneMappingModal'
-import { loadReferenceScene, loadTargetScene, autoMapBones, retargetAnimationClip, getReference } from '../utils/animationLibrary'
+import { loadReferenceScene, loadTargetScene, autoMapBones, retargetAnimationClip, findUpperArmTargets, getReference } from '../utils/animationLibrary'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, ensureDesktopService } from '../utils/meshTools'
 
@@ -465,6 +465,8 @@ export default function MeshEditorPage() {
   const [animRetargeting, setAnimRetargeting] = useState(null)   // clip name currently retargeting
   const [animPreview, setAnimPreview] = useState(null)           // { scene, skinnedMesh, clip, floorOffset }
   const [animAlignFloor, setAnimAlignFloor] = useState(true)     // sit the animated mesh on the grid
+  const [animArmExtension, setAnimArmExtension] = useState(0)    // Expand/Contract arms (%)
+  const [animArmTargets, setAnimArmTargets] = useState(null)     // { left:[], right:[] } upper-arm target bones
   const animSourceRef = useRef(null)   // loaded reference: { scene, skinnedMesh, boneNames, clips, hipName }
   const animTargetRef = useRef(null)   // loaded target skinned mesh: { scene, skinnedMesh, boneNames }
   // The rigged GLB blob returned by the service, kept for Save-as-version / download.
@@ -1969,6 +1971,8 @@ export default function MeshEditorPage() {
           setSelectedAnimation(null)
           setAnimPreview(null)
           setAnimError(null)
+          setAnimArmTargets(null)
+          setAnimArmExtension(0)
           animSourceRef.current = null
           animTargetRef.current = null
           setAutoRigResult(null)
@@ -4119,6 +4123,8 @@ export default function MeshEditorPage() {
       setAnimClips([])
       setSelectedAnimation(null)
       setAnimPreview(null)
+      setAnimArmTargets(null)
+      setAnimArmExtension(0)
 
       const t = stats?.tool || {}
       const rows = []
@@ -4243,6 +4249,7 @@ export default function MeshEditorPage() {
 
   const handleSaveBoneMapping = useCallback((mapping) => {
     setAnimMapping(mapping)
+    setAnimArmTargets(findUpperArmTargets(mapping))
     setShowBoneMapping(false)
     const clips = animSourceRef.current?.clips || []
     setAnimClips(clips.map(c => ({ name: c.name })))
@@ -4301,8 +4308,12 @@ export default function MeshEditorPage() {
     error: animError,
     alignFloor: animAlignFloor,
     onToggleAlignFloor: () => setAnimAlignFloor(v => !v),
+    armExtension: animArmExtension,
+    onArmExtensionChange: setAnimArmExtension,
+    canAdjustArms: !!(animArmTargets && (animArmTargets.left.length || animArmTargets.right.length)),
   }), [animReferenceId, handleSelectAnimReference, handleOpenBoneMapping, animMapping, animClips,
-    selectedAnimation, handleSelectAnimation, animRetargeting, animLoading, animError, animAlignFloor])
+    selectedAnimation, handleSelectAnimation, animRetargeting, animLoading, animError, animAlignFloor,
+    animArmExtension, animArmTargets])
 
   // On-demand watertight check for the Auto Retopo panel. The position-welded
   // edge scan can take a moment on dense meshes, so it runs behind a button with
@@ -6679,7 +6690,10 @@ export default function MeshEditorPage() {
                         object={animPreview.scene}
                         mixerRoot={animPreview.skinnedMesh}
                         clip={animPreview.clip}
-                        yOffset={animAlignFloor ? animPreview.floorOffset : 0}
+                        alignFloor={animAlignFloor}
+                        floorOffset={animPreview.floorOffset}
+                        armExtension={animArmExtension}
+                        armTargets={animArmTargets}
                       />
                     ) : (activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection' || activeMenu === 'optimize') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || maskTextureRef.current) ? (
                       <TexturedMesh

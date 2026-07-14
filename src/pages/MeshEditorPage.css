@@ -668,6 +668,58 @@
   font-size: 1.1rem;
 }
 
+.mesh-editor-anim__arms {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 8px;
+  background: var(--surface, #141418);
+}
+
+.mesh-editor-anim__arms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mesh-editor-anim__arms-reset {
+  display: inline-flex;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mesh-editor-anim__arms-reset:hover {
+  color: #8ff5ff;
+}
+
+.mesh-editor-anim__arms-reset .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+
+.mesh-editor-anim__arms-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mesh-editor-anim__arms-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.mesh-editor-anim__arms-val {
+  font-size: 0.75rem;
+  color: var(--on-surface);
+  min-width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 .mesh-editor-anim__list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
