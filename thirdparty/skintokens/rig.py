@@ -521,8 +521,22 @@ def main() -> None:
         raise RuntimeError(f"No valid 3D files found under: {input_path}")
     outputs = _resolve_outputs(files, input_path, output_path)
 
+    # When driven as a subprocess (e.g. the rig service's "cold" path), stream
+    # progress as JSON lines on stdout so the parent can forward them; otherwise
+    # progress is just the tqdm bar. Enabled via RIG_PROGRESS_JSON=1.
+    progress = None
+    if os.environ.get("RIG_PROGRESS_JSON"):
+        import json as _json
+
+        def progress(stage, frac, message=""):  # noqa: E306
+            print(f"@@RP@@{_json.dumps({'stage': stage, 'frac': frac, 'message': message})}", flush=True)
+
     pipeline = RigPipeline(model_ckpt=args.model_ckpt, hf_path=args.hf_path)
+    if progress:
+        progress("init", 0.01, "Starting Blender worker…")
     with BpyServer():
+        if progress:
+            progress("model", 0.03, "Loading rig model…")
         pipeline.load()
         pipeline._run(
             files,
@@ -536,6 +550,7 @@ def main() -> None:
             temperature=args.temperature,
             repetition_penalty=args.repetition_penalty,
             num_beams=args.num_beams,
+            progress=progress,
         )
 
     print(f"[rig] done. {len(outputs)} mesh(es) rigged.")

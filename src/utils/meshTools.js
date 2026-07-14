@@ -8,6 +8,19 @@
 // this helper decodes it into { blob, stats, previewUrl }.
 import { API_BASE } from '../config'
 
+// In the desktop app the Python services (Mesh Tools, Rigging) are started on
+// demand. Call this before a request that needs one — it starts the service and
+// waits until it's healthy. Outside the desktop app it's a no-op (the services
+// are launched externally). name: 'meshtools' | 'rigging'.
+export async function ensureDesktopService(name) {
+  const svc = typeof window !== 'undefined' ? window.genStudioServices : null
+  if (!svc?.isDesktop) return
+  const res = await svc.ensure(name)
+  if (!res?.ok) {
+    throw new Error(res?.error || `Could not start the ${name === 'rigging' ? 'Rigging' : 'Mesh Tools'} service.`)
+  }
+}
+
 // Decode a base64 string into a Blob of the given MIME type.
 function base64ToBlob(base64, type) {
   const binary = atob(base64)

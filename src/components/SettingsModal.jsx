@@ -14,6 +14,78 @@ function getCustomApiTypeLabel(type) {
   return CUSTOM_API_TYPE_OPTIONS.find(option => option.value === type)?.label || 'Image Generation'
 }
 
+// Desktop-only: start/stop a Python service on demand and show its status. The
+// services aren't started at app launch — they spin up when a tool needs them,
+// and can be stopped here (stopping Rigging frees its GPU memory). Renders
+// nothing outside the desktop app.
+function ServiceControl({ name }) {
+  const bridge = typeof window !== 'undefined' ? window.genStudioServices : null
+  const isDesktop = !!bridge?.isDesktop
+  const [st, setSt] = useState(null)
+  const [busy, setBusy] = useState('') // '' | 'start' | 'stop'
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isDesktop) return undefined
+    let alive = true
+    const refresh = async () => {
+      try { const s = await bridge.status(); if (alive) setSt(s?.[name] || null) } catch { /* ignore */ }
+    }
+    refresh()
+    const id = setInterval(refresh, 3000) // reflect starting → running transitions
+    return () => { alive = false; clearInterval(id) }
+  }, [isDesktop, bridge, name])
+
+  if (!isDesktop || !st) return null
+  if (!st.installed) return null // not installed yet (Rigging install is handled above)
+
+  const stopping = busy === 'stop'
+  const starting = !stopping && (st.starting || busy === 'start')
+  const running = st.running && !starting && !stopping
+
+  const applyResult = (r) => {
+    if (r?.status?.[name]) setSt(r.status[name])
+    if (r && r.ok === false) setError(r.error || 'Operation failed.')
+  }
+  const doStart = async () => {
+    setError(''); setBusy('start')
+    try { applyResult(await bridge.start(name)) }
+    catch (e) { setError(e?.message || 'Failed to start.') }
+    finally { setBusy('') }
+  }
+  const doStop = async () => {
+    setError(''); setBusy('stop')
+    try { applyResult(await bridge.stop(name)) }
+    catch (e) { setError(e?.message || 'Failed to stop.') }
+    finally { setBusy('') }
+  }
+
+  const dotColor = running ? '#4caf50' : (starting || stopping) ? '#e0a030' : '#6b7280'
+  const btn = {
+    fontFamily: 'inherit', fontSize: '12px', fontWeight: 600, cursor: busy ? 'default' : 'pointer',
+    borderRadius: '8px', padding: '6px 14px', border: '1px solid rgba(255,255,255,0.12)',
+    background: '#1b2130', color: '#e8eaf0', opacity: busy ? 0.6 : 1,
+  }
+
+  return (
+    <div style={{ marginTop: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6em' }}>
+        <span style={{ width: 9, height: 9, borderRadius: '50%', background: dotColor, boxShadow: running ? '0 0 6px #4caf50' : 'none', flex: 'none' }} />
+        <span className="settings-helper-text" style={{ margin: 0 }}>
+          {stopping ? 'Stopping…' : starting ? 'Starting…' : running ? 'Running' : 'Stopped'}
+        </span>
+        <div style={{ flex: 1 }} />
+        {running ? (
+          <button type="button" style={btn} onClick={doStop} disabled={!!busy}>Stop</button>
+        ) : (
+          <button type="button" style={btn} onClick={doStart} disabled={!!busy}>{starting ? 'Starting…' : 'Start'}</button>
+        )}
+      </div>
+      {error && <p className="settings-helper-text" style={{ color: '#f87171' }}>{error}</p>}
+    </div>
+  )
+}
+
 // Desktop-only: install the (opt-in) rigging service after first run — for users
 // who upgraded, skipped it on the setup screen, or later added a GPU. Drives the
 // same uv provisioning as the first-run window via the genStudioSetup bridge and
@@ -562,9 +634,11 @@ export default function SettingsModal({ onClose }) {
                 </div>
 
                 <p className="settings-helper-text">
-                  The Python mesh-processing service (Auto UV, Auto Retopo). Start it from
-                  python-server/run.bat. Can run on another machine or port.
+                  The Python mesh-processing service (Auto UV, Auto Retopo). In the desktop
+                  app it starts automatically when you use those tools; you can also start or
+                  stop it here. Outside the desktop app, start it from python-server/run.
                 </p>
+                <ServiceControl name="meshtools" />
               </div>
 
               <h3 className="settings-section-title font-label">Rigging (Python) Connection</h3>
@@ -618,9 +692,11 @@ export default function SettingsModal({ onClose }) {
 
                 <p className="settings-helper-text">
                   The SkinTokens/TokenRig rigging service (Auto Rig). Needs an NVIDIA GPU (≥14 GB).
+                  In the desktop app it starts on demand; Stop it here to free GPU memory.
                   Outside the desktop app, start it from thirdparty/skintokens/run_server.
                 </p>
                 <RiggingInstaller />
+                <ServiceControl name="rigging" />
               </div>
             </section>
           )}

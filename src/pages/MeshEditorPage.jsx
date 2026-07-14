@@ -153,7 +153,7 @@ import AutoRetopoToolsPanel from '../components/meshEditor/AutoRetopoToolsPanel'
 import AutoRigToolsPanel from '../components/meshEditor/AutoRigToolsPanel'
 import SkeletonOverlay from '../components/meshEditor/SkeletonOverlay'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
-import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService } from '../utils/meshTools'
+import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, ensureDesktopService } from '../utils/meshTools'
 
 // Default option sets for the Python mesh-tools panels. These mirror the
 // defaults of autouv.unwrap() and autoretopo.RetopoConfig 1:1 (see
@@ -3871,7 +3871,7 @@ export default function MeshEditorPage() {
   // pre-op mesh onto the modeling undo stack, so "Revert" is just an undo.
   // After applying, the texturable-mesh state is rebuilt so the new UVs (Auto
   // UV) immediately enable painting/texturing/projection.
-  const runMeshTool = useCallback(async (service, options, { setRunning, setResult, setProgress, buildRows, label, preserveTexture = false }) => {
+  const runMeshTool = useCallback(async (service, options, { setRunning, setResult, setProgress, buildRows, label, preserveTexture = false, requiresService = null }) => {
     if (!geometry || autoUvRunning || autoRetopoRunning || optimizeRunning || repairRunning) {
       return
     }
@@ -3881,6 +3881,11 @@ export default function MeshEditorPage() {
     setError('')
     setFeedback(`${label}…`)
     try {
+      // Desktop: start the required Python service on demand (no-op elsewhere).
+      if (requiresService) {
+        setProgress({ stage: 'service', frac: 0, message: 'Starting service…' })
+        await ensureDesktopService(requiresService)
+      }
       const glbBuffer = await exportGeometryToGlb(geometry)
       const meshBlob = new Blob([glbBuffer], { type: 'model/gltf-binary' })
       const { blob, stats, previewUrl } = await service(meshBlob, {
@@ -3940,6 +3945,7 @@ export default function MeshEditorPage() {
       setResult: setAutoUvResult,
       setProgress: setAutoUvProgress,
       label: 'Auto UV',
+      requiresService: 'meshtools',
       buildRows: stats => {
         const t = stats?.tool || {}
         const rows = []
@@ -3958,6 +3964,7 @@ export default function MeshEditorPage() {
       setResult: setAutoRetopoResult,
       setProgress: setAutoRetopoProgress,
       label: 'Auto Retopo',
+      requiresService: 'meshtools',
       buildRows: stats => {
         const m = stats?.tool?.metrics || {}
         const rows = [
@@ -4017,6 +4024,9 @@ export default function MeshEditorPage() {
     setError('')
     setFeedback('Auto Rig…')
     try {
+      // Desktop: start the rigging service on demand (no-op elsewhere).
+      setAutoRigProgress({ stage: 'service', frac: 0, message: 'Starting rigging service…' })
+      await ensureDesktopService('rigging')
       const canExportTextured = !!(
         texturableMesh?.root
         && texturableMesh?.textureCanvas
@@ -4140,6 +4150,7 @@ export default function MeshEditorPage() {
       setResult: setRepairResult,
       setProgress: setRepairProgress,
       label: 'Repair',
+      requiresService: 'meshtools',
       buildRows: stats => {
         const t = stats?.tool || {}
         const before = t.before || {}

@@ -11,6 +11,19 @@ contextBridge.exposeInMainWorld('genStudioDesktop', {
   version: process.env.npm_package_version || null,
 });
 
+// Start/stop the on-demand Python services (Mesh Tools, Rigging). Used by the
+// mesh-editor tool handlers (ensure the right service is up before a request)
+// and by Settings (manual Start/Stop). No-op semantics outside the desktop app,
+// where the services are launched externally.
+contextBridge.exposeInMainWorld('genStudioServices', {
+  isDesktop: true,
+  // Ensure a service is running + healthy before use. name: 'meshtools' | 'rigging'.
+  ensure: (name) => ipcRenderer.invoke('services:ensure', { name }),
+  start: (name) => ipcRenderer.invoke('services:start', { name }),
+  stop: (name) => ipcRenderer.invoke('services:stop', { name }),
+  status: () => ipcRenderer.invoke('services:status'),
+});
+
 contextBridge.exposeInMainWorld('genStudioSetup', {
   // Kick off provisioning. opts: { rigging: boolean }. Resolves to { ok, error }.
   run: (opts) => ipcRenderer.invoke('setup:run', opts),

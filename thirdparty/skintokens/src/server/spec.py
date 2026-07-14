@@ -13,7 +13,9 @@ PORT = 59875
 SERVER = f"http://localhost:{PORT}"
 TMP_CKPT_DIR = "./tmp_ckpt"
 
-BPY_PORT = 59876
+# Overridable so a short-lived "cold" rig worker can run its own bpy_server on a
+# different port without colliding with a warm in-process one (see rig_server.py).
+BPY_PORT = int(os.environ.get("BPY_PORT", "59876"))
 BPY_SERVER = f"http://localhost:{BPY_PORT}"
 
 @dataclass

@@ -36,6 +36,8 @@ import os
 import queue
 import shutil
 import struct
+import subprocess
+import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -72,6 +74,9 @@ HOST = os.environ.get("RIGTOOLS_HOST", "0.0.0.0")
 PORT = int(os.environ.get("RIGTOOLS_PORT", "8300") or "8300")
 MODEL_CKPT = os.environ.get("RIGTOOLS_MODEL_CKPT", DEFAULT_MODEL_CKPT)
 HF_PATH = os.environ.get("RIGTOOLS_HF_PATH") or None
+# bpy port for the short-lived "cold" (keep_loaded=False) worker — distinct from
+# the default 59876 a warm in-process bpy_server uses, so the two never collide.
+COLD_BPY_PORT = os.environ.get("RIGTOOLS_COLD_BPY_PORT", "59900")
 MAX_UPLOAD_BYTES = int(os.environ.get("RIGTOOLS_MAX_UPLOAD_BYTES", str(512 * 1024 * 1024)))
 ALLOWED_ORIGINS = [
     o.strip()
@@ -115,6 +120,54 @@ def _ensure_ready(report) -> RigPipeline:
         report("model", 0.03, "Loading rig model (first run may take a minute)…")
         _pipeline = RigPipeline(model_ckpt=MODEL_CKPT, hf_path=HF_PATH).load()
     return _pipeline
+
+
+def _run_cold_rig(in_path: Path, out_path: Path, opts: dict, report) -> None:
+    """Run one rig in a short-lived subprocess (rig.py CLI) that EXITS afterward.
+
+    Used for keep_loaded=False: exiting the process returns ALL of its GPU memory
+    to the OS — including the CUDA context + cuDNN/cuBLAS/flash-attn workspaces
+    that an in-process unload() cannot free. Progress is streamed back via the
+    subprocess's `@@RP@@{json}` stdout lines (RIG_PROGRESS_JSON). The worker runs
+    its own bpy_server on COLD_BPY_PORT so it never collides with a warm one.
+    """
+    args = [
+        sys.executable, str(_HERE / "rig.py"),
+        "--input", str(in_path), "--output", str(out_path),
+        "--rename_bones", opts["rename_bones"],
+        "--top_k", str(opts["top_k"]), "--top_p", str(opts["top_p"]),
+        "--temperature", str(opts["temperature"]),
+        "--repetition_penalty", str(opts["repetition_penalty"]),
+        "--num_beams", str(opts["num_beams"]),
+        "--use_transfer" if opts["use_transfer"] else "--no_transfer",
+    ]
+    if opts["use_postprocess"]:
+        args.append("--use_postprocess")
+    if opts["use_skeleton"]:
+        args.append("--use_skeleton")
+
+    env = {**os.environ, "RIG_PROGRESS_JSON": "1", "BPY_PORT": str(COLD_BPY_PORT)}
+    # cwd = the writable data dir so the worker's relative weight/config lookups
+    # resolve exactly like the in-process path (same run-root).
+    proc = subprocess.Popen(
+        args, cwd=str(_DATA_DIR), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1,
+    )
+    try:
+        for line in proc.stdout:
+            if line.startswith("@@RP@@"):
+                try:
+                    evt = json.loads(line[len("@@RP@@"):])
+                    report(evt.get("stage", ""), float(evt.get("frac", 0.0)), evt.get("message", ""))
+                    continue
+                except Exception:
+                    pass
+            print(line, end="")  # forward the worker's other output to the log
+    finally:
+        code = proc.wait()
+    if code != 0:
+        raise RuntimeError(f"cold rig worker exited with code {code} (see log above).")
 
 
 def _glb_bone_count(path: Path) -> int | None:
@@ -217,23 +270,25 @@ async def rig(
         out_path = tmpdir / "rigged.glb"
         try:
             in_path.write_bytes(data)
-            # Only one rig at a time — the model + bpy_server are shared singletons.
+            # Only one rig at a time (GPU-bound). The lock also guards the warm
+            # singletons and keeps a cold worker from overlapping a warm rig.
             with _lock:
-                pipeline = _ensure_ready(emit)
-                pipeline.rig(
-                    in_path,
-                    out_path,
-                    progress=emit,
-                    **opts,
-                )
-                # Free the model unless the user asked to keep it warm. Done under
-                # the lock so no other request sees a half-unloaded pipeline; the
-                # next rig reloads it via _ensure_ready.
-                if not keep_loaded:
+                if keep_loaded:
+                    # Warm path: load once, reuse across rigs, stay resident.
+                    pipeline = _ensure_ready(emit)
+                    pipeline.rig(in_path, out_path, progress=emit, **opts)
+                else:
+                    # Cold path: run in a subprocess that EXITS afterward so ALL
+                    # its GPU memory (model + CUDA context) is returned to the OS.
+                    # An in-process unload() can't free the CUDA context.
                     global _pipeline
-                    emit("unload", 0.99, "Unloading model from memory…")
-                    pipeline.unload()
-                    _pipeline = None
+                    if _pipeline is not None:
+                        # Free a model left resident by an earlier keep_loaded=True
+                        # rig — the user asked not to keep the model in memory.
+                        emit("unload", 0.02, "Freeing the resident model…")
+                        _pipeline.unload()
+                        _pipeline = None
+                    _run_cold_rig(in_path, out_path, opts, emit)
             payload = out_path.read_bytes()
             holder["payload"] = {
                 "format": "glb",

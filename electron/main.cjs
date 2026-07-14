@@ -49,11 +49,18 @@ const RIG_VENV = path.join(DATA_ROOT, 'rig-venv');
 const RIG_DATA = path.join(DATA_ROOT, 'rig-data');
 
 let backendProc = null;
-let pythonHandle = null;
-let rigHandle = null;
 let mainWindow = null;
 let setupWindow = null;
 let shuttingDown = false;
+
+// The two Python services are started ON DEMAND (not at boot) and can be
+// stopped from Settings — stopping the rigging service fully releases its GPU
+// memory (the CUDA context an in-process unload can't free). `handles[name]`
+// holds a running service's { stop() }; `starting[name]` dedupes concurrent
+// ensure() calls. The registry is populated after the launchers are defined.
+const handles = { meshtools: null, rigging: null };
+const starting = { meshtools: null, rigging: null };
+let SERVICES = null;
 
 function log(line) {
   const stamped = `[main] ${line}`;
@@ -114,25 +121,114 @@ function waitForBackend(timeoutMs = 60000, intervalMs = 400) {
   });
 }
 
-// Ensure each provisioned service is running (and don't double-start). Safe to
-// call repeatedly — after boot and after an in-app "install rigging" action.
-function syncServices() {
-  if (!pythonHandle && isReady(PY_VENV)) {
-    try {
-      pythonHandle = startPythonServer({
+// --- On-demand Python service management ------------------------------------
+function serviceRegistry() {
+  return {
+    meshtools: {
+      label: 'Mesh Tools', venv: PY_VENV, port: PYTHON_PORT,
+      start: () => startPythonServer({
         serviceDir: PYTHON_DIR, venvDir: PY_VENV, port: PYTHON_PORT,
         logStream: openLogStream('python.log'), log,
-      });
-    } catch (err) { log(`Mesh Tools service failed to start (non-fatal): ${err.message}`); }
-  }
-  if (!rigHandle && isReady(RIG_VENV)) {
-    try {
-      rigHandle = startSkintokens({
+      }),
+    },
+    rigging: {
+      label: 'Rigging', venv: RIG_VENV, port: RIG_PORT,
+      start: () => startSkintokens({
         serviceDir: SKINTOKENS_DIR, venvDir: RIG_VENV, dataDir: RIG_DATA, port: RIG_PORT,
         logStream: openLogStream('rig.log'), log,
-      });
-    } catch (err) { log(`Rigging service failed to start (non-fatal): ${err.message}`); }
+      }),
+    },
+  };
+}
+
+// One /health probe → boolean.
+function isHealthy(port) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/health', timeout: 2000 }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+  });
+}
+
+// Poll /health until healthy or timeout. Rigging can take a while (heavy imports
+// + model), hence the generous default.
+function waitForHealth(port, timeoutMs = 180000, intervalMs = 600) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const tick = async () => {
+      if (await isHealthy(port)) return resolve();
+      if (Date.now() > deadline) return reject(new Error('service did not become ready in time'));
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+
+function stopService(name) {
+  const h = handles[name];
+  handles[name] = null;
+  starting[name] = null;
+  if (h && typeof h.stop === 'function') {
+    log(`Stopping ${name} service`);
+    try { h.stop(); } catch { /* ignore */ }
   }
+}
+
+// Start the service if needed and wait until it answers /health. Concurrent
+// callers share one in-flight start. Recovers a crashed service (handle present
+// but not answering) by restarting it.
+function ensureService(name) {
+  const svc = SERVICES[name];
+  if (!svc) return Promise.reject(new Error(`Unknown service: ${name}`));
+  if (!isReady(svc.venv)) {
+    return Promise.reject(new Error(`${svc.label} is not installed yet. Install it in Settings.`));
+  }
+  if (starting[name]) return starting[name];
+
+  const p = (async () => {
+    if (handles[name]) {
+      if (await isHealthy(svc.port)) return;
+      stopService(name); // crashed → restart
+    }
+    log(`Starting ${name} service on demand`);
+    handles[name] = svc.start();
+    await waitForHealth(svc.port);
+  })();
+  starting[name] = p;
+  p.catch(() => {}).finally(() => { if (starting[name] === p) starting[name] = null; });
+  return p;
+}
+
+function serviceStatus() {
+  const out = {};
+  for (const [name, svc] of Object.entries(SERVICES)) {
+    out[name] = {
+      label: svc.label,
+      installed: isReady(svc.venv),
+      running: !!handles[name],
+      starting: !!starting[name],
+    };
+  }
+  return out;
+}
+
+function registerServicesIpc() {
+  ipcMain.handle('services:status', () => serviceStatus());
+  ipcMain.handle('services:ensure', async (_e, { name } = {}) => {
+    try { await ensureService(name); return { ok: true, status: serviceStatus() }; }
+    catch (err) { return { ok: false, error: err.message, status: serviceStatus() }; }
+  });
+  ipcMain.handle('services:start', async (_e, { name } = {}) => {
+    try { await ensureService(name); return { ok: true, status: serviceStatus() }; }
+    catch (err) { return { ok: false, error: err.message, status: serviceStatus() }; }
+  });
+  ipcMain.handle('services:stop', (_e, { name } = {}) => {
+    stopService(name);
+    return { ok: true, status: serviceStatus() };
+  });
 }
 
 // Provision the Python services with uv, forwarding progress to `send`. Skips a
@@ -173,7 +269,8 @@ function registerSetupIpc() {
     const send = (evt) => { try { event.sender.send('setup:progress', evt); } catch { /* window gone */ } };
     try {
       await doSetup(!!opts.rigging, send);
-      syncServices();
+      // Provisioned only — services are started on demand (or from Settings),
+      // not here, so installing doesn't spin up a process the user isn't using.
       log('Setup run complete.');
       return { ok: true, status: { meshtools: isReady(PY_VENV), rigging: isReady(RIG_VENV) } };
     } catch (err) {
@@ -235,7 +332,9 @@ function loadingWindow() {
 
 async function boot() {
   fs.mkdirSync(DATA_ROOT, { recursive: true });
+  SERVICES = serviceRegistry();
   registerSetupIpc();
+  registerServicesIpc();
   backendProc = startBackend();
 
   // First run OR a broken/absent Mesh Tools venv → guided setup window with
@@ -248,7 +347,8 @@ async function boot() {
     splash = loadingWindow();
   }
 
-  syncServices();
+  // Python services are NOT started here — they start on demand when the user
+  // runs Auto UV/Retopo (Mesh Tools) or Auto Rig (Rigging), or from Settings.
 
   try {
     await waitForBackend();
@@ -273,10 +373,10 @@ function shutdown() {
   if (didShutdown) return;
   didShutdown = true;
   shuttingDown = true;
-  // Kill each service's whole process tree (the rigging service spawns a
-  // bpy_server child that a plain kill would orphan — leaving a python.exe
-  // running that holds the rig venv).
-  for (const h of [pythonHandle, rigHandle]) {
+  // Kill each running service's whole process tree (the rigging service spawns
+  // a bpy_server child + cold worker that a plain kill would orphan).
+  for (const name of Object.keys(handles)) {
+    const h = handles[name];
     if (h && typeof h.stop === 'function') { try { h.stop(); } catch { /* ignore */ } }
   }
   // Backend is a lone Node process (no long-lived children) → a plain kill is fine.
