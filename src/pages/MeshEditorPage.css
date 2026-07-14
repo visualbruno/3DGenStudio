@@ -171,6 +171,10 @@
   grid-template-columns: 250px minmax(0, 1fr) 280px;
 }
 
+.mesh-editor-workspace--with-skeleton {
+  grid-template-columns: 250px minmax(0, 1fr) 340px;
+}
+
 .mesh-editor-layers-panel {
   display: flex;
   flex-direction: column;
@@ -471,6 +475,151 @@
   font-size: 0.8rem;
   text-align: center;
   padding: 1.25rem 0.5rem;
+}
+
+/* ---- Auto Rig skeleton panel (tabs + bone hierarchy tree) ---- */
+.mesh-editor-skeleton-panel {
+  gap: 0.6rem;
+}
+
+.mesh-editor-skeleton-panel__tabs {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+}
+
+.mesh-editor-skeleton-panel__tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.6rem;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.mesh-editor-skeleton-panel__tab:hover {
+  color: var(--on-surface);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mesh-editor-skeleton-panel__tab--active {
+  background: rgba(108, 140, 255, 0.16);
+  color: var(--on-surface);
+  box-shadow: 0 0 0 1px rgba(108, 140, 255, 0.35) inset;
+}
+
+.mesh-editor-skeleton-panel__tab .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+
+.mesh-editor-skeleton-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-height: 0;
+  flex: 1;
+}
+
+.mesh-editor-bone-tree,
+.mesh-editor-bone-tree__children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mesh-editor-bone-tree {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 4px;
+  padding-bottom: 4px;
+  overscroll-behavior: contain;
+}
+
+.mesh-editor-bone-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.28rem 0.35rem;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--on-surface);
+  font-size: 0.82rem;
+  user-select: none;
+  /* Grow to fit the (indented) bone name so long names scroll horizontally
+     instead of being clipped, while still filling the panel for selection. */
+  width: max-content;
+  min-width: 100%;
+}
+
+.mesh-editor-bone-tree__row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mesh-editor-bone-tree__row--selected {
+  background: rgba(143, 245, 255, 0.14);
+  box-shadow: 0 0 0 1px rgba(143, 245, 255, 0.4) inset;
+}
+
+.mesh-editor-bone-tree__toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mesh-editor-bone-tree__toggle--leaf {
+  cursor: default;
+}
+
+.mesh-editor-bone-tree__toggle .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+
+.mesh-editor-bone-tree__icon {
+  font-size: 0.95rem;
+  color: var(--primary, #ac89ff);
+  flex: none;
+}
+
+.mesh-editor-bone-tree__row--selected .mesh-editor-bone-tree__icon {
+  color: #8ff5ff;
+}
+
+.mesh-editor-bone-tree__name {
+  white-space: nowrap;
+}
+
+/* Floating bone-name label (drei <Html>) at the selected joint in the viewport. */
+.mesh-editor-bone-label {
+  pointer-events: none;
+  transform: translateY(-160%);
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(16, 17, 20, 0.92);
+  border: 1px solid rgba(143, 245, 255, 0.5);
+  color: #8ff5ff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45);
 }
 
 .mesh-editor-layer-card__apply-btn {

@@ -342,6 +342,7 @@ export function loadEditableGeometryFromGlbBuffer(arrayBuffer) {
 //   joints:   Float32Array [x,y,z, ...]                 // one per bone
 //   segments: Float32Array [x1,y1,z1, x2,y2,z2, ...]     // parent→child bone pairs
 //   names:    string[]                                   // bone names, parallel to joints
+//   parents:  number[]                                   // parent bone index per bone, -1 for roots
 //   size:     number                                     // bbox diagonal (for sizing joint dots)
 // }
 export function extractSkeletonFromObject(object) {
@@ -389,12 +390,16 @@ export function extractSkeletonFromObject(object) {
   })
 
   // A bone's parent may be a plain node; walk up until we find another bone.
+  // `parents[i]` is the index of bone i's nearest bone-ancestor, or -1 for roots
+  // — this is the hierarchy the Skeleton tree view renders from.
   const segments = []
+  const parents = new Array(bones.length).fill(-1)
   bones.forEach((bone, i) => {
     let parent = bone.parent
     while (parent && !boneSet.has(parent)) parent = parent.parent
     if (parent && indexOf.has(parent)) {
       const p = indexOf.get(parent)
+      parents[i] = p
       segments.push(
         joints[p * 3], joints[p * 3 + 1], joints[p * 3 + 2],
         joints[i * 3], joints[i * 3 + 1], joints[i * 3 + 2],
@@ -409,6 +414,7 @@ export function extractSkeletonFromObject(object) {
     joints,
     segments: new Float32Array(segments),
     names,
+    parents,
     size: size || 1,
   }
 }

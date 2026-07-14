@@ -152,6 +152,7 @@ import AutoUvToolsPanel from '../components/meshEditor/AutoUvToolsPanel'
 import AutoRetopoToolsPanel from '../components/meshEditor/AutoRetopoToolsPanel'
 import AutoRigToolsPanel from '../components/meshEditor/AutoRigToolsPanel'
 import SkeletonOverlay from '../components/meshEditor/SkeletonOverlay'
+import SkeletonPanel from '../components/meshEditor/SkeletonPanel'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, ensureDesktopService } from '../utils/meshTools'
 
@@ -446,6 +447,9 @@ export default function MeshEditorPage() {
   // or of the freshly-generated rig result. `showSkeleton` toggles its visibility.
   const [skeleton, setSkeleton] = useState(null)
   const [showSkeleton, setShowSkeleton] = useState(true)
+  // Index of the bone selected in the Skeleton panel / by clicking it on the mesh
+  // (null = none). Highlighted in the viewport by SkeletonOverlay.
+  const [selectedBone, setSelectedBone] = useState(null)
   // The rigged GLB blob returned by the service, kept for Save-as-version / download.
   const riggedBlobRef = useRef(null)
   // Watertight check (Auto Retopo panel) — runs on demand via a button.
@@ -1940,6 +1944,7 @@ export default function MeshEditorPage() {
           // Reset the rig overlay to whatever this mesh arrived with.
           setSkeleton(loadedSkeleton)
           setShowSkeleton(true)
+          setSelectedBone(null)
           setAutoRigResult(null)
           riggedBlobRef.current = null
           // Bump the camera framing key so CameraRig re-frames the new mesh.
@@ -2921,6 +2926,33 @@ export default function MeshEditorPage() {
       return
     }
 
+    // Auto Rig: left-click picks the nearest bone joint (screen-space) so it can be
+    // highlighted + selected in the Skeleton panel. Clicking empty space deselects.
+    if (activeMenu === 'autorig' && skeleton?.joints?.length && cameraRef.current) {
+      const camera = cameraRef.current
+      const rect = canvasShellRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const joints = skeleton.joints
+      const projected = new THREE.Vector3()
+      const PICK_RADIUS_PX = 16
+      let closestBone = null
+      let closestDist = PICK_RADIUS_PX
+      for (let i = 0; i < joints.length / 3; i += 1) {
+        projected.set(joints[i * 3], joints[i * 3 + 1], joints[i * 3 + 2]).project(camera)
+        if (projected.z > 1) continue // behind the camera
+        const px = (projected.x * 0.5 + 0.5) * rect.width
+        const py = (-projected.y * 0.5 + 0.5) * rect.height
+        const dist = Math.hypot(px - nextPoint.x, py - nextPoint.y)
+        if (dist <= closestDist) {
+          closestDist = dist
+          closestBone = i
+        }
+      }
+      event.preventDefault()
+      setSelectedBone(closestBone)
+      return
+    }
+
     if (activeMenu === 'boolean' && booleanPlaceMode) {
       if (!selectionMesh) {
         return
@@ -3252,7 +3284,7 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, applySculptStamp, beginPaintStroke, booleanPlaceMode, booleanStampBasis, brushSize, captureMaskPreviewBase, computeSculptCursorPixelRadius, ensureLayerMaskCanvas, ensureSculptMesh, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, pushSculptUndo, resetSelection, scheduleProjectionMaskPaint, sculptBrush, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptSymmetry, selectedLayerId, selectionMesh, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
+  }, [activeMenu, applySculptStamp, beginPaintStroke, booleanPlaceMode, booleanStampBasis, brushSize, captureMaskPreviewBase, computeSculptCursorPixelRadius, ensureLayerMaskCanvas, ensureSculptMesh, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, pushSculptUndo, resetSelection, scheduleProjectionMaskPaint, sculptBrush, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptSymmetry, selectedLayerId, selectionMesh, skeleton, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady])
 
   const handleCanvasPointerMove = useCallback((event) => {
     if (activeMenu === 'boolean' && booleanPlaceMode) {
@@ -4053,6 +4085,7 @@ export default function MeshEditorPage() {
       const rigSkeleton = await extractSkeletonFromGlbBuffer(resultBuffer)
       setSkeleton(rigSkeleton)
       setShowSkeleton(true)
+      setSelectedBone(null)
 
       const t = stats?.tool || {}
       const rows = []
@@ -6129,7 +6162,13 @@ export default function MeshEditorPage() {
             )}
           </div>
 
-          <div className={`mesh-editor-workspace ${(activeMenu === 'painting' || activeMenu === 'projection') ? 'mesh-editor-workspace--with-layers' : ''}`}>
+          <div className={`mesh-editor-workspace ${
+            (activeMenu === 'painting' || activeMenu === 'projection')
+              ? 'mesh-editor-workspace--with-layers'
+              : (activeMenu === 'autorig' && skeleton)
+                ? 'mesh-editor-workspace--with-skeleton'
+                : ''
+          }`}>
             <aside className="mesh-editor-sidebar">
               <div className="mesh-editor-panel mesh-editor-panel--compact">
                 <span className="mesh-editor-panel__label">Tools</span>
@@ -6541,7 +6580,7 @@ export default function MeshEditorPage() {
                         </mesh>
                       </group>
                     )}
-                    <SkeletonOverlay skeleton={skeleton} visible={showSkeleton} />
+                    <SkeletonOverlay skeleton={skeleton} visible={showSkeleton} selectedBone={selectedBone} />
                     <Grid
                       infiniteGrid
                       fadeDistance={60}
@@ -6649,6 +6688,14 @@ export default function MeshEditorPage() {
                 )
               })()}
             </div>
+
+            {activeMenu === 'autorig' && skeleton && (
+              <SkeletonPanel
+                skeleton={skeleton}
+                selectedBone={selectedBone}
+                onSelectBone={setSelectedBone}
+              />
+            )}
 
             {activeMenu === 'painting' && (
               <aside className="mesh-editor-layers-panel">
