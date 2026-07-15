@@ -77,6 +77,7 @@ import {
   getNodeKind,
   getNodeOutputType,
   getPointerClientPosition,
+  getWorkflowFileInputAccept,
   getWorkflowParameterBinding,
   getWorkflowParameterValueType,
   isFileWorkflowValueType,
@@ -161,6 +162,8 @@ export default function GraphPage({ project }) {
 
   const fileInputRef = useRef(null)
   const pendingUploadNodeIdRef = useRef(null)
+  const meshFileInputRef = useRef(null)
+  const pendingMeshUploadNodeIdRef = useRef(null)
   const pendingConnectionRef = useRef(null)
   const skipNextPaneClickRef = useRef(false)
   const libraryLoadedRef = useRef(false)
@@ -1011,6 +1014,12 @@ export default function GraphPage({ project }) {
         })
       },
       onMeshGenModeSelect: async (targetNodeId, mode) => {
+        if (mode === 'local') {
+          pendingMeshUploadNodeIdRef.current = String(targetNodeId)
+          meshFileInputRef.current?.click()
+          return
+        }
+
         if (mode === 'api') {
           await ensureLibraryLoaded()
         }
@@ -2564,6 +2573,49 @@ export default function GraphPage({ project }) {
     }
   }, [project.id, replaceFlowNodeData, updateProjectNode, uploadAsset])
 
+  const handleMeshFileUpload = useCallback(async (event) => {
+    const file = event.target.files?.[0]
+    const nodeId = pendingMeshUploadNodeIdRef.current
+    event.target.value = ''
+
+    if (!file || !nodeId) {
+      pendingMeshUploadNodeIdRef.current = null
+      return
+    }
+
+    try {
+      const uploadedAsset = await uploadAsset(project.id, file, 'mesh', {
+        format: file.name.split('.').pop()?.toUpperCase() || 'MESH',
+        source: 'IMPORT'
+      })
+
+      try {
+        const thumbnailFile = await createMeshThumbnailFile(file)
+        if (thumbnailFile) {
+          await uploadAssetThumbnail(uploadedAsset.id, thumbnailFile)
+        }
+      } catch (thumbErr) {
+        console.warn('Failed to generate thumbnail for imported mesh:', thumbErr)
+      }
+
+      const updatedNode = await updateProjectNode(project.id, Number(nodeId), {
+        assetId: uploadedAsset.id,
+        name: uploadedAsset.name,
+        status: null,
+        progress: null,
+        metadata: {
+          lastAction: 'local-upload'
+        }
+      })
+      replaceFlowNodeData(updatedNode)
+      setActionDraftsByNodeId({})
+    } catch (err) {
+      console.error('Failed to upload mesh to node:', err)
+    } finally {
+      pendingMeshUploadNodeIdRef.current = null
+    }
+  }, [project.id, replaceFlowNodeData, updateProjectNode, uploadAsset, uploadAssetThumbnail])
+
   const handleCanvasFileDragOver = useCallback((event) => {
     if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return
     event.preventDefault()
@@ -2945,6 +2997,7 @@ export default function GraphPage({ project }) {
 			)}			
 
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
+      <input ref={meshFileInputRef} type="file" accept={getWorkflowFileInputAccept('mesh')} style={{ display: 'none' }} onChange={handleMeshFileUpload} />
 
       <div className="graph-page__body">
         <main className="graph-page__main" id="graph-main">

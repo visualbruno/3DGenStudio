@@ -491,6 +491,9 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                   )}
                   {isMeshGen ? (
                     <>
+                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'local')}>
+                        Local Computer
+                      </button>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onMeshGenModeSelect?.(data.id, 'assets')}>
                         Assets
                       </button>
