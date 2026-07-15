@@ -105,6 +105,7 @@ export default function BoneSkeletonView({
   selectedBone = null,
   mappedBones = null,
   onSelectBone,
+  onBackgroundClick,
 }) {
   const hasBones = skeleton && skeleton.names?.length
   return (
@@ -117,7 +118,12 @@ export default function BoneSkeletonView({
       </div>
       <div className="mesh-editor-bonemap-view__canvas">
         {hasBones ? (
-          <Canvas dpr={[1, 2]} gl={{ antialias: true, alpha: true }} frameloop="demand">
+          <Canvas
+            dpr={[1, 2]}
+            gl={{ antialias: true, alpha: true }}
+            frameloop="demand"
+            onPointerMissed={() => onBackgroundClick?.()}
+          >
             <Scene
               skeleton={skeleton}
               selectedBone={selectedBone}

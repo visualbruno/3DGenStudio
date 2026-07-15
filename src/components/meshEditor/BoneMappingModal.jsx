@@ -75,6 +75,29 @@ export default function BoneMappingModal({
     if (pickedSource) assign(targetName, pickedSource)
   }
 
+  // Clicking a target bone in the 3D view: assign the picked source if one is
+  // held, otherwise toggle the label (click the selected bone again to hide it).
+  const handleTargetViewClick = targetName => {
+    if (pickedSource) { assign(targetName, pickedSource); setPickedTarget(targetName); return }
+    setPickedTarget(prev => (prev === targetName ? null : targetName))
+  }
+
+  // Fill only the currently-unmapped target bones from the heuristic, leaving
+  // existing mappings untouched and never reusing a source already in use.
+  const finishMapping = () => {
+    const auto = onAutoMap() || {}
+    setMapping(prev => {
+      const next = { ...prev }
+      const usedSources = new Set(Object.values(next))
+      for (const [target, source] of Object.entries(auto)) {
+        if (next[target] || usedSources.has(source)) continue
+        next[target] = source
+        usedSources.add(source)
+      }
+      return next
+    })
+  }
+
   const handleDrop = targetName => {
     if (dragSource) assign(targetName, dragSource)
     setDragSource(null)
@@ -113,13 +136,15 @@ export default function BoneMappingModal({
               selectedBone={sourceHighlight}
               mappedBones={mappedSources}
               onSelectBone={toggleSource}
+              onBackgroundClick={() => setPickedSource(null)}
             />
             <BoneSkeletonView
               title="Target · your mesh"
               skeleton={targetSkeleton}
               selectedBone={targetHighlight}
               mappedBones={mappedTargets}
-              onSelectBone={handleTargetClick}
+              onSelectBone={handleTargetViewClick}
+              onBackgroundClick={() => setPickedTarget(null)}
             />
           </div>
 
@@ -170,6 +195,15 @@ export default function BoneMappingModal({
               <div className="mesh-editor-bonemap__col-actions">
                 <button type="button" className="mesh-editor-bonemap__mini-btn" onClick={() => setMapping(onAutoMap() || {})}>
                   Auto-Map
+                </button>
+                <button
+                  type="button"
+                  className="mesh-editor-bonemap__mini-btn"
+                  onClick={finishMapping}
+                  disabled={mappedCount >= targetBones.length}
+                  title="Fill the remaining unmapped bones, keeping the ones you've already set"
+                >
+                  Finish Mapping
                 </button>
                 <button type="button" className="mesh-editor-bonemap__mini-btn" onClick={() => setMapping({})} disabled={!mappedCount}>
                   Clear
