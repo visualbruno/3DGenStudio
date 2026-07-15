@@ -478,9 +478,11 @@ export function isFileWorkflowValueType(valueType) {
   return ['image', 'video', 'mesh'].includes(valueType)
 }
 
+export const MESH_FILE_EXTENSIONS = ['glb', 'gltf', 'obj', 'fbx', 'stl', 'ply', 'usdz', 'usd', 'usda', 'usdc']
+
 export function getWorkflowFileInputAccept(valueType) {
   if (valueType === 'video') return 'video/*'
-  if (valueType === 'mesh') return '.glb,.gltf,.obj,.fbx,.stl,.ply,.usdz,.usd,.usda,.usdc'
+  if (valueType === 'mesh') return MESH_FILE_EXTENSIONS.map(ext => `.${ext}`).join(',')
   return 'image/*'
 }
 

@@ -35,6 +35,7 @@ import {
   IMAGE_COMPARE_INPUT_IDS,
   IMAGE_COMPARE_NODE_TYPE_NAME,
   LEGACY_INPUT_ID,
+  MESH_FILE_EXTENSIONS,
   HITEM_MESH_API_OPTION,
   HITEM_MESH_GENERATION_API_ID,
   TENCENT_GENERATION_TYPE_OPTIONS,
@@ -2622,10 +2623,12 @@ export default function GraphPage({ project }) {
     event.dataTransfer.dropEffect = 'copy'
   }, [])
 
-  // Import dropped image files into Assets and create an Image node at the drop
-  // position for each file, then bind the uploaded asset to that node.
+  // Import dropped image/mesh files into Assets and create the matching node
+  // (Image or Mesh) at the drop position for each file, then bind the uploaded
+  // asset to that node.
   const handleCanvasFileDrop = useCallback(async (event) => {
-    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'))
+    const isMeshFile = (file) => MESH_FILE_EXTENSIONS.includes((file.name.split('.').pop() || '').toLowerCase())
+    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/') || isMeshFile(file))
     if (files.length === 0) return
     event.preventDefault()
 
@@ -2635,17 +2638,36 @@ export default function GraphPage({ project }) {
 
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index]
+      const isMesh = isMeshFile(file)
       try {
-        const createdNode = await handleCreateNode('Image', {
+        const createdNode = await handleCreateNode(isMesh ? 'Mesh' : 'Image', {
           xPos: flowPosition.x + (index * 32),
           yPos: flowPosition.y + (index * 32),
-          name: file.name?.replace(/\.[^.]+$/, '') || 'Image'
+          name: file.name?.replace(/\.[^.]+$/, '') || (isMesh ? 'Mesh' : 'Image')
         })
-        const uploadedAsset = await uploadAsset(project.id, file, 'image', {
-          resolution: 'Unknown',
-          format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
-          source: 'IMPORT'
-        })
+
+        const uploadedAsset = isMesh
+          ? await uploadAsset(project.id, file, 'mesh', {
+              format: file.name.split('.').pop()?.toUpperCase() || 'MESH',
+              source: 'IMPORT'
+            })
+          : await uploadAsset(project.id, file, 'image', {
+              resolution: 'Unknown',
+              format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+              source: 'IMPORT'
+            })
+
+        if (isMesh) {
+          try {
+            const thumbnailFile = await createMeshThumbnailFile(file)
+            if (thumbnailFile) {
+              await uploadAssetThumbnail(uploadedAsset.id, thumbnailFile)
+            }
+          } catch (thumbErr) {
+            console.warn('Failed to generate thumbnail for imported mesh:', thumbErr)
+          }
+        }
+
         const updatedNode = await updateProjectNode(project.id, Number(createdNode.id), {
           assetId: uploadedAsset.id,
           name: uploadedAsset.name,
@@ -2655,10 +2677,10 @@ export default function GraphPage({ project }) {
         })
         if (updatedNode) replaceFlowNodeData(updatedNode)
       } catch (err) {
-        console.error('Failed to import dropped image to graph:', err)
+        console.error(`Failed to import dropped ${isMesh ? 'mesh' : 'image'} to graph:`, err)
       }
     }
-  }, [handleCreateNode, project.id, reactFlowInstance, replaceFlowNodeData, updateProjectNode, uploadAsset])
+  }, [handleCreateNode, project.id, reactFlowInstance, replaceFlowNodeData, updateProjectNode, uploadAsset, uploadAssetThumbnail])
 
   const handleDeleteConnection = useCallback(async (edgeToDelete) => {
     if (!edgeToDelete) {
