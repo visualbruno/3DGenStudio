@@ -21,7 +21,8 @@ const KANBAN_COLUMNS = [
   { id: 2, name: 'Image Edit', position: 1 },
   { id: 3, name: 'Mesh Gen', position: 2 },
   { id: 4, name: 'Mesh Edit', position: 3 },
-  { id: 5, name: 'Texturing', position: 4 }
+  { id: 5, name: 'Texturing', position: 4 },
+  { id: 6, name: 'Rigging', position: 5 }
 ];
 const ASSET_TYPES = [
   { id: 1, name: 'Image' },

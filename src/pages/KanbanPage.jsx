@@ -86,6 +86,7 @@ export default function KanbanPage() {
     queryHitemMeshGenerationResult,
     runMeshEditApi,
     runMeshTexturingApi,
+    runMeshRiggingApi,
     runImageEditComfy,
     generateImage,
     getComfyWorkflows,
@@ -977,9 +978,15 @@ export default function KanbanPage() {
       .map(api => ({ id: `custom_${api.id}`, name: api.name }))
   ), [customApis])
 
+  const meshRiggingApis = useMemo(() => (
+    customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'mesh-rigging')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ), [customApis])
+
   const getWorkflowsForCard = (card) => {
     if (card?.kanbanColumnId === 3) return meshGenWorkflows
-    if ([4, 5].includes(card?.kanbanColumnId)) return meshEditWorkflows
+    if ([4, 5, 6].includes(card?.kanbanColumnId)) return meshEditWorkflows
     return imageEditWorkflows
   }
 
@@ -987,6 +994,7 @@ export default function KanbanPage() {
     if (columnId === 3) return meshGenerationApis
     if (columnId === 4) return meshEditApis
     if (columnId === 5) return meshTexturingApis
+    if (columnId === 6) return meshRiggingApis
     return imageEditApis
   }
 
@@ -1614,7 +1622,7 @@ export default function KanbanPage() {
 
   const getCardPreviewItems = (card, showAttributes = false) => {
     const hasMeshAssets = (card.meshAssets?.length || 0) > 0
-    const useMixedAssetCarousel = showAttributes && [3, 4, 5].includes(card.kanbanColumnId) && hasMeshAssets
+    const useMixedAssetCarousel = showAttributes && [3, 4, 5, 6].includes(card.kanbanColumnId) && hasMeshAssets
 
     if (!useMixedAssetCarousel) {
       return []
@@ -1784,7 +1792,7 @@ export default function KanbanPage() {
       name: '',
       selectedApi: defaultSelectedApi,
       prompt: '',
-      selectedAssetId: [4, 5].includes(card.kanbanColumnId)
+      selectedAssetId: [4, 5, 6].includes(card.kanbanColumnId)
         ? (card.meshAssets[0]?.id ? `asset:${card.meshAssets[0].id}` : '')
         : (card.assets[0]?.id ? `asset:${card.assets[0].id}` : ''),
       workflowId: initialWorkflow?.id || '',
@@ -2101,9 +2109,10 @@ export default function KanbanPage() {
     const isMeshGenCard = card.kanbanColumnId === 3
     const isMeshEditCard = card.kanbanColumnId === 4
     const isTexturingCard = card.kanbanColumnId === 5
-    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard
-    const actionLabel = isMeshGenCard ? 'mesh generation' : isMeshEditCard ? 'mesh edit' : isTexturingCard ? 'mesh texturing' : 'image edit'
-    const sourceAssetLabel = isMeshEditCard || isTexturingCard ? 'mesh' : 'image'
+    const isRiggingCard = card.kanbanColumnId === 6
+    const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard || isRiggingCard
+    const actionLabel = isMeshGenCard ? 'mesh generation' : isMeshEditCard ? 'mesh edit' : isTexturingCard ? 'mesh texturing' : isRiggingCard ? 'mesh rigging' : 'image edit'
+    const sourceAssetLabel = isMeshEditCard || isTexturingCard || isRiggingCard ? 'mesh' : 'image'
     // Track every mesh item (roots and their versions/children) so the focus
     // logic can detect a newly generated child mesh, not just new root meshes.
     const existingMeshAssetIds = (card.meshAssets || [])
@@ -2380,6 +2389,21 @@ export default function KanbanPage() {
             cardId: card.id,
             existingMeshAssetIds
           })
+        } else if (isRiggingCard) {
+          const riggedMesh = await runMeshRiggingApi(projectId, {
+            meshSource: imageEditDraft.selectedAssetId,
+            name,
+            selectedApi: imageEditDraft.selectedApi,
+            prompt,
+            cardId: card.id
+          })
+
+          await ensureGeneratedMeshThumbnails(riggedMesh)
+          queueResultFocus({
+            type: 'mesh-result',
+            cardId: card.id,
+            existingMeshAssetIds
+          })
         } else {
           await runImageEditApi(projectId, {
             imageSource: imageEditDraft.selectedAssetId,
@@ -2531,9 +2555,9 @@ export default function KanbanPage() {
             inputs: inputValues,
             promptId,
             clientId,
-            // Mesh Edit / Texturing operate on an existing mesh — save the result
-            // as a version (child) of that source mesh.
-            parentAssetId: (isMeshEditCard || isTexturingCard) ? primaryMeshAssetId : null
+            // Mesh Edit / Texturing / Rigging operate on an existing mesh — save
+            // the result as a version (child) of that source mesh.
+            parentAssetId: (isMeshEditCard || isTexturingCard || isRiggingCard) ? primaryMeshAssetId : null
           })
 
           await ensureGeneratedMeshThumbnails(generatedMeshes)
@@ -2549,8 +2573,8 @@ export default function KanbanPage() {
                 [card.id]: {
                   ...prev[card.id],
                   progressPercent: 100,
-                  detail: isMeshGenCard ? 'Saving generated mesh' : isTexturingCard ? 'Saving textured mesh' : 'Saving edited mesh',
-                  currentNodeLabel: isMeshGenCard ? 'ComfyUI mesh generation completed' : isTexturingCard ? 'ComfyUI mesh texturing completed' : 'ComfyUI mesh edit completed'
+                  detail: isMeshGenCard ? 'Saving generated mesh' : isTexturingCard ? 'Saving textured mesh' : isRiggingCard ? 'Saving rigged mesh' : 'Saving edited mesh',
+                  currentNodeLabel: isMeshGenCard ? 'ComfyUI mesh generation completed' : isTexturingCard ? 'ComfyUI mesh texturing completed' : isRiggingCard ? 'ComfyUI mesh rigging completed' : 'ComfyUI mesh edit completed'
                 }
               }
             : prev)
@@ -2599,6 +2623,8 @@ export default function KanbanPage() {
           ? 'Mesh edit completed successfully.'
           : isTexturingCard
             ? 'Mesh texturing completed successfully.'
+          : isRiggingCard
+            ? 'Mesh rigging completed successfully.'
           : 'Image edit completed successfully.', 'success')
     } catch (err) {
       console.error(`Failed to run ${actionLabel}:`, err)
@@ -2611,6 +2637,8 @@ export default function KanbanPage() {
           ? 'Failed to run mesh edit'
           : isTexturingCard
             ? 'Failed to run mesh texturing'
+          : isRiggingCard
+            ? 'Failed to run mesh rigging'
           : 'Failed to run image edit')
 
       showStatusMessage(failureMessage, 'error')
@@ -2641,6 +2669,12 @@ export default function KanbanPage() {
             'Mesh texturing failed',
             failureMessage,
             meshTexturingApis.find(api => api.id === imageEditDraft?.selectedApi)?.name || 'Mesh texturing API'
+          )
+        } else if (isRiggingCard) {
+          pushExternalApiFailureNotification(
+            'Mesh rigging failed',
+            failureMessage,
+            meshRiggingApis.find(api => api.id === imageEditDraft?.selectedApi)?.name || 'Mesh rigging API'
           )
         } else {
           pushExternalApiFailureNotification(

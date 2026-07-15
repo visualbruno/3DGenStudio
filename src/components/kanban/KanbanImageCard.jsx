@@ -82,7 +82,8 @@ export default function KanbanImageCard({
   const isMeshGenCard = card.kanbanColumnId === 3
   const isMeshEditCard = card.kanbanColumnId === 4
   const isTexturingCard = card.kanbanColumnId === 5
-  const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard
+  const isRiggingCard = card.kanbanColumnId === 6
+  const isMeshWorkflowCard = isMeshGenCard || isMeshEditCard || isTexturingCard || isRiggingCard
   const carouselItems = getCardPreviewItems(card, showAttributes)
   const useAssetCarousel = carouselItems.length > 0
   const previewAssets = isMeshWorkflowCard && (card.meshAssets?.length || 0) > 0 && !useAssetCarousel
@@ -101,8 +102,8 @@ export default function KanbanImageCard({
   const availableActionApis = getApiOptionsForCard(card)
   const availableActionWorkflows = getWorkflowsForCard(card)
   const selectedActionWorkflow = availableActionWorkflows.find(workflow => workflow.id == imageEditDraft?.workflowId) || null
-  const apiSourceGroups = isMeshEditCard || isTexturingCard ? meshSourceGroups : imageSourceGroups
-  const apiSourceValueType = isMeshEditCard || isTexturingCard ? 'mesh' : 'image'
+  const apiSourceGroups = isMeshEditCard || isTexturingCard || isRiggingCard ? meshSourceGroups : imageSourceGroups
+  const apiSourceValueType = isMeshEditCard || isTexturingCard || isRiggingCard ? 'mesh' : 'image'
 
   return (
     <div
@@ -428,7 +429,7 @@ export default function KanbanImageCard({
                   {imageEditDraft.mode === 'api' ? (
                     <>
                       <div className="params-card__field">
-                        <label className="params-card__label font-label">{isMeshEditCard || isTexturingCard ? 'Mesh' : 'Image'}</label>
+                        <label className="params-card__label font-label">{isMeshEditCard || isTexturingCard || isRiggingCard ? 'Mesh' : 'Image'}</label>
                         <select
                           className="image-card__attribute-select"
                           value={imageEditDraft.selectedAssetId}
@@ -437,7 +438,7 @@ export default function KanbanImageCard({
                           {isMeshGenCard && (isTencentMeshGenerationApi(imageEditDraft.selectedApi) || isTripoMeshGenerationApi(imageEditDraft.selectedApi)) && (
                             <option value="">No image source (use prompt)</option>
                           )}
-                          {apiSourceGroups.length === 0 && <option value="">{isMeshEditCard || isTexturingCard ? 'No meshes available' : 'No images available'}</option>}
+                          {apiSourceGroups.length === 0 && <option value="">{isMeshEditCard || isTexturingCard || isRiggingCard ? 'No meshes available' : 'No images available'}</option>}
                           {apiSourceGroups.map(group => (
                             <optgroup key={group.asset.id} label={group.asset.name}>
                               {group.options.map(option => (
@@ -638,6 +639,8 @@ export default function KanbanImageCard({
                               ? 'No compatible ComfyUI workflow available for mesh edits.'
                               : isTexturingCard
                                 ? 'No compatible ComfyUI workflow available for mesh texturing.'
+                              : isRiggingCard
+                                ? 'No compatible ComfyUI workflow available for mesh rigging.'
                               : 'No compatible ComfyUI workflow available for image edits.'}</span>
                         </div>
                       )}

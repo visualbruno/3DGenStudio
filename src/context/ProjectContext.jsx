@@ -143,6 +143,22 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const runMeshRiggingApi = async (projectId, rigData) => {
+    const res = await fetch(`${API_BASE}/meshes/rigging`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...rigData })
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to run mesh rigging API')
+    }
+
+    return data
+  }
+
   const runMeshEditApi = async (projectId, editData) => {
     const res = await fetch(`${API_BASE}/meshes/edit`, {
       method: 'POST',
@@ -1199,6 +1215,7 @@ export function ProjectProvider({ children }) {
       queryHitemMeshGenerationResult,
       runMeshEditApi,
       runMeshTexturingApi,
+      runMeshRiggingApi,
       runImageEditComfy,
       generateImage,
       getComfyWorkflows,

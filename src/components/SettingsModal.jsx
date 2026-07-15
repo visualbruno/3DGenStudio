@@ -7,7 +7,8 @@ const CUSTOM_API_TYPE_OPTIONS = [
   { value: 'image-edit', label: 'Image Edit' },
   { value: 'mesh-generation', label: 'Mesh Generation' },
   { value: 'mesh-edit', label: 'Mesh Edit' },
-  { value: 'mesh-texturing', label: 'Mesh Texturing' }
+  { value: 'mesh-texturing', label: 'Mesh Texturing' },
+  { value: 'mesh-rigging', label: 'Mesh Rigging' }
 ]
 
 function getCustomApiTypeLabel(type) {

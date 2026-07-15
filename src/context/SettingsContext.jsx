@@ -5,7 +5,7 @@ import { API_BASE } from '../config'
 const DEFAULT_CUSTOM_API_TYPE = 'image-generation'
 
 function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing', 'mesh-rigging'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE
 }

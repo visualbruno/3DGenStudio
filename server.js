@@ -1576,7 +1576,7 @@ function getCustomApiConfig(settings, selectedApi, expectedType = null) {
     throw new Error('Selected custom API was not found in settings');
   }
 
-  const normalizedType = ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(customApi?.type)
+  const normalizedType = ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing', 'mesh-rigging'].includes(customApi?.type)
     ? customApi.type
     : 'image-generation';
 
@@ -4792,6 +4792,144 @@ app.post('/api/meshes/texture', async (req, res) => {
       });
     }
     res.status(500).json({ error: err.message || 'Failed to run mesh texturing API' });
+  }
+});
+
+// Kanban "Rigging" column custom-API runner. Mirrors the mesh texturing/edit
+// flow: takes a source mesh, POSTs it to the user's configured mesh-rigging
+// custom API, and saves the returned mesh as a version of the source. Distinct
+// from POST /api/meshes/rig, which proxies the built-in rig micro-service.
+app.post('/api/meshes/rigging', async (req, res) => {
+  let processingProjectId = null;
+  let processingCardId = null;
+  let processingCardName = null;
+  let processingStartedAt = Date.now();
+
+  try {
+    const { projectId, selectedApi, prompt, name, meshSource, cardId } = req.body;
+    const trimmedName = String(name || '').trim();
+    const trimmedPrompt = String(prompt || '').trim();
+
+    if (!projectId || !selectedApi || !trimmedPrompt || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
+    }
+
+    if (!String(selectedApi).startsWith('custom_')) {
+      return res.status(400).json({ error: 'Mesh rigging currently supports custom APIs only' });
+    }
+
+    const resolvedSource = await resolveProjectMeshSource(Number(projectId), meshSource);
+    const sourceAsset = resolvedSource?.asset;
+    if (!resolvedSource || !sourceAsset || sourceAsset.type !== 'mesh') {
+      return res.status(404).json({ error: 'Source mesh not found' });
+    }
+
+    processingProjectId = Number(projectId);
+    processingCardId = cardId || sourceAsset.metadata?.cardId || randomUUID();
+    processingCardName = trimmedName;
+    processingStartedAt = Date.now();
+
+    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+      columnName: 'Rigging',
+      name: processingCardName,
+      status: 'processing',
+      progressPercent: null,
+      detail: 'Submitting mesh rigging request',
+      currentNodeLabel: 'Waiting for API response',
+      source: 'API',
+      operationType: 'mesh-rigging',
+      startedAt: processingStartedAt
+    });
+
+    const settings = await getSettings();
+    const customApi = getCustomApiConfig(settings, selectedApi, 'mesh-rigging');
+    const sourceFilePath = toAbsoluteStoragePath(resolvedSource.inputFilePath);
+    const sourceBuffer = await fs.readFile(sourceFilePath);
+    const meshMimeType = getMimeTypeFromFilename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName);
+    const replacements = {
+      prompt: trimmedPrompt,
+      name: trimmedName,
+      projectId: String(projectId),
+      cardId: String(processingCardId || ''),
+      meshBase64: sourceBuffer.toString('base64'),
+      meshMimeType,
+      meshFilename: path.basename(resolvedSource.inputFilePath || resolvedSource.inputFilename || resolvedSource.inputName || 'mesh.glb')
+    };
+    const requestHeaders = {
+      'Content-Type': 'application/json',
+      ...replaceTemplatePlaceholders(parseJsonTemplate(customApi.headers, 'Custom API headers', {}), replacements)
+    };
+    const requestPayload = replaceTemplatePlaceholders(parseJsonTemplate(customApi.body, 'Custom API body template', {}), replacements);
+
+    const response = await fetch(customApi.url, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: JSON.stringify(requestPayload)
+    });
+
+    let responseBody = null;
+    const responseContentType = response.headers.get('content-type') || '';
+    if (String(responseContentType).toLowerCase().includes('application/json')) {
+      responseBody = await response.json().catch(() => ({}));
+    }
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        error: responseBody?.error?.message || responseBody?.error || 'Mesh rigging request failed'
+      });
+    }
+
+    const meshOutput = await extractMeshOutputFromApiResponse(response, responseBody);
+    const extension = path.extname(meshOutput.filename).replace('.', '') || getExtensionFromContentType(meshOutput.contentType, 'glb');
+    const filename = `${Date.now()}-${Math.round(Math.random() * 1E9)}.${extension}`;
+    const storedFilePath = toStoredAssetPath('mesh', filename);
+    const absoluteFilePath = toAbsoluteStoragePath(storedFilePath);
+
+    await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
+    await fs.writeFile(absoluteFilePath, meshOutput.buffer);
+
+    // The result was produced from an existing source mesh, so save it as a
+    // version (child) of that mesh instead of creating a new root asset.
+    const savedAsset = await createAssetVersion({
+      assetId: sourceAsset.id,
+      type: 'mesh',
+      name: trimmedName,
+      filePath: storedFilePath,
+      metadata: {
+        format: extension.toUpperCase(),
+        source: 'API',
+        provider: customApi.name,
+        prompt: trimmedPrompt,
+        cardId: processingCardId
+      },
+      createdAt: Date.now(),
+      // The generated geometry differs from the parent, so render its own thumbnail.
+      inheritThumbnail: false
+    });
+
+    await clearCardProcessingState(processingProjectId, processingCardId, {
+      name: processingCardName
+    });
+
+    res.status(201).json(savedAsset);
+  } catch (err) {
+    console.error('Mesh rigging API execution failed:', err);
+    if (processingProjectId && processingCardId) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Rigging',
+        name: processingCardName,
+        status: 'error',
+        progressPercent: null,
+        detail: err.message || 'Failed to run mesh rigging API',
+        currentNodeLabel: 'Mesh rigging failed',
+        source: 'API',
+        operationType: 'mesh-rigging',
+        startedAt: processingStartedAt
+      }).catch(persistErr => {
+        console.warn('Failed to persist mesh rigging error state:', persistErr.message);
+      });
+    }
+    res.status(500).json({ error: err.message || 'Failed to run mesh rigging API' });
   }
 });
 

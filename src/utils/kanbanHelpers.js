@@ -49,6 +49,7 @@ export const IMAGE_CARD_COLUMNS = [
   { id: 'meshgen', dbId: 3, icon: 'deployed_code', title: 'MESH GEN', showAttributes: true, emptyLabel: 'Drag an image card here to generate a mesh' },
   { id: 'meshedit', dbId: 4, icon: 'edit_square', title: 'MESH EDIT', showAttributes: true, emptyLabel: 'Drag a mesh card here to edit it' },
   { id: 'texturing', dbId: 5, icon: 'texture', title: 'TEXTURING', showAttributes: true, emptyLabel: 'Drag a mesh card here to texture it' },
+  { id: 'rigging', dbId: 6, icon: 'accessibility_new', title: 'RIGGING', showAttributes: true, emptyLabel: 'Drag a mesh card here to rig it' },
 ]
 
 export const DEFAULT_ATTRIBUTE_TYPE_ID = 1
@@ -71,7 +72,7 @@ export function getWorkflowFileInputIcon(valueType) {
 }
 
 export function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing', 'mesh-rigging'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE
 }

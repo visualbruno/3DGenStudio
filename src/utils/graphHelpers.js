@@ -60,7 +60,7 @@ export const CONNECTOR_TYPE_META = {
 }
 
 export function normalizeCustomApiType(type) {
-  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing'].includes(type)
+  return ['image-generation', 'image-edit', 'mesh-generation', 'mesh-edit', 'mesh-texturing', 'mesh-rigging'].includes(type)
     ? type
     : DEFAULT_CUSTOM_API_TYPE
 }
