@@ -43,9 +43,12 @@ files:
   - setup/**/*
   - tools/**/*
   - wiki/**/*
-  # Bundled reference animation library (mesh2motion, MIT) served at /resources.
+  # Bundled reference animation library (mesh2motion, MIT) served at /resources:
+  # skinned animation GLBs, mp4 clip previews, and the clean skeleton-only rig
+  # GLBs used by the Auto Rig → Animations bone-mapping 3D views.
   - resources/animations/**/*
   - resources/animpreviews/**/*
+  - resources/rigs/**/*
   - python-server/**/*
   - "!python-server/.venv/**"
   - "!python-server/**/__pycache__/**"
