@@ -39,6 +39,10 @@ ALLOWED_ORIGINS: list[str] = [
 # Upload guard rails.
 MAX_UPLOAD_BYTES: int = _env_int("MESHTOOLS_MAX_UPLOAD_BYTES", 512 * 1024 * 1024)
 
+# GLB -> FBX conversion (headless Blender subprocess). Generous default: bpy
+# import alone takes seconds and heavy scenes bake many animation takes.
+CONVERT_TIMEOUT_S: int = _env_int("MESHTOOLS_CONVERT_TIMEOUT", 600)
+
 # Scratch space for temp files when a tool needs real paths on disk
 # (many mesh CLIs/libraries only accept file paths, not in-memory buffers).
 WORK_DIR: Path = Path(

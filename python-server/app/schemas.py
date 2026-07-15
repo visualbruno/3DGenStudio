@@ -132,6 +132,28 @@ class RepairOptions(BaseModel):
                        description="Weld coincident vertices by position before repairing (matches the editor's check).")
 
 
+class ConvertOptions(BaseModel):
+    """Options for the GLB -> FBX engine-export endpoint (headless Blender).
+
+    Presets tune the FBX for the target engine's import pipeline; see
+    app/tools/fbx_worker.py for the exact exporter settings each one maps to.
+    """
+
+    preset: Literal["unity", "unreal", "generic"] = Field(
+        default="generic",
+        description="Target engine. 'unity'/'generic' write a meters file with "
+                    "scale-1 transforms; 'unreal' bakes the scene to centimeters.")
+    unreal_scale_mode: Literal["bake", "units"] = Field(
+        default="bake",
+        description="Unreal only. 'bake' rescales mesh/armature/animation data "
+                    "x100 to native centimeters; 'units' keeps meters and relies "
+                    "on UE's 'Convert Scene Unit' import option.")
+    bake_fps: int = Field(default=30, ge=1, le=120,
+                          description="Frame rate animation takes are baked at.")
+    anim_simplify: float = Field(default=1.0, ge=0.0, le=10.0,
+                                 description="Baked curve simplification (0 = lossless, larger = smaller files).")
+
+
 class MeshStats(BaseModel):
     """Reported back to the caller (also surfaced via response headers)."""
 

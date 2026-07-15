@@ -1,6 +1,6 @@
-"""Mesh-processing endpoints: Auto UV and Auto Retopo.
+"""Mesh-processing endpoints: Auto UV, Auto Retopo, Repair and FBX Convert.
 
-Contract (shared by both routes):
+Contract (shared by all routes):
   Request  : multipart/form-data
                - meshFile : the mesh to process (GLB/OBJ/PLY/STL)
                - options  : JSON string of the operation options (optional)
@@ -29,9 +29,10 @@ from pydantic import ValidationError
 
 from ..config import MAX_UPLOAD_BYTES
 from ..meshio import export_mesh, load_mesh, mesh_stats
-from ..schemas import AutoRetopoOptions, AutoUvOptions, RepairOptions
+from ..schemas import AutoRetopoOptions, AutoUvOptions, ConvertOptions, RepairOptions
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
+from ..services.convert_fbx import run_convert_fbx
 from ..services.repair import run_repair
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
@@ -86,11 +87,13 @@ def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj, separators=(',', ':'))}\n\n"
 
 
-def _stream_tool(run_callable, fmt: str, label: str) -> StreamingResponse:
+def _stream_payload(run_callable, label: str) -> StreamingResponse:
     """Run `run_callable(emit)` in a worker thread and stream SSE progress events.
 
-    `run_callable(emit)` must return (mesh, tool_stats, preview_png) and may call
-    emit(stage, frac, message) to report progress.
+    `run_callable(emit)` must return the terminal `done` payload dict and may
+    call emit(stage, frac, message) to report progress. Use this directly for
+    tools that build their own envelope (e.g. FBX conversion, which must never
+    round-trip through trimesh); use `_stream_tool` for trimesh-based tools.
     """
     events: "queue.Queue" = queue.Queue()
     holder: dict = {}
@@ -100,8 +103,7 @@ def _stream_tool(run_callable, fmt: str, label: str) -> StreamingResponse:
 
     def worker():
         try:
-            mesh, tool_stats, preview = run_callable(emit)
-            holder["payload"] = _envelope(mesh, fmt, tool_stats, preview)
+            holder["payload"] = run_callable(emit)
         except Exception as exc:  # noqa: BLE001 — surfaced to the client as an error event
             holder["error"] = f"{label} failed: {exc}"
         finally:
@@ -130,6 +132,17 @@ def _stream_tool(run_callable, fmt: str, label: str) -> StreamingResponse:
             yield _sse({"type": "done", **holder["payload"]})
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+def _stream_tool(run_callable, fmt: str, label: str) -> StreamingResponse:
+    """`_stream_payload` for trimesh-based tools: `run_callable(emit)` returns
+    (mesh, tool_stats, preview_png) and the envelope is built here.
+    """
+    def run(emit):
+        mesh, tool_stats, preview = run_callable(emit)
+        return _envelope(mesh, fmt, tool_stats, preview)
+
+    return _stream_payload(run, label)
 
 
 @router.post("/auto-uv")
@@ -166,3 +179,38 @@ async def repair(
     data = await _read_upload(meshFile)
     mesh = load_mesh(data, meshFile.filename or "mesh.glb")
     return _stream_tool(lambda emit: run_repair(mesh, opts, progress=emit), format, "Repair")
+
+
+@router.post("/convert")
+async def convert(
+    meshFile: UploadFile = File(...),
+    options: str | None = Form(None),
+    format: str = Form("fbx"),
+) -> StreamingResponse:
+    """GLB -> FBX engine export (headless Blender subprocess).
+
+    Deliberately bypasses trimesh (`load_mesh`/`_envelope`): trimesh cannot
+    write FBX and flattens skinned meshes, and this endpoint's whole point is
+    preserving the skeleton + animation takes. The GLB bytes go to the worker
+    untouched.
+    """
+    opts = _parse_options(options, ConvertOptions)
+    data = await _read_upload(meshFile)
+    if (format or "fbx").lstrip(".").lower() != "fbx":
+        raise HTTPException(status_code=400, detail="Only 'fbx' output is supported by /meshes/convert.")
+
+    def run(emit):
+        fbx_bytes, tool_stats = run_convert_fbx(data, opts, progress=emit)
+        return {
+            "format": "fbx",
+            "mesh_b64": base64.b64encode(fbx_bytes).decode("ascii"),
+            "stats": {
+                "vertex_count": tool_stats.get("vertices"),
+                "face_count": None,
+                "has_uv": bool(tool_stats.get("has_uv")),
+                "tool": tool_stats,
+            },
+            "preview_b64": None,
+        }
+
+    return _stream_payload(run, "Convert to FBX")

@@ -10,13 +10,40 @@ import { PLYExporter } from 'three/examples/jsm/exporters/PLYExporter.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { API_BASE } from '../config'
 
-// Formats we can reliably serialize with three.js. FBX has no official
-// exporter, so it is intentionally excluded.
+// kind 'local'  — serialized in the browser with three.js exporters.
+// kind 'preset' — engine-targeted exports (Blender/Unity/Unreal). FBX has no
+// three.js exporter, so those go through the mesh-tools service, which runs
+// headless Blender to convert a GLB into an engine-tuned FBX (skeleton + one
+// animation take per clip). Presets are only offered when exporting from a
+// mesh URL (asset library preview) — the mesh editor exports raw geometry.
 export const EXPORT_FORMATS = [
-  { value: 'glb', label: 'GLB — single file, textures embedded', extension: 'glb', multiFile: false },
-  { value: 'obj', label: 'OBJ — geometry + .mtl + textures', extension: 'obj', multiFile: true },
-  { value: 'ply', label: 'PLY — geometry only', extension: 'ply', multiFile: false },
-  { value: 'stl', label: 'STL — geometry only', extension: 'stl', multiFile: false }
+  { value: 'glb', label: 'GLB — single file, textures embedded', extension: 'glb', multiFile: false, kind: 'local' },
+  {
+    value: 'blender', label: 'Blender — GLB (rig + animations)', extension: 'glb', multiFile: false,
+    kind: 'preset', preset: 'blender', requiresService: false,
+    hint: 'Blender imports GLB natively (File > Import > glTF 2.0) with the skeleton and every animation clip. GLB source assets are copied byte-for-byte for perfect fidelity.'
+  },
+  {
+    value: 'unity', label: 'Unity — FBX (rig + animation takes)', extension: 'fbx', multiFile: false,
+    kind: 'preset', preset: 'unity', requiresService: true,
+    hint: 'Drop the .fbx into Assets. Textures are embedded — use Materials > Extract Textures. Pick the rig type under Rig (Humanoid may need Enforce T-Pose); each clip appears as a separate take.'
+  },
+  {
+    value: 'unreal', label: 'Unreal Engine — FBX (cm, rig + takes)', extension: 'fbx', multiFile: false,
+    kind: 'preset', preset: 'unreal', requiresService: true,
+    hint: 'Import as Skeletal Mesh with "Import Animations" enabled. The file is exported in centimeters at scale 1 — no unit conversion needed.'
+  },
+  {
+    value: 'fbx', label: 'FBX — generic (rig + animation takes)', extension: 'fbx', multiFile: false,
+    kind: 'preset', preset: 'generic', requiresService: true,
+    hint: 'Neutral FBX (meters, Y-up) with the skeleton and one take per animation clip. Suitable for Godot, Maya, 3ds Max and other DCC tools.'
+  },
+  {
+    value: 'obj', label: 'OBJ — geometry + .mtl + textures', extension: 'obj', multiFile: true, kind: 'local',
+    hint: 'OBJ saves geometry, materials and textures as separate files named after the mesh (e.g. mesh.obj, mesh.mtl, mesh_albedo.png).'
+  },
+  { value: 'ply', label: 'PLY — geometry only', extension: 'ply', multiFile: false, kind: 'local' },
+  { value: 'stl', label: 'STL — geometry only', extension: 'stl', multiFile: false, kind: 'local' }
 ]
 
 function defaultMaterial() {
@@ -27,6 +54,13 @@ function getExtensionFromUrl(url) {
   const clean = String(url || '').split('?')[0].split('#')[0]
   const dot = clean.lastIndexOf('.')
   return dot >= 0 ? clean.slice(dot).toLowerCase() : ''
+}
+
+// True when the URL points at a binary glTF — those sources can be exported
+// byte-for-byte (or fed to the FBX converter) without a lossy three.js
+// round-trip.
+export function isGlbUrl(url) {
+  return getExtensionFromUrl(url) === '.glb'
 }
 
 function loadWithLoader(loader, url) {
@@ -54,6 +88,10 @@ export async function loadObject3DFromUrl(url) {
     if (!scene) {
       throw new Error('The glTF file did not contain a scene to export.')
     }
+    // Carry the clips on the object (FBXLoader's convention) so exportGlb can
+    // hand them to GLTFExporter — otherwise animated assets re-export silently
+    // stripped of their animations.
+    scene.animations = Array.isArray(gltf.animations) ? gltf.animations : []
     return scene
   }
 
@@ -125,7 +163,10 @@ function exportGlb(object, base) {
         resolve([{ filename: `${base}.glb`, blob: new Blob([result], { type: 'model/gltf-binary' }) }])
       },
       error => reject(error instanceof Error ? error : new Error('Failed to export the mesh as GLB.')),
-      { binary: true, onlyVisible: false }
+      // Loader-produced clips are already node-name-addressed, so they need no
+      // track renaming here — the `.bones[...]` rewrite in animationLibrary.js
+      // exists only for the retargeter's mixer-bound clips.
+      { binary: true, onlyVisible: false, animations: object.animations || [] }
     )
   })
 }

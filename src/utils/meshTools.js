@@ -127,6 +127,14 @@ export function repairMesh(meshBlob, opts = {}) {
   return callMeshTool('/meshes/repair', meshBlob, opts)
 }
 
+// GLB -> FBX engine-preset conversion (headless Blender in the mesh-tools
+// service). options: { preset: 'unity'|'unreal'|'generic', ... } — see the
+// service's ConvertOptions. Same SSE contract; the returned blob is the FBX and
+// stats.tool carries { bones, meshes, clips, preset, validation }.
+export function convertMesh(meshBlob, opts = {}) {
+  return callMeshTool('/meshes/convert', meshBlob, { ...opts, format: 'fbx' })
+}
+
 // Auto Rig (SkinTokens/TokenRig). Proxies to the dedicated rigging service; the
 // returned blob is a SKINNED GLB (mesh + skeleton + skin weights) — unlike the
 // tools above it must NOT be flattened into editable geometry. Same SSE contract;

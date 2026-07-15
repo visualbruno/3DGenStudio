@@ -16,6 +16,12 @@ pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
 matplotlib>=3.8         # only needed for the CLI's UV-layout / compare PNGs
 rtree
 
+# Engine export (GLB -> FBX via headless Blender). cp313 wheel (~340MB download,
+# ~1GB installed); each bpy release supports exactly one Python version — keep in
+# sync with .python-version (3.13). Imported ONLY by app/tools/fbx_worker.py,
+# which runs as a subprocess (never import bpy in the FastAPI process).
+bpy>=5.0,<6
+
 # --- Optional GPU acceleration (Auto Retopo) ---------------------------------
 # GPU packages live in requirements-nvidia.txt and are NOT installed from this
 # file. run.bat auto-detects an NVIDIA GPU on first setup and installs them

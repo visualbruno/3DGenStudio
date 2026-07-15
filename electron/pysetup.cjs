@@ -24,6 +24,12 @@ const IS_WIN = process.platform === 'win32';
 const PYVER = '3.13';
 const UV_EXE = IS_WIN ? 'uv.exe' : 'uv';
 
+// Bump whenever python-server/requirements.txt changes so EXISTING installs
+// re-run the (incremental) mesh-tools setup and pick up the new deps — the
+// marker alone only proves that SOME requirements set was installed once.
+// History: 2 = added bpy (GLB->FBX engine export, v1.5.0).
+const MESHTOOLS_REQS_TAG = 'meshtools-reqs-2';
+
 function venvPython(venvDir) {
   return IS_WIN
     ? path.join(venvDir, 'Scripts', 'python.exe')
@@ -52,8 +58,19 @@ function venvUsable(venvDir) {
   }
 }
 
-function isReady(venvDir) {
-  return fs.existsSync(depsMarker(venvDir)) && venvUsable(venvDir);
+// `requiredTag` (optional) additionally requires the marker to start with that
+// tag — pass MESHTOOLS_REQS_TAG for the mesh-tools venv so a requirements bump
+// re-triggers its setup. Rigging keeps the tag-less check (its marker must not
+// be invalidated by mesh-tools changes: re-setup means multi-GB torch/model
+// downloads).
+function isReady(venvDir, requiredTag) {
+  if (!fs.existsSync(depsMarker(venvDir)) || !venvUsable(venvDir)) return false;
+  if (!requiredTag) return true;
+  try {
+    return fs.readFileSync(depsMarker(venvDir), 'utf8').startsWith(requiredTag);
+  } catch {
+    return false;
+  }
 }
 
 // Create the venv with uv, rebuilding from scratch if the existing one is broken
@@ -165,7 +182,7 @@ async function setupPythonServer({ uv, serviceDir, venvDir, onProgress }) {
       run: (log) => runStream(uv, ['pip', 'install', '--python', vp, '-r', 'requirements.txt'], { cwd: serviceDir, env, onLine: log }).then((r) => r.code),
     },
   ], onProgress);
-  fs.writeFileSync(depsMarker(venvDir), new Date().toISOString());
+  fs.writeFileSync(depsMarker(venvDir), `${MESHTOOLS_REQS_TAG} ${new Date().toISOString()}`);
   onProgress({ kind: 'done' });
 }
 
@@ -315,6 +332,7 @@ function startService({ name, serviceDir, venvDir, script, env, logStream, log }
 
 module.exports = {
   PYVER,
+  MESHTOOLS_REQS_TAG,
   venvPython,
   isReady,
   ensureUv,

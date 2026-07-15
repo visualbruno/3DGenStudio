@@ -145,6 +145,32 @@
   color: var(--on-surface-variant);
 }
 
+.export-mesh__progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.export-mesh__progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(71, 72, 74, 0.28);
+  overflow: hidden;
+}
+
+.export-mesh__progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--primary);
+  transition: width 0.25s ease;
+}
+
+.export-mesh__progress-message {
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--on-surface-variant);
+}
+
 .export-mesh__message {
   padding: 0.65rem 0.8rem;
   border-radius: var(--radius-md);

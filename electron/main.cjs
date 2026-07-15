@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 const {
   isReady,
+  MESHTOOLS_REQS_TAG,
   ensureUv,
   setupPythonServer,
   setupSkintokens,
@@ -125,7 +126,9 @@ function waitForBackend(timeoutMs = 60000, intervalMs = 400) {
 function serviceRegistry() {
   return {
     meshtools: {
-      label: 'Mesh Tools', venv: PY_VENV, port: PYTHON_PORT,
+      // reqsTag: a requirements.txt bump flips this service back to
+      // "not installed" until setup re-runs (incrementally) and re-tags it.
+      label: 'Mesh Tools', venv: PY_VENV, port: PYTHON_PORT, reqsTag: MESHTOOLS_REQS_TAG,
       start: () => startPythonServer({
         serviceDir: PYTHON_DIR, venvDir: PY_VENV, port: PYTHON_PORT,
         logStream: openLogStream('python.log'), log,
@@ -183,7 +186,7 @@ function stopService(name) {
 function ensureService(name) {
   const svc = SERVICES[name];
   if (!svc) return Promise.reject(new Error(`Unknown service: ${name}`));
-  if (!isReady(svc.venv)) {
+  if (!isReady(svc.venv, svc.reqsTag)) {
     return Promise.reject(new Error(`${svc.label} is not installed yet. Install it in Settings.`));
   }
   if (starting[name]) return starting[name];
@@ -207,7 +210,7 @@ function serviceStatus() {
   for (const [name, svc] of Object.entries(SERVICES)) {
     out[name] = {
       label: svc.label,
-      installed: isReady(svc.venv),
+      installed: isReady(svc.venv, svc.reqsTag),
       running: !!handles[name],
       starting: !!starting[name],
     };
@@ -238,7 +241,7 @@ async function doSetup(rigging, send) {
   const uv = await ensureUv({ appRoot: APP_ROOT, onLine: (t) => send({ service: 'meshtools', kind: 'log', text: t }) });
   if (!uv) throw new Error('Could not find or install uv (the Python toolchain manager).');
 
-  if (!isReady(PY_VENV)) {
+  if (!isReady(PY_VENV, MESHTOOLS_REQS_TAG)) {
     await setupPythonServer({
       uv, serviceDir: PYTHON_DIR, venvDir: PY_VENV,
       onProgress: (e) => send({ service: 'meshtools', ...e }),
@@ -261,7 +264,7 @@ async function doSetup(rigging, send) {
 function registerSetupIpc() {
   ipcMain.handle('setup:status', () => ({
     desktop: true,
-    meshtools: isReady(PY_VENV),
+    meshtools: isReady(PY_VENV, MESHTOOLS_REQS_TAG),
     rigging: isReady(RIG_VENV),
   }));
 
@@ -272,7 +275,7 @@ function registerSetupIpc() {
       // Provisioned only — services are started on demand (or from Settings),
       // not here, so installing doesn't spin up a process the user isn't using.
       log('Setup run complete.');
-      return { ok: true, status: { meshtools: isReady(PY_VENV), rigging: isReady(RIG_VENV) } };
+      return { ok: true, status: { meshtools: isReady(PY_VENV, MESHTOOLS_REQS_TAG), rigging: isReady(RIG_VENV) } };
     } catch (err) {
       log(`Setup run failed: ${err.message}`);
       send({ kind: 'error', text: err.message });
@@ -341,7 +344,7 @@ async function boot() {
   // progress (isReady probes the venv, so a legacy venv whose system Python was
   // removed is detected and rebuilt). Otherwise → fast path (splash).
   let splash = null;
-  if (!isReady(PY_VENV)) {
+  if (!isReady(PY_VENV, MESHTOOLS_REQS_TAG)) {
     await runFirstRunSetup();
   } else {
     splash = loadingWindow();

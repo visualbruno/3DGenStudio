@@ -5864,6 +5864,18 @@ app.post('/api/meshes/repair', meshToolsUpload.single('meshFile'), async (req, r
   }
 });
 
+// GLB -> FBX engine-preset conversion (headless Blender in the mesh-tools
+// service). Used by the Unity/Unreal/FBX export presets; preserves the
+// skeleton and one animation take per clip.
+app.post('/api/meshes/convert', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/convert', req, res);
+  } catch (err) {
+    console.error('Mesh convert proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Mesh convert failed' });
+  }
+});
+
 // Auto Rig proxies to the dedicated rigging micro-service (SkinTokens/TokenRig),
 // which runs on its own host/port (settings.apis.rigtools) with a GPU/ML stack.
 // Same SSE contract as the mesh-tools routes above.
