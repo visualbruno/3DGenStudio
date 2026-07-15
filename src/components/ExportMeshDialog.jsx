@@ -69,15 +69,17 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
       let files
       let convertNote = ''
 
-      if (selectedFormat.kind !== 'preset') {
+      if (selectedFormat.value === 'glb') {
+        // Byte-passthrough when the source is a .glb (rig/animations/textures
+        // untouched); three.js re-export otherwise.
+        setProgress({ frac: 0.2, message: 'Preparing GLB…' })
+        files = [{ filename: `${base}.glb`, blob: await getSourceGlbBlob(base) }]
+      } else if (selectedFormat.kind !== 'preset') {
         const object = getObject3D ? await getObject3D() : await loadObject3DFromUrl(meshUrl)
         if (!object) {
           throw new Error('No mesh is available to export.')
         }
         files = await exportObject3D(object, { format: selectedFormat.value, baseName: base })
-      } else if (selectedFormat.value === 'blender') {
-        setProgress({ frac: 0.2, message: 'Preparing GLB…' })
-        files = [{ filename: `${base}.glb`, blob: await getSourceGlbBlob(base) }]
       } else {
         setProgress({ frac: 0.05, message: 'Preparing source GLB…' })
         const glbBlob = await getSourceGlbBlob(base)

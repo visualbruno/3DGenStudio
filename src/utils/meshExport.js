@@ -10,18 +10,19 @@ import { PLYExporter } from 'three/examples/jsm/exporters/PLYExporter.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { API_BASE } from '../config'
 
-// kind 'local'  — serialized in the browser with three.js exporters.
-// kind 'preset' — engine-targeted exports (Blender/Unity/Unreal). FBX has no
-// three.js exporter, so those go through the mesh-tools service, which runs
+// kind 'local'  — serialized in the browser with three.js exporters. GLB is
+// special-cased by the export dialog: a .glb source asset is copied
+// byte-for-byte (rig, animations and textures untouched) instead of being
+// round-tripped through three.js; it imports natively into Blender.
+// kind 'preset' — engine-targeted FBX exports (Unity/Unreal/generic). FBX has
+// no three.js exporter, so those go through the mesh-tools service, which runs
 // headless Blender to convert a GLB into an engine-tuned FBX (skeleton + one
 // animation take per clip). Presets are only offered when exporting from a
 // mesh URL (asset library preview) — the mesh editor exports raw geometry.
 export const EXPORT_FORMATS = [
-  { value: 'glb', label: 'GLB — single file, textures embedded', extension: 'glb', multiFile: false, kind: 'local' },
   {
-    value: 'blender', label: 'Blender — GLB (rig + animations)', extension: 'glb', multiFile: false,
-    kind: 'preset', preset: 'blender', requiresService: false,
-    hint: 'Blender imports GLB natively (File > Import > glTF 2.0) with the skeleton and every animation clip. GLB source assets are copied byte-for-byte for perfect fidelity. Note: Blender’s importer may add an "Icosphere" bone-widget object — it is viewport dressing created at import time, not part of the file (set Bone Dir to "Temperance" to avoid it).'
+    value: 'glb', label: 'GLB — single file, textures embedded', extension: 'glb', multiFile: false, kind: 'local',
+    hint: 'Includes the rig and every animation clip; GLB source assets are copied byte-for-byte for perfect fidelity. Imports natively into Blender (File > Import > glTF 2.0). Note: Blender’s importer may add an "Icosphere" bone-widget object — viewport dressing created at import time, not part of the file (set Bone Dir to "Temperance" to avoid it).'
   },
   {
     value: 'unity', label: 'Unity — FBX (rig + animation takes)', extension: 'fbx', multiFile: false,
