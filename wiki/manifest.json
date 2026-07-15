@@ -278,6 +278,69 @@
       "position": 6,
       "createdAt": 1783518027458,
       "updatedAt": 1783518036189
+    },
+    {
+      "id": 32,
+      "parentId": 12,
+      "title": "Auto Rig",
+      "icon": "description",
+      "position": 7,
+      "createdAt": 1784129471917,
+      "updatedAt": 1784129481740
+    },
+    {
+      "id": 33,
+      "parentId": 32,
+      "title": "Skeleton",
+      "icon": "description",
+      "position": 0,
+      "createdAt": 1784129488969,
+      "updatedAt": 1784129500497
+    },
+    {
+      "id": 34,
+      "parentId": 32,
+      "title": "Animations",
+      "icon": "description",
+      "position": 1,
+      "createdAt": 1784129502193,
+      "updatedAt": 1784129513127
+    },
+    {
+      "id": 35,
+      "parentId": 34,
+      "title": "Bone Mapping",
+      "icon": "description",
+      "position": 0,
+      "createdAt": 1784129514439,
+      "updatedAt": 1784129524534
+    },
+    {
+      "id": 36,
+      "parentId": null,
+      "title": "Imports / Exports",
+      "icon": "description",
+      "position": 5,
+      "createdAt": 1784129581364,
+      "updatedAt": 1784129594826
+    },
+    {
+      "id": 37,
+      "parentId": 36,
+      "title": "Project",
+      "icon": "description",
+      "position": 0,
+      "createdAt": 1784129597001,
+      "updatedAt": 1784129608065
+    },
+    {
+      "id": 38,
+      "parentId": 36,
+      "title": "Mesh",
+      "icon": "description",
+      "position": 1,
+      "createdAt": 1784129609391,
+      "updatedAt": 1784129619051
     }
   ]
 }
