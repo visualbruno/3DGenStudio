@@ -11,6 +11,8 @@
 //      three's SkeletonUtils.retargetClip, then play it on the target SkinnedMesh.
 import { AnimationClip, AnimationMixer, Box3, Matrix4, Quaternion, QuaternionKeyframeTrack, Vector3, VectorKeyframeTrack } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { clone as cloneSkinnedScene } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { resourceUrl } from '../config'
 
 // The reference species. `glbs` are loaded and their clips concatenated; for
@@ -387,6 +389,49 @@ export function retargetAnimationClip({
     tracks.push(new VectorKeyframeTrack(`.bones[${hipTargetBone.name}].position`, times, hipPosValues))
   }
   return new AnimationClip(clip.name, duration, tracks)
+}
+
+// Rebind a retargeted clip's tracks for glTF export. Playback tracks are named
+// ".bones[BoneName].quaternion" (resolved by the mixer against the SkinnedMesh's
+// skeleton). GLTFExporter instead resolves tracks against nodes by name, so we
+// rewrite them to "BoneName.quaternion" — matching the bone node the exporter
+// finds while walking the scene.
+function rebindClipForExport(clip) {
+  const tracks = clip.tracks.map(track => {
+    const cloned = track.clone()
+    const m = /^\.bones\[(.+?)\]\.(.+)$/.exec(cloned.name)
+    if (m) cloned.name = `${m[1]}.${m[2]}`
+    return cloned
+  })
+  return new AnimationClip(clip.name, clip.duration, tracks)
+}
+
+// Serialize the user's rigged/target scene to a binary GLB with the given
+// retargeted clips embedded as animations. Returns a Blob.
+//
+// The scene is cloned (SkeletonUtils.clone preserves the skinned-mesh/skeleton/
+// bone hierarchy and bone names) and reset to its bind pose before export, so the
+// live viewport preview is never disturbed and the exported base transforms are
+// the rest pose (the embedded clips drive the motion at playback time).
+export function exportAnimatedGlb({ scene, clips }) {
+  const exportScene = cloneSkinnedScene(scene)
+  exportScene.traverse(o => { if (o.isSkinnedMesh) o.skeleton.pose() })
+  exportScene.updateMatrixWorld(true)
+  const animations = (clips || []).map(rebindClipForExport)
+  return new Promise((resolve, reject) => {
+    new GLTFExporter().parse(
+      exportScene,
+      result => {
+        if (!(result instanceof ArrayBuffer)) {
+          reject(new Error('Failed to export the animated mesh as a binary GLB.'))
+          return
+        }
+        resolve(new Blob([result], { type: 'model/gltf-binary' }))
+      },
+      err => reject(err instanceof Error ? err : new Error('Failed to export the animated mesh.')),
+      { binary: true, onlyVisible: false, animations }
+    )
+  })
 }
 
 // Target bones that correspond to the left/right UPPER ARM (for the

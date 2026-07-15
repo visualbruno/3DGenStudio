@@ -9,6 +9,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ANIMATION_REFERENCES, animationPreviewUrl } from '../../utils/animationLibrary'
 import AnimationClipItem from './AnimationClipItem'
 
+const EMPTY_SET = new Set()
+
 // Build a children-index map + root list from the flat `parents` array.
 function buildHierarchy(parents) {
   const children = new Map()
@@ -87,7 +89,18 @@ function BoneNode({ index, depth, names, childMap, selectedBone, onSelectBone, c
 export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, animation }) {
   const [tab, setTab] = useState('skeleton')
   const [collapsed, setCollapsed] = useState(() => new Set())
+  const [animSearch, setAnimSearch] = useState('')
   const rowRefs = useRef(new Map())
+
+  // Animations tab: filter clips by name and track which are ticked for saving.
+  const allClips = useMemo(() => animation?.clips || [], [animation?.clips])
+  const checkedSet = animation?.checkedAnimations || EMPTY_SET
+  const checkedCount = checkedSet.size
+  const filteredClips = useMemo(() => {
+    const q = animSearch.trim().toLowerCase()
+    if (!q) return allClips
+    return allClips.filter(c => c.name.toLowerCase().includes(q))
+  }, [allClips, animSearch])
 
   const names = skeleton?.names || []
   const { children, roots } = useMemo(() => buildHierarchy(skeleton?.parents), [skeleton])
@@ -265,22 +278,66 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
 
               <div className="mesh-editor-layers-panel__header">
                 <span className="mesh-editor-layers-panel__title">Animations</span>
-                <span className="mesh-editor-panel__hint">{animation?.clips?.length || 0}</span>
+                <span className="mesh-editor-panel__hint">{filteredClips.length}{animSearch.trim() ? ` / ${allClips.length}` : ''}</span>
               </div>
+
+              <div className="mesh-editor-anim__search">
+                <span className="material-symbols-outlined">search</span>
+                <input
+                  type="text"
+                  value={animSearch}
+                  onChange={e => setAnimSearch(e.target.value)}
+                  placeholder="Search animations…"
+                  aria-label="Search animations by name"
+                />
+                {animSearch && (
+                  <button
+                    type="button"
+                    className="mesh-editor-anim__search-clear"
+                    onClick={() => setAnimSearch('')}
+                    title="Clear search"
+                    aria-label="Clear search"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                )}
+              </div>
+
               <div className="mesh-editor-anim__list">
-                {(animation?.clips || []).map(clip => (
+                {filteredClips.length === 0 ? (
+                  <div className="mesh-editor-layers-panel__empty">No animations match “{animSearch.trim()}”.</div>
+                ) : filteredClips.map(clip => (
                   <AnimationClipItem
                     key={clip.name}
                     name={clip.name}
                     previewUrl={animationPreviewUrl(animation.referenceId, clip.name)}
                     selected={animation.selectedAnimation === clip.name}
                     busy={animation.retargeting === clip.name}
+                    checked={checkedSet.has(clip.name)}
                     onSelect={() => animation.onSelectAnimation(clip.name)}
+                    onToggleChecked={() => animation.onToggleChecked(clip.name)}
                   />
                 ))}
               </div>
+
+              <button
+                type="button"
+                className="mesh-editor-btn mesh-editor-btn--primary mesh-editor-anim__save"
+                onClick={animation?.onSave}
+                disabled={checkedCount === 0 || animation?.saving}
+                title="Save the mesh with the selected animations embedded as a new version"
+              >
+                <span className="material-symbols-outlined">
+                  {animation?.saving ? 'progress_activity' : 'save'}
+                </span>
+                <span>
+                  {animation?.saving
+                    ? 'Saving…'
+                    : `Save mesh with ${checkedCount} animation${checkedCount === 1 ? '' : 's'}`}
+                </span>
+              </button>
               <span className="mesh-editor-panel__hint">
-                Click an animation to play it on your mesh. Saving/exporting comes later.
+                Click an animation to preview it. Tick the ones to embed, then save the mesh as a new version.
               </span>
             </>
           )}

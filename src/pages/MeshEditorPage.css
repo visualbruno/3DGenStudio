@@ -798,6 +798,88 @@
   word-break: break-word;
 }
 
+.mesh-editor-anim-item--checked {
+  border-color: rgba(105, 240, 174, 0.6);
+  box-shadow: 0 0 0 1px rgba(105, 240, 174, 0.5) inset;
+}
+
+.mesh-editor-anim-item__check {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: rgba(16, 17, 20, 0.72);
+  padding: 2px;
+  cursor: pointer;
+}
+
+.mesh-editor-anim-item__check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #69f0ae;
+}
+
+/* ---- Animations search ---- */
+.mesh-editor-anim__search {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: 8px;
+  background: var(--surface, #141418);
+}
+
+.mesh-editor-anim__search:focus-within {
+  border-color: rgba(143, 245, 255, 0.5);
+}
+
+.mesh-editor-anim__search > .material-symbols-outlined {
+  font-size: 1.1rem;
+  color: var(--on-surface-variant);
+}
+
+.mesh-editor-anim__search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--on-surface);
+  font-size: 0.8rem;
+  outline: none;
+}
+
+.mesh-editor-anim__search input::placeholder {
+  color: var(--on-surface-variant);
+}
+
+.mesh-editor-anim__search-clear {
+  display: inline-flex;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  padding: 0;
+}
+
+.mesh-editor-anim__search-clear:hover {
+  color: #8ff5ff;
+}
+
+.mesh-editor-anim__search-clear .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.mesh-editor-anim__save {
+  width: 100%;
+  justify-content: center;
+}
+
 @keyframes mesh-editor-spin {
   to { transform: rotate(360deg); }
 }

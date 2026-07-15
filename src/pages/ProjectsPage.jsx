@@ -24,6 +24,14 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.4.0',
+    date: '2026-07-15',
+    items: [
+			'MeshEditor: Added Auto Rig with Skintokens',
+			'Fixed Desktop App Setup',
+    ],
+  },
+  {
     version: 'v1.3.3',
     date: '2026-07-10',
     items: [
