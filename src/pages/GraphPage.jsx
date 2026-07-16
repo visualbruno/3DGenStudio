@@ -8,6 +8,7 @@ import {
   EdgeLabelRenderer,
   Handle,
   MiniMap,
+  Panel,
   Position,
   ReactFlow,
   useEdgesState,
@@ -58,6 +59,7 @@ import {
   canFetchTencentMeshResult,
   canFetchTripoMeshResult,
   canNodeTypeAcceptIncomingConnection,
+  computeReorganizedLayout,
   createComfyExecutionId,
   createWorkflowDraftBindings,
   createWorkflowDraftInputs,
@@ -2835,6 +2837,36 @@ export default function GraphPage({ project }) {
     }
   }, [project.id, updateProjectNodePosition])
 
+  // Tidy up the canvas: lay the nodes out in clean left-to-right columns that
+  // follow the connections, persist the new positions, then re-fit the view.
+  const handleReorganize = useCallback(async () => {
+    const layout = computeReorganizedLayout(nodes, edges)
+    const movedNodes = nodes.filter(node => {
+      const position = layout[node.id]
+      return position && (position.x !== node.position.x || position.y !== node.position.y)
+    })
+
+    if (movedNodes.length === 0) {
+      return
+    }
+
+    setNodes(currentNodes => currentNodes.map(node => (
+      layout[node.id] ? { ...node, position: layout[node.id] } : node
+    )))
+
+    window.requestAnimationFrame(() => {
+      reactFlowInstance?.fitView?.({ padding: 0.2, duration: 400 })
+    })
+
+    try {
+      await Promise.all(movedNodes.map(node => (
+        updateProjectNodePosition(project.id, Number(node.id), layout[node.id])
+      )))
+    } catch (err) {
+      console.error('Failed to persist reorganized node positions:', err)
+    }
+  }, [nodes, edges, setNodes, reactFlowInstance, project.id, updateProjectNodePosition])
+
   const handleEdgesDelete = useCallback(async (deletedEdges) => {
     await Promise.all(
       deletedEdges.map(edge => handleDeleteConnection(edge))
@@ -3201,6 +3233,18 @@ export default function GraphPage({ project }) {
               deleteKeyCode={null}
               proOptions={{ hideAttribution: true }}
             >
+              <Panel position="top-left">
+                <button
+                  type="button"
+                  className="graph-page__reorganize"
+                  onClick={handleReorganize}
+                  disabled={nodes.length === 0}
+                  title="Reorganize nodes by following their connections"
+                >
+                  <span className="material-symbols-outlined">account_tree</span>
+                  <span>Reorganize</span>
+                </button>
+              </Panel>
               <Background gap={24} size={1} color="rgba(143, 245, 255, 0.14)" />
               <MiniMap pannable zoomable className="graph-page__minimap" nodeColor={minimapNodeColor} />
               <Controls className="graph-page__controls" showInteractive={false} />

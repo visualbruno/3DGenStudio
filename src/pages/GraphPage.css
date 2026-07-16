@@ -169,6 +169,39 @@
   border: 1px solid rgba(71, 72, 74, 0.16);
 }
 
+.graph-page__reorganize {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(18, 19, 21, 0.96);
+  color: var(--on-surface);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(14px);
+  transition: all var(--transition-base);
+}
+
+.graph-page__reorganize:hover:not(:disabled) {
+  border-color: rgba(143, 245, 255, 0.28);
+  background: rgba(143, 245, 255, 0.12);
+  color: var(--primary);
+}
+
+.graph-page__reorganize:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.graph-page__reorganize .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+
 .graph-page__controls {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
 }
