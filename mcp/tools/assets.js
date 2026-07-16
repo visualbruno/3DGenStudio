@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { toolHandler, withAssetUrls } from '../client.js';
+import { toolHandler, withAssetUrls, findProjectAsset } from '../client.js';
 
 const MIME_BY_EXT = {
   '.png': 'image/png',
@@ -15,6 +16,34 @@ const MIME_BY_EXT = {
   '.obj': 'text/plain',
   '.json': 'application/json'
 };
+
+// MCP image blocks Claude can actually see. Cap the raw size so the base64
+// payload stays under typical model/image limits (~5 MB base64).
+const VIEWABLE_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const MAX_VIEW_BYTES = 3.5 * 1024 * 1024;
+
+function imageMimeOf(filePath) {
+  return MIME_BY_EXT[path.extname(String(filePath || '')).toLowerCase()] || null;
+}
+
+// Resolve what file a view/download request points at: an image asset's own
+// file, or — for meshes — its thumbnail when viewing.
+function resolveViewTarget(asset) {
+  const file = asset.filename || asset.filePath;
+  const mime = imageMimeOf(file);
+  if (mime && VIEWABLE_IMAGE_MIME.has(mime)) {
+    return { file, mime, note: null };
+  }
+  if (asset.thumbnail) {
+    const thumbMime = imageMimeOf(asset.thumbnail) || 'image/png';
+    return {
+      file: asset.thumbnail,
+      mime: thumbMime,
+      note: `This is the thumbnail preview of "${asset.name}" (${String(asset.type || 'asset')}), not the file itself. Use download_asset for the full file.`
+    };
+  }
+  return null;
+}
 
 export function registerAssetTools(server, { api, notifyMutation }) {
   server.registerTool('list_assets', {
@@ -86,6 +115,81 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     });
     notifyMutation(projectId);
     return withAssetUrls(api, asset);
+  }));
+
+  server.registerTool('view_asset', {
+    title: 'View asset (image)',
+    description: 'SEE a project asset: returns the actual image so it can be visually inspected. For image assets returns the image itself; for meshes returns the thumbnail preview when one exists. Use this after generating images to check the results. For raw file access use download_asset.',
+    inputSchema: {
+      projectId: z.number().int(),
+      assetId: z.number().int().describe('Asset id (from list_assets or a generation result)')
+    },
+    annotations: { readOnlyHint: true }
+  }, async ({ projectId, assetId } = {}) => {
+    try {
+      const asset = await findProjectAsset(api, projectId, assetId);
+      const target = resolveViewTarget(asset);
+      if (!target) {
+        return {
+          isError: true,
+          content: [{
+            type: 'text',
+            text: `Asset ${assetId} ("${asset.name}", type ${asset.type}) has no viewable image or thumbnail. Use download_asset to save the file locally instead.`
+          }]
+        };
+      }
+
+      const buffer = await api.fetchAssetBuffer(target.file);
+      if (buffer.length > MAX_VIEW_BYTES) {
+        return {
+          isError: true,
+          content: [{
+            type: 'text',
+            text: `Asset file is too large to view inline (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Use download_asset to save it locally, or open its URL: ${api.assetUrl(target.file)}`
+          }]
+        };
+      }
+
+      const info = {
+        id: asset.id,
+        name: asset.name,
+        type: asset.type,
+        width: asset.width || undefined,
+        height: asset.height || undefined,
+        url: api.assetUrl(asset.filename || asset.filePath)
+      };
+      return {
+        content: [
+          { type: 'image', data: buffer.toString('base64'), mimeType: target.mime },
+          { type: 'text', text: (target.note ? `${target.note}\n` : '') + JSON.stringify(info) }
+        ]
+      };
+    } catch (err) {
+      return { isError: true, content: [{ type: 'text', text: String(err?.message || err) }] };
+    }
+  });
+
+  server.registerTool('download_asset', {
+    title: 'Download asset to disk',
+    description: 'Save a project asset\'s file (image, mesh, or workflow) into an absolute folder on the machine running 3D Gen Studio, so it can be opened or inspected from the filesystem.',
+    inputSchema: {
+      projectId: z.number().int(),
+      assetId: z.number().int(),
+      folder: z.string().min(1).describe('Absolute output folder'),
+      fileName: z.string().optional().describe('Output file name (defaults to the asset\'s stored file name)')
+    },
+    annotations: { readOnlyHint: true }
+  }, toolHandler(async ({ projectId, assetId, folder, fileName }) => {
+    const asset = await findProjectAsset(api, projectId, assetId);
+    const assetFile = asset.filename || asset.filePath;
+    const buffer = await api.fetchAssetBuffer(assetFile);
+    // Reuse the server's export endpoint — it writes arbitrary files under an
+    // absolute folder with basename sanitization.
+    const form = new FormData();
+    form.append('folder', folder);
+    form.append('files', new Blob([buffer]), fileName || path.basename(String(assetFile)) || `asset-${assetId}`);
+    const written = await api.apiForm('POST', '/export/mesh', form);
+    return { ...written, sizeBytes: buffer.length, asset: { id: asset.id, name: asset.name, type: asset.type } };
   }));
 
   server.registerTool('delete_asset', {

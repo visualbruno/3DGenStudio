@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { Buffer } from 'node:buffer';
 import path from 'node:path';
-import { toolHandler, createProgressReporter, withAssetUrls } from '../client.js';
+import { toolHandler, createProgressReporter, withAssetUrls, findProjectAsset } from '../client.js';
 
 // Local mesh services behind the Node proxy. auto_uv/auto_retopo/repair/
 // convert_fbx run on the Python mesh-tools service (:8200), auto_rig on the
@@ -14,23 +14,6 @@ const OPERATIONS = {
   auto_rig: { path: '/meshes/rig', sse: true },
   optimize: { path: '/meshes/optimize', sse: false }
 };
-
-async function findProjectAsset(api, projectId, assetId) {
-  const assets = await api.apiJson('GET', '/assets', { query: { projectId } });
-  const flat = [];
-  const visit = asset => {
-    if (!asset) return;
-    flat.push(asset);
-    for (const key of ['edits', 'versions', 'children']) {
-      if (Array.isArray(asset[key])) asset[key].forEach(visit);
-    }
-  };
-  (Array.isArray(assets) ? assets : []).forEach(visit);
-  const asset = flat.find(a => Number(a?.id) === Number(assetId));
-  if (!asset) throw new Error(`Asset ${assetId} not found in project ${projectId} (use list_assets to find valid ids).`);
-  if (!asset.filename && !asset.filePath) throw new Error(`Asset ${assetId} has no stored file.`);
-  return asset;
-}
 
 export function registerMeshToolTools(server, { api, notifyMutation }) {
   server.registerTool('run_mesh_tool', {

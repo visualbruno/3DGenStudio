@@ -36,7 +36,7 @@ Typical flows:
 - IMPORTANT (graph projects): always pass nodeId to run_workflow / generate_image / edit_image / generate_mesh so the results are DISPLAYED on that node. Without nodeId the assets are saved but no node shows them. The first result becomes the node's image/mesh; extra results become new nodes stacked below it.
 - ComfyUI: list_workflows for saved workflows and their parameters; import_workflow to add new ones (inspect_workflow first to discover inputs/outputs). run_workflow blocks with progress until the assets are ready. ComfyUI itself must be running (URL in get_settings).
 - Mesh processing: run_mesh_tool (auto_uv / auto_retopo / repair / auto_rig / optimize / convert_fbx) works on mesh assets; results save as asset versions.
-- Assets carry direct download URLs in every response.
+- Seeing results: use view_asset to LOOK at a generated image (returns the actual image; for meshes it returns the thumbnail when available). Use download_asset to save any asset file to a local folder. Assets also carry direct download URLs in every response.
 
 Note: interactive Mesh Editor sculpting/painting and Image Editor pixel edits are browser-only and not exposed here. If the app UI is open in a browser, it may need a refresh to show changes made through these tools.`;
 

@@ -170,6 +170,25 @@ export function createProgressReporter(extra) {
   };
 }
 
+// Locate an asset anywhere in a project's asset tree (top-level assets plus
+// nested edits/versions/children). Throws with a hint when the id is unknown.
+export async function findProjectAsset(api, projectId, assetId) {
+  const assets = await api.apiJson('GET', '/assets', { query: { projectId } });
+  const flat = [];
+  const visit = asset => {
+    if (!asset) return;
+    flat.push(asset);
+    for (const key of ['edits', 'versions', 'children']) {
+      if (Array.isArray(asset[key])) asset[key].forEach(visit);
+    }
+  };
+  (Array.isArray(assets) ? assets : []).forEach(visit);
+  const asset = flat.find(a => Number(a?.id) === Number(assetId));
+  if (!asset) throw new Error(`Asset ${assetId} not found in project ${projectId} (use list_assets to find valid ids).`);
+  if (!asset.filename && !asset.filePath) throw new Error(`Asset ${assetId} has no stored file.`);
+  return asset;
+}
+
 // Attach a public URL to an asset record (and its nested edits/versions when
 // present) so MCP clients can download files without base64 round-trips.
 export function withAssetUrls(api, asset) {

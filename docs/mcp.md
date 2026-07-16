@@ -25,7 +25,7 @@ Settings live in the app database and can be changed via `POST /api/settings` wi
 ### Claude Code
 
 ```sh
-claude mcp add --transport http gen-studio http://localhost:3001/mcp
+claude mcp add --transport http 3d-gen-studio http://localhost:3001/mcp
 ```
 
 ### Claude Desktop
@@ -35,7 +35,7 @@ Add a custom connector (Settings → Connectors) with URL `http://localhost:3001
 ```json
 {
   "mcpServers": {
-    "gen-studio": {
+    "3d-gen-studio": {
       "command": "node",
       "args": ["C:/Git/3DGenStudio/mcp/stdio.js"]
     }
@@ -69,7 +69,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
 | AI actions | `generate_image`, `edit_image`, `generate_mesh`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `run_mesh_tool` (auto_uv / auto_retopo / repair / auto_rig / optimize / convert_fbx), `export_mesh` |
-| Assets | `list_assets`, `list_library_assets`, `upload_asset`, `link_asset`, `delete_asset` |
+| Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `delete_asset` |
 | System | `get_settings` (secrets redacted), `get_system_stats` |
 
 ### Displaying results on graph nodes
@@ -82,7 +82,9 @@ In graph projects, pass `nodeId` to `run_workflow`, `generate_image`, `edit_imag
 
 ### Files and assets
 
-Tools never return file bytes. Assets carry direct download URLs (`http://localhost:3001/assets/...`); local files are passed into tools by absolute path (`upload_asset`, `import_workflow filePath`, `run_workflow fileInputs`), and exports write to absolute folders on the machine running the app.
+- `view_asset` returns the **actual image** as MCP image content, so the AI can visually inspect generated images (for meshes it returns the thumbnail preview when one exists). Inline viewing is capped at ~3.5 MB per image.
+- `download_asset` writes any asset file (image/mesh/workflow) to an absolute folder on the machine running the app.
+- Asset listings and results otherwise carry direct download URLs (`http://localhost:3001/assets/...`); local files are passed into tools by absolute path (`upload_asset`, `import_workflow filePath`, `run_workflow fileInputs`), and exports write to absolute folders.
 
 ## Requirements per capability
 
