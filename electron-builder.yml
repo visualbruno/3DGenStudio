@@ -35,6 +35,8 @@ files:
   - server.js
   - storage.js
   - wikiStorage.js
+  # MCP automation server (POST /mcp on the backend + stdio bridge).
+  - mcp/**/*
   - version.json
   - package.json
   - dist/**/*

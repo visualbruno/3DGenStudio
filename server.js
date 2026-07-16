@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import si from 'systeminformation';
 import { WebSocket as WsWebSocket } from 'ws';
 import tencentcloudSdk from 'tencentcloud-sdk-nodejs-intl-en';
+import { mountMcp } from './mcp/http.js';
 
 // Node 20 (bundled by Electron 33) has no global WebSocket, so fall back to the
 // `ws` package. Newer Node runtimes (dev) expose a global WebSocket we can reuse.
@@ -190,6 +191,51 @@ const HAS_DIST = existsSync(DIST_DIR);
 if (HAS_DIST) {
   app.use(express.static(DIST_DIR));
 }
+
+// App-level event stream (SSE). Lets an open browser UI learn about mutations
+// made outside of it (e.g. by an MCP client) and refetch instead of showing
+// stale data until the next manual refresh.
+const appEventSubscribers = new Set();
+function publishAppEvent(event) {
+  const serialized = `data: ${JSON.stringify({ timestamp: Date.now(), ...event })}\n\n`;
+  for (const response of appEventSubscribers) {
+    response.write(serialized);
+  }
+}
+
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  res.write('retry: 1000\n\n');
+
+  appEventSubscribers.add(res);
+
+  const heartbeat = setInterval(() => {
+    res.write(': keep-alive\n\n');
+  }, 15000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    appEventSubscribers.delete(res);
+  });
+});
+
+// MCP server endpoint (POST /mcp) — lets any MCP client (Claude, ChatGPT,
+// local LLMs) automate the app. Tools loop back through this server's own
+// REST API, so SQLite stays behind this single process. Gated by
+// settings.mcp (enabled/token) in mcp/http.js.
+mountMcp(app, {
+  baseUrl: `http://127.0.0.1:${PORT}`,
+  getSettings,
+  notifyMutation: (projectId, detail) => publishAppEvent({
+    type: 'externalMutation',
+    projectId: projectId ?? null,
+    ...(detail || {})
+  })
+});
 
 // Multer Config for Asset Uploads
 const storage = multer.diskStorage({
@@ -7779,7 +7825,7 @@ async function migrateWikiIfNeeded() {
 if (HAS_DIST) {
   app.use((req, res, next) => {
     if (req.method !== 'GET') return next();
-    if (/^\/(api|assets|wiki-media)(\/|$)/.test(req.path)) return next();
+    if (/^\/(api|assets|wiki-media|mcp)(\/|$)/.test(req.path)) return next();
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }

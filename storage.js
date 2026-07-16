@@ -188,6 +188,12 @@ export const DEFAULT_SETTINGS = {
       port: '8300'
     },
     custom: []
+  },
+  // MCP automation endpoint (POST /mcp on the backend). With no token set,
+  // only loopback clients may connect; a token allows remote MCP clients.
+  mcp: {
+    enabled: true,
+    token: ''
   }
 };
 

@@ -668,6 +668,21 @@ export default function GraphPage({ project }) {
     }
   }, [getComfyWorkflows, updateComfyWorkflow])
 
+  // Bumped when something outside this browser (e.g. an MCP client / AI
+  // agent) mutates this project — re-runs the loadGraph effect below.
+  const [externalReloadTick, setExternalReloadTick] = useState(0)
+
+  useEffect(() => {
+    const handleExternalMutation = (event) => {
+      const targetProjectId = event?.detail?.projectId
+      if (targetProjectId == null || Number(targetProjectId) === Number(project.id)) {
+        setExternalReloadTick(tick => tick + 1)
+      }
+    }
+    window.addEventListener('genstudio:external-mutation', handleExternalMutation)
+    return () => window.removeEventListener('genstudio:external-mutation', handleExternalMutation)
+  }, [project.id])
+
   useEffect(() => {
     let cancelled = false
 
@@ -704,7 +719,7 @@ export default function GraphPage({ project }) {
     return () => {
       cancelled = true
     }
-  }, [getProjectConnections, getProjectNodes, handleDeleteNode, project.id, setEdges, setNodes])
+  }, [getProjectConnections, getProjectNodes, handleDeleteNode, project.id, setEdges, setNodes, externalReloadTick])
 
   const handleCreateNode = useCallback(async (nodeTypeName, initialData = {}) => {
     const nextIndex = nodes.length

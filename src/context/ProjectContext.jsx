@@ -79,6 +79,30 @@ export function ProjectProvider({ children }) {
     fetchProjects()
   }, [fetchProjects])
 
+  // App-level event stream: the backend publishes `externalMutation` events
+  // when something outside this browser (e.g. an MCP client / AI agent)
+  // changes data. Refresh the project list and let open pages refetch via a
+  // window event so the UI doesn't sit on stale state until a manual reload.
+  useEffect(() => {
+    if (typeof EventSource === 'undefined') return undefined
+
+    const eventSource = new EventSource(`${API_BASE}/events`)
+    eventSource.onmessage = (event) => {
+      let payload
+      try {
+        payload = JSON.parse(event.data)
+      } catch {
+        return
+      }
+      if (payload?.type !== 'externalMutation') return
+      fetchProjects()
+      window.dispatchEvent(new CustomEvent('genstudio:external-mutation', { detail: payload }))
+    }
+    eventSource.onerror = () => {}
+
+    return () => eventSource.close()
+  }, [fetchProjects])
+
   const createProject = async (projectData) => {
     try {
       const res = await fetch(`${API_BASE}/projects`, {

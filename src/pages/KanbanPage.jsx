@@ -342,6 +342,22 @@ export default function KanbanPage() {
     setCardAttributes(attributesData)
   }
 
+  // Reload board data when something outside this browser (e.g. an MCP
+  // client / AI agent) mutates this project.
+  useEffect(() => {
+    const handleExternalMutation = (event) => {
+      const targetProjectId = event?.detail?.projectId
+      if (targetProjectId != null && Number(targetProjectId) !== Number(projectId)) return
+      refreshProjectAssets().catch(() => {})
+      refreshCardAttributes().catch(() => {})
+    }
+    window.addEventListener('genstudio:external-mutation', handleExternalMutation)
+    return () => window.removeEventListener('genstudio:external-mutation', handleExternalMutation)
+    // refreshCardAttributes is re-created per render; the listener only needs
+    // a working copy, so deps stay minimal to avoid re-subscribing every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, refreshProjectAssets])
+
   const closePendingComfyProgressSubscription = () => {
     pendingComfyProgressSubscriptionRef.current?.()
     pendingComfyProgressSubscriptionRef.current = null

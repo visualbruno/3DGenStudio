@@ -18,6 +18,7 @@
     "serve": "vite build && node server.js",
     "lint": "eslint .",
     "preview": "vite preview",
+    "mcp:stdio": "node mcp/stdio.js",
     "electron:dev": "npm run build && electron .",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win",
@@ -26,6 +27,7 @@
     "dist:dir": "npm run build && electron-builder --dir"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@types/three": "^0.183.1",
@@ -50,7 +52,8 @@
     "three": "^0.183.2",
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.9",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
