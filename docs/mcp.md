@@ -72,6 +72,10 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Assets | `list_assets`, `list_library_assets`, `upload_asset`, `link_asset`, `delete_asset` |
 | System | `get_settings` (secrets redacted), `get_system_stats` |
 
+### Displaying results on graph nodes
+
+In graph projects, pass `nodeId` to `run_workflow`, `generate_image`, `edit_image`, or `generate_mesh` to display the results on that node — the first result becomes the node's asset, and additional results become new nodes stacked below it (wired to the same inputs). Without `nodeId` the generated assets are saved to the project but no node displays them.
+
 ### Long-running operations
 
 `run_workflow`, `generate_mesh`, and `run_mesh_tool` block until the result is ready and stream MCP progress notifications. If a run outlives the tool's `timeoutSeconds`, it keeps running in the background and the tool returns a `promptId`/job info to poll (`get_run_status` for ComfyUI runs; `list_assets`/`list_cards` otherwise).

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { toolHandler, createProgressReporter } from '../client.js';
+import { attachResultsToNode } from '../nodeResults.js';
 
 // Strip the raw graph JSON from workflow records so list responses stay small.
 function summarizeWorkflow(workflow) {
@@ -103,13 +104,14 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
 
   server.registerTool('run_workflow', {
     title: 'Run ComfyUI workflow',
-    description: 'Execute a saved ComfyUI workflow and wait for the generated assets (streams MCP progress notifications). inputs maps parameter id -> value; for image/mesh parameters pass a project asset id (number) as the value, or use fileInputs to upload a local file. Requires ComfyUI to be running (configured in Settings). On timeout returns {status:"running", promptId} — poll with get_run_status.',
+    description: 'Execute a saved ComfyUI workflow and wait for the generated assets (streams MCP progress notifications). inputs maps parameter id -> value; for image/mesh parameters pass a project asset id (number) as the value, or use fileInputs to upload a local file. IMPORTANT for graph projects: pass nodeId (a graph node from get_graph/create_node) so the results are displayed on that node — the first result becomes the node\'s asset, additional results become new nodes stacked below it. Requires ComfyUI to be running (configured in Settings). On timeout returns {status:"running", promptId} — poll with get_run_status.',
     inputSchema: {
       workflowId: z.number().int().describe('Saved workflow id (from list_workflows)'),
       projectId: z.number().int().optional().describe('Project to attach results to (required unless persistGeneratedAssets=false)'),
       inputs: z.record(z.string(), z.any()).default({}).describe('Parameter id -> value. Image/mesh parameters accept a project assetId (number) or stored filePath (string).'),
       fileInputs: z.record(z.string(), z.string()).optional().describe('Parameter id -> absolute local file path to upload for image/mesh/video parameters'),
-      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing card/node to attach the run to (its status updates live in the UI)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the results to (graph projects) — without it the generated assets are saved but no node displays them'),
+      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing kanban card to attach the run to (its status updates live in the UI)'),
       name: z.string().optional().describe('Name for the generated asset(s)'),
       parentAssetId: z.number().int().optional().describe('Save results as versions of this asset'),
       persistProcessingCard: z.boolean().optional(),
@@ -118,7 +120,7 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
     }
   }, toolHandler(async (args, extra) => {
     const {
-      workflowId, projectId, inputs = {}, fileInputs, cardId, name,
+      workflowId, projectId, inputs = {}, fileInputs, nodeId, cardId, name,
       parentAssetId, persistProcessingCard, persistGeneratedAssets, timeoutSeconds = 600
     } = args;
     const reportProgress = createProgressReporter(extra);
@@ -186,10 +188,27 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       }
       await reportProgress(100, 100, 'Workflow completed');
       const result = outcome.result;
+      const assets = Array.isArray(result) ? result : (result ? [result] : []);
+
+      // Graph projects: display the results on the target node (mirrors what
+      // the GraphPage does after a run — without this the assets exist but no
+      // node shows them).
+      let nodeAttachment = null;
+      if (nodeId && projectId) {
+        nodeAttachment = await attachResultsToNode(api, {
+          projectId,
+          nodeId,
+          assets,
+          metadata: { lastAction: 'comfy-workflow', promptId }
+        });
+        notifyMutation(projectId);
+      }
+
       return {
         status: 'completed',
         promptId,
-        assets: Array.isArray(result) ? result : (result ? [result] : [])
+        assets,
+        ...(nodeAttachment ? { nodeAttachment } : {})
       };
     } finally {
       if (timer) clearTimeout(timer);

@@ -33,6 +33,7 @@ const SERVER_INSTRUCTIONS = `3D Gen Studio automation server.
 
 Typical flows:
 - New pipeline: create_project (preset "graph") -> create_node / connect_nodes to lay out the pipeline -> run_workflow or generate_image / generate_mesh to produce assets.
+- IMPORTANT (graph projects): always pass nodeId to run_workflow / generate_image / edit_image / generate_mesh so the results are DISPLAYED on that node. Without nodeId the assets are saved but no node shows them. The first result becomes the node's image/mesh; extra results become new nodes stacked below it.
 - ComfyUI: list_workflows for saved workflows and their parameters; import_workflow to add new ones (inspect_workflow first to discover inputs/outputs). run_workflow blocks with progress until the assets are ready. ComfyUI itself must be running (URL in get_settings).
 - Mesh processing: run_mesh_tool (auto_uv / auto_retopo / repair / auto_rig / optimize / convert_fbx) works on mesh assets; results save as asset versions.
 - Assets carry direct download URLs in every response.
