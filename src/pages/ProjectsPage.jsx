@@ -24,11 +24,22 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v1.5.0',
+    date: '2026-07-16',
+    items: [
+			'MeshPreviewer: Export to Unity, Unreal Engine, FBX',
+			'Graph Page: Add a mesh directly from the Local Computer',
+			'Graph Page: Can drag and drop a mesh from your computer',
+			'Kanban Board: Can drag and drop a mesh from your computer',
+			'Kanban Board: Added Rigging column'
+    ],
+  },
+  {
     version: 'v1.4.0',
     date: '2026-07-15',
     items: [
 			'MeshEditor: Added Auto Rig with Skintokens',
-			'Fixed Desktop App Setup',
+			'Fixed Desktop App Setup'
     ],
   },
   {

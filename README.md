@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-07-16** | Mesh Preview: Export presets for Unity and Unreal Engine (FBX with skeleton + one take per animation clip, headless-Blender conversion); GLB export keeps rig + animations and copies .glb sources byte-for-byte (imports natively into Blender)<br>Graph Page: Can import a mesh directly from the computer<br>Kanban board: Added Rigging column |
 | **2026-07-15** | MeshEditor: Auto Rig with Skintokens<br>Fixed Desktop App Setup |
 | **2026-07-10** | Desktop App Installer<br>Speed up Auto Retopo<br>Added Clean Non-Manifold Edges in Auto Retopo |
 | **2026-07-08** | Added Hitem3D API v1 |
