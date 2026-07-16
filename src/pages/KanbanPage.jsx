@@ -59,6 +59,19 @@ import { saveWorkflowDefaults } from '../utils/workflowDefaults'
 // Database id of the "Mesh Gen" kanban column (see IMAGE_CARD_COLUMNS).
 const MESH_GEN_COLUMN_ID = 3
 
+// Extensions accepted for 3D mesh imports, derived from the shared mesh accept
+// list so drag-and-drop stays in sync with the file picker. Meshes dropped from
+// the OS often arrive with an empty MIME type, so we detect them by extension.
+const MESH_FILE_EXTENSIONS = getWorkflowFileInputAccept('mesh')
+  .split(',')
+  .map(entry => entry.trim().replace(/^\./, '').toLowerCase())
+  .filter(Boolean)
+
+const isMeshFile = (file) => {
+  const extension = (file?.name?.split('.').pop() || '').toLowerCase()
+  return MESH_FILE_EXTENSIONS.includes(extension)
+}
+
 export default function KanbanPage() {
   const { projectId } = useParams()
   const navigate = useNavigate()
@@ -2824,43 +2837,72 @@ export default function KanbanPage() {
     setFileDropColumnId(prev => (prev === columnId ? null : prev))
   }
 
-  // Import dropped image files into Assets and create a single image card in the
-  // column they were dropped on. New assets are created in the Images column
-  // server-side, so cards dropped elsewhere are relocated afterwards.
+  // Move a freshly created card into the column it was dropped on. New assets and
+  // cards are always created in the Images column server-side, so anything dropped
+  // elsewhere needs to be relocated afterwards.
+  const moveDroppedCardToColumn = async (cardId, columnId) => {
+    if (columnId === IMAGE_CARD_COLUMNS[0].dbId) return
+    const position = projectCards.filter(card => card.kanbanColumnId === columnId).length
+    await moveKanbanCard(projectId, cardId, columnId, position)
+  }
+
+  // Import dropped image and/or 3D mesh files into Assets, creating one card per
+  // file type in the column they were dropped on. Meshes are imported as mesh
+  // assets and get a rendered thumbnail like generated meshes do.
   const handleColumnFileDrop = async (event, columnId) => {
     if (draggedCard || !isFileDrag(event)) return
     event.preventDefault()
     setFileDropColumnId(null)
 
-    const files = Array.from(event.dataTransfer?.files || []).filter(file => file.type.startsWith('image/'))
-    if (files.length === 0) {
-      showStatusMessage('Only image files can be dropped here', 'error')
+    const droppedFiles = Array.from(event.dataTransfer?.files || [])
+    const imageFiles = droppedFiles.filter(file => file.type.startsWith('image/'))
+    const meshFiles = droppedFiles.filter(isMeshFile)
+
+    if (imageFiles.length === 0 && meshFiles.length === 0) {
+      showStatusMessage('Only image or 3D mesh files can be dropped here', 'error')
       return
     }
-
-    const cardId = createImageCardId()
 
     try {
       setLoading(true)
 
-      for (const file of files) {
-        await uploadAsset(projectId, file, 'image', {
-          resolution: 'Unknown',
-          format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
-          source: 'IMPORT',
-          cardId
-        })
+      if (imageFiles.length > 0) {
+        const imageCardId = createImageCardId()
+
+        for (const file of imageFiles) {
+          await uploadAsset(projectId, file, 'image', {
+            resolution: 'Unknown',
+            format: file.type.split('/')[1]?.toUpperCase() || 'IMG',
+            source: 'IMPORT',
+            cardId: imageCardId
+          })
+        }
+
+        await moveDroppedCardToColumn(imageCardId, columnId)
       }
 
-      if (columnId !== IMAGE_CARD_COLUMNS[0].dbId) {
-        const position = projectCards.filter(card => card.kanbanColumnId === columnId).length
-        await moveKanbanCard(projectId, cardId, columnId, position)
+      if (meshFiles.length > 0) {
+        const meshCardId = createImageCardId()
+        const uploadedMeshes = []
+
+        for (const file of meshFiles) {
+          const uploaded = await uploadAsset(projectId, file, 'mesh', {
+            resolution: 'Unknown',
+            format: file.name.split('.').pop()?.toUpperCase() || 'MESH',
+            source: 'IMPORT',
+            cardId: meshCardId
+          })
+          uploadedMeshes.push(uploaded)
+        }
+
+        await moveDroppedCardToColumn(meshCardId, columnId)
+        await ensureGeneratedMeshThumbnails(uploadedMeshes)
       }
 
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
-      console.error('Failed to import dropped image:', err)
-      showStatusMessage(err.message || 'Failed to import dropped image', 'error')
+      console.error('Failed to import dropped files:', err)
+      showStatusMessage(err.message || 'Failed to import dropped files', 'error')
     } finally {
       setLoading(false)
     }
