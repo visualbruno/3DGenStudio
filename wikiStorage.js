@@ -1,7 +1,7 @@
 import path from 'path';
-import process from 'process';
 import fs from 'fs/promises';
 import { existsSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 // ─────────────────────────────────────────────────────────────────────────
 // File-based wiki store. Lives in a git-tracked folder so the documentation
@@ -9,9 +9,17 @@ import { existsSync } from 'fs';
 //   wiki/manifest.json   — flat list of pages (the tree is derived from parentId)
 //   wiki/content/<id>.md — one Markdown file per page
 //   wiki/media/          — screenshots and videos referenced by the pages
+//
+// Resolve the folder relative to THIS module — NOT process.cwd(). The desktop
+// app runs the backend with cwd set to the per-user data dir (so the writable
+// data/ folder lands there), but the wiki is shipped, read-only documentation
+// that sits beside this file: the repo root in dev, resources/app/ in a
+// packaged build. Keying off cwd made the packaged app read (and seed a stray
+// default) wiki under the user data dir instead of the shipped one.
 // ─────────────────────────────────────────────────────────────────────────
 
-export const WIKI_DIR = path.join(process.cwd(), 'wiki');
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+export const WIKI_DIR = path.join(MODULE_DIR, 'wiki');
 export const WIKI_CONTENT_DIR = path.join(WIKI_DIR, 'content');
 export const WIKI_MEDIA_DIR = path.join(WIKI_DIR, 'media');
 const WIKI_MANIFEST = path.join(WIKI_DIR, 'manifest.json');
