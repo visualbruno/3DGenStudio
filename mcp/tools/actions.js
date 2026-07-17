@@ -71,6 +71,49 @@ const HITEM_MESH_OPTIONS = {
   hitemPbr: z.boolean().default(false).describe('Generate a PBR-ready mesh.')
 };
 
+// Poll a provider's mesh-result endpoint until the job completes, errors, or the
+// timeout elapses — streaming MCP progress and attaching results to a graph node
+// on completion. The mesh is only persisted server-side once a poll sees the job
+// complete, so this loop IS what finishes an async job. Returns the completed
+// result, throws on provider error, or returns {status:'running'} on timeout.
+async function pollMeshResult(api, notifyMutation, {
+  pollRequest, providerLabel, projectId, nodeId, selectedApi, timeoutSeconds, pollIntervalSeconds, pollFirst = false
+}, reportProgress) {
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastStatus = null;
+  let first = true;
+  while (Date.now() < deadline) {
+    if (!(first && pollFirst)) await sleep(pollIntervalSeconds * 1000);
+    first = false;
+    lastStatus = await api.apiJson('POST', pollRequest.path, { body: pollRequest.body });
+
+    if (lastStatus?.status === 'completed') {
+      await reportProgress(100, 100, 'Mesh generation completed');
+      let nodeAttachment = null;
+      if (nodeId && Array.isArray(lastStatus.assets) && lastStatus.assets.length > 0) {
+        nodeAttachment = await attachResultsToNode(api, {
+          projectId,
+          nodeId,
+          assets: lastStatus.assets.map(asset => ({ ...asset, type: asset?.type || 'mesh' })),
+          metadata: { lastAction: 'mesh-generation', selectedApi }
+        });
+      }
+      notifyMutation(projectId);
+      return nodeAttachment ? { ...lastStatus, nodeAttachment } : lastStatus;
+    }
+    if (lastStatus?.status === 'error') {
+      throw new Error(lastStatus.error || 'Mesh generation failed');
+    }
+    const percent = Number(lastStatus?.progressPercent ?? lastStatus?.progress);
+    await reportProgress(
+      Number.isFinite(percent) ? percent : 50,
+      100,
+      `${providerLabel} status: ${lastStatus?.jobStatus || lastStatus?.taskStatus || lastStatus?.status || 'processing'}`
+    );
+  }
+  return { status: 'running', lastStatus };
+}
+
 // Core submit-and-poll runner shared by generate_mesh and the typed
 // generate_mesh_{tencent,tripo,hitem} tools: submit the provider job, poll to
 // completion (streaming MCP progress), attach results to a graph node when
@@ -108,43 +151,34 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
 
   await reportProgress(0, 100, `${submit.provider} job submitted (${submit.jobId || submit.taskId})`);
 
-  const deadline = Date.now() + timeoutSeconds * 1000;
-  let lastStatus = submit;
-  while (Date.now() < deadline) {
-    await sleep(pollIntervalSeconds * 1000);
-    lastStatus = await api.apiJson('POST', pollRequest.path, { body: pollRequest.body });
+  const outcome = await pollMeshResult(api, notifyMutation, {
+    pollRequest,
+    providerLabel: submit.provider,
+    projectId,
+    nodeId,
+    selectedApi,
+    timeoutSeconds,
+    pollIntervalSeconds
+  }, reportProgress);
 
-    if (lastStatus?.status === 'completed') {
-      await reportProgress(100, 100, 'Mesh generation completed');
-      let nodeAttachment = null;
-      if (nodeId && Array.isArray(lastStatus.assets) && lastStatus.assets.length > 0) {
-        nodeAttachment = await attachResultsToNode(api, {
-          projectId,
-          nodeId,
-          assets: lastStatus.assets.map(asset => ({ ...asset, type: asset?.type || 'mesh' })),
-          metadata: { lastAction: 'mesh-generation', selectedApi }
-        });
-      }
-      notifyMutation(projectId);
-      return nodeAttachment ? { ...lastStatus, nodeAttachment } : lastStatus;
-    }
-    if (lastStatus?.status === 'error') {
-      throw new Error(lastStatus.error || 'Mesh generation failed');
-    }
-    const percent = Number(lastStatus?.progressPercent);
-    await reportProgress(
-      Number.isFinite(percent) ? percent : 50,
-      100,
-      `${submit.provider} status: ${lastStatus?.jobStatus || lastStatus?.taskStatus || lastStatus?.status || 'processing'}`
-    );
+  if (outcome.status === 'running') {
+    // Timed out with the job still on the provider. The mesh is NOT saved until a
+    // result poll sees completion, so hand back the job ids for get_mesh_result.
+    return {
+      status: 'running',
+      note: `Still processing after ${timeoutSeconds}s. The provider keeps working, but the mesh is only saved once a result poll sees it finish — call get_mesh_result with the ids below to retrieve it when ready. Do NOT re-run generation (that starts a new job).`,
+      provider: submit.provider,
+      selectedApi,
+      projectId,
+      name,
+      ...(submit.jobId ? { jobId: submit.jobId } : {}),
+      ...(submit.taskId ? { taskId: submit.taskId } : {}),
+      ...(submit.region ? { region: submit.region } : {}),
+      ...(submit.cardId ? { cardId: submit.cardId } : {}),
+      lastStatus: outcome.lastStatus
+    };
   }
-
-  return {
-    status: 'running',
-    note: `Still processing after ${timeoutSeconds}s. The provider keeps working — re-running the tool is NOT needed; check the project with list_assets, or the card status with list_cards.`,
-    submit,
-    lastStatus
-  };
+  return outcome;
 }
 
 export function registerActionTools(server, { api, notifyMutation }) {
@@ -269,6 +303,77 @@ export function registerActionTools(server, { api, notifyMutation }) {
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
   }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, { ...args, selectedApi: HITEM_MESH_API_ID }, extra)));
+
+  server.registerTool('get_mesh_result', {
+    title: 'Get mesh generation result',
+    description: 'Retrieve and finish an async mesh-generation job (Tencent / Tripo / Hitem3D) — use this when the original generate_mesh* call returned {status:"running"} after timing out. The generated mesh is NOT saved to the project until a result poll sees the job complete, so this tool is required to recover a timed-out job (list_assets will not show it before then). It polls the provider until the mesh is ready, saves it, and returns the assets. Pass the ids from the timeout payload: Tripo/Hitem3D use taskId; Tencent uses jobId + region. It is safe to call repeatedly.',
+    inputSchema: {
+      projectId: z.number().int(),
+      name: z.string().min(1).describe('The same name the job was submitted with (used to save the asset)'),
+      provider: z.enum(['tencent', 'tripo', 'hitem']).describe('Provider the job was submitted to'),
+      taskId: z.string().optional().describe('Tripo AI / Hitem3D job id (from the timeout payload)'),
+      jobId: z.string().optional().describe('Tencent Cloud job id (from the timeout payload)'),
+      region: z.enum(['ap-singapore', 'eu-frankfurt', 'na-siliconvalley']).optional().describe('Tencent Cloud region the job was submitted in (required for Tencent)'),
+      selectedApi: z.string().optional().describe('Provider id override (defaults to the standard id for the provider)'),
+      prompt: z.string().optional().describe('Original prompt (stored in asset metadata; optional)'),
+      cardId: z.union([z.number().int(), z.string()]).optional().describe('Kanban card the job is attached to (from the timeout payload)'),
+      parentAssetId: z.number().int().optional().describe('Save the result as a version of this asset'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the result to (graph projects)'),
+      timeoutSeconds: z.number().int().min(5).max(3600).default(600),
+      pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
+    }
+  }, toolHandler(async (args, extra) => {
+    const {
+      projectId, name, provider, taskId, jobId, region, selectedApi, prompt,
+      cardId, parentAssetId, nodeId, timeoutSeconds = 600, pollIntervalSeconds = 10
+    } = args;
+    const reportProgress = createProgressReporter(extra);
+
+    const providerIds = { tencent: TENCENT_MESH_API_ID, tripo: TRIPO_MESH_API_ID, hitem: HITEM_MESH_API_ID };
+    const providerLabels = { tencent: 'Tencent Cloud', tripo: 'Tripo AI', hitem: 'Hitem3D' };
+    const effectiveSelectedApi = selectedApi || providerIds[provider];
+    const providerLabel = providerLabels[provider];
+
+    if (provider === 'tencent' && (!jobId || !region)) {
+      throw new Error('Tencent result lookup requires both jobId and region (from the timeout payload).');
+    }
+    if ((provider === 'tripo' || provider === 'hitem') && !taskId) {
+      throw new Error(`${providerLabel} result lookup requires taskId (from the timeout payload).`);
+    }
+
+    // buildMeshPollRequest keys off the provider label substring and the ids.
+    const pollRequest = buildMeshPollRequest(
+      { provider: providerLabel, jobId, taskId, region },
+      { projectId, name, prompt: prompt || '', cardId: cardId ?? null, selectedApi: effectiveSelectedApi, parentAssetId: parentAssetId ?? null }
+    );
+    if (!pollRequest) throw new Error(`Unknown mesh provider: ${provider}`);
+
+    const outcome = await pollMeshResult(api, notifyMutation, {
+      pollRequest,
+      providerLabel,
+      projectId,
+      nodeId,
+      selectedApi: effectiveSelectedApi,
+      timeoutSeconds,
+      pollIntervalSeconds,
+      pollFirst: true
+    }, reportProgress);
+
+    if (outcome.status === 'running') {
+      return {
+        status: 'running',
+        note: `Still processing after ${timeoutSeconds}s. Call get_mesh_result again with the same ids to keep waiting.`,
+        provider: providerLabel,
+        projectId,
+        name,
+        ...(jobId ? { jobId } : {}),
+        ...(taskId ? { taskId } : {}),
+        ...(region ? { region } : {}),
+        lastStatus: outcome.lastStatus
+      };
+    }
+    return outcome;
+  }));
 
   server.registerTool('edit_mesh', {
     title: 'Edit mesh (AI)',

@@ -67,7 +67,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Kanban cards | `list_cards`, `move_card`, `delete_card`, `list_card_attributes`, `create_card_attribute`, `update_card_attribute`, `delete_card_attribute` |
 | Graph | `get_graph`, `create_node`, `update_node`, `move_node`, `delete_node`, `connect_nodes`, `disconnect_nodes` |
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
-| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
+| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh` (fully-typed parameters), `run_mesh_tool` (auto_uv / auto_retopo / repair / auto_rig / optimize / convert_fbx), `export_mesh` |
 | Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `delete_asset` |
 | System | `get_settings` (secrets redacted), `get_system_stats` |
@@ -83,6 +83,8 @@ Auto UV and Auto Retopo have many tuning parameters (14 and 20 respectively) tha
 ### External mesh-generation providers
 
 Tencent Hunyuan3D, Tripo AI, and Hitem3D each take a different, parameter-heavy option set. Use the dedicated `generate_mesh_tencent`, `generate_mesh_tripo`, and `generate_mesh_hitem` tools: each hardwires its provider and declares every parameter in its `options` schema with type, enum/range, and default (mirroring the backend 1:1), so a client can set exactly what it needs. Provider notes: Tencent `region` is required and `LowPoly` needs model `3.0`; Tripo's `P1` model ignores several options and `generateParts` is incompatible with `texture`/`pbr`/`quad`; Hitem3D requires an `imageSource`. Tencent and Tripo accept either a `prompt` (text-to-3D) or an `imageSource` (image-to-3D). The generic `generate_mesh` still accepts these providers with a free-form `options` object for backward compatibility.
+
+These provider jobs are asynchronous. Unlike the app UI (where you click **Get Result** to poll), the MCP tools poll for you automatically: `generate_mesh*` submits the job and then polls the provider until the mesh is ready, streaming progress, and returns the saved assets — the AI just awaits the call and gets `{status:"completed", assets}`. The mesh is only saved once a poll sees completion, so if a job outlives `timeoutSeconds` (default 1200s) the tool returns `{status:"running", provider, taskId/jobId, region}`; pass those ids to **`get_mesh_result`** to finish and save the job (safe to call repeatedly). Do not re-run generation on timeout — that starts a new job.
 
 Image generation (`generate_image`) is prompt-only by design: OpenAI/Google image parameters (size, quality, aspect ratio) are fixed in each provider's payload template in Settings, not passed per request, so there is nothing extra to set over MCP.
 
