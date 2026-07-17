@@ -67,7 +67,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Kanban cards | `list_cards`, `move_card`, `delete_card`, `list_card_attributes`, `create_card_attribute`, `update_card_attribute`, `delete_card_attribute` |
 | Graph | `get_graph`, `create_node`, `update_node`, `move_node`, `delete_node`, `connect_nodes`, `disconnect_nodes` |
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
-| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
+| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh` (fully-typed parameters), `run_mesh_tool` (auto_uv / auto_retopo / repair / auto_rig / optimize / convert_fbx), `export_mesh` |
 | Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `delete_asset` |
 | System | `get_settings` (secrets redacted), `get_system_stats` |
@@ -79,6 +79,12 @@ In graph projects, pass `nodeId` to `run_workflow`, `generate_image`, `edit_imag
 ### Parameter-heavy mesh tools
 
 Auto UV and Auto Retopo have many tuning parameters (14 and 20 respectively) that materially change the output. Use the dedicated `auto_uv_mesh` and `auto_retopo_mesh` tools rather than `run_mesh_tool` for these: each declares every parameter in its schema with type, range, default, and description (mirroring the Python service's models), so a client can set exactly what it needs and see the valid bounds. Any subset of options may be set; unset keys fall back to the documented default. For Auto Retopo, the `shell_*` options apply only when `watertight` is `true`. `run_mesh_tool` still accepts `auto_uv`/`auto_retopo` (options ride along as a free-form object) for backward compatibility.
+
+### External mesh-generation providers
+
+Tencent Hunyuan3D, Tripo AI, and Hitem3D each take a different, parameter-heavy option set. Use the dedicated `generate_mesh_tencent`, `generate_mesh_tripo`, and `generate_mesh_hitem` tools: each hardwires its provider and declares every parameter in its `options` schema with type, enum/range, and default (mirroring the backend 1:1), so a client can set exactly what it needs. Provider notes: Tencent `region` is required and `LowPoly` needs model `3.0`; Tripo's `P1` model ignores several options and `generateParts` is incompatible with `texture`/`pbr`/`quad`; Hitem3D requires an `imageSource`. Tencent and Tripo accept either a `prompt` (text-to-3D) or an `imageSource` (image-to-3D). The generic `generate_mesh` still accepts these providers with a free-form `options` object for backward compatibility.
+
+Image generation (`generate_image`) is prompt-only by design: OpenAI/Google image parameters (size, quality, aspect ratio) are fixed in each provider's payload template in Settings, not passed per request, so there is nothing extra to set over MCP.
 
 ### Long-running operations
 
@@ -96,7 +102,7 @@ Auto UV and Auto Retopo have many tuning parameters (14 and 20 respectively) tha
 |---|---|
 | Projects / cards / graph / assets / export / import | just the app running |
 | `run_workflow`, ComfyUI-based edits | ComfyUI running (URL in Settings, default `127.0.0.1:8188`) |
-| `generate_image`, `edit_image`, `generate_mesh`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` | provider API keys in Settings |
+| `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` | provider API keys in Settings |
 | `auto_uv_mesh`, `auto_retopo_mesh`, `run_mesh_tool` auto_uv / auto_retopo / repair / convert_fbx | Python mesh-tools service (`:8200`) running — the desktop app can start it from Settings |
 | `run_mesh_tool` auto_rig | rigging service (`:8300`) running |
 | `run_mesh_tool` optimize | nothing extra (bundled gltfpack) |

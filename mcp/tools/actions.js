@@ -23,6 +23,130 @@ function buildMeshPollRequest(submit, base) {
   return null;
 }
 
+// Fixed mesh-generation provider ids the backend dispatches on
+// (see src/utils/kanbanHelpers.js). Each typed tool below hardwires one, so a
+// client only supplies parameters — no need to know the id.
+const TENCENT_MESH_API_ID = 'tencent_meshgeneration';
+const TRIPO_MESH_API_ID = 'tripo_meshgeneration';
+const HITEM_MESH_API_ID = 'hitem_meshgeneration';
+
+// Typed provider option shapes. These mirror the request-body keys and defaults
+// that server.js reads for each provider (normalize{Tencent,Tripo,Hitem}
+// MeshGenerationInput) 1:1, so a client sees every knob with its enum/range and
+// default instead of an opaque options blob. Keep in sync with server.js and
+// src/utils/kanbanHelpers.js.
+const TENCENT_MESH_OPTIONS = {
+  region: z.enum(['ap-singapore', 'eu-frankfurt', 'na-siliconvalley']).describe('Tencent Cloud region — REQUIRED (no default).'),
+  modelVersion: z.enum(['3.0', '3.1']).default('3.0').describe('Hunyuan3D model version. LowPoly generation requires 3.0.'),
+  generationType: z.enum(['Normal', 'LowPoly', 'Geometry']).default('Normal').describe('Generation mode. LowPoly requires modelVersion 3.0.'),
+  polygonType: z.enum(['triangle', 'quadrilaterial']).default('triangle').describe('Polygon type — only applied when generationType is LowPoly.'),
+  faceCount: z.number().int().min(3000).max(1500000).default(500000).describe('Target face count (3000–1,500,000).'),
+  enablePBR: z.boolean().default(false).describe('Generate a PBR-ready mesh.')
+};
+
+const TRIPO_MESH_OPTIONS = {
+  modelVersion: z.enum(['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']).default('v2.5-20250123').describe('Tripo model version. The P1 model ignores enableImageAutofix/textureAlignment/orientation/quad/smartLowPoly/generateParts/geometryQuality.'),
+  modelSeed: z.number().int().optional().describe('Geometry RNG seed (optional; omit for random).'),
+  enableImageAutofix: z.boolean().default(false).describe('Fix the input image before generation (ignored by P1).'),
+  faceLimit: z.number().int().min(1000).optional().describe('Max face count (>=1000; optional).'),
+  texture: z.boolean().default(true).describe('Generate texture maps. Incompatible with generateParts=true.'),
+  pbr: z.boolean().default(true).describe('Export a PBR model. Incompatible with generateParts=true.'),
+  textureSeed: z.number().int().optional().describe('Texture RNG seed (optional).'),
+  textureAlignment: z.enum(['original_image', 'geometry']).default('original_image').describe('Texture alignment (ignored by P1).'),
+  textureQuality: z.enum(['standard', 'detailed']).default('standard').describe('Texture quality.'),
+  autoSize: z.boolean().default(false).describe('Auto-fit scale to real-world size.'),
+  orientation: z.enum(['default', 'align_image']).default('default').describe('Output orientation (ignored by P1).'),
+  quad: z.boolean().default(false).describe('Generate a quad mesh (ignored by P1). Incompatible with generateParts=true.'),
+  smartLowPoly: z.boolean().default(false).describe('Optimize for low poly (ignored by P1).'),
+  generateParts: z.boolean().default(false).describe('Split into semantic parts (ignored by P1). Incompatible with texture/pbr/quad=true.'),
+  exportUv: z.boolean().default(true).describe('Include UVs in the output.'),
+  geometryQuality: z.enum(['standard', 'detailed']).default('standard').describe('Geometry quality — only applied for v3.0/v3.1 models.')
+};
+
+const HITEM_MESH_OPTIONS = {
+  hitemModel: z.enum(['hitem3dv1.5', 'hitem3dv2.0', 'hitem3dv2.1']).default('hitem3dv2.1').describe('Hitem3D model version.'),
+  hitemResolution: z.enum(['512', '1024', '1536', '1536pro', '1536fast']).optional().describe('Resolution. Valid per model: v1.5/v2.0 = 512/1024/1536/1536pro; v2.1 = 1536fast/1536pro. Invalid/omitted falls back to the model default.'),
+  hitemRequestType: z.union([z.literal(1), z.literal(3)]).default(3).describe('1 = mesh only, 3 = textured mesh.'),
+  hitemFace: z.number().int().min(100000).max(2000000).default(300000).describe('Target face count (100,000–2,000,000).'),
+  hitemPbr: z.boolean().default(false).describe('Generate a PBR-ready mesh.')
+};
+
+// Core submit-and-poll runner shared by generate_mesh and the typed
+// generate_mesh_{tencent,tripo,hitem} tools: submit the provider job, poll to
+// completion (streaming MCP progress), attach results to a graph node when
+// asked, and return the saved assets (or job info on timeout).
+async function runMeshGeneration(api, notifyMutation, args, extra) {
+  const {
+    projectId, selectedApi, name, prompt, imageSource, nodeId, cardId, parentAssetId,
+    options = {}, timeoutSeconds = 1200, pollIntervalSeconds = 10
+  } = args;
+  const reportProgress = createProgressReporter(extra);
+
+  const submit = await api.apiJson('POST', '/meshes/generate', {
+    body: {
+      projectId, selectedApi, name,
+      ...(prompt ? { prompt } : {}),
+      ...(imageSource !== undefined ? { imageSource } : {}),
+      ...(cardId !== undefined ? { cardId } : {}),
+      ...(parentAssetId !== undefined ? { parentAssetId } : {}),
+      ...options
+    }
+  });
+  notifyMutation(projectId);
+
+  const pollRequest = buildMeshPollRequest(submit, {
+    projectId,
+    name,
+    prompt: prompt || '',
+    cardId: submit?.cardId ?? cardId ?? null,
+    selectedApi,
+    parentAssetId: parentAssetId ?? null
+  });
+
+  // Custom APIs respond synchronously — nothing to poll.
+  if (!pollRequest) return submit;
+
+  await reportProgress(0, 100, `${submit.provider} job submitted (${submit.jobId || submit.taskId})`);
+
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  let lastStatus = submit;
+  while (Date.now() < deadline) {
+    await sleep(pollIntervalSeconds * 1000);
+    lastStatus = await api.apiJson('POST', pollRequest.path, { body: pollRequest.body });
+
+    if (lastStatus?.status === 'completed') {
+      await reportProgress(100, 100, 'Mesh generation completed');
+      let nodeAttachment = null;
+      if (nodeId && Array.isArray(lastStatus.assets) && lastStatus.assets.length > 0) {
+        nodeAttachment = await attachResultsToNode(api, {
+          projectId,
+          nodeId,
+          assets: lastStatus.assets.map(asset => ({ ...asset, type: asset?.type || 'mesh' })),
+          metadata: { lastAction: 'mesh-generation', selectedApi }
+        });
+      }
+      notifyMutation(projectId);
+      return nodeAttachment ? { ...lastStatus, nodeAttachment } : lastStatus;
+    }
+    if (lastStatus?.status === 'error') {
+      throw new Error(lastStatus.error || 'Mesh generation failed');
+    }
+    const percent = Number(lastStatus?.progressPercent);
+    await reportProgress(
+      Number.isFinite(percent) ? percent : 50,
+      100,
+      `${submit.provider} status: ${lastStatus?.jobStatus || lastStatus?.taskStatus || lastStatus?.status || 'processing'}`
+    );
+  }
+
+  return {
+    status: 'running',
+    note: `Still processing after ${timeoutSeconds}s. The provider keeps working — re-running the tool is NOT needed; check the project with list_assets, or the card status with list_cards.`,
+    submit,
+    lastStatus
+  };
+}
+
 export function registerActionTools(server, { api, notifyMutation }) {
   server.registerTool('generate_image', {
     title: 'Generate image',
@@ -90,81 +214,61 @@ export function registerActionTools(server, { api, notifyMutation }) {
       nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
-      options: z.record(z.string(), z.any()).default({}).describe('Provider options, e.g. Tencent: region, modelVersion, enablePBR, faceCount, generationType, polygonType; Tripo: modelVersion, texture, pbr, quad, faceLimit, …'),
+      options: z.record(z.string(), z.any()).default({}).describe('Provider options, e.g. Tencent: region, modelVersion, enablePBR, faceCount, generationType, polygonType; Tripo: modelVersion, texture, pbr, quad, faceLimit, …. Prefer the dedicated generate_mesh_tencent / generate_mesh_tripo / generate_mesh_hitem tools, which document and validate every option.'),
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
-  }, toolHandler(async (args, extra) => {
-    const {
-      projectId, selectedApi, name, prompt, imageSource, nodeId, cardId, parentAssetId,
-      options = {}, timeoutSeconds = 1200, pollIntervalSeconds = 10
-    } = args;
-    const reportProgress = createProgressReporter(extra);
+  }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, args, extra)));
 
-    const submit = await api.apiJson('POST', '/meshes/generate', {
-      body: {
-        projectId, selectedApi, name,
-        ...(prompt ? { prompt } : {}),
-        ...(imageSource !== undefined ? { imageSource } : {}),
-        ...(cardId !== undefined ? { cardId } : {}),
-        ...(parentAssetId !== undefined ? { parentAssetId } : {}),
-        ...options
-      }
-    });
-    notifyMutation(projectId);
-
-    const pollRequest = buildMeshPollRequest(submit, {
-      projectId,
-      name,
-      prompt: prompt || '',
-      cardId: submit?.cardId ?? cardId ?? null,
-      selectedApi,
-      parentAssetId: parentAssetId ?? null
-    });
-
-    // Custom APIs respond synchronously — nothing to poll.
-    if (!pollRequest) return submit;
-
-    await reportProgress(0, 100, `${submit.provider} job submitted (${submit.jobId || submit.taskId})`);
-
-    const deadline = Date.now() + timeoutSeconds * 1000;
-    let lastStatus = submit;
-    while (Date.now() < deadline) {
-      await sleep(pollIntervalSeconds * 1000);
-      lastStatus = await api.apiJson('POST', pollRequest.path, { body: pollRequest.body });
-
-      if (lastStatus?.status === 'completed') {
-        await reportProgress(100, 100, 'Mesh generation completed');
-        let nodeAttachment = null;
-        if (nodeId && Array.isArray(lastStatus.assets) && lastStatus.assets.length > 0) {
-          nodeAttachment = await attachResultsToNode(api, {
-            projectId,
-            nodeId,
-            assets: lastStatus.assets.map(asset => ({ ...asset, type: asset?.type || 'mesh' })),
-            metadata: { lastAction: 'mesh-generation', selectedApi }
-          });
-        }
-        notifyMutation(projectId);
-        return nodeAttachment ? { ...lastStatus, nodeAttachment } : lastStatus;
-      }
-      if (lastStatus?.status === 'error') {
-        throw new Error(lastStatus.error || 'Mesh generation failed');
-      }
-      const percent = Number(lastStatus?.progressPercent);
-      await reportProgress(
-        Number.isFinite(percent) ? percent : 50,
-        100,
-        `${submit.provider} status: ${lastStatus?.jobStatus || lastStatus?.taskStatus || lastStatus?.status || 'processing'}`
-      );
+  server.registerTool('generate_mesh_tencent', {
+    title: 'Generate 3D mesh (Tencent Hunyuan3D)',
+    description: 'Generate a 3D mesh with Tencent Cloud Hunyuan3D and save it as a project asset. Provide EITHER prompt (text-to-3D) OR imageSource (image-to-3D), not both. Every Tencent parameter is exposed under `options` with its enum/range and default; region is required. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires Tencent Cloud credentials configured in Settings.',
+    inputSchema: {
+      projectId: z.number().int(),
+      name: z.string().min(1),
+      prompt: z.string().optional().describe('Text prompt (text-to-3D). Provide this OR imageSource.'),
+      imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (image-to-3D). Provide this OR prompt.'),
+      options: z.object(TENCENT_MESH_OPTIONS).describe('Tencent Hunyuan3D parameters (region is required).'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      parentAssetId: z.number().int().optional(),
+      timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
+      pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
+  }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, { ...args, selectedApi: TENCENT_MESH_API_ID }, extra)));
 
-    return {
-      status: 'running',
-      note: `Still processing after ${timeoutSeconds}s. The provider keeps working — re-run generate_mesh later is NOT needed; check the project with list_assets, or the card status with list_cards.`,
-      submit,
-      lastStatus
-    };
-  }));
+  server.registerTool('generate_mesh_tripo', {
+    title: 'Generate 3D mesh (Tripo AI)',
+    description: 'Generate a 3D mesh with Tripo AI and save it as a project asset. Provide EITHER prompt (text-to-3D) OR imageSource (image-to-3D), not both. Every Tripo parameter is exposed under `options` with its enum/range and default. Note: the P1 model ignores several options, and generateParts is incompatible with texture/pbr/quad. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires a Tripo AI API key configured in Settings.',
+    inputSchema: {
+      projectId: z.number().int(),
+      name: z.string().min(1),
+      prompt: z.string().optional().describe('Text prompt (text-to-3D). Provide this OR imageSource.'),
+      imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (image-to-3D). Provide this OR prompt.'),
+      options: z.object(TRIPO_MESH_OPTIONS).default({}).describe('Tripo AI parameters (all optional; unset keys use their default).'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      parentAssetId: z.number().int().optional(),
+      timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
+      pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
+    }
+  }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, { ...args, selectedApi: TRIPO_MESH_API_ID }, extra)));
+
+  server.registerTool('generate_mesh_hitem', {
+    title: 'Generate 3D mesh (Hitem3D)',
+    description: 'Generate a 3D mesh with Hitem3D from an image and save it as a project asset. imageSource is REQUIRED (Hitem3D is image-to-3D only). Every Hitem3D parameter is exposed under `options` with its enum/range and default. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires Hitem3D access/secret keys configured in Settings.',
+    inputSchema: {
+      projectId: z.number().int(),
+      name: z.string().min(1),
+      imageSource: z.union([z.number().int(), z.string()]).describe('Source image: asset id or stored filePath — REQUIRED.'),
+      options: z.object(HITEM_MESH_OPTIONS).default({}).describe('Hitem3D parameters (all optional; unset keys use their default).'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      parentAssetId: z.number().int().optional(),
+      timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
+      pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
+    }
+  }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, { ...args, selectedApi: HITEM_MESH_API_ID }, extra)));
 
   server.registerTool('edit_mesh', {
     title: 'Edit mesh (AI)',
