@@ -2040,7 +2040,10 @@ async function downloadTripoMeshResult(output = {}) {
     extension,
     filename,
     buffer,
-    isPbr: Boolean(pbrModelUrl)
+    isPbr: Boolean(pbrModelUrl),
+    // Cover render Tripo returns alongside the model — used as the mesh thumbnail
+    // for headless generation (rendered_image_url on v3; rendered_image on v2).
+    previewImageUrl: String(output?.rendered_image_url || output?.rendered_image || '').trim() || null
   };
 }
 
@@ -2632,6 +2635,32 @@ async function downloadTencentCloudResultFiles(resultFiles = []) {
   }];
 }
 
+// Download a provider's cover/preview render and store it as a mesh thumbnail.
+// Mesh thumbnails are normally rendered client-side (WebGL) in the browser;
+// headless generation (MCP / external API callers) has no browser, so we fall
+// back to the provider's own cover image. Returns the stored thumbnail filename,
+// or null on any failure — a missing thumbnail must never fail mesh generation.
+async function downloadPreviewThumbnail(previewImageUrl, baseName = 'mesh') {
+  const url = String(previewImageUrl || '').trim();
+  if (!url) return null;
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) return null;
+
+    const thumbnailFilename = createLibraryThumbnailFilename(baseName);
+    const absoluteThumbnailPath = toAbsoluteStoragePath(toStoredThumbnailPath(thumbnailFilename));
+    await fs.mkdir(path.dirname(absoluteThumbnailPath), { recursive: true });
+    await fs.writeFile(absoluteThumbnailPath, buffer);
+    return thumbnailFilename;
+  } catch (err) {
+    console.warn('Failed to download provider preview thumbnail:', err.message);
+    return null;
+  }
+}
+
 async function saveGeneratedMeshAssets({
   projectId,
   name,
@@ -2671,11 +2700,15 @@ async function saveGeneratedMeshAssets({
       createdAt: Date.now() + index
     };
 
+    // Meshes have no client-side thumbnail on the headless generation path, so
+    // store the provider's cover render as the thumbnail (best-effort).
+    const thumbnailFilename = await downloadPreviewThumbnail(downloadedFile.previewImageUrl, assetPayload.name);
+
     // When the mesh was edited from a connected mesh, save it as a version (child)
     // of that mesh instead of creating a new root asset.
     savedAssets.push(normalizedParentAssetId
-      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...assetPayload, inheritThumbnail: false })
-      : await createProjectAsset({ projectId: Number(projectId), ...assetPayload }));
+      ? await createAssetVersion({ assetId: normalizedParentAssetId, ...assetPayload, thumbnailPath: thumbnailFilename, inheritThumbnail: false })
+      : await createProjectAsset({ projectId: Number(projectId), ...assetPayload, thumbnailPath: thumbnailFilename }));
   }
 
   return savedAssets;
