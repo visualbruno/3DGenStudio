@@ -47,6 +47,42 @@ The stdio bridge requires the app to be running; it talks to `http://127.0.0.1:3
 
 Alternatively, without a checkout: `npx mcp-remote http://localhost:3001/mcp` as the command.
 
+### VS Code (GitHub Copilot)
+
+Requires VS Code 1.102+ with the GitHub Copilot and GitHub Copilot Chat extensions; MCP tools are used from Copilot **Agent mode**. Fastest path: Command Palette → **MCP: Add Server…** → **HTTP** → `http://localhost:3001/mcp` → name it `3d-gen-studio`.
+
+Or add a workspace `.vscode/mcp.json` (VS Code uses the `servers` key, not `mcpServers`):
+
+```json
+{
+  "servers": {
+    "3d-gen-studio": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+Start it via the CodeLens in that file (or the MCP view), then open Copilot Chat, switch to **Agent** mode, and select the 3D Gen Studio tools in the tools (🔧) picker. For a token-protected/remote endpoint, add a header and prompt for the token:
+
+```json
+{
+  "servers": {
+    "3d-gen-studio": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp",
+      "headers": { "Authorization": "Bearer ${input:genstudio-token}" }
+    }
+  },
+  "inputs": [
+    { "id": "genstudio-token", "type": "promptString", "description": "3D Gen Studio MCP token", "password": true }
+  ]
+}
+```
+
+A `stdio` server (`"type": "stdio"`, `"command": "node"`, `"args": ["C:/Git/3DGenStudio/mcp/stdio.js"]`) also works and requires the app to be running.
+
 ### ChatGPT (developer mode) / other clients
 
 Any client that supports Streamable HTTP MCP servers can connect to `http://localhost:3001/mcp` (remote clients need the bearer token, see Security).
