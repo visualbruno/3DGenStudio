@@ -1,7 +1,7 @@
 {
   "name": "app",
   "private": true,
-  "version": "1.5.0",
+  "version": "2.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "description": "AI-powered 3D mesh production studio — image generation, mesh generation, UV unwrapping, and texturing pipelines.",
