@@ -222,8 +222,11 @@
   display: block;
 }
 
+/* Mesh thumbnails are square renders (often transparent-backed); the preview
+   box is 16:10, so `cover` would crop a tall subject and look zoomed in.
+   `contain` shows the whole render, centered over the card background. */
 .asset-selector-preview--mesh .asset-selector-image {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .asset-selector-mesh-placeholder {

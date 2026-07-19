@@ -690,6 +690,14 @@
   object-fit: cover;
 }
 
+/* Mesh thumbnails are square renders (often with a transparent background); the
+   preview box is 16:10, so `cover` would crop a tall subject (head/feet) and
+   look zoomed in. `contain` shows the whole render, letterboxed over the card's
+   gradient background. */
+.asset-card__preview--mesh-thumbnail .asset-card__image {
+  object-fit: contain;
+}
+
 .asset-card__mesh-icon {
   font-size: 2.75rem;
   color: var(--secondary);

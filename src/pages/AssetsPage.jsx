@@ -11,6 +11,9 @@ import { downloadShareableWorkflow, isShareableWorkflow } from '../utils/workflo
 import './AssetsPage.css'
 
 const ASSETS_PER_PAGE = 20
+// The mesh grid is 3 columns wide, so 21 (7 full rows) paginates more cleanly
+// than 20 (which leaves a ragged last row).
+const MESHES_PER_PAGE = 21
 const COMFY_VALUE_TYPES = [
   { value: 'string', label: 'String' },
   { value: 'number', label: 'Number' },
@@ -517,11 +520,12 @@ export default function AssetsPage() {
   }
   const groupedAssets = buildGroupedAssets()
 
-  const totalPages = Math.max(1, Math.ceil(activeAssets.length / ASSETS_PER_PAGE))
-  const pageStart = (currentPage - 1) * ASSETS_PER_PAGE
-  const paginatedAssets = activeAssets.slice(pageStart, pageStart + ASSETS_PER_PAGE)
+  const assetsPerPage = activeSection === 'meshes' ? MESHES_PER_PAGE : ASSETS_PER_PAGE
+  const totalPages = Math.max(1, Math.ceil(activeAssets.length / assetsPerPage))
+  const pageStart = (currentPage - 1) * assetsPerPage
+  const paginatedAssets = activeAssets.slice(pageStart, pageStart + assetsPerPage)
   const pageRangeStart = activeAssets.length === 0 ? 0 : pageStart + 1
-  const pageRangeEnd = Math.min(pageStart + ASSETS_PER_PAGE, activeAssets.length)
+  const pageRangeEnd = Math.min(pageStart + assetsPerPage, activeAssets.length)
 
   useEffect(() => {
     if (currentPage > totalPages) {

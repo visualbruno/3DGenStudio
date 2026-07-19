@@ -15,6 +15,8 @@ function getAssetPreviewUrl(filename) {
 }
 
 const ASSETS_PER_PAGE = 20;
+// Meshes show 3 per row, so 21 (7 full rows) paginates more cleanly than 20.
+const MESHES_PER_PAGE = 21;
 
 export default function AssetSelectorModal({ assetType, onSelect, onClose, showEdits = false }) {
   const { getLibraryAssets, projects } = useProjects();
@@ -137,11 +139,12 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
     setCurrentPage(1);
   }, [normalizedSearch, projectFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredAssets.length / ASSETS_PER_PAGE));
-  const pageStart = (currentPage - 1) * ASSETS_PER_PAGE;
-  const paginatedAssets = filteredAssets.slice(pageStart, pageStart + ASSETS_PER_PAGE);
+  const assetsPerPage = validType === 'mesh' ? MESHES_PER_PAGE : ASSETS_PER_PAGE;
+  const totalPages = Math.max(1, Math.ceil(filteredAssets.length / assetsPerPage));
+  const pageStart = (currentPage - 1) * assetsPerPage;
+  const paginatedAssets = filteredAssets.slice(pageStart, pageStart + assetsPerPage);
   const pageRangeStart = filteredAssets.length === 0 ? 0 : pageStart + 1;
-  const pageRangeEnd = Math.min(pageStart + ASSETS_PER_PAGE, filteredAssets.length);
+  const pageRangeEnd = Math.min(pageStart + assetsPerPage, filteredAssets.length);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -294,7 +297,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 								})}
 							</div>
 
-              {filteredAssets.length > ASSETS_PER_PAGE && (
+              {filteredAssets.length > assetsPerPage && (
                 <div className="asset-selector-pagination">
                   <div className="asset-selector-pagination-summary">
                     Showing {pageRangeStart}-{pageRangeEnd} of {filteredAssets.length}

@@ -7955,7 +7955,11 @@ async function migrateWikiIfNeeded() {
 if (HAS_DIST) {
   app.use((req, res, next) => {
     if (req.method !== 'GET') return next();
-    if (/^\/(api|assets|wiki-media|mcp)(\/|$)/.test(req.path)) return next();
+    if (/^\/(api|wiki-media|mcp)(\/|$)/.test(req.path)) return next();
+    // `/assets/<file>` is a stored asset file (served above, or a genuine 404) —
+    // never the SPA. But bare `/assets` and `/assets/` ARE the Assets Library
+    // client route, so they must fall through to index.html on a full reload.
+    if (/^\/assets\/.+/.test(req.path)) return next();
     res.sendFile(path.join(DIST_DIR, 'index.html'));
   });
 }
