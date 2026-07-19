@@ -87,6 +87,23 @@ function ServiceControl({ name }) {
   )
 }
 
+// Desktop-only: opt a service into starting automatically when the app launches
+// (the main process reads this setting on boot). Renders nothing outside the
+// desktop app, where services are launched externally.
+function AutoStartToggle({ checked, onChange, warning }) {
+  const isDesktop = typeof window !== 'undefined' && !!window.genStudioServices?.isDesktop
+  if (!isDesktop) return null
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', marginTop: '10px', cursor: 'pointer' }}>
+      <input type="checkbox" checked={!!checked} onChange={e => onChange(e.target.checked)} />
+      <span className="settings-helper-text" style={{ margin: 0 }}>
+        Start automatically when the app launches
+        {warning ? ' (keeps ~14 GB of GPU memory in use the whole session)' : ''}
+      </span>
+    </label>
+  )
+}
+
 // Desktop-only: install the (opt-in) rigging service after first run — for users
 // who upgraded, skipped it on the setup screen, or later added a GPU. Drives the
 // same uv provisioning as the first-run window via the genStudioSetup bridge and
@@ -640,6 +657,13 @@ export default function SettingsModal({ onClose }) {
                   stop it here. Outside the desktop app, start it from python-server/run.
                 </p>
                 <ServiceControl name="meshtools" />
+                <AutoStartToggle
+                  checked={localSettings?.apis?.meshtools?.autoStart}
+                  onChange={v => setLocalSettings(prev => ({
+                    ...prev,
+                    apis: { ...prev?.apis, meshtools: { ...prev?.apis?.meshtools, autoStart: v } }
+                  }))}
+                />
               </div>
 
               <h3 className="settings-section-title font-label">Rigging (Python) Connection</h3>
@@ -698,6 +722,14 @@ export default function SettingsModal({ onClose }) {
                 </p>
                 <RiggingInstaller />
                 <ServiceControl name="rigging" />
+                <AutoStartToggle
+                  warning
+                  checked={localSettings?.apis?.rigtools?.autoStart}
+                  onChange={v => setLocalSettings(prev => ({
+                    ...prev,
+                    apis: { ...prev?.apis, rigtools: { ...prev?.apis?.rigtools, autoStart: v } }
+                  }))}
+                />
               </div>
             </section>
           )}

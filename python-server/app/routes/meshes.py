@@ -24,6 +24,7 @@ import queue
 import threading
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
@@ -33,6 +34,7 @@ from ..schemas import AutoRetopoOptions, AutoUvOptions, ConvertOptions, RepairOp
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
 from ..services.convert_fbx import run_convert_fbx
+from ..services.mesh_thumbnail import render_mesh_thumbnail
 from ..services.repair import run_repair
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
@@ -214,3 +216,21 @@ async def convert(
         }
 
     return _stream_payload(run, "Convert to FBX")
+
+
+@router.post("/thumbnail")
+async def thumbnail(meshFile: UploadFile = File(...)) -> dict:
+    """Render a GLB to a 512x512 PNG thumbnail (headless Blender subprocess).
+
+    Single-artifact endpoint (no SSE): returns plain JSON with the PNG base64 in
+    `preview_b64`. Used by the Node backend to give server-side-generated meshes
+    (ComfyUI / external-API, driven over MCP) a thumbnail — those never get the
+    browser's WebGL render. The render runs in a threadpool so the bpy subprocess
+    does not block the event loop.
+    """
+    data = await _read_upload(meshFile)
+    try:
+        png = await run_in_threadpool(render_mesh_thumbnail, data)
+    except Exception as exc:  # noqa: BLE001 — surface as a clean HTTP error
+        raise HTTPException(status_code=500, detail=f"Thumbnail render failed: {exc}") from exc
+    return {"preview_b64": base64.b64encode(png).decode("ascii")}

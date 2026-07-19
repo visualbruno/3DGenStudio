@@ -2661,6 +2661,92 @@ async function downloadPreviewThumbnail(previewImageUrl, baseName = 'mesh') {
   }
 }
 
+// Ask the Electron main process (desktop app only) to start a Python service on
+// demand. The backend runs as a separate process with an IPC channel to main
+// (electron/main.cjs startBackend); outside the desktop app `process.send` is
+// undefined and this is a no-op. Best-effort: resolves true when the service is
+// confirmed running, false otherwise (timeout / not desktop / start failed).
+const pendingServiceEnsures = new Map();
+if (typeof process.send === 'function') {
+  process.on('message', (msg) => {
+    if (!msg || msg.type !== 'services:ensure:result') return;
+    const pending = pendingServiceEnsures.get(msg.requestId);
+    if (!pending) return;
+    pendingServiceEnsures.delete(msg.requestId);
+    clearTimeout(pending.timer);
+    pending.resolve(Boolean(msg.ok));
+  });
+}
+
+function ensureDesktopService(name, { timeoutMs = 120000 } = {}) {
+  if (typeof process.send !== 'function') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const requestId = randomUUID();
+    const timer = setTimeout(() => {
+      pendingServiceEnsures.delete(requestId);
+      resolve(false);
+    }, timeoutMs);
+    pendingServiceEnsures.set(requestId, { resolve, timer });
+    try {
+      process.send({ type: 'services:ensure', name, requestId });
+    } catch {
+      pendingServiceEnsures.delete(requestId);
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
+// Render a mesh thumbnail headlessly via the Python mesh-tools service (:8200),
+// which runs a Blender subprocess (see app/routes/meshes.py /meshes/thumbnail).
+// Meshes generated without a browser (ComfyUI / external API over MCP) have no
+// client-side WebGL thumbnail; this is the fallback when there is no provider
+// cover to use. Returns the stored thumbnail filename, or null on any failure —
+// the render is best-effort and must never fail mesh generation (e.g. when the
+// mesh-tools service is not installed or running).
+async function renderMeshThumbnailViaService(buffer, baseName = 'mesh') {
+  if (!buffer?.length) return null;
+
+  try {
+    // In the desktop app, start the mesh-tools service on demand if it isn't
+    // running (best-effort — proceed regardless; a stopped service just yields
+    // no thumbnail, as before).
+    await ensureDesktopService('meshtools');
+
+    const settings = await getSettings();
+    const baseUrl = buildMeshToolsBaseUrl(settings);
+
+    const form = new FormData();
+    form.append('meshFile', new Blob([buffer], { type: 'model/gltf-binary' }), 'mesh.glb');
+
+    const response = await fetch(`${baseUrl}/meshes/thumbnail`, { method: 'POST', body: form });
+    if (!response.ok) return null;
+
+    const data = await response.json().catch(() => null);
+    const pngBuffer = data?.preview_b64 ? Buffer.from(data.preview_b64, 'base64') : null;
+    if (!pngBuffer?.length) return null;
+
+    const thumbnailFilename = createLibraryThumbnailFilename(baseName);
+    const absoluteThumbnailPath = toAbsoluteStoragePath(toStoredThumbnailPath(thumbnailFilename));
+    await fs.mkdir(path.dirname(absoluteThumbnailPath), { recursive: true });
+    await fs.writeFile(absoluteThumbnailPath, pngBuffer);
+    return thumbnailFilename;
+  } catch (err) {
+    console.warn('Failed to render mesh thumbnail via service:', err.message);
+    return null;
+  }
+}
+
+// Resolve a thumbnail for a generated mesh: prefer the provider's own cover
+// render (free, always available for the external APIs), else fall back to a
+// headless Blender render (covers ComfyUI meshes, which have no cover). Returns
+// the stored thumbnail filename, or null when neither is available.
+async function resolveMeshThumbnailFilename({ buffer, previewImageUrl, baseName = 'mesh' }) {
+  const cover = await downloadPreviewThumbnail(previewImageUrl, baseName);
+  if (cover) return cover;
+  return renderMeshThumbnailViaService(buffer, baseName);
+}
+
 async function saveGeneratedMeshAssets({
   projectId,
   name,
@@ -2701,8 +2787,13 @@ async function saveGeneratedMeshAssets({
     };
 
     // Meshes have no client-side thumbnail on the headless generation path, so
-    // store the provider's cover render as the thumbnail (best-effort).
-    const thumbnailFilename = await downloadPreviewThumbnail(downloadedFile.previewImageUrl, assetPayload.name);
+    // use the provider's cover render, falling back to a headless Blender render
+    // when there is no cover (best-effort).
+    const thumbnailFilename = await resolveMeshThumbnailFilename({
+      buffer: downloadedFile.buffer,
+      previewImageUrl: downloadedFile.previewImageUrl,
+      baseName: assetPayload.name
+    });
 
     // When the mesh was edited from a connected mesh, save it as a version (child)
     // of that mesh instead of creating a new root asset.
@@ -3697,11 +3788,17 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
         await fs.mkdir(path.dirname(absoluteFilePath), { recursive: true });
         await fs.writeFile(absoluteFilePath, downloadedFile.buffer);
 
+        // ComfyUI returns no cover image, so headless mesh outputs have no
+        // thumbnail — render one via the mesh-tools service (best-effort).
+        const meshThumbnailFilename = inferredAssetType === 'mesh'
+          ? await renderMeshThumbnailViaService(downloadedFile.buffer, generatedAssetPayload.name)
+          : null;
+
         // When a mesh output was edited from a connected mesh, store it as a
         // version (child) of that mesh instead of creating a new root asset.
         const persistedAsset = (normalizedParentAssetId && inferredAssetType === 'mesh')
-          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload, inheritThumbnail: false })
-          : await createProjectAsset(generatedAssetPayload);
+          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename, inheritThumbnail: false })
+          : await createProjectAsset({ ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename });
         generatedAssets.push({
           ...persistedAsset,
           url: `${getRequestBaseUrl(req)}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,

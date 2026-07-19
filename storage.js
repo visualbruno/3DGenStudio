@@ -181,11 +181,17 @@ export const DEFAULT_SETTINGS = {
     },
     meshtools: {
       url: 'http://127.0.0.1',
-      port: '8200'
+      port: '8200',
+      // Desktop app: start this service automatically at launch (default off —
+      // services otherwise start on demand or from Settings).
+      autoStart: false
     },
     rigtools: {
       url: 'http://127.0.0.1',
-      port: '8300'
+      port: '8300',
+      // Desktop app: start the rigging service at launch. Default off — it pins
+      // ~14GB of GPU memory for the whole session.
+      autoStart: false
     },
     custom: []
   },

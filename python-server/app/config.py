@@ -43,6 +43,10 @@ MAX_UPLOAD_BYTES: int = _env_int("MESHTOOLS_MAX_UPLOAD_BYTES", 512 * 1024 * 1024
 # import alone takes seconds and heavy scenes bake many animation takes.
 CONVERT_TIMEOUT_S: int = _env_int("MESHTOOLS_CONVERT_TIMEOUT", 600)
 
+# Thumbnail render (headless Blender subprocess). Shorter than convert: a single
+# low-sample Cycles-CPU render of one frame after the bpy import (~seconds).
+THUMBNAIL_TIMEOUT_S: int = _env_int("MESHTOOLS_THUMBNAIL_TIMEOUT", 180)
+
 # Scratch space for temp files when a tool needs real paths on disk
 # (many mesh CLIs/libraries only accept file paths, not in-memory buffers).
 WORK_DIR: Path = Path(

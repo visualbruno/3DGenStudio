@@ -90,10 +90,28 @@ function startBackend() {
       PORT: String(BACKEND_PORT),
       NODE_ENV: 'production',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // 4th fd = IPC channel: lets the headless backend ask the main process to
+    // start a Python service on demand (e.g. to render a mesh thumbnail) —
+    // something it otherwise can't do (ensureService lives here, not there).
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   proc.stdout.pipe(out);
   proc.stderr.pipe(out);
+
+  // Backend → main service requests. Reuses the same ensureService the Start
+  // buttons and on-demand UI path use (start + health wait + dedupe).
+  proc.on('message', async (msg) => {
+    if (!msg || msg.type !== 'services:ensure') return;
+    const { name, requestId } = msg;
+    let reply = { type: 'services:ensure:result', requestId };
+    try {
+      await ensureService(name);
+      reply.ok = true;
+    } catch (err) {
+      reply = { ...reply, ok: false, error: err?.message || String(err) };
+    }
+    try { proc.send(reply); } catch { /* backend gone */ }
+  });
   proc.on('exit', (code, signal) => {
     log(`Backend exited (code=${code} signal=${signal})`);
     if (!shuttingDown) {
@@ -120,6 +138,38 @@ function waitForBackend(timeoutMs = 60000, intervalMs = 400) {
     };
     tick();
   });
+}
+
+// Fetch the app settings from the backend over HTTP (the backend owns the DB).
+// Resolves null on any error — callers treat that as "no auto-start".
+function fetchSettings(timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const req = http.get(`${BACKEND_ORIGIN}/api/settings`, (res) => {
+      if (res.statusCode !== 200) { res.resume(); return resolve(null); }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => { body += chunk; });
+      res.on('end', () => { try { resolve(JSON.parse(body)); } catch { resolve(null); } });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(timeoutMs, () => req.destroy());
+  });
+}
+
+// Start the services the user opted into auto-starting (Settings → Mesh Tools /
+// Auto Rig). Non-blocking and best-effort: failures are logged, never fatal, and
+// never delay the window. Setting key `rigtools` maps to service `rigging`.
+async function autoStartServices() {
+  const settings = await fetchSettings();
+  const apis = settings?.apis || {};
+  const wanted = [
+    apis.meshtools?.autoStart ? 'meshtools' : null,
+    apis.rigtools?.autoStart ? 'rigging' : null,
+  ].filter(Boolean);
+  for (const name of wanted) {
+    log(`Auto-starting ${name} service (enabled in Settings)`);
+    ensureService(name).catch((err) => log(`Auto-start of ${name} failed: ${err?.message || err}`));
+  }
 }
 
 // --- On-demand Python service management ------------------------------------
@@ -369,6 +419,10 @@ async function boot() {
   createWindow();
   if (splash && !splash.isDestroyed()) splash.close();
   if (setupWindow && !setupWindow.isDestroyed()) setupWindow.close();
+
+  // Fire the opt-in service auto-starts AFTER the window is up so they never
+  // delay launch (fire-and-forget — each service reports its own readiness).
+  autoStartServices();
 }
 
 let didShutdown = false;
