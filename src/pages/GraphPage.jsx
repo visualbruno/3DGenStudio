@@ -1449,6 +1449,54 @@ export default function GraphPage({ project }) {
               return
             }
 
+            // With an image attached to the node, an API run edits that image and
+            // saves the result as an edit of it; otherwise it's a plain generation.
+            const connectedInputAsset = getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+            const editSourceReference = getAssetSourceReference(connectedInputAsset)
+
+            if (editSourceReference) {
+              await setProcessingState('processing', null, { processingSource: 'API', inputSource: editSourceReference })
+              try {
+                const response = await runImageEditApi(project.id, {
+                  imageSource: editSourceReference,
+                  name: targetDraft.name.trim(),
+                  selectedApi: targetDraft.selectedApi,
+                  prompt: targetDraft.prompt.trim()
+                })
+                const savedEdits = response?.savedEdits || []
+                if (savedEdits.length === 0) {
+                  throw new Error('Image edit did not return any saved image')
+                }
+                await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
+                  lastAction: 'image-edit-api',
+                  inputSource: editSourceReference,
+                  lastActionParams: buildLastActionParams({
+                    source: 'API',
+                    label: imageGenerationApis.find(api => api.id === targetDraft.selectedApi)?.name || targetDraft.selectedApi,
+                    params: [
+                      { label: 'Prompt', type: 'string', value: targetDraft.prompt.trim() },
+                      { label: 'Image source', type: 'image', value: editSourceReference }
+                    ]
+                  })
+                })
+                if (savedEdits.length > 1) {
+                  await spawnAdditionalResultNodes('Image', savedEdits.slice(1).map(edit => ({
+                    id: edit.id,
+                    name: edit.name || targetDraft.name.trim()
+                  })))
+                }
+                setActionDraftsByNodeId({})
+              } catch (err) {
+                await setProcessingState('error', null, { error: err.message || 'Image edit failed', inputSource: editSourceReference })
+                pushExternalApiFailureNotification(
+                  'Image edit failed',
+                  err.message || 'Image edit failed',
+                  imageGenerationApis.find(api => api.id === targetDraft.selectedApi)?.name || 'Image edit API'
+                )
+              }
+              return
+            }
+
             await setProcessingState('processing', null, { processingSource: 'API' })
             try {
               const generatedAsset = await generateImage(project.id, {
@@ -1517,6 +1565,13 @@ export default function GraphPage({ project }) {
               inputValues[parameter.id] = inputValue
             }
 
+            // With an image attached to the node, the workflow output is saved as
+            // an edit of that image instead of as a brand-new asset — but only when
+            // the workflow exposes an image input to receive it. A pure text-to-image
+            // workflow can't edit the attached image, so it falls back to generation.
+            const connectedInputAsset = getConnectedInputAssetFrom(nodes, edges, targetNodeId)
+            const workflowAcceptsImageInput = (workflow.parameters || []).some(parameter => getWorkflowParameterValueType(parameter) === 'image')
+            const saveAsEdit = Boolean(connectedInputAsset && workflowAcceptsImageInput)
             const promptId = createComfyExecutionId('graph-image-prompt')
             const clientId = createComfyExecutionId('graph-image-client')
             setActionDraftsByNodeId({})
@@ -1526,15 +1581,55 @@ export default function GraphPage({ project }) {
               projectName: project.name,
               page: 'graph',
               targetId: targetNodeId,
-              kind: 'image',
+              kind: saveAsEdit ? 'imageEdit' : 'image',
               label: targetDraft.name.trim() || workflow.name
             })
 
             await setProcessingState('processing', 0, { processingSource: 'ComfyUI', promptId }, {
-              progressDetail: 'Preparing ComfyUI workflow',
+              progressDetail: saveAsEdit ? 'Preparing ComfyUI image edit' : 'Preparing ComfyUI workflow',
               currentNodeLabel: 'Waiting for ComfyUI execution to start'
             })
             try {
+              if (saveAsEdit) {
+                const response = await runImageEditComfy(project.id, {
+                  assetId: connectedInputAsset.id,
+                  workflowId: Number(targetDraft.workflowId),
+                  name: targetDraft.name.trim(),
+                  inputValues,
+                  promptId,
+                  clientId
+                })
+                const savedEdits = response?.savedEdits || []
+                if (savedEdits.length === 0) {
+                  throw new Error('ComfyUI image edit did not return any saved image')
+                }
+                setNodeTransientData(targetNodeId, {
+                  status: 'processing',
+                  progress: 100,
+                  progressDetail: 'Saving edited image',
+                  currentNodeLabel: 'ComfyUI image edit completed'
+                })
+                await applyNodeResult({ id: savedEdits[0].id, name: savedEdits[0].name || targetDraft.name.trim() }, {
+                  lastAction: 'image-edit-comfy',
+                  promptId,
+                  inputSource: JSON.stringify(inputValues),
+                  lastActionParams: buildLastActionParams({
+                    source: 'ComfyUI',
+                    label: workflow.name,
+                    params: describeWorkflowParams(workflow, inputValues, targetDraft, targetInputSources)
+                  })
+                })
+                if (savedEdits.length > 1) {
+                  await spawnAdditionalResultNodes('Image', savedEdits.slice(1).map(edit => ({
+                    id: edit.id,
+                    name: edit.name || targetDraft.name.trim()
+                  })))
+                }
+                await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
+                completeJob(promptId, { status: 'completed' })
+                return
+              }
+
               const generatedAssets = await runComfyWorkflow(project.id, {
                 workflowId: Number(targetDraft.workflowId),
                 name: targetDraft.name.trim(),

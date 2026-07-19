@@ -3719,6 +3719,13 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     const baseTimestamp = Date.now();
     const generatedAssets = [];
 
+    // When results are saved under a parent asset, they become an image edit or a
+    // mesh version of it — but only when the parent's type matches the produced
+    // output type (a mismatched parent falls back to a new root asset).
+    const parentAsset = normalizedParentAssetId ? await getAssetRecordById(normalizedParentAssetId) : null;
+    const parentAssetType = parentAsset ? String(parentAsset.assetTypeName || '').toLowerCase() : null;
+    const workflowEditId = randomUUID();
+
     for (const [index, workflowText] of workflowTexts.entries()) {
       generatedAssets.push({
         type: 'text',
@@ -3794,11 +3801,26 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           ? await renderMeshThumbnailViaService(downloadedFile.buffer, generatedAssetPayload.name)
           : null;
 
-        // When a mesh output was edited from a connected mesh, store it as a
-        // version (child) of that mesh instead of creating a new root asset.
-        const persistedAsset = (normalizedParentAssetId && inferredAssetType === 'mesh')
+        // When the output was produced from a connected input asset, store it as a
+        // child of that asset instead of a new root: a mesh output becomes a version
+        // of the connected mesh, an image output becomes an edit of the connected
+        // image. A parent whose type doesn't match the output falls back to a root.
+        const persistedAsset = (normalizedParentAssetId && parentAssetType === 'mesh' && inferredAssetType === 'mesh')
           ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename, inheritThumbnail: false })
-          : await createProjectAsset({ ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename });
+          : (normalizedParentAssetId && parentAssetType === 'image' && inferredAssetType === 'image')
+            ? {
+                ...(await createAssetEditRecord({
+                  assetId: normalizedParentAssetId,
+                  editId: workflowEditId,
+                  name: generatedAssetPayload.name,
+                  filePath: storedFilePath,
+                  width: dimensions.width,
+                  height: dimensions.height,
+                  createdAt: generatedAssetPayload.createdAt
+                })),
+                type: 'image'
+              }
+            : await createProjectAsset({ ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename });
         generatedAssets.push({
           ...persistedAsset,
           url: `${getRequestBaseUrl(req)}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,

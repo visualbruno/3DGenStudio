@@ -476,16 +476,10 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         From Assets
                       </button>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'comfy')}>
-                        Generate · ComfyUI Workflow
+                        ComfyUI Workflow
                       </button>
                       <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageModeSelect?.(data.id, 'api')}>
-                        Generate · Remote API
-                      </button>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'edit-api')}>
-                        Edit · API
-                      </button>
-                      <button className="image-card__edit-action-option nodrag" onClick={() => data.onImageEditModeSelect?.(data.id, 'edit-comfy')}>
-                        Edit · ComfyUI Workflow
+                        API
                       </button>
                     </>
                   )}

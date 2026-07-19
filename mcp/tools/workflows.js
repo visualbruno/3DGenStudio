@@ -3,7 +3,27 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { toolHandler, createProgressReporter } from '../client.js';
-import { attachResultsToNode } from '../nodeResults.js';
+import { attachResultsToNode, resolveNodeTarget, resolveNodeInputAssets } from '../nodeResults.js';
+
+const FILE_PARAM_TYPES = ['image', 'mesh', 'video'];
+
+// Pull a project asset id out of a file-parameter value (number, "asset:<id>",
+// numeric string, or {assetId|source|filePath}). Returns null for uploaded local
+// files and stored file paths — there's no project asset to parent to.
+function extractAssetIdFromInput(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return Number.isInteger(value) && value > 0 ? value : null;
+  if (typeof value === 'string') {
+    const raw = value.startsWith('asset:') ? value.slice(6) : value;
+    const numeric = Number(raw);
+    return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+  }
+  if (typeof value === 'object') {
+    if (value.__fileField) return null;
+    return extractAssetIdFromInput(value.assetId ?? value.source ?? value.filePath ?? null);
+  }
+  return null;
+}
 
 // Strip the raw graph JSON from workflow records so list responses stay small.
 function summarizeWorkflow(workflow) {
@@ -104,16 +124,16 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
 
   server.registerTool('run_workflow', {
     title: 'Run ComfyUI workflow',
-    description: 'Execute a saved ComfyUI workflow and wait for the generated assets (streams MCP progress notifications). inputs maps parameter id -> value; for image/mesh parameters pass a project asset id (number) as the value, or use fileInputs to upload a local file. IMPORTANT for graph projects: pass nodeId (a graph node from get_graph/create_node) so the results are displayed on that node — the first result becomes the node\'s asset, additional results become new nodes stacked below it. Requires ComfyUI to be running (configured in Settings). On timeout returns {status:"running", promptId} — poll with get_run_status.',
+    description: 'Execute a saved ComfyUI workflow and wait for the generated assets (streams MCP progress notifications). inputs maps parameter id -> value; for image/mesh parameters pass a project asset id (number) as the value, or use fileInputs to upload a local file. IMPORTANT for graph projects: pass nodeId (a graph node from get_graph/create_node) so the results are displayed on that node — the first result becomes the node\'s asset, additional results become new nodes stacked below it. nodeId is the ONLY way to fill a graph node; cardId is for kanban cards. (If you pass a graph node id as cardId it is auto-attached to that node, not turned into a card.) Wiring: the target node\'s connected input assets automatically fill the workflow\'s image/mesh parameters (matched by type), so you normally do NOT set inputs for file parameters — just connect_nodes to wire the source image/mesh, then run with nodeId. Only pass inputs for file parameters to override a wired input or when the node has no connection. Requires ComfyUI to be running (configured in Settings). On timeout returns {status:"running", promptId} — poll with get_run_status.',
     inputSchema: {
       workflowId: z.number().int().describe('Saved workflow id (from list_workflows)'),
       projectId: z.number().int().optional().describe('Project to attach results to (required unless persistGeneratedAssets=false)'),
       inputs: z.record(z.string(), z.any()).default({}).describe('Parameter id -> value. Image/mesh parameters accept a project assetId (number) or stored filePath (string).'),
       fileInputs: z.record(z.string(), z.string()).optional().describe('Parameter id -> absolute local file path to upload for image/mesh/video parameters'),
-      nodeId: z.number().int().optional().describe('Graph node to attach the results to (graph projects) — without it the generated assets are saved but no node displays them'),
-      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing kanban card to attach the run to (its status updates live in the UI)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the results to (graph projects) — the correct way to fill a node; without it the generated assets are saved but no node displays them'),
+      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing KANBAN card to attach the run to (kanban projects). For graph nodes use nodeId — a graph node id passed here is auto-routed to that node'),
       name: z.string().optional().describe('Name for the generated asset(s)'),
-      parentAssetId: z.number().int().optional().describe('Save results as versions of this asset'),
+      parentAssetId: z.number().int().optional().describe('Save results under this asset: a mesh output becomes a version of it, an image output an edit of it (the parent must match the output type, else a new root asset is created). USUALLY LEAVE UNSET — it is inferred automatically from the source the output was derived from: the workflow file (image/mesh) input matching the output type, whether that input came from the target node\'s wiring or was passed in `inputs`. Set this only to override that inference (e.g. attach to a different asset).'),
       persistProcessingCard: z.boolean().optional(),
       persistGeneratedAssets: z.boolean().optional(),
       timeoutSeconds: z.number().int().min(5).max(3600).default(600)
@@ -125,6 +145,66 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
     } = args;
     const reportProgress = createProgressReporter(extra);
     const promptId = randomUUID();
+
+    // Route a graph-node target to the node (via nodeId), even if the caller
+    // passed the node id as cardId. targetNodeId gets the result attached;
+    // kanbanCardId is only forwarded to the server when it's a real kanban card.
+    const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId });
+
+    // Mirror the GraphPage: use what the target node is wired to. Its connected
+    // input assets fill the workflow's image/mesh parameters (by matching type) so
+    // the caller doesn't have to hand-map parameter ids, and — when the caller
+    // didn't pin one — set the parent so the output is saved as an edit of a
+    // connected image / a version of a connected mesh (parent matches output type).
+    const nodeInputAssets = (targetNodeId && projectId)
+      ? await resolveNodeInputAssets(api, projectId, targetNodeId)
+      : [];
+
+    // Fetch the workflow definition to know its file parameters and output type.
+    const workflowDef = (await api.apiJson('GET', '/library/comfy-workflows').catch(() => []))
+      .find?.(item => Number(item?.id) === Number(workflowId)) || null;
+    const fileParams = (workflowDef?.parameters || [])
+      .map(parameter => ({ id: parameter.id, type: String(parameter.valueType || '').toLowerCase() }))
+      .filter(parameter => FILE_PARAM_TYPES.includes(parameter.type));
+
+    // Auto-fill each unset image/mesh/video parameter from a connected input of
+    // the matching type (each connected asset used at most once). Explicit `inputs`
+    // and `fileInputs` always win over an auto-filled value.
+    const autoInputs = {};
+    if (nodeInputAssets.length > 0 && fileParams.length > 0) {
+      const available = nodeInputAssets.map(asset => ({ ...asset, used: false }));
+      for (const parameter of fileParams) {
+        const explicitlySet = (inputs[parameter.id] !== undefined && inputs[parameter.id] !== null)
+          || (fileInputs && fileInputs[parameter.id]);
+        if (explicitlySet) continue;
+        const match = available.find(asset => !asset.used && asset.type === parameter.type);
+        if (match) {
+          autoInputs[parameter.id] = `asset:${match.assetId}`;
+          match.used = true;
+        }
+      }
+    }
+
+    // Save the output under the source asset it was derived from, unless the caller
+    // pinned a parent explicitly. Pick the file-parameter input (auto-filled from
+    // wiring OR passed in `inputs`) whose type matches the produced output: an image
+    // output becomes an edit of its source image, a mesh output a version of its
+    // source mesh. Inferring from the reused input — not just node wiring — means a
+    // caller that reuses a source assetId as an input doesn't have to remember
+    // parentAssetId. Pass parentAssetId explicitly to override the inferred parent.
+    let effectiveParentAssetId = parentAssetId;
+    if (effectiveParentAssetId === undefined || effectiveParentAssetId === null) {
+      const outputTypes = (workflowDef?.outputs || []).map(output => String(output?.valueType || 'image').toLowerCase());
+      const primaryOutputType = outputTypes.includes('mesh')
+        ? 'mesh'
+        : (outputTypes.includes('image') ? 'image' : (outputTypes[0] || null));
+      const matchingParam = primaryOutputType
+        ? fileParams.find(parameter => parameter.type === primaryOutputType)
+        : null;
+      if (matchingParam) {
+        effectiveParentAssetId = extractAssetIdFromInput(inputs[matchingParam.id] ?? autoInputs[matchingParam.id]);
+      }
+    }
 
     // Subscribe to the single-job progress stream BEFORE submitting so the
     // terminal event can't be missed (the endpoint also replays the latest
@@ -153,13 +233,13 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       if (projectId !== undefined && projectId !== null) form.append('projectId', String(projectId));
       form.append('workflowId', String(workflowId));
       form.append('promptId', promptId);
-      if (cardId !== undefined && cardId !== null) form.append('cardId', String(cardId));
+      if (kanbanCardId !== undefined && kanbanCardId !== null) form.append('cardId', String(kanbanCardId));
       if (name) form.append('name', name);
-      if (parentAssetId !== undefined && parentAssetId !== null) form.append('parentAssetId', String(parentAssetId));
+      if (effectiveParentAssetId !== undefined && effectiveParentAssetId !== null) form.append('parentAssetId', String(effectiveParentAssetId));
       if (persistProcessingCard === false) form.append('persistProcessingCard', 'false');
       if (persistGeneratedAssets === false) form.append('persistGeneratedAssets', 'false');
 
-      const inputValues = { ...inputs };
+      const inputValues = { ...autoInputs, ...inputs };
       for (const [key, localPath] of Object.entries(fileInputs || {})) {
         const fieldName = `comfyFile:${key}`;
         const buffer = await fs.readFile(localPath);
@@ -194,10 +274,10 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       // the GraphPage does after a run — without this the assets exist but no
       // node shows them).
       let nodeAttachment = null;
-      if (nodeId && projectId) {
+      if (targetNodeId && projectId) {
         nodeAttachment = await attachResultsToNode(api, {
           projectId,
-          nodeId,
+          nodeId: targetNodeId,
           assets,
           metadata: { lastAction: 'comfy-workflow', promptId }
         });

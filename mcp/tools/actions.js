@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { toolHandler, createProgressReporter } from '../client.js';
-import { attachResultsToNode } from '../nodeResults.js';
+import { attachResultsToNode, resolveNodeTarget } from '../nodeResults.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -125,12 +125,16 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
   } = args;
   const reportProgress = createProgressReporter(extra);
 
+  // Route a graph-node target to the node; never send a node id as a kanban
+  // cardId. targetNodeId gets the final mesh attached (via pollMeshResult).
+  const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId });
+
   const submit = await api.apiJson('POST', '/meshes/generate', {
     body: {
       projectId, selectedApi, name,
       ...(prompt ? { prompt } : {}),
       ...(imageSource !== undefined ? { imageSource } : {}),
-      ...(cardId !== undefined ? { cardId } : {}),
+      ...(kanbanCardId !== undefined && kanbanCardId !== null ? { cardId: kanbanCardId } : {}),
       ...(parentAssetId !== undefined ? { parentAssetId } : {}),
       ...options
     }
@@ -141,7 +145,7 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
     projectId,
     name,
     prompt: prompt || '',
-    cardId: submit?.cardId ?? cardId ?? null,
+    cardId: submit?.cardId ?? kanbanCardId ?? null,
     selectedApi,
     parentAssetId: parentAssetId ?? null
   });
@@ -155,7 +159,7 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
     pollRequest,
     providerLabel: submit.provider,
     projectId,
-    nodeId,
+    nodeId: targetNodeId,
     selectedApi,
     timeoutSeconds,
     pollIntervalSeconds
@@ -164,13 +168,16 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
   if (outcome.status === 'running') {
     // Timed out with the job still on the provider. The mesh is NOT saved until a
     // result poll sees completion, so hand back the job ids for get_mesh_result.
+    // Surface the resolved node target so a follow-up get_mesh_result can pass
+    // nodeId and still land the mesh on the intended node.
     return {
       status: 'running',
-      note: `Still processing after ${timeoutSeconds}s. The provider keeps working, but the mesh is only saved once a result poll sees it finish — call get_mesh_result with the ids below to retrieve it when ready. Do NOT re-run generation (that starts a new job).`,
+      note: `Still processing after ${timeoutSeconds}s. The provider keeps working, but the mesh is only saved once a result poll sees it finish — call get_mesh_result with the ids below to retrieve it when ready${targetNodeId ? ' (pass nodeId to attach it to the graph node)' : ''}. Do NOT re-run generation (that starts a new job).`,
       provider: submit.provider,
       selectedApi,
       projectId,
       name,
+      ...(targetNodeId ? { nodeId: targetNodeId } : {}),
       ...(submit.jobId ? { jobId: submit.jobId } : {}),
       ...(submit.taskId ? { taskId: submit.taskId } : {}),
       ...(submit.region ? { region: submit.region } : {}),
@@ -184,7 +191,7 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
 export function registerActionTools(server, { api, notifyMutation }) {
   server.registerTool('generate_image', {
     title: 'Generate image',
-    description: 'Generate an image with an external AI provider and save it as a project asset. selectedApi identifies the provider/model configured in Settings (e.g. Google/OpenAI image APIs or a custom_* API) — check get_settings for what is configured. In graph projects pass nodeId so the result is displayed on that node.',
+    description: 'Generate an image with an external AI provider and save it as a project asset. selectedApi identifies the provider/model configured in Settings (e.g. Google/OpenAI image APIs or a custom_* API) — check get_settings for what is configured. In graph projects pass nodeId so the result is displayed on that node (cardId is for kanban cards; a graph node id passed as cardId is auto-routed to that node).',
     inputSchema: {
       projectId: z.number().int(),
       selectedApi: z.string().min(1).describe('Provider/model id from Settings (e.g. "google_gemini", "openai_gpt_image", or a custom_* id)'),
@@ -194,12 +201,15 @@ export function registerActionTools(server, { api, notifyMutation }) {
       cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing kanban card to attach the result to')
     }
   }, toolHandler(async ({ projectId, nodeId, ...body }) => {
-    const result = await api.apiJson('POST', '/images/generate', { body: { projectId, ...body } });
+    // A graph node id may arrive as nodeId or (mistakenly) as cardId — route it
+    // to the node and keep only a real kanban cardId in the request body.
+    const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId: body.cardId });
+    const result = await api.apiJson('POST', '/images/generate', { body: { projectId, ...body, cardId: kanbanCardId } });
     let nodeAttachment = null;
-    if (nodeId) {
+    if (targetNodeId) {
       nodeAttachment = await attachResultsToNode(api, {
         projectId,
-        nodeId,
+        nodeId: targetNodeId,
         assets: [{ ...result, type: result?.type || 'image' }],
         metadata: { lastAction: 'image-api' }
       });
@@ -210,7 +220,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
 
   server.registerTool('edit_image', {
     title: 'Edit image (AI)',
-    description: 'Edit an existing project image with an external AI provider (prompt-based edit). The result is saved as an edit of the source asset. In graph projects pass nodeId so the result is displayed on that node. For ComfyUI-based edits use run_workflow instead.',
+    description: 'Edit an existing project image with an external AI provider (prompt-based edit). The result is saved as an edit of the source asset. In graph projects pass nodeId so the result is displayed on that node (cardId is for kanban cards; a graph node id passed as cardId is auto-routed to that node). For ComfyUI-based edits use run_workflow instead.',
     inputSchema: {
       projectId: z.number().int(),
       selectedApi: z.string().min(1),
@@ -221,13 +231,14 @@ export function registerActionTools(server, { api, notifyMutation }) {
       cardId: z.union([z.number().int(), z.string()]).optional()
     }
   }, toolHandler(async ({ projectId, nodeId, ...body }) => {
-    const result = await api.apiJson('POST', '/image-edits/api', { body: { projectId, ...body } });
+    const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId: body.cardId });
+    const result = await api.apiJson('POST', '/image-edits/api', { body: { projectId, ...body, cardId: kanbanCardId } });
     let nodeAttachment = null;
     const savedEdits = Array.isArray(result?.savedEdits) ? result.savedEdits : [];
-    if (nodeId && savedEdits.length > 0) {
+    if (targetNodeId && savedEdits.length > 0) {
       nodeAttachment = await attachResultsToNode(api, {
         projectId,
-        nodeId,
+        nodeId: targetNodeId,
         assets: savedEdits.map(edit => ({ id: edit.id, name: edit.name || body.name, type: 'image' })),
         metadata: { lastAction: 'image-edit-api' }
       });
@@ -238,14 +249,14 @@ export function registerActionTools(server, { api, notifyMutation }) {
 
   server.registerTool('generate_mesh', {
     title: 'Generate 3D mesh',
-    description: 'Generate a 3D mesh from an image and/or prompt using Tencent Hunyuan, Tripo AI, or Hitem3D (selectedApi from Settings). Submits the job and polls the provider until the mesh is ready (streams MCP progress), then returns the saved mesh assets. Takes minutes — on timeout returns the job info so it can be re-polled by calling this tool\'s sibling get-result flow or checking list_assets later.',
+    description: 'Generate a 3D mesh from an image and/or prompt using Tencent Hunyuan, Tripo AI, or Hitem3D (selectedApi from Settings). Submits the job and polls the provider until the mesh is ready (streams MCP progress), then returns the saved mesh assets. In graph projects pass nodeId so the mesh is displayed on that node (cardId is for kanban cards; a graph node id passed as cardId is auto-routed to that node). Takes minutes — on timeout returns the job info so it can be re-polled by calling this tool\'s sibling get-result flow or checking list_assets later.',
     inputSchema: {
       projectId: z.number().int(),
       selectedApi: z.string().min(1).describe('Mesh provider id from Settings (Tencent / Tripo / Hitem3D / custom_*)'),
       name: z.string().min(1),
       prompt: z.string().optional().describe('Text prompt (Tencent/Tripo support text-to-3D)'),
       imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (required for Hitem3D)'),
-      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
       options: z.record(z.string(), z.any()).default({}).describe('Provider options, e.g. Tencent: region, modelVersion, enablePBR, faceCount, generationType, polygonType; Tripo: modelVersion, texture, pbr, quad, faceLimit, …. Prefer the dedicated generate_mesh_tencent / generate_mesh_tripo / generate_mesh_hitem tools, which document and validate every option.'),
@@ -263,7 +274,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().optional().describe('Text prompt (text-to-3D). Provide this OR imageSource.'),
       imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (image-to-3D). Provide this OR prompt.'),
       options: z.object(TENCENT_MESH_OPTIONS).describe('Tencent Hunyuan3D parameters (region is required).'),
-      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
@@ -280,7 +291,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().optional().describe('Text prompt (text-to-3D). Provide this OR imageSource.'),
       imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (image-to-3D). Provide this OR prompt.'),
       options: z.object(TRIPO_MESH_OPTIONS).default({}).describe('Tripo AI parameters (all optional; unset keys use their default).'),
-      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
@@ -296,7 +307,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       name: z.string().min(1),
       imageSource: z.union([z.number().int(), z.string()]).describe('Source image: asset id or stored filePath — REQUIRED.'),
       options: z.object(HITEM_MESH_OPTIONS).default({}).describe('Hitem3D parameters (all optional; unset keys use their default).'),
-      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects)'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
