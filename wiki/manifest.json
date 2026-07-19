@@ -341,6 +341,15 @@
       "position": 1,
       "createdAt": 1784129609391,
       "updatedAt": 1784129619051
+    },
+    {
+      "id": 39,
+      "parentId": null,
+      "title": "MCP",
+      "icon": "description",
+      "position": 6,
+      "createdAt": 1784492754708,
+      "updatedAt": 1784492762736
     }
   ]
 }
