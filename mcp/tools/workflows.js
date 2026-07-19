@@ -7,24 +7,6 @@ import { attachResultsToNode, resolveNodeTarget, resolveNodeInputAssets } from '
 
 const FILE_PARAM_TYPES = ['image', 'mesh', 'video'];
 
-// Pull a project asset id out of a file-parameter value (number, "asset:<id>",
-// numeric string, or {assetId|source|filePath}). Returns null for uploaded local
-// files and stored file paths — there's no project asset to parent to.
-function extractAssetIdFromInput(value) {
-  if (value === null || value === undefined) return null;
-  if (typeof value === 'number') return Number.isInteger(value) && value > 0 ? value : null;
-  if (typeof value === 'string') {
-    const raw = value.startsWith('asset:') ? value.slice(6) : value;
-    const numeric = Number(raw);
-    return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
-  }
-  if (typeof value === 'object') {
-    if (value.__fileField) return null;
-    return extractAssetIdFromInput(value.assetId ?? value.source ?? value.filePath ?? null);
-  }
-  return null;
-}
-
 // Strip the raw graph JSON from workflow records so list responses stay small.
 function summarizeWorkflow(workflow) {
   if (!workflow || typeof workflow !== 'object') return workflow;
@@ -128,7 +110,7 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
     inputSchema: {
       workflowId: z.number().int().describe('Saved workflow id (from list_workflows)'),
       projectId: z.number().int().optional().describe('Project to attach results to (required unless persistGeneratedAssets=false)'),
-      inputs: z.record(z.string(), z.any()).default({}).describe('Parameter id -> value. Image/mesh parameters accept a project assetId (number) or stored filePath (string).'),
+      inputs: z.record(z.string(), z.any()).default({}).describe('Parameter id -> value. For an image/mesh parameter pass the asset\'s numeric id (from list_assets / a generation result) — this is ALL you need. The SAME plain id works for a root asset, an edit, or a version (e.g. a background-removed image is an edit — pass that edit\'s own id). Do NOT pass a file path/filename, and do NOT pass a {assetId, editId} object — a bare number is correct. Non-file parameters take their literal value (string/number/boolean).'),
       fileInputs: z.record(z.string(), z.string()).optional().describe('Parameter id -> absolute local file path to upload for image/mesh/video parameters'),
       nodeId: z.number().int().optional().describe('Graph node to attach the results to (graph projects) — the correct way to fill a node; without it the generated assets are saved but no node displays them'),
       cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing KANBAN card to attach the run to (kanban projects). For graph nodes use nodeId — a graph node id passed here is auto-routed to that node'),
@@ -185,26 +167,15 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       }
     }
 
-    // Save the output under the source asset it was derived from, unless the caller
-    // pinned a parent explicitly. Pick the file-parameter input (auto-filled from
-    // wiring OR passed in `inputs`) whose type matches the produced output: an image
-    // output becomes an edit of its source image, a mesh output a version of its
-    // source mesh. Inferring from the reused input — not just node wiring — means a
-    // caller that reuses a source assetId as an input doesn't have to remember
-    // parentAssetId. Pass parentAssetId explicitly to override the inferred parent.
-    let effectiveParentAssetId = parentAssetId;
-    if (effectiveParentAssetId === undefined || effectiveParentAssetId === null) {
-      const outputTypes = (workflowDef?.outputs || []).map(output => String(output?.valueType || 'image').toLowerCase());
-      const primaryOutputType = outputTypes.includes('mesh')
-        ? 'mesh'
-        : (outputTypes.includes('image') ? 'image' : (outputTypes[0] || null));
-      const matchingParam = primaryOutputType
-        ? fileParams.find(parameter => parameter.type === primaryOutputType)
-        : null;
-      if (matchingParam) {
-        effectiveParentAssetId = extractAssetIdFromInput(inputs[matchingParam.id] ?? autoInputs[matchingParam.id]);
-      }
-    }
+    // Unless the caller pinned a parent, let the server save the output under the
+    // source it was derived from: it matches each output to a resolved image/mesh
+    // input of the same type (from wiring or `inputs`) — an image output becomes an
+    // edit of its source image, a mesh output a version of its source mesh. This
+    // means a caller that reuses a source asset as an input doesn't have to remember
+    // parentAssetId (works for kanban too, where there is no node wiring). The server
+    // knows the true output type, so this is robust even when the workflow's declared
+    // output type is missing/wrong. Pass parentAssetId to override.
+    const autoParentFromInputs = (parentAssetId === undefined || parentAssetId === null);
 
     // Subscribe to the single-job progress stream BEFORE submitting so the
     // terminal event can't be missed (the endpoint also replays the latest
@@ -235,7 +206,11 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       form.append('promptId', promptId);
       if (kanbanCardId !== undefined && kanbanCardId !== null) form.append('cardId', String(kanbanCardId));
       if (name) form.append('name', name);
-      if (effectiveParentAssetId !== undefined && effectiveParentAssetId !== null) form.append('parentAssetId', String(effectiveParentAssetId));
+      if (parentAssetId !== undefined && parentAssetId !== null) {
+        form.append('parentAssetId', String(parentAssetId));
+      } else if (autoParentFromInputs) {
+        form.append('autoParentFromInputs', 'true');
+      }
       if (persistProcessingCard === false) form.append('persistProcessingCard', 'false');
       if (persistGeneratedAssets === false) form.append('persistGeneratedAssets', 'false');
 

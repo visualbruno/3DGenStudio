@@ -3557,6 +3557,14 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     const inputValues = JSON.parse(req.body.inputValues || '{}');
     const persistProcessingCard = String(req.body.persistProcessingCard || '').toLowerCase() !== 'false';
     const persistGeneratedAssets = String(req.body.persistGeneratedAssets || '').toLowerCase() !== 'false';
+    // Default ON: when no explicit parentAssetId is given, save each output under
+    // the resolved input asset of the same type — a mesh output becomes a version of
+    // the input mesh, an image output an edit of the input image. This means MCP
+    // callers get edit/version linkage without tracking parentAssetId (and it does
+    // not depend on the MCP tool version, only on this backend). The app frontend
+    // opts out explicitly (autoParentFromInputs=false), because it manages its own
+    // edit/version saving and its generate flows must produce new root assets.
+    const autoParentFromInputs = String(req.body.autoParentFromInputs ?? 'true').toLowerCase() !== 'false';
 
     if (!workflowId) {
       return res.status(400).json({ error: 'workflowId is required' });
@@ -3583,6 +3591,9 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
     const uploadedFiles = new Map((req.files || []).map(file => [file.fieldname, file]));
     const resolvedInputs = { ...inputValues };
+    // The project assets used as image/mesh inputs, grouped by type, so an output
+    // can be saved as an edit/version of the same-type source it was derived from.
+    const resolvedInputAssetsByType = { image: [], mesh: [] };
 
     for (const parameter of workflow.parameters || []) {
       const parameterValueType = normalizeComfyValueType(parameter.valueType, getDefaultComfyValueType(parameter));
@@ -3611,6 +3622,10 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
 
         if (!resolvedSource?.asset || resolvedSource.asset.type !== parameterValueType) {
           throw new Error(`A reference file is required for ${parameter.name}`);
+        }
+
+        if (resolvedSource.asset.id) {
+          resolvedInputAssetsByType[parameterValueType].push(resolvedSource.asset.id);
         }
 
         const inputBuffer = await fs.readFile(toAbsoluteStoragePath(resolvedSource.inputFilePath));
@@ -3719,11 +3734,23 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     const baseTimestamp = Date.now();
     const generatedAssets = [];
 
-    // When results are saved under a parent asset, they become an image edit or a
-    // mesh version of it — but only when the parent's type matches the produced
-    // output type (a mismatched parent falls back to a new root asset).
-    const parentAsset = normalizedParentAssetId ? await getAssetRecordById(normalizedParentAssetId) : null;
-    const parentAssetType = parentAsset ? String(parentAsset.assetTypeName || '').toLowerCase() : null;
+    // Resolve which asset an output should be saved under, by output type, so it
+    // becomes an image edit / mesh version instead of a new root. An explicit
+    // parentAssetId wins when its type matches the output; otherwise, when
+    // autoParentFromInputs is set, the output is saved under a resolved input asset
+    // of the same type (the source it was derived from). No match → new root asset.
+    const explicitParentType = normalizedParentAssetId
+      ? String((await getAssetRecordById(normalizedParentAssetId))?.assetTypeName || '').toLowerCase()
+      : null;
+    const resolveOutputParentId = (outputType) => {
+      if (normalizedParentAssetId && explicitParentType === outputType) {
+        return normalizedParentAssetId;
+      }
+      if (autoParentFromInputs) {
+        return resolvedInputAssetsByType[outputType]?.[0] || null;
+      }
+      return null;
+    };
     const workflowEditId = randomUUID();
 
     for (const [index, workflowText] of workflowTexts.entries()) {
@@ -3801,16 +3828,16 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           ? await renderMeshThumbnailViaService(downloadedFile.buffer, generatedAssetPayload.name)
           : null;
 
-        // When the output was produced from a connected input asset, store it as a
-        // child of that asset instead of a new root: a mesh output becomes a version
-        // of the connected mesh, an image output becomes an edit of the connected
-        // image. A parent whose type doesn't match the output falls back to a root.
-        const persistedAsset = (normalizedParentAssetId && parentAssetType === 'mesh' && inferredAssetType === 'mesh')
-          ? await createAssetVersion({ assetId: normalizedParentAssetId, ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename, inheritThumbnail: false })
-          : (normalizedParentAssetId && parentAssetType === 'image' && inferredAssetType === 'image')
+        // Store the output under the source it was derived from when one applies: a
+        // mesh output becomes a version of the source mesh, an image output an edit
+        // of the source image. Otherwise it's a new root asset.
+        const outputParentId = resolveOutputParentId(inferredAssetType);
+        const persistedAsset = (outputParentId && inferredAssetType === 'mesh')
+          ? await createAssetVersion({ assetId: outputParentId, ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename, inheritThumbnail: false })
+          : (outputParentId && inferredAssetType === 'image')
             ? {
                 ...(await createAssetEditRecord({
-                  assetId: normalizedParentAssetId,
+                  assetId: outputParentId,
                   editId: workflowEditId,
                   name: generatedAssetPayload.name,
                   filePath: storedFilePath,

@@ -1005,6 +1005,11 @@ export function ProjectProvider({ children }) {
     if (workflowData.persistGeneratedAssets === false) {
       formData.append('persistGeneratedAssets', 'false')
     }
+    // The app manages its own edit/version saving (e.g. image edits via
+    // /image-edits/comfy, mesh versions via an explicit parentAssetId), and its
+    // generate flows must create new root assets — so opt out of the server's
+    // input-based parent inference unless a caller explicitly asks for it.
+    formData.append('autoParentFromInputs', workflowData.autoParentFromInputs === true ? 'true' : 'false')
 
     Object.entries(workflowData.inputs || {}).forEach(([key, value]) => {
       if (typeof File !== 'undefined' && value instanceof File) {

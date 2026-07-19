@@ -184,7 +184,7 @@ export const DEFAULT_SETTINGS = {
       port: '8200',
       // Desktop app: start this service automatically at launch (default off —
       // services otherwise start on demand or from Settings).
-      autoStart: false
+      autoStart: true
     },
     rigtools: {
       url: 'http://127.0.0.1',
@@ -1683,10 +1683,60 @@ async function resolveEditSourceByFilePath(db, editFilePath, typeName) {
   };
 }
 
+// Resolve an image/mesh input source by asset id, accepting EITHER a root/card
+// asset OR a child edit/version. A child (an image edit or a mesh version) has no
+// Cards_Assets link of its own — only its root does — so getProjectAssetById(id)
+// returns null for it; here we accept it as long as its root belongs to the
+// project, using the child's own file as the input. This lets callers reference an
+// edit/version by its plain asset id, the same way they reference a root asset.
+async function resolveProjectAssetSourceById(projectId, assetId, typeName) {
+  const expectedType = typeName.toLowerCase();
+
+  const direct = await getProjectAssetById(projectId, assetId);
+  if (direct) {
+    if (direct.type !== expectedType) {
+      return null;
+    }
+    return {
+      asset: direct,
+      inputFilePath: direct.filePath,
+      inputFilename: direct.filename,
+      inputName: direct.name,
+      isEdit: false,
+      editId: null
+    };
+  }
+
+  // Not a card-linked asset — try to resolve it as a child edit/version whose
+  // root lives in this project.
+  const record = await getAssetRecordById(assetId);
+  if (!record || !record.parentId || String(record.assetTypeName || '').toLowerCase() !== expectedType) {
+    return null;
+  }
+
+  const root = await getRootAssetById(assetId);
+  const rootInProject = root ? await getProjectAssetById(projectId, root.id) : null;
+  if (!rootInProject) {
+    return null;
+  }
+
+  const metadata = parseJson(record.metadata, {});
+  return {
+    asset: { id: record.id, type: expectedType, name: record.name, filePath: record.filePath },
+    inputFilePath: record.filePath,
+    inputFilename: toAssetUrlPath(record.filePath),
+    inputName: record.name,
+    isEdit: true,
+    editId: metadata?.editId || null
+  };
+}
+
 export async function resolveProjectImageSource(projectId, sourceReference) {
   const parsedReference = typeof sourceReference === 'string'
     ? sourceReference
-    : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
+    : typeof sourceReference === 'number'
+      ? String(sourceReference)
+      : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
 
   if (typeof parsedReference === 'string' && parsedReference.startsWith('edit:')) {
     const editFilePath = parsedReference.slice(5);
@@ -1741,25 +1791,15 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
     return null;
   }
 
-  const asset = await getProjectAssetById(projectId, assetId);
-  if (!asset || asset.type !== 'image') {
-    return null;
-  }
-
-  return {
-    asset,
-    inputFilePath: asset.filePath,
-    inputFilename: asset.filename,
-    inputName: asset.name,
-    isEdit: false,
-    editId: null
-  };
+  return await resolveProjectAssetSourceById(projectId, assetId, 'Image');
 }
 
 export async function resolveProjectMeshSource(projectId, sourceReference) {
   const parsedReference = typeof sourceReference === 'string'
     ? sourceReference
-    : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
+    : typeof sourceReference === 'number'
+      ? String(sourceReference)
+      : (sourceReference?.source || sourceReference?.filePath || sourceReference?.assetId || '');
 
   if (typeof parsedReference === 'string' && parsedReference.startsWith('edit:')) {
     const editFilePath = parsedReference.slice(5);
@@ -1814,19 +1854,7 @@ export async function resolveProjectMeshSource(projectId, sourceReference) {
     return null;
   }
 
-  const asset = await getProjectAssetById(projectId, assetId);
-  if (!asset || asset.type !== 'mesh') {
-    return null;
-  }
-
-  return {
-    asset,
-    inputFilePath: asset.filePath,
-    inputFilename: asset.filename,
-    inputName: asset.name,
-    isEdit: false,
-    editId: null
-  };
+  return await resolveProjectAssetSourceById(projectId, assetId, 'Mesh');
 }
 
 export async function listProjects() {
