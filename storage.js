@@ -1065,10 +1065,26 @@ export async function initializeStorage() {
       updatedAt INTEGER NOT NULL,
       FOREIGN KEY(parentId) REFERENCES WikiPages(id) ON DELETE CASCADE
     );
+
+    -- Brainstorming Boards: a Figma-like canvas. Many boards per project.
+    -- stateJson holds the Excalidraw document (elements + trimmed appState +
+    -- imageRefs); image binaries live as normal project Assets on disk.
+    CREATE TABLE IF NOT EXISTS Boards (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      projectId INTEGER NOT NULL,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      stateJson TEXT,
+      thumbnailPath TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL,
+      FOREIGN KEY(projectId) REFERENCES Projects(id) ON DELETE CASCADE
+    );
     `
   );
 
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_wikipages_parentId ON WikiPages(parentId)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_boards_projectId ON Boards(projectId)');
 
   const assetColumns = await all(db, 'PRAGMA table_info(Assets)');
   if (!assetColumns.some(column => column.name === 'thumbnail')) {
@@ -2311,6 +2327,107 @@ export async function deleteProjectConnection(projectId, {
   return { status: result.changes > 0 ? 'deleted' : 'not-found' };
 }
 
+// ---------------------------------------------------------------------------
+// Brainstorming Boards
+// ---------------------------------------------------------------------------
+
+function mapBoardRow(row) {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    name: row.name,
+    position: row.position ?? 0,
+    state: parseJson(row.stateJson, null),
+    thumbnailPath: row.thumbnailPath || null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  };
+}
+
+export async function listProjectBoards(projectId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const rows = await all(
+    db,
+    'SELECT * FROM Boards WHERE projectId = ? ORDER BY position ASC, id ASC',
+    [normalizedProjectId]
+  );
+
+  return rows.map(mapBoardRow);
+}
+
+export async function getBoardById(boardId) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT * FROM Boards WHERE id = ?', [Number(boardId)]);
+  return row ? mapBoardRow(row) : null;
+}
+
+export async function createBoard({ projectId, name = 'Untitled Board', position = null } = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+
+  let nextPosition;
+  if (position === null || position === undefined || !Number.isFinite(Number(position))) {
+    const row = await get(
+      db,
+      'SELECT COALESCE(MAX(position), -1) + 1 AS nextPosition FROM Boards WHERE projectId = ?',
+      [normalizedProjectId]
+    );
+    nextPosition = row?.nextPosition ?? 0;
+  } else {
+    nextPosition = Number(position);
+  }
+
+  const now = Date.now();
+  const result = await run(
+    db,
+    'INSERT INTO Boards (projectId, name, position, stateJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
+    [normalizedProjectId, String(name || '').trim() || 'Untitled Board', nextPosition, null, now, now]
+  );
+
+  return await getBoardById(result.lastID);
+}
+
+export async function updateBoard(boardId, updates = {}) {
+  const db = await getDb();
+  const existing = await get(db, 'SELECT * FROM Boards WHERE id = ?', [Number(boardId)]);
+  if (!existing) return null;
+
+  const fields = [];
+  const values = [];
+  if (updates.name !== undefined) {
+    fields.push('name = ?');
+    values.push(String(updates.name || '').trim() || 'Untitled Board');
+  }
+  if (updates.position !== undefined) {
+    fields.push('position = ?');
+    values.push(Number(updates.position) || 0);
+  }
+  if (updates.state !== undefined) {
+    fields.push('stateJson = ?');
+    values.push(updates.state === null ? null : JSON.stringify(updates.state));
+  }
+  if (updates.thumbnailPath !== undefined) {
+    fields.push('thumbnailPath = ?');
+    values.push(updates.thumbnailPath || null);
+  }
+
+  if (fields.length > 0) {
+    fields.push('updatedAt = ?');
+    values.push(Date.now());
+    values.push(Number(boardId));
+    await run(db, `UPDATE Boards SET ${fields.join(', ')} WHERE id = ?`, values);
+  }
+
+  return await getBoardById(boardId);
+}
+
+export async function deleteBoard(boardId) {
+  const db = await getDb();
+  const result = await run(db, 'DELETE FROM Boards WHERE id = ?', [Number(boardId)]);
+  return { status: result.changes > 0 ? 'deleted' : 'not-found' };
+}
+
 export async function setCardProcessingState(projectId, externalCardId, {
   columnName = 'Images',
   name = null,
@@ -2811,10 +2928,40 @@ export async function moveCard(projectId, externalCardId, kanbanColumnId, positi
   return await resolveProjectCard(projectId, externalCardId);
 }
 
-export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now() }) {
-  const card = await ensureCard(projectId, 'Images', metadata.cardId, {
-    creationDate: createdAt
-  });
+// A per-project "container" card that holds assets which must be linked to the
+// project but must NOT appear on the Kanban board. It has no kanbanColumnId (so
+// listProjectCards' INNER JOIN on Columns excludes it) and no nodeTypeId (so the
+// graph node listing excludes it too) — yet the library listing still resolves
+// the asset's project through it. Used for Brainstorming Board generations.
+async function ensureDetachedCard(projectId, clientKey = 'board-assets') {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+
+  const existing = await get(
+    db,
+    'SELECT id, clientKey FROM Cards WHERE projectId = ? AND clientKey = ? AND kanbanColumnId IS NULL AND nodeTypeId IS NULL',
+    [normalizedProjectId, clientKey]
+  );
+  if (existing) {
+    return { id: existing.id, clientKey: existing.clientKey };
+  }
+
+  const result = await run(
+    db,
+    `INSERT INTO Cards (projectId, kanbanColumnId, nodeTypeId, clientKey, name, position, creationDate)
+     VALUES (?, NULL, NULL, ?, ?, NULL, ?)`,
+    [normalizedProjectId, clientKey, 'Board assets', Date.now()]
+  );
+
+  return { id: result.lastID, clientKey };
+}
+
+export async function createProjectAsset({ projectId, type, name, filePath, thumbnailPath = null, width = 0, height = 0, metadata = {}, createdAt = Date.now(), detached = false }) {
+  const card = detached
+    ? await ensureDetachedCard(projectId)
+    : await ensureCard(projectId, 'Images', metadata.cardId, {
+        creationDate: createdAt
+      });
   const assetId = await insertAsset({
     name,
     type,

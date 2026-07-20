@@ -27,6 +27,7 @@
     "dist:dir": "npm run build && electron-builder --dir"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",

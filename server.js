@@ -45,6 +45,11 @@ import {
   deleteAssetById,
   deleteProjectConnection,
   deleteProjectNode,
+  deleteBoard,
+  listProjectBoards,
+  getBoardById,
+  createBoard,
+  updateBoard,
   deleteLibraryAssetByFilePath,
   deleteProjectById,
   findLibraryAssetByFilePath,
@@ -3557,6 +3562,9 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     const inputValues = JSON.parse(req.body.inputValues || '{}');
     const persistProcessingCard = String(req.body.persistProcessingCard || '').toLowerCase() !== 'false';
     const persistGeneratedAssets = String(req.body.persistGeneratedAssets || '').toLowerCase() !== 'false';
+    // Brainstorming Board generations link assets to the project without creating
+    // a visible Kanban card (see ensureDetachedCard).
+    const persistAssetsDetached = String(req.body.detachedAsset || '').toLowerCase() === 'true';
     // Default ON: when no explicit parentAssetId is given, save each output under
     // the resolved input asset of the same type — a mesh output becomes a version of
     // the input mesh, an image output an edit of the input image. This means MCP
@@ -3847,7 +3855,7 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
                 })),
                 type: 'image'
               }
-            : await createProjectAsset({ ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename });
+            : await createProjectAsset({ ...generatedAssetPayload, thumbnailPath: meshThumbnailFilename, detached: persistAssetsDetached });
         generatedAssets.push({
           ...persistedAsset,
           url: `${getRequestBaseUrl(req)}/assets/${encodeURI(toAssetUrlPath(storedFilePath))}`,
@@ -5480,6 +5488,86 @@ app.delete('/api/graph/connections', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Brainstorming Boards
+// ---------------------------------------------------------------------------
+
+app.get('/api/boards', async (req, res) => {
+  try {
+    const { projectId } = req.query;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.json(await listProjectBoards(Number(projectId)));
+  } catch (err) {
+    console.error('Failed to list boards:', err);
+    res.status(500).json({ error: err.message || 'Failed to list boards' });
+  }
+});
+
+app.post('/api/boards', async (req, res) => {
+  try {
+    const { projectId, name } = req.body;
+
+    if (!projectId) {
+      return res.status(400).json({ error: 'projectId is required' });
+    }
+
+    res.status(201).json(await createBoard({ projectId: Number(projectId), name }));
+  } catch (err) {
+    console.error('Failed to create board:', err);
+    res.status(500).json({ error: err.message || 'Failed to create board' });
+  }
+});
+
+app.get('/api/boards/:id', async (req, res) => {
+  try {
+    const board = await getBoardById(Number(req.params.id));
+
+    if (!board) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+
+    res.json(board);
+  } catch (err) {
+    console.error('Failed to get board:', err);
+    res.status(500).json({ error: err.message || 'Failed to get board' });
+  }
+});
+
+app.put('/api/boards/:id', async (req, res) => {
+  try {
+    const { name, state, position, thumbnailPath } = req.body;
+    const board = await updateBoard(Number(req.params.id), { name, state, position, thumbnailPath });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+
+    res.json(board);
+  } catch (err) {
+    console.error('Failed to update board:', err);
+    res.status(500).json({ error: err.message || 'Failed to update board' });
+  }
+});
+
+app.delete('/api/boards/:id', async (req, res) => {
+  try {
+    const result = await deleteBoard(Number(req.params.id));
+
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Board not found' });
+    }
+
+    res.status(204).end();
+  } catch (err) {
+    console.error('Failed to delete board:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete board' });
+  }
+});
+
 app.get('/api/assets/library', async (req, res) => {
   try {
     const [images, meshes, brushes] = await Promise.all([
@@ -7084,6 +7172,9 @@ app.post('/api/images/generate', async (req, res) => {
   try {
     const { projectId, selectedApi, prompt, name, cardId } = req.body;
     const trimmedName = String(name || '').trim();
+    // Brainstorming Board generations link the asset to the project without a
+    // visible Kanban card, so skip the processing-card snapshot entirely.
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
 
     if (!projectId || !selectedApi || !prompt?.trim() || !trimmedName) {
       return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
@@ -7092,21 +7183,23 @@ app.post('/api/images/generate', async (req, res) => {
     const settings = await getSettings();
     const trimmedPrompt = prompt.trim();
     processingProjectId = Number(projectId);
-    processingCardId = cardId || randomUUID();
+    processingCardId = detachedAsset ? null : (cardId || randomUUID());
     processingCardName = trimmedName;
     processingStartedAt = Date.now();
 
-    await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
-      columnName: 'Images',
-      name: processingCardName,
-      status: 'processing',
-      progressPercent: null,
-      detail: 'Submitting image generation request',
-      currentNodeLabel: 'Waiting for API response',
-      source: 'API',
-      operationType: 'image-generation',
-      startedAt: processingStartedAt
-    });
+    if (!detachedAsset) {
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Images',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: null,
+        detail: 'Submitting image generation request',
+        currentNodeLabel: 'Waiting for API response',
+        source: 'API',
+        operationType: 'image-generation',
+        startedAt: processingStartedAt
+      });
+    }
 
     const googleSettings = settings?.apis?.google;
     const googleGenerationSettings = googleSettings?.imageGeneration;
@@ -7248,14 +7341,17 @@ app.post('/api/images/generate', async (req, res) => {
         mimeType: inlineData.mimeType,
         responseId,
         usage: responseBody?.usage || responseBody?.usageMetadata || null,
-        cardId: processingCardId
+        ...(processingCardId ? { cardId: processingCardId } : {})
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      detached: detachedAsset
     });
 
-    await clearCardProcessingState(processingProjectId, processingCardId, {
-      name: processingCardName
-    });
+    if (!detachedAsset) {
+      await clearCardProcessingState(processingProjectId, processingCardId, {
+        name: processingCardName
+      });
+    }
 
     res.status(201).json(newAsset);
   } catch (err) {

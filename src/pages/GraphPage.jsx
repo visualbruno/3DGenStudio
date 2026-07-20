@@ -3226,6 +3226,7 @@ export default function GraphPage({ project }) {
         onSettingsClick={() => setShowSettings(true)}
         title={project?.name || 'Workspace'}
         centerTitle
+        projectId={project?.id}
       />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}

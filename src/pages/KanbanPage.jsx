@@ -3607,6 +3607,7 @@ export default function KanbanPage() {
         onSettingsClick={() => setShowSettings(true)}
         title={project?.name || 'Workspace'}
         centerTitle
+        projectId={projectId}
       />
 
       {statusMessage && (

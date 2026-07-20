@@ -500,6 +500,69 @@ export function ProjectProvider({ children }) {
     await fetchProjects()
   }
 
+  // ---- Brainstorming Boards ------------------------------------------------
+
+  const getProjectBoards = async (projectId) => {
+    const res = await fetch(`${API_BASE}/boards?projectId=${projectId}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || 'Failed to load boards')
+    return data
+  }
+
+  const getBoard = async (boardId) => {
+    const res = await fetch(`${API_BASE}/boards/${boardId}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || 'Failed to load board')
+    return data
+  }
+
+  const createBoard = async (projectId, name = 'Untitled Board') => {
+    const res = await fetch(`${API_BASE}/boards`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, name })
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || 'Failed to create board')
+    return data
+  }
+
+  const updateBoard = async (boardId, patch) => {
+    const res = await fetch(`${API_BASE}/boards/${boardId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch)
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || 'Failed to update board')
+    return data
+  }
+
+  // Save used by the board's debounced autosave. Never throws into the render
+  // path (mirrors saveGraphViewport); returns true on success so the UI can
+  // surface a save indicator.
+  const saveBoardState = async (boardId, state) => {
+    try {
+      const res = await fetch(`${API_BASE}/boards/${boardId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state })
+      })
+      return res.ok
+    } catch (err) {
+      console.error('Failed to save board state:', err)
+      return false
+    }
+  }
+
+  const deleteBoard = async (boardId) => {
+    const res = await fetch(`${API_BASE}/boards/${boardId}`, { method: 'DELETE' })
+    if (!res.ok && res.status !== 204) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to delete board')
+    }
+  }
+
   const exportProject = async (id, { folder, name }) => {
     const res = await fetch(`${API_BASE}/projects/${id}/export`, {
       method: 'POST',
@@ -1005,6 +1068,9 @@ export function ProjectProvider({ children }) {
     if (workflowData.persistGeneratedAssets === false) {
       formData.append('persistGeneratedAssets', 'false')
     }
+    if (workflowData.detachedAsset === true) {
+      formData.append('detachedAsset', 'true')
+    }
     // The app manages its own edit/version saving (e.g. image edits via
     // /image-edits/comfy, mesh versions via an explicit parentAssetId), and its
     // generate flows must create new root assets — so opt out of the server's
@@ -1217,6 +1283,12 @@ export function ProjectProvider({ children }) {
       deleteProject,
       exportProject,
       importProject,
+      getProjectBoards,
+      getBoard,
+      createBoard,
+      updateBoard,
+      saveBoardState,
+      deleteBoard,
       getProjectAssets,
       getProjectCards,
       getProjectNodes,

@@ -55,7 +55,7 @@ function getNotificationIcon(tone) {
   return 'info'
 }
 
-export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false, searchValue = '', onSearchChange, searchPlaceholder = 'Search Assets' }) {
+export default function Header({ showSearch = false, showCreateNew = false, onSettingsClick, title = '', centerTitle = false, searchValue = '', onSearchChange, searchPlaceholder = 'Search Assets', projectId = null }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { notifications, clearNotifications, removeNotification } = useNotifications()
@@ -179,6 +179,20 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>search</span>
               <span className="header__search-text">Search Assets</span>
             </button>
+          )
+        )}
+
+        {projectId && (
+          isActive('/board') ? (
+            <Link to={`/projects/${projectId}`} className="header__search-btn" title="Back to workspace">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>arrow_back</span>
+              <span className="header__search-text">Workspace</span>
+            </Link>
+          ) : (
+            <Link to={`/board?projectId=${projectId}`} className="header__search-btn" title="Open brainstorming boards">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>dashboard</span>
+              <span className="header__search-text">Boards</span>
+            </Link>
           )
         )}
 
