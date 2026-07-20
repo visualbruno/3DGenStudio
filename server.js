@@ -50,6 +50,7 @@ import {
   getBoardById,
   createBoard,
   updateBoard,
+  resolveEditableSourceReference,
   deleteLibraryAssetByFilePath,
   deleteProjectById,
   findLibraryAssetByFilePath,
@@ -6542,6 +6543,23 @@ app.post('/api/assets/image-editor/save', multer({ storage: multer.memoryStorage
   } catch (err) {
     console.error('Failed to save image editor result:', err);
     res.status(500).json({ error: err.message || 'Failed to save image editor result' });
+  }
+});
+
+// Resolve a chosen file (served filename or stored path) to a workflow source
+// reference that parents edits to the root ancestor. Used by the board panel.
+app.get('/api/assets/resolve-source', async (req, res) => {
+  try {
+    const { projectId, type = 'image', filePath } = req.query;
+
+    if (!projectId || !filePath) {
+      return res.status(400).json({ error: 'projectId and filePath are required' });
+    }
+
+    res.json(await resolveEditableSourceReference(Number(projectId), type, filePath));
+  } catch (err) {
+    console.error('Failed to resolve asset source:', err);
+    res.status(500).json({ error: err.message || 'Failed to resolve asset source' });
   }
 });
 

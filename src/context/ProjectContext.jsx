@@ -852,6 +852,16 @@ export function ProjectProvider({ children }) {
     return await res.json();
   }
 
+  // Resolve a file (served filename or stored path) to a workflow source
+  // reference (edit: for edits, asset: for roots) so board edits nest correctly.
+  const resolveAssetSourceReference = async (projectId, type, filePath) => {
+    const params = new URLSearchParams({ projectId: String(projectId), type: type || 'image', filePath })
+    const res = await fetch(`${API_BASE}/assets/resolve-source?${params.toString()}`)
+    const data = await res.json()
+    if (!res.ok) throw new Error(data?.error || 'Failed to resolve asset source')
+    return data
+  }
+
   const attachExistingAsset = async (projectId, assetData) => {
     const res = await fetch(`${API_BASE}/assets/link`, {
       method: 'POST',
@@ -1308,6 +1318,7 @@ export function ProjectProvider({ children }) {
       getPaintDocument,
       savePaintDocument,
       attachExistingAsset,
+      resolveAssetSourceReference,
       deleteAsset,
       moveKanbanCard,
       deleteCard,

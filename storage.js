@@ -1810,6 +1810,64 @@ export async function resolveProjectImageSource(projectId, sourceReference) {
   return await resolveProjectAssetSourceById(projectId, assetId, 'Image');
 }
 
+// Given a file (served filename or stored path) chosen as a workflow image/mesh
+// input, produce the correct source reference so the OUTPUT is parented to the
+// root ancestor and no bogus root asset is created:
+//   - an edit/child file  -> "edit:<storedFilePath>" (server parents output to the root)
+//   - a root already in this project -> "asset:<id>"
+//   - a library root not in this project -> attach detached, then "asset:<newId>"
+// This is what the Brainstorming Board uses for "From Assets" / "Selected image".
+export async function resolveEditableSourceReference(projectId, type, filePathOrFilename) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const normalizedType = normalizeAssetTypeName(type); // 'Image' | 'Mesh'
+  const lowerType = normalizedType.toLowerCase();
+  const stored = toStoredAssetPath(lowerType, filePathOrFilename);
+  const db = await getDb();
+
+  // 1. The file belongs to an edit/version (child) → reference it as an edit.
+  const editRow = await get(
+    db,
+    `SELECT a.id FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE a.filePath = ? AND a.parentId IS NOT NULL AND at.name = ?
+     LIMIT 1`,
+    [stored, normalizedType]
+  );
+  if (editRow) {
+    return { sourceReference: `edit:${stored}`, isEdit: true };
+  }
+
+  // 2. A root asset with this file already linked to the project → reference by id.
+  const projectRoot = await get(
+    db,
+    `SELECT a.id FROM Assets a
+     JOIN AssetTypes at ON at.id = a.assetTypeId
+     JOIN Cards_Assets ca ON ca.assetId = a.id
+     JOIN Cards c ON c.id = ca.cardId
+     WHERE a.filePath = ? AND a.parentId IS NULL AND at.name = ? AND c.projectId = ?
+     LIMIT 1`,
+    [stored, normalizedType, normalizedProjectId]
+  );
+  if (projectRoot) {
+    return { sourceReference: `asset:${projectRoot.id}`, isEdit: false };
+  }
+
+  // 3. Library root not in this project → attach it (detached, no Kanban card).
+  const libraryAsset = await findLibraryAssetByFilePath(lowerType, stored);
+  const attached = await createProjectAsset({
+    projectId: normalizedProjectId,
+    type: lowerType,
+    name: libraryAsset?.name || stored.split('/').pop(),
+    filePath: stored,
+    thumbnailPath: libraryAsset?.thumbnail || null,
+    width: libraryAsset?.width ?? 0,
+    height: libraryAsset?.height ?? 0,
+    metadata: { source: 'ASSET LIB' },
+    detached: true
+  });
+  return { sourceReference: `asset:${attached.id}`, isEdit: false, attached: true };
+}
+
 export async function resolveProjectMeshSource(projectId, sourceReference) {
   const parsedReference = typeof sourceReference === 'string'
     ? sourceReference

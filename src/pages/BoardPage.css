@@ -300,7 +300,8 @@
 
 .board-ai-panel__file-actions {
   display: flex;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   margin-top: 0.3rem;
 }
 

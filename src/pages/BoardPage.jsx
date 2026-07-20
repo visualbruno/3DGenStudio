@@ -56,6 +56,7 @@ export default function BoardPage() {
   const saveTimerRef = useRef(null)
   const latestSceneRef = useRef(null)  // latest { elements, appState } from onChange
   const boardIdRef = useRef(null)      // current boardId, so async saves target the right board
+  const selectedImageRef = useRef(null) // { fileId, filename } of the selected asset-backed image, or null
 
   // ---- Load the project (name for the header) ------------------------------
   useEffect(() => {
@@ -221,12 +222,26 @@ export default function BoardPage() {
 
   const handleChange = useCallback((elements, appState, files) => {
     latestSceneRef.current = { elements, appState }
+
+    // Track the currently-selected asset-backed image (used by the AI panel's
+    // "Selected image" input option). Runs before the save early-return because
+    // selection changes don't alter the board-state signature.
+    const selectedIds = appState?.selectedElementIds || {}
+    const selectedImage = elements.find(el =>
+      el.type === 'image' && !el.isDeleted && el.fileId && selectedIds[el.id] && imageRefsRef.current[el.fileId]
+    )
+    selectedImageRef.current = selectedImage
+      ? { fileId: selectedImage.fileId, filename: imageRefsRef.current[selectedImage.fileId] }
+      : null
+
     const sig = boardStateSignature(elements, appState)
     if (sig === lastSavedSigRef.current) return
     lastSavedSigRef.current = sig
     scheduleSave()
     backfillLocalImages(elements, files)
   }, [scheduleSave, backfillLocalImages])
+
+  const getSelectedBoardImage = useCallback(() => selectedImageRef.current, [])
 
   // Flush a pending save on unmount / board switch.
   useEffect(() => () => {
@@ -373,6 +388,7 @@ export default function BoardPage() {
           projectName={project?.name || ''}
           boardId={boardId}
           onImageGenerated={placeAssetImage}
+          getSelectedBoardImage={getSelectedBoardImage}
         />
       </div>
     </div>

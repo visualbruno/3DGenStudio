@@ -42,8 +42,8 @@ function collectImageWorkflows(workflows = []) {
   )
 }
 
-export default function BoardAiPanel({ projectId, projectName, boardId, onImageGenerated }) {
-  const { getComfyWorkflows, runComfyWorkflow, generateImage, attachExistingAsset } = useProjects()
+export default function BoardAiPanel({ projectId, projectName, boardId, onImageGenerated, getSelectedBoardImage }) {
+  const { getComfyWorkflows, runComfyWorkflow, generateImage, resolveAssetSourceReference } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
   const { registerJob, completeJob } = useWorkflowJobs()
@@ -101,6 +101,31 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
   }
 
   const flash = (message, tone = 'info') => setStatus({ message, tone })
+
+  // Resolve a chosen file to a source reference (edit: for edits so the output
+  // nests under the root ancestor; asset: for roots) and bind it to a parameter.
+  const bindSourceForParam = async (paramId, valueType, filePath, fallbackName) => {
+    const { sourceReference } = await resolveAssetSourceReference(
+      projectId,
+      valueType === 'mesh' ? 'mesh' : 'image',
+      filePath
+    )
+    setInputValue(paramId, { source: sourceReference, name: fallbackName || 'Selected asset' })
+  }
+
+  const handleUseSelectedImage = async (paramId, valueType) => {
+    const selected = getSelectedBoardImage?.()
+    if (!selected?.filename) {
+      flash('Select an image on the board first.', 'error')
+      return
+    }
+    try {
+      await bindSourceForParam(paramId, valueType, selected.filename, 'Selected board image')
+    } catch (err) {
+      console.error('Failed to use selected board image', err)
+      flash(err.message || 'Failed to use the selected image.', 'error')
+    }
+  }
 
   const runComfy = async () => {
     if (!selectedWorkflow) { flash('Select a workflow first.', 'error'); return }
@@ -219,6 +244,16 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
             >
               From Assets
             </button>
+            {valueType === 'image' && (
+              <button
+                type="button"
+                className="board-ai-panel__link-btn"
+                onClick={() => handleUseSelectedImage(parameter.id, valueType)}
+                title="Use the image currently selected on the board"
+              >
+                Selected image
+              </button>
+            )}
           </div>
           <input
             ref={(el) => { fileInputsRef.current[parameter.id] = el }}
@@ -390,22 +425,14 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
             setAssetPickerParam(null)
             if (!asset) return
             try {
-              // The selector lists library assets whose ids aren't project-scoped.
-              // Attach the file to this project (mirrors GraphPage) so the server
-              // can resolve it as a project image/mesh source for the workflow.
-              const attached = await attachExistingAsset(projectId, {
-                filename: asset.filename || asset.filePath,
-                type: picker.valueType === 'mesh' ? 'mesh' : 'image',
-                name: asset.name,
-                metadata: { source: 'ASSET LIB' },
-                // Link the source to the project without a Kanban card; the edit
-                // output is parented to it (see autoParentFromInputs below).
-                detached: true
-              })
-              setInputValue(picker.paramId, {
-                source: `asset:${attached.id}`,
-                name: attached.name || asset.name || 'Selected asset'
-              })
+              // Resolve to the right reference: edits nest under the root ancestor;
+              // roots reuse the project asset or attach a library file if needed.
+              await bindSourceForParam(
+                picker.paramId,
+                picker.valueType,
+                asset.filename || asset.filePath,
+                asset.name
+              )
             } catch (err) {
               console.error('Failed to use selected asset for board input', err)
               flash(err.message || 'Failed to use the selected asset.', 'error')
