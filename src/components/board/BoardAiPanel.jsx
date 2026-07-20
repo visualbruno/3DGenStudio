@@ -141,7 +141,11 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
         clientId,
         promptId,
         persistProcessingCard: false,
-        detachedAsset: true
+        // Detached: image-generation outputs (no image input) become root project
+        // assets with no Kanban card. autoParentFromInputs: when an image input is
+        // an asset, the output is saved as an Edit of that source image instead.
+        detachedAsset: true,
+        autoParentFromInputs: true
       })
       const imageAssets = (Array.isArray(assets) ? assets : [assets]).filter(
         a => a && (a.type ? a.type === 'image' : true)
@@ -393,7 +397,10 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
                 filename: asset.filename || asset.filePath,
                 type: picker.valueType === 'mesh' ? 'mesh' : 'image',
                 name: asset.name,
-                metadata: { source: 'ASSET LIB' }
+                metadata: { source: 'ASSET LIB' },
+                // Link the source to the project without a Kanban card; the edit
+                // output is parented to it (see autoParentFromInputs below).
+                detached: true
               })
               setInputValue(picker.paramId, {
                 source: `asset:${attached.id}`,

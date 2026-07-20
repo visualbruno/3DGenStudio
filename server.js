@@ -6547,7 +6547,7 @@ app.post('/api/assets/image-editor/save', multer({ storage: multer.memoryStorage
 
 app.post('/api/assets/link', async (req, res) => {
   try {
-    const { projectId, filename, type = 'image', name, metadata } = req.body;
+    const { projectId, filename, type = 'image', name, metadata, detached } = req.body;
 
     if (!projectId || !filename) {
       return res.status(400).json({ error: 'projectId and filename are required' });
@@ -6581,7 +6581,8 @@ app.post('/api/assets/link', async (req, res) => {
         format: path.extname(storedFilePath).replace('.', '').toUpperCase() || assetType.toUpperCase(),
         source: 'ASSET LIB'
       },
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      detached: detached === true || String(detached).toLowerCase() === 'true'
     });
 
     res.status(201).json(newAsset);

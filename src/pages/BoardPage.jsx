@@ -16,7 +16,8 @@ import {
   dataURLToFile,
   measureImage,
   mimeFromName,
-  extFromMime
+  extFromMime,
+  toServedAssetPath
 } from '../utils/boardHelpers'
 import './BoardPage.css'
 
@@ -257,7 +258,9 @@ export default function BoardPage() {
   const placeAssetImage = useCallback(async (asset) => {
     const api = excalidrawApiRef.current
     if (!api || !asset) return
-    const refPath = asset.filename || asset.filePath || null
+    // Edits return a stored filePath (with data/assets/ prefix) and no filename;
+    // normalize either to the served path so reload URLs resolve correctly.
+    const refPath = asset.filename || (asset.filePath ? toServedAssetPath(asset.filePath) : null)
     try {
       // ComfyUI results carry an absolute `url`; external-API/persisted assets
       // resolve from their served filename. Either way we render from a data URL.

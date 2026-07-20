@@ -23,6 +23,13 @@ export function boardStateSignature(elements = [], appState = {}) {
   return JSON.stringify({ e: elementSig, a: sanitized })
 }
 
+// Normalize an asset path to the served (url) form assetUrl() expects. Assets
+// created as edits return a stored filePath ("data/assets/images/x.png") with no
+// filename field; the served mount strips the "data/assets/" prefix.
+export function toServedAssetPath(pathOrFilename) {
+  return String(pathOrFilename || '').replace(/\\/g, '/').replace(/^data\/assets\//, '')
+}
+
 export function mimeFromName(name = '') {
   const ext = String(name).split('.').pop().toLowerCase()
   if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg'

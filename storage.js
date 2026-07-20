@@ -3167,7 +3167,7 @@ export async function deleteAssetEditByFilePath(filePath) {
 
   const absoluteEditFilePath = toAbsoluteStoragePath(existingEdit.filePath);
   await fs.rm(absoluteEditFilePath, { force: true }).catch(() => null);
-  await fs.rmdir(path.dirname(absoluteEditFilePath)).catch(() => null);
+  // NB: never remove path.dirname() here — edit files share the images folder.
 
   const editMetadata = parseJson(existingEdit.metadata, {});
 
@@ -3391,9 +3391,16 @@ export async function deleteLibraryAssetByFilePath(type, filePath, { force = fal
     }
   }
 
+  // Remove each edit's OWN file only — never its directory. Edit files live in
+  // the shared data/assets/images folder, so deleting path.dirname() here would
+  // recursively wipe every image. Guard on filePath still being referenced by
+  // another asset row (edits and sources can share files after attach/link).
   for (const childAssetRow of childAssetRows) {
-    const absoluteEditFilePath = toAbsoluteStoragePath(childAssetRow.filePath);
-    await fs.rm(path.dirname(absoluteEditFilePath), { recursive: true, force: true }).catch(() => null);
+    if (!childAssetRow.filePath) continue;
+    const stillReferenced = await get(db, 'SELECT 1 FROM Assets WHERE filePath = ? LIMIT 1', [childAssetRow.filePath]);
+    if (!stillReferenced) {
+      await fs.rm(toAbsoluteStoragePath(childAssetRow.filePath), { force: true }).catch(() => null);
+    }
   }
 
   return { status: 'deleted' };
