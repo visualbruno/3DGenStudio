@@ -2627,7 +2627,7 @@ export async function listProjectAssets(projectId = null) {
      JOIN AssetTypes at ON at.id = a.assetTypeId
      JOIN Cards_Assets ca ON ca.assetId = a.id
      JOIN Cards c ON c.id = ca.cardId
-     JOIN Columns kc ON kc.id = c.kanbanColumnId
+     LEFT JOIN Columns kc ON kc.id = c.kanbanColumnId
      ${whereClause}
      ORDER BY c.kanbanColumnId ASC, c.position ASC, ca.position ASC, a.creationDate DESC`,
     params
