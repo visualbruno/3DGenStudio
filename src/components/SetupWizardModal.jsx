@@ -74,9 +74,11 @@ export default function SetupWizardModal({ onComplete, onClose }) {
   const [loadError, setLoadError] = useState('')
 
   const [comfyPath, setComfyPath] = useState('')
+  const [modelsPath, setModelsPath] = useState('')
   const [pathBusy, setPathBusy] = useState(false)
   const [pathError, setPathError] = useState('')
   const [browseBusy, setBrowseBusy] = useState(false)
+  const [browseModelsBusy, setBrowseModelsBusy] = useState(false)
 
   const [selectionByName, setSelectionByName] = useState({})
   const [existingFileKeys, setExistingFileKeys] = useState(new Set())
@@ -117,6 +119,10 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     setComfyPath(settings?.apis?.comfyui?.path || '')
   }, [settings?.apis?.comfyui?.path])
 
+  useEffect(() => {
+    setModelsPath(settings?.apis?.comfyui?.modelsPath || '')
+  }, [settings?.apis?.comfyui?.modelsPath])
+
   useEffect(() => () => {
     eventSourceRef.current?.close()
   }, [])
@@ -131,9 +137,10 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     return buildFileList(config, allSelections, paths)
   }, [config])
 
-  const refreshFileExistence = useCallback(async (pathOverride) => {
+  const refreshFileExistence = useCallback(async (pathOverride, modelsPathOverride) => {
     if (!config) return
     const effectivePath = pathOverride ?? comfyPath
+    const effectiveModelsPath = modelsPathOverride ?? modelsPath
     if (!effectivePath) return
 
     setCheckingFiles(true)
@@ -141,7 +148,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
       const res = await fetch(`${API_BASE}/setup/check-files`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comfyPath: effectivePath, files: allCandidateFiles })
+        body: JSON.stringify({ comfyPath: effectivePath, modelsPath: effectiveModelsPath, files: allCandidateFiles })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Failed to check files')
@@ -156,7 +163,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     } finally {
       setCheckingFiles(false)
     }
-  }, [allCandidateFiles, comfyPath, config])
+  }, [allCandidateFiles, comfyPath, modelsPath, config])
 
   const selections = useMemo(
     () => Object.entries(selectionByName).map(([diffusionName, modelQuality]) => ({ diffusionName, modelQuality })),
@@ -255,15 +262,35 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     }
   }
 
+  const handleBrowseModelsFolder = async () => {
+    setPathError('')
+    setBrowseModelsBusy(true)
+    try {
+      const res = await fetch(`${API_BASE}/setup/pick-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: 'Select your ComfyUI models folder', initialPath: modelsPath || comfyPath })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Folder picker failed')
+      if (data.path) setModelsPath(data.path)
+    } catch (err) {
+      setPathError(err.message || String(err))
+    } finally {
+      setBrowseModelsBusy(false)
+    }
+  }
+
   const handleValidatePath = async () => {
     setPathError('')
     setPathBusy(true)
     try {
       const trimmed = comfyPath.trim()
+      const trimmedModelsPath = modelsPath.trim()
       const res = await fetch(`${API_BASE}/setup/check-comfy-path`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: trimmed })
+        body: JSON.stringify({ path: trimmed, modelsPath: trimmedModelsPath })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Invalid ComfyUI path')
@@ -272,11 +299,11 @@ export default function SetupWizardModal({ onComplete, onClose }) {
         ...settings,
         apis: {
           ...(settings?.apis || {}),
-          comfyui: { ...(settings?.apis?.comfyui || {}), path: trimmed }
+          comfyui: { ...(settings?.apis?.comfyui || {}), path: trimmed, modelsPath: trimmedModelsPath }
         }
       })
 
-      await refreshFileExistence(trimmed)
+      await refreshFileExistence(trimmed, trimmedModelsPath)
       setStepId('models')
     } catch (err) {
       setPathError(err.message || String(err))
@@ -298,7 +325,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
       const res = await fetch(`${API_BASE}/setup/download`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comfyPath, files: filesToDownload })
+        body: JSON.stringify({ comfyPath, modelsPath, files: filesToDownload })
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error || 'Failed to start downloads')
@@ -440,7 +467,36 @@ export default function SetupWizardModal({ onComplete, onClose }) {
               </button>
             </div>
             <p className="setup-wizard__hint">
-              The folder must contain a <code>models</code> subfolder. Missing model-type subfolders will be created.
+              {modelsPath.trim()
+                ? 'Missing model-type subfolders will be created inside your models folder below.'
+                : <>The folder must contain a <code>models</code> subfolder. Missing model-type subfolders will be created.</>}
+            </p>
+
+            <label className="projects-page__label font-label" htmlFor="setup-models-path" style={{ marginTop: '1em' }}>
+              Models Folder <span style={{ opacity: 0.6, fontWeight: 400 }}>(optional)</span>
+            </label>
+            <div className="setup-wizard__path-row">
+              <input
+                id="setup-models-path"
+                type="text"
+                className="projects-page__input setup-wizard__path-input"
+                placeholder="Defaults to {ComfyUI folder}\models"
+                value={modelsPath}
+                onChange={(e) => setModelsPath(e.target.value)}
+              />
+              <button
+                type="button"
+                className="setup-wizard__browse-btn"
+                onClick={handleBrowseModelsFolder}
+                disabled={browseModelsBusy}
+                title="Browse for models folder"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>folder_open</span>
+                {browseModelsBusy ? '…' : 'Browse'}
+              </button>
+            </div>
+            <p className="setup-wizard__hint">
+              Set this only if your models live somewhere other than <code>{'{ComfyUI folder}'}\models</code> (e.g. shared across multiple ComfyUI installs).
             </p>
             {pathError && <div className="setup-wizard__error">{pathError}</div>}
 

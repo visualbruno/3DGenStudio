@@ -7597,8 +7597,14 @@ async function fileSizeOrNull(targetPath) {
   }
 }
 
-function resolveComfySubPath(comfyPath, relativePath) {
+function resolveComfySubPath(comfyPath, relativePath, modelsPath) {
   const normalizedRelative = String(relativePath || '').replace(/^[/\\]+/, '');
+  if (modelsPath) {
+    const afterModels = normalizedRelative.replace(/^models[/\\]?/, '');
+    if (afterModels !== normalizedRelative) {
+      return path.join(modelsPath, afterModels);
+    }
+  }
   return path.join(comfyPath, normalizedRelative);
 }
 
@@ -7638,7 +7644,7 @@ async function downloadFileWithProgress(url, destinationPath, onChunk) {
   return { receivedBytes, totalBytes };
 }
 
-async function runSetupDownloads(jobId, comfyPath, files) {
+async function runSetupDownloads(jobId, comfyPath, files, modelsPath) {
   const totalExpectedBytes = files.reduce((sum, file) => sum + (Number(file.expectedBytes) || 0), 0);
   let cumulativeCompletedBytes = 0;
 
@@ -7655,7 +7661,7 @@ async function runSetupDownloads(jobId, comfyPath, files) {
 
   for (let index = 0; index < files.length; index += 1) {
     const file = files[index];
-    const destinationPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir, file.fileName));
+    const destinationPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir, file.fileName), modelsPath);
 
     try {
       await fs.mkdir(path.dirname(destinationPath), { recursive: true });
@@ -7892,6 +7898,7 @@ app.get('/api/setup/config', async (req, res) => {
 app.post('/api/setup/check-comfy-path', async (req, res) => {
   try {
     const comfyPath = String(req.body?.path || '').trim();
+    const modelsPath = String(req.body?.modelsPath || '').trim();
     if (!comfyPath) {
       return res.status(400).json({ error: 'A ComfyUI folder path is required' });
     }
@@ -7901,23 +7908,30 @@ app.post('/api/setup/check-comfy-path', async (req, res) => {
       return res.status(400).json({ error: `Folder does not exist: ${comfyPath}` });
     }
 
-    const modelsDir = path.join(comfyPath, 'models');
-    const modelsExist = await pathExists(modelsDir);
-    if (!modelsExist) {
-      return res.status(400).json({ error: `This does not look like a ComfyUI folder (missing "models" subfolder): ${comfyPath}` });
+    if (modelsPath) {
+      const modelsPathExists = await pathExists(modelsPath);
+      if (!modelsPathExists) {
+        return res.status(400).json({ error: `Models folder does not exist: ${modelsPath}` });
+      }
+    } else {
+      const modelsDir = path.join(comfyPath, 'models');
+      const modelsExist = await pathExists(modelsDir);
+      if (!modelsExist) {
+        return res.status(400).json({ error: `This does not look like a ComfyUI folder (missing "models" subfolder): ${comfyPath}` });
+      }
     }
 
     const config = await loadSetupConfig();
     const created = [];
     for (const relativePath of Object.values(config.ComfyUIPaths || {})) {
-      const target = resolveComfySubPath(comfyPath, relativePath);
+      const target = resolveComfySubPath(comfyPath, relativePath, modelsPath);
       if (!(await pathExists(target))) {
         await fs.mkdir(target, { recursive: true });
         created.push(relativePath);
       }
     }
 
-    res.json({ ok: true, comfyPath, createdSubfolders: created });
+    res.json({ ok: true, comfyPath, modelsPath, createdSubfolders: created });
   } catch (err) {
     console.error('Failed to validate ComfyUI path:', err);
     res.status(500).json({ error: err.message || 'Failed to validate ComfyUI path' });
@@ -7927,6 +7941,7 @@ app.post('/api/setup/check-comfy-path', async (req, res) => {
 app.post('/api/setup/check-files', async (req, res) => {
   try {
     const comfyPath = String(req.body?.comfyPath || '').trim();
+    const modelsPath = String(req.body?.modelsPath || '').trim();
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
 
     if (!comfyPath) {
@@ -7935,7 +7950,7 @@ app.post('/api/setup/check-files', async (req, res) => {
 
     const results = [];
     for (const file of files) {
-      const absPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir || '', file.fileName || ''));
+      const absPath = resolveComfySubPath(comfyPath, path.join(file.relativeDir || '', file.fileName || ''), modelsPath);
       const size = await fileSizeOrNull(absPath);
       results.push({
         relativeDir: file.relativeDir || '',
@@ -7955,6 +7970,7 @@ app.post('/api/setup/check-files', async (req, res) => {
 app.post('/api/setup/download', async (req, res) => {
   try {
     const comfyPath = String(req.body?.comfyPath || '').trim();
+    const modelsPath = String(req.body?.modelsPath || '').trim();
     const files = Array.isArray(req.body?.files) ? req.body.files : [];
 
     if (!comfyPath) {
@@ -7970,7 +7986,7 @@ app.post('/api/setup/download', async (req, res) => {
     const jobId = randomUUID();
     getSetupDownloadJob(jobId);
 
-    runSetupDownloads(jobId, comfyPath, files).catch(err => {
+    runSetupDownloads(jobId, comfyPath, files, modelsPath).catch(err => {
       console.error('[setup] download job crashed:', err);
       publishSetupDownloadProgress(jobId, { status: 'error', error: err.message || String(err) });
     });

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSettings } from '../context/SettingsContext.shared'
+import { API_BASE } from '../config'
 import './SettingsModal.css'
 
 const CUSTOM_API_TYPE_OPTIONS = [
@@ -179,6 +180,48 @@ function RiggingInstaller() {
       {error && <p className="settings-helper-text" style={{ color: '#f87171' }}>{error}</p>}
       <p className="settings-helper-text">One-time install; downloads several GB and needs an NVIDIA GPU (≥14 GB).</p>
     </div>
+  )
+}
+
+// Desktop-only-friendly folder browse button: calls the backend's native folder
+// picker (Windows) and reports the chosen path back to the caller.
+function BrowseFolderButton({ description, initialPath, onPick }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleClick = async () => {
+    setError(''); setBusy(true)
+    try {
+      const res = await fetch(`${API_BASE}/setup/pick-folder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, initialPath })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error || 'Folder picker failed')
+      if (data.path) onPick(data.path)
+    } catch (err) {
+      setError(err.message || String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="kanban-sidebar__new-asset"
+        style={{ margin: 0, padding: '0.5rem 0.9rem', whiteSpace: 'nowrap' }}
+        onClick={handleClick}
+        disabled={busy}
+        title={description}
+      >
+        <span className="material-symbols-outlined" style={{ fontSize: '16px', verticalAlign: 'middle' }}>folder_open</span>
+        {busy ? '…' : 'Browse'}
+      </button>
+      {error && <p className="settings-helper-text" style={{ color: '#f87171' }}>{error}</p>}
+    </>
   )
 }
 
@@ -536,21 +579,65 @@ export default function SettingsModal({ onClose }) {
 
                 <div className="settings-input-group">
                   <label className="settings-label">Path</label>
-                  <input
-                    className="settings-input"
-                    placeholder="C:\\ComfyUI"
-                    value={localSettings?.apis?.comfyui?.path || ''}
-                    onChange={e => setLocalSettings(prev => ({
-                      ...prev,
-                      apis: {
-                        ...prev?.apis,
-                        comfyui: {
-                          ...prev?.apis?.comfyui,
-                          path: e.target.value
+                  <div style={{ display: 'flex', gap: '0.5em', alignItems: 'flex-start' }}>
+                    <input
+                      className="settings-input"
+                      style={{ flex: 1 }}
+                      placeholder="C:\\ComfyUI"
+                      value={localSettings?.apis?.comfyui?.path || ''}
+                      onChange={e => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: {
+                          ...prev?.apis,
+                          comfyui: {
+                            ...prev?.apis?.comfyui,
+                            path: e.target.value
+                          }
                         }
-                      }
-                    }))}
-                  />
+                      }))}
+                    />
+                    <BrowseFolderButton
+                      description="Select your ComfyUI folder"
+                      initialPath={localSettings?.apis?.comfyui?.path || ''}
+                      onPick={picked => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: { ...prev?.apis, comfyui: { ...prev?.apis?.comfyui, path: picked } }
+                      }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="settings-input-group">
+                  <label className="settings-label">Models Path <span style={{ opacity: 0.6, fontWeight: 400 }}>(optional)</span></label>
+                  <div style={{ display: 'flex', gap: '0.5em', alignItems: 'flex-start' }}>
+                    <input
+                      className="settings-input"
+                      style={{ flex: 1 }}
+                      placeholder="Defaults to {ComfyUI path}\models"
+                      value={localSettings?.apis?.comfyui?.modelsPath || ''}
+                      onChange={e => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: {
+                          ...prev?.apis,
+                          comfyui: {
+                            ...prev?.apis?.comfyui,
+                            modelsPath: e.target.value
+                          }
+                        }
+                      }))}
+                    />
+                    <BrowseFolderButton
+                      description="Select your ComfyUI models folder"
+                      initialPath={localSettings?.apis?.comfyui?.modelsPath || localSettings?.apis?.comfyui?.path || ''}
+                      onPick={picked => setLocalSettings(prev => ({
+                        ...prev,
+                        apis: { ...prev?.apis, comfyui: { ...prev?.apis?.comfyui, modelsPath: picked } }
+                      }))}
+                    />
+                  </div>
+                  <p className="settings-helper-text">
+                    Set this only if your models live somewhere other than <code>{'{ComfyUI path}'}\models</code> (e.g. shared across multiple ComfyUI installs).
+                  </p>
                 </div>
 
                 <div className="settings-grid settings-grid--triple">

@@ -176,6 +176,9 @@ export const DEFAULT_SETTINGS = {
     },
     comfyui: {
       path: '',
+      // Optional override for where models live, when it's not "{path}/models"
+      // (e.g. models are shared across ComfyUI installs via extra_model_paths.yaml).
+      modelsPath: '',
       url: 'http://127.0.0.1',
       port: '8188'
     },
