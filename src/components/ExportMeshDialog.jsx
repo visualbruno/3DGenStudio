@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import FolderBrowserDialog from './FolderBrowserDialog'
 import {
   EXPORT_FORMATS,
+  browseFolders,
   exportObject3D,
   isGlbUrl,
   loadObject3DFromUrl,
@@ -10,6 +11,8 @@ import {
 } from '../utils/meshExport'
 import { convertMesh, ensureDesktopService } from '../utils/meshTools'
 import './ExportMeshDialog.css'
+
+const LAST_OUTPUT_FOLDER_KEY = 'exportMeshDialog:lastOutputFolder'
 
 // Reusable export popup. Provide either `getObject3D` (an async function that
 // returns the in-memory THREE.Object3D to export) or `meshUrl` (a mesh URL the
@@ -30,6 +33,15 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
 
   const formats = getObject3D ? EXPORT_FORMATS.filter(entry => entry.kind === 'local') : EXPORT_FORMATS
   const selectedFormat = formats.find(entry => entry.value === format) || formats[0]
+
+  // Recall the last folder used, but drop it silently if it no longer exists.
+  useEffect(() => {
+    const saved = localStorage.getItem(LAST_OUTPUT_FOLDER_KEY)
+    if (!saved) return
+    browseFolders(saved)
+      .then(() => setOutputFolder(saved))
+      .catch(() => localStorage.removeItem(LAST_OUTPUT_FOLDER_KEY))
+  }, [])
 
   // Source GLB for the preset paths. When the asset is already a .glb, use its
   // original bytes (perfect fidelity — skin weights, clips and textures
@@ -103,6 +115,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
 
       setProgress({ frac: 0.97, message: 'Writing files…' })
       const result = await writeExportedFiles(folder, files)
+      localStorage.setItem(LAST_OUTPUT_FOLDER_KEY, folder)
       const writtenNames = (result?.written || files.map(file => file.filename)).join(', ')
       setSuccess(`Exported ${files.length} file${files.length === 1 ? '' : 's'}: ${writtenNames}${convertNote}`)
     } catch (err) {

@@ -683,6 +683,19 @@
 			"Outputs": [
 				{ "Node": "10", "Name": "Save Mesh", "Type": "Mesh" }
 			]
+		},
+		{
+			"Name": "Prompt Enhancer",
+			"File": "setup/Prompt Enhancer.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "prompt_text",  "Name": "Source Prompt", "Type": "String" },
+				{ "Node": "1",  "Input": "max_tokens",  "Name": "Max Tokens",   "Type": "Number" },
+				{ "Node": "1",  "Input": "keep_model_loaded",  "Name": "Keep Model Loaded",   "Type": "Boolean" },
+				{ "Node": "1",  "Input": "seed",  "Name": "Seed",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "2", "Name": "Enhanced Prompt", "Type": "String" }
+			]
 		}		
 	]
 }
