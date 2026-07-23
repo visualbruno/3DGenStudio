@@ -24,6 +24,14 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v2.1.0',
+    date: '2026-07-23',
+    items: [
+			'Added Brainstorming Boards',
+			'MCP: Fixed Optimize tool'
+    ],
+  },
+  {
     version: 'v2.0.0',
     date: '2026-07-20',
     items: [

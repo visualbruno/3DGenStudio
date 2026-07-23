@@ -647,8 +647,13 @@ export default function KanbanPage() {
     }
   }
 
-  const images = assets.filter(a => a.type === 'image')
-  const meshes = assets.filter(a => a.type === 'mesh')
+  // Assets on column-less "detached" container cards (Brainstorming Board
+  // generations) have kanbanColumnId === null. They belong to the project (and
+  // are returned by listProjectAssets for MCP/clients) but must NOT appear on
+  // the Kanban board, so exclude them from the columns entirely.
+  const kanbanAssets = assets.filter(a => a.kanbanColumnId !== null && a.kanbanColumnId !== undefined)
+  const images = kanbanAssets.filter(a => a.type === 'image')
+  const meshes = kanbanAssets.filter(a => a.type === 'mesh')
 
   const meshAssetsByCardId = useMemo(() => {
     return meshes.reduce((accumulator, asset) => {

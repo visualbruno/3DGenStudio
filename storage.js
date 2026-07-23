@@ -2627,6 +2627,10 @@ export async function listProjectAssets(projectId = null) {
      JOIN AssetTypes at ON at.id = a.assetTypeId
      JOIN Cards_Assets ca ON ca.assetId = a.id
      JOIN Cards c ON c.id = ca.cardId
+     -- LEFT JOIN so this returns ALL project assets, including those on
+     -- column-less "detached" container cards (Brainstorming Board assets) —
+     -- MCP/clients rely on the full list. The Kanban board frontend is
+     -- responsible for hiding null-column (detached) assets from its columns.
      LEFT JOIN Columns kc ON kc.id = c.kanbanColumnId
      ${whereClause}
      ORDER BY c.kanbanColumnId ASC, c.position ASC, ca.position ASC, a.creationDate DESC`,
