@@ -41,3 +41,12 @@ thirdparty/skintokens/models/
 thirdparty/skintokens/tmp_ckpt/
 thirdparty/skintokens/tmp_gradio/
 thirdparty/skintokens/results/
+# Runtime logs and downloaded model artifacts
+*.log
+*.gguf
+*.safetensors
+*.ckpt
+*.pth
+*.onnx
+*.bin
+*.part

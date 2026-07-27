@@ -174,35 +174,45 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     [filesToDownload]
   )
 
+  const readyQualityByDiffusion = useMemo(() => {
+    if (!config) return {}
+    const ready = {}
+    for (const diffusion of config.DiffusionModels || []) {
+      const quality = Object.keys(diffusion.Models || {}).find(candidate => {
+        const files = buildFileList(config, [{ diffusionName: diffusion.Name, modelQuality: candidate }], config.ComfyUIPaths || {})
+        return files.length > 0 && files.every(file => existingFileKeys.has(`${file.relativeDir}::${file.fileName}`))
+      })
+      if (quality) ready[diffusion.Name] = quality
+    }
+    return ready
+  }, [config, existingFileKeys])
+
+  useEffect(() => {
+    if (!config || Object.keys(readyQualityByDiffusion).length === 0) return
+    setSelectionByName(prev => {
+      const next = { ...prev }
+      for (const [name, quality] of Object.entries(readyQualityByDiffusion)) {
+        if (!next[name]) next[name] = quality
+      }
+      return next
+    })
+  }, [config, readyQualityByDiffusion])
+
   const candidateWorkflows = useMemo(() => {
     if (!config) return []
     const items = []
-    for (const sel of selections) {
-      if (!sel.modelQuality) continue
-      const diffusion = (config.DiffusionModels || []).find(d => d.Name === sel.diffusionName)
-      for (const workflow of diffusion?.Workflows || []) {
-        items.push({
-          key: workflow.File,
-          name: workflow.Name,
-          workflowFile: workflow.File,
-          subtitle: diffusion.Name,
-          diffusionName: diffusion.Name,
-          modelQuality: sel.modelQuality
-        })
+    for (const diffusion of config.DiffusionModels || []) {
+      const modelQuality = selectionByName[diffusion.Name] || readyQualityByDiffusion[diffusion.Name] || null
+      const ready = Boolean(modelQuality && readyQualityByDiffusion[diffusion.Name] === modelQuality)
+      for (const workflow of diffusion.Workflows || []) {
+        items.push({ key: workflow.File, name: workflow.Name, workflowFile: workflow.File, subtitle: `${diffusion.Name}${ready ? ' - models detected' : ' - models not detected'}`, diffusionName: diffusion.Name, modelQuality, ready })
       }
     }
     for (const workflow of config.OtherWorkflows || []) {
-      items.push({
-        key: workflow.File,
-        name: workflow.Name,
-        workflowFile: workflow.File,
-        subtitle: 'Other',
-        diffusionName: null,
-        modelQuality: null
-      })
+      items.push({ key: workflow.File, name: workflow.Name, workflowFile: workflow.File, subtitle: 'Other', diffusionName: null, modelQuality: null, ready: true })
     }
     return items
-  }, [config, selections])
+  }, [config, readyQualityByDiffusion, selectionByName])
 
   useEffect(() => {
     if (stepId !== 'workflows') {
@@ -213,7 +223,7 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     workflowSelectionPrimedRef.current = true
     const next = {}
     for (const item of candidateWorkflows) {
-      next[item.key] = true
+      next[item.key] = Boolean(item.ready)
     }
     setWorkflowSelection(next)
   }, [stepId, candidateWorkflows])
