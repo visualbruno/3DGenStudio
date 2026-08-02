@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<style>
+  :root {
+    --bg: #0d0f14; --card: #141821; --text: #e8eaf0; --muted: #8b91a3;
+    --accent1: #7c5cff; --accent2: #22d3ee; --ok: #4ade80; --err: #f87171;
+    --line: rgba(255,255,255,0.08);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text); overflow: hidden; }
+  body {
+    font-family: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none; user-select: none;
+    display: flex; flex-direction: column; padding: 26px 30px; gap: 16px;
+  }
+  h1 {
+    font-size: 18px; font-weight: 700;
+    background: linear-gradient(90deg, #fff, #c9c2ff 60%, #9be9ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .msg { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  label { font-size: 12px; color: var(--muted); }
+  input[type="number"] {
+    width: 100%; margin-top: 6px; font-family: inherit; font-size: 14px;
+    background: #0a0c11; color: var(--text); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; -webkit-user-select: text; user-select: text;
+  }
+  input[type="number"]:focus { outline: none; border-color: var(--accent2); }
+  .feedback { font-size: 12px; min-height: 15px; }
+  .feedback.err { color: var(--err); }
+  .feedback.ok { color: var(--ok); }
+  .row { display: flex; align-items: center; gap: 12px; margin-top: auto; }
+  .spacer { flex: 1; }
+  button {
+    font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); border-radius: 10px; padding: 9px 18px;
+    background: #1b2130; color: var(--text); transition: filter .2s, opacity .2s;
+  }
+  button.primary { border: none; background: linear-gradient(90deg, var(--accent1), var(--accent2)); color: #0b0e14; }
+  button:hover { filter: brightness(1.12); }
+  button:disabled { opacity: .45; cursor: default; filter: none; }
+</style>
+</head>
+<body>
+  <div>
+    <h1>Port already in use</h1>
+    <div class="msg" id="msg">Loading…</div>
+  </div>
+  <div>
+    <label for="port">Backend port</label>
+    <input type="number" id="port" min="1" max="65535" step="1" />
+    <div class="feedback" id="feedback"></div>
+  </div>
+  <div class="row">
+    <div class="spacer"></div>
+    <button id="confirm" class="primary" disabled>Use this port</button>
+  </div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+  const params = new URLSearchParams(window.location.search);
+  const occupied = params.get('occupied');
+  const suggested = params.get('suggested');
+
+  const input = $('#port');
+  const feedback = $('#feedback');
+  const confirmBtn = $('#confirm');
+
+  $('#msg').textContent =
+    `3D Gen Studio's backend usually runs on port ${occupied}, but something else on ` +
+    `this machine is already using it. Pick a different port below (we've suggested ` +
+    `one that's free) and continue.`;
+  input.value = suggested;
+
+  let checkToken = 0;
+  async function revalidate() {
+    const token = ++checkToken;
+    const port = Number(input.value);
+    confirmBtn.disabled = true;
+    feedback.className = 'feedback';
+    feedback.textContent = 'Checking…';
+    const res = await window.genStudioPortPrompt.check(port);
+    if (token !== checkToken) return; // superseded by a newer keystroke
+    if (!res.ok) {
+      feedback.className = 'feedback err';
+      feedback.textContent = res.error;
+      return;
+    }
+    if (res.free) {
+      feedback.className = 'feedback ok';
+      feedback.textContent = `Port ${port} is available.`;
+      confirmBtn.disabled = false;
+    } else {
+      feedback.className = 'feedback err';
+      feedback.textContent = `Port ${port} is also in use — pick another.`;
+    }
+  }
+
+  let debounceTimer = null;
+  input.addEventListener('input', () => {
+    confirmBtn.disabled = true;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(revalidate, 300);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !confirmBtn.disabled) confirmBtn.click();
+  });
+  confirmBtn.addEventListener('click', () => {
+    if (confirmBtn.disabled) return;
+    window.genStudioPortPrompt.confirm(Number(input.value));
+  });
+
+  revalidate();
+</script>
+</body>
+</html>

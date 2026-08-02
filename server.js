@@ -8310,7 +8310,7 @@ initializeStorage().then(async () => {
     console.warn('Failed to clear stale processing cards on startup:', err.message);
   }
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 3D Gen Studio Backend running at http://localhost:${PORT}`);
     console.log(`📁 Local Workspace: ${DATA_DIR}`);
     if (HAS_DIST) {
@@ -8318,5 +8318,18 @@ initializeStorage().then(async () => {
     } else {
       console.log('ℹ️  No dist/ build found — run "npm run build" to serve the UI from this server.');
     }
+  });
+  // The desktop shell checks the port before ever spawning this process (see
+  // electron/main.cjs's resolveBackendPort), but `npm start` / `node server.js`
+  // run standalone with no such check. Without this handler, a taken PORT
+  // surfaces only as the top-level uncaughtException handler above logging it
+  // and keeping the process alive-but-not-listening. Fail fast and say why.
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${PORT} is already in use. Set PORT to a free port and try again.`);
+    } else {
+      console.error(`Failed to start the server: ${err.message}`);
+    }
+    process.exit(1);
   });
 });

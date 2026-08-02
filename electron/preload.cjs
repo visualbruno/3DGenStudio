@@ -3,6 +3,9 @@
 //     desktop shell.
 //   - genStudioSetup: used ONLY by the first-run setup window (setup.html) to
 //     drive the Python provisioning and stream progress. Harmless elsewhere.
+//   - genStudioPortPrompt: used ONLY by the port-conflict window
+//     (portPrompt.html), shown when the backend's usual port is taken.
+//     Harmless elsewhere.
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('genStudioDesktop', {
@@ -55,4 +58,12 @@ contextBridge.exposeInMainWorld('genStudioSetup', {
   },
   // Tell the main process the user is done and the app can launch (first-run window).
   finish: () => ipcRenderer.send('setup:finish'),
+});
+
+contextBridge.exposeInMainWorld('genStudioPortPrompt', {
+  // Live-validate a candidate port as still free. Resolves { ok, free, error? }.
+  check: (port) => ipcRenderer.invoke('port-prompt:check', { port }),
+  // Confirm the chosen port. Fire-and-forget — main closes the window once it
+  // receives this (mirrors genStudioSetup.finish's send/on shape).
+  confirm: (port) => ipcRenderer.send('port-prompt:confirm', { port }),
 });
