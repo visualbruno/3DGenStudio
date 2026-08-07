@@ -2,14 +2,17 @@
 //
 // Responsibilities:
 //   1. Resolve the app root + a writable data directory.
-//   2. Spawn the Node/Express backend (server.js) using Electron's own Node
+//   2. EVERY LAUNCH: make sure the backend's port is free (an unrelated app —
+//      Grafana, another Node process, etc. — may already hold it); if not,
+//      let the user confirm a different one before the backend ever spawns.
+//   3. Spawn the Node/Express backend (server.js) using Electron's own Node
 //      runtime (ELECTRON_RUN_AS_NODE) so users don't need Node installed.
-//   3. FIRST RUN: show a setup window that provisions the Python services with
+//   4. FIRST RUN: show a setup window that provisions the Python services with
 //      uv (Mesh Tools always; Rigging and a managed ComfyUI opt-in) and streams
 //      live progress. Later runs skip straight to the splash — the venvs exist.
-//   4. Launch the Python services on demand (Mesh Tools, Rigging, ComfyUI).
-//   5. Wait for the backend to answer, then open the app window.
-//   6. Kill child processes on quit.
+//   5. Launch the Python services on demand (Mesh Tools, Rigging, ComfyUI).
+//   6. Wait for the backend to answer, then open the app window.
+//   7. Kill child processes on quit.
 
 const { app, BrowserWindow, shell, dialog, ipcMain } = require('electron');
 const path = require('node:path');
@@ -39,8 +42,14 @@ const {
 // Force a stable, brandable name BEFORE any getPath('userData') call.
 app.setName('3DGenStudio');
 
-const BACKEND_PORT = Number(process.env.PORT) || 3001;
-const BACKEND_ORIGIN = `http://localhost:${BACKEND_PORT}`;
+// Default only — process.env.PORT is an explicit developer override, honored
+// unconditionally (see resolveBackendPort). BACKEND_PORT/BACKEND_ORIGIN are
+// `let`: boot() resolves the real port (the default if free, otherwise a
+// user-confirmed one — see resolveBackendPort/promptForBackendPort) before
+// the backend is spawned, then reassigns both.
+const BACKEND_PORT_DEFAULT = Number(process.env.PORT) || 3001;
+let BACKEND_PORT = BACKEND_PORT_DEFAULT;
+let BACKEND_ORIGIN = `http://localhost:${BACKEND_PORT}`;
 const PYTHON_PORT = Number(process.env.MESHTOOLS_PORT) || 8200;
 const RIG_PORT = Number(process.env.RIGTOOLS_PORT) || 8300;
 // ComfyUI's conventional port. The managed install must NOT assume it's free —
@@ -73,6 +82,7 @@ const COMFY_DATA = path.join(DATA_ROOT, 'comfy-data');
 let backendProc = null;
 let mainWindow = null;
 let setupWindow = null;
+let portPromptWindow = null;
 let shuttingDown = false;
 
 // The two Python services are started ON DEMAND (not at boot) and can be
@@ -200,14 +210,22 @@ function patchSettings(patch, timeoutMs = 8000) {
   });
 }
 
-// Is a TCP port free to bind on loopback? Used to pick a ComfyUI port that does
-// not collide with a ComfyUI the user already runs themselves.
-function portFree(port) {
+// Is a TCP port free to bind? `host` matters: pass '127.0.0.1' to match a
+// service that binds there explicitly (e.g. ComfyUI's own --listen 127.0.0.1,
+// comfysetup.cjs), or omit it to match a plain listen(port) with no host —
+// Node's dual-stack default, which is how the backend itself binds
+// (server.js's app.listen(PORT, cb) passes no host). The two checks are NOT
+// interchangeable: on Windows, a bind to 127.0.0.1 (or 0.0.0.0) can succeed
+// even while the dual-stack default is genuinely taken — observed in practice
+// with Docker Desktop's own port-forwarding — so checking the wrong one gives
+// a false "free" reading for whichever service you're actually about to start.
+function portFree(port, host) {
   return new Promise((resolve) => {
     const srv = net.createServer();
     srv.once('error', () => resolve(false));
     srv.once('listening', () => srv.close(() => resolve(true)));
-    srv.listen(port, '127.0.0.1');
+    if (host) srv.listen(port, host);
+    else srv.listen(port);
   });
 }
 
@@ -215,11 +233,39 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function pickFreePort(start, tries = 20) {
+async function pickFreePort(start, tries = 20, host) {
   for (let p = start; p < start + tries; p += 1) {
-    if (await portFree(p)) return p;
+    if (await portFree(p, host)) return p;
   }
   return start;
+}
+
+// Remembers the backend port the user last CONFIRMED after a conflict (see
+// promptForBackendPort), so the next launch tries it first. Only written on an
+// explicit confirm — the common case (default port free) never touches this
+// file. Lives directly under DATA_ROOT: unlike comfy-install.json this isn't
+// tied to any one venv/subsystem dir, so there's no better home for it.
+const BACKEND_PORT_FILE = path.join(DATA_ROOT, 'backend-port.json');
+
+// null when absent, unreadable, or not a usable port — callers treat that as
+// "nothing remembered, use the default".
+function readSavedBackendPort() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(BACKEND_PORT_FILE, 'utf8'));
+    const port = Number(parsed?.port);
+    return Number.isFinite(port) && port > 0 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSavedBackendPort(port) {
+  try {
+    fs.mkdirSync(DATA_ROOT, { recursive: true });
+    fs.writeFileSync(BACKEND_PORT_FILE, `${JSON.stringify({ port }, null, 2)}\n`);
+  } catch (err) {
+    log(`Could not save the chosen backend port: ${err.message}`); // non-fatal
+  }
 }
 
 // Start the services the user opted into auto-starting (Settings → Mesh Tools /
@@ -596,7 +642,9 @@ async function doSetup(opts, send) {
 // install exists and so never re-writes these fields.
 // Returns { port } on success, null if the settings write failed.
 async function applyManagedComfySettings() {
-  const port = await pickFreePort(COMFY_PORT_DEFAULT);
+  // '127.0.0.1': matches ComfyUI's own --listen flag (comfysetup.cjs) — see
+  // portFree's doc comment for why the host argument isn't optional here.
+  const port = await pickFreePort(COMFY_PORT_DEFAULT, 20, '127.0.0.1');
   const ok = await patchSettings({
     apis: {
       comfyui: {
@@ -611,6 +659,19 @@ async function applyManagedComfySettings() {
   if (!ok) return null;
   if (SERVICES?.comfyui) SERVICES.comfyui.port = port;
   return { port };
+}
+
+// IPC for the port-conflict prompt window (portPrompt.html). Registered
+// unconditionally at boot, like registerSetupIpc/registerServicesIpc — cheap,
+// and inert on launches where the window never appears.
+function registerPortPromptIpc() {
+  ipcMain.handle('port-prompt:check', async (_e, { port } = {}) => {
+    const p = Number(port);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) {
+      return { ok: false, error: 'Enter a whole number between 1 and 65535.' };
+    }
+    return { ok: true, free: await portFree(p) };
+  });
 }
 
 // Global setup IPC — used by BOTH the first-run window and the running app
@@ -670,6 +731,48 @@ function runFirstRunSetup() {
   });
 }
 
+// Shown once, only when the backend's port is occupied (see resolveBackendPort).
+// Modeled on runFirstRunSetup: a real interactive window (title bar, not
+// resizable). Resolves on EITHER an explicit confirm OR the window being
+// closed — closing without confirming is a valid outcome (falls back to the
+// auto-suggested free port, NOT persisted — see the confirm handler below) so
+// this can never hang boot.
+function promptForBackendPort(occupiedPort, suggestedPort) {
+  return new Promise((resolve) => {
+    const win = new BrowserWindow({
+      width: 480, height: 340, resizable: false, backgroundColor: '#0d0f14',
+      title: '3D Gen Studio — Port in use', show: true, center: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true, nodeIntegration: false,
+      },
+    });
+    portPromptWindow = win;
+    win.setMenuBarVisibility(false);
+    win.loadFile(path.join(__dirname, 'portPrompt.html'), {
+      query: { occupied: String(occupiedPort), suggested: String(suggestedPort) },
+    });
+
+    let resolved = false;
+    const done = (port) => {
+      if (resolved) return;
+      resolved = true;
+      portPromptWindow = null;
+      resolve(port);
+    };
+    ipcMain.once('port-prompt:confirm', (_e, { port } = {}) => {
+      const chosen = Number(port);
+      writeSavedBackendPort(chosen); // only an explicit confirm is remembered
+      done(chosen);
+      if (!win.isDestroyed()) win.close();
+    });
+    win.on('closed', () => {
+      if (!resolved) log(`Port prompt closed without confirming — using the suggested port ${suggestedPort}.`);
+      done(suggestedPort);
+    });
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1600, height: 1000, minWidth: 1024, minHeight: 700,
@@ -697,8 +800,31 @@ function loadingWindow() {
   return win;
 }
 
+// Runs on EVERY launch, before the backend is spawned — a port conflict is a
+// per-launch condition (whatever else is running on the machine that day),
+// never gated on first-run/venv state the way runFirstRunSetup() is.
+//
+// process.env.PORT is an explicit override and is trusted unconditionally: no
+// check, no prompt. It's also what server.js's own `PORT` const reads, so the
+// two processes agree without this function's involvement.
+async function resolveBackendPort() {
+  if (process.env.PORT) return BACKEND_PORT_DEFAULT;
+
+  const candidate = readSavedBackendPort() || BACKEND_PORT_DEFAULT;
+  if (await portFree(candidate)) return candidate;
+
+  log(`Backend port ${candidate} is already in use — asking the user to confirm another.`);
+  const suggested = await pickFreePort(candidate + 1);
+  return promptForBackendPort(candidate, suggested);
+}
+
 async function boot() {
   fs.mkdirSync(DATA_ROOT, { recursive: true });
+
+  registerPortPromptIpc();
+  BACKEND_PORT = await resolveBackendPort();
+  BACKEND_ORIGIN = `http://localhost:${BACKEND_PORT}`;
+
   SERVICES = serviceRegistry();
   registerSetupIpc();
   registerServicesIpc();
@@ -758,7 +884,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const win = mainWindow || setupWindow;
+    const win = mainWindow || setupWindow || portPromptWindow;
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
 
