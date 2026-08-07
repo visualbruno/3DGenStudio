@@ -8379,7 +8379,7 @@ initializeStorage().then(async () => {
     console.warn('Failed to clear stale processing cards on startup:', err.message);
   }
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 3D Gen Studio Backend running at http://localhost:${PORT}`);
     console.log(`📁 Local Workspace: ${DATA_DIR}`);
     if (PUBLIC_BASE_URL) {
@@ -8391,6 +8391,18 @@ initializeStorage().then(async () => {
       console.log(`🖥️  Serving bundled UI from dist/ — open http://localhost:${PORT}`);
     } else {
       console.log('ℹ️  No dist/ build found — run "npm run build" to serve the UI from this server.');
+    }
+  });
+  
+  server.on("error", (err) => {
+    console.error("SERVER ERROR:", err);
+
+    if (err.code === "EACCES") {
+      console.error(`❌ Backend cannot start: access denied for port ${PORT}.`);
+	} else if (err.code === "EADDRINUSE") {
+      console.error(`❌ Backend cannot start: port ${PORT} is already in use.`);
+    } else {
+      console.error(`❌ Backend cannot start: ${err.message}`);
     }
   });
 });
