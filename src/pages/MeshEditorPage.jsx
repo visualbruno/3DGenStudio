@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber'
-import { Grid, PerspectiveCamera } from '@react-three/drei'
+import { Grid } from '@react-three/drei'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import * as THREE from 'three'
@@ -140,6 +140,7 @@ import {
 } from '../utils/meshPaintTexture'
 
 import CameraRig from '../components/meshEditor/CameraRig'
+import NavigationGizmo from '../components/meshEditor/NavigationGizmo'
 import EditorMesh from '../components/meshEditor/EditorMesh'
 import BooleanPreviewMesh from '../components/meshEditor/BooleanPreviewMesh'
 import TexturedMesh from '../components/meshEditor/TexturedMesh'
@@ -413,6 +414,10 @@ export default function MeshEditorPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showShadows, setShowShadows] = useState(false)
   const [displayMode, setDisplayMode] = useState('pbr')
+  const viewportApiRef = useRef(null)
+  const handleViewportReady = useCallback(api => {
+    viewportApiRef.current = api
+  }, [])
   const [showWireframe, setShowWireframe] = useState(false)
   const [activeMenu, setActiveMenu] = useState('modeling')
   const [geometry, setGeometry] = useState(null)
@@ -7830,6 +7835,7 @@ export default function MeshEditorPage() {
                     resize={{ offsetSize: true }}
                     style={{ width: '100%', height: '100%' }}
                     gl={{ powerPreference: 'high-performance' }}
+                    camera={{ position: [3, 3, 5], fov: 50, near: 0.0001, far: 4000 }}
                     onCreated={({ gl }) => {
                       const canvas = gl.domElement
                       const handleLost = (event) => {
@@ -7844,7 +7850,6 @@ export default function MeshEditorPage() {
                       canvas.addEventListener('webglcontextrestored', handleRestored, false)
                     }}
                   >
-                    <PerspectiveCamera makeDefault position={[3, 3, 5]} near={0.0001} far={4000} />
                     <ambientLight intensity={displayMode === 'sculpt' ? 0.42 : 1.25} />
                     <directionalLight
                       position={displayMode === 'sculpt' ? [5, 7, 4] : [5, 7, 9]}
@@ -7960,8 +7965,10 @@ export default function MeshEditorPage() {
                       controlsEnabled={activeMenu !== 'texturing' || !hasProjectionMask}
                       allowPan={activeMenu !== 'projection' || !!projectionMaskEditLayerId}
                       lockToCenter={activeMenu === 'projection' && !projectionMaskEditLayerId}
+                      onViewportReady={handleViewportReady}
                     />
                   </Canvas>
+                  <NavigationGizmo apiRef={viewportApiRef} />
                   {selectionBox && activeMenu === 'modeling' && (
                     <div
                       className="mesh-editor-selection-box"

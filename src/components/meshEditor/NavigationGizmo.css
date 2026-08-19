@@ -1,0 +1,74 @@
+.navigation-gizmo {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+
+.navigation-gizmo__scene {
+  width: 132px;
+  height: 132px;
+  perspective: 320px;
+  touch-action: none;
+}
+
+.navigation-gizmo__cube {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.18s ease-out;
+}
+
+.navigation-gizmo__cube--dragging {
+  transition: none;
+}
+
+.navigation-gizmo__face {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 78px;
+  height: 78px;
+  margin: -39px 0 0 -39px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(26, 28, 33, 0.78);
+  border: 1.5px solid;
+  border-radius: 6px;
+  color: #e8e8ec;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.navigation-gizmo__face:hover {
+  background: rgba(72, 78, 90, 0.92);
+}
+
+.navigation-gizmo__face--x {
+  border-color: #ff4d5d;
+}
+
+.navigation-gizmo__face--y {
+  border-color: #4dff88;
+}
+
+.navigation-gizmo__face--z {
+  border-color: #4da6ff;
+}
+
+.navigation-gizmo__face-label {
+  pointer-events: none;
+}
