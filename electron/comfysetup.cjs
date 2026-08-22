@@ -108,19 +108,47 @@ function isAvailableHere(manifest) {
 // Pick the newest CUDA build this driver can actually run, mirroring the rigging
 // wheel-table logic: a build targeting CUDA newer than the driver will not run,
 // an older one will.
+// ---- ROCm / AMD detection -------------------------------------------------
+// Host-level check: `amd-smi` (or `rocminfo`) is the AMD analogue of nvidia-smi.
+function detectRocmHost() {
+  for (const cmd of ['amd-smi', 'rocminfo']) {
+    try {
+      const r = spawnSync(cmd, ['--help'], { encoding: 'utf8', timeout: 5000 });
+      if (r.status === 0 || (r.stdout || '').length || (r.stderr || '').length) return true;
+    } catch { /* command not found */ }
+  }
+  return false;
+}
+
+// Venv-level check: a ROCm torch reports a non-empty `torch.version.hip`.
+function detectRocmVenv(vp) {
+  try {
+    const r = spawnSync(vp, ['-c', "import torch;print(torch.version.hip or '')"], { encoding: 'utf8', timeout: 20000 });
+    return r.code === 0 && (r.stdout || '').trim().length > 0;
+  } catch { return false; }
+}
+
 function pickBuild(manifest) {
   if (IS_MAC) {
     throw new Error('The managed ComfyUI install needs an NVIDIA GPU (CUDA), which macOS does not provide. Point Settings → ComfyUI at a ComfyUI instance on another machine instead.');
   }
   const plat = platformKey();
   const builds = (manifest.builds || []).filter((b) => b.platform === plat);
+  // On ROCm/AMD there is no CUDA build in the manifest; fall through to a synthetic
+  // ROCm build so the install can run against the ROCm environment.
+  if (!builds.length && detectRocmHost()) {
+    return { platform: plat, cuda: 'rocm', torchArgs: '', lock: null, rocm: true };
+  }
   if (!builds.length) {
     const have = [...new Set((manifest.builds || []).map((b) => b.platform))].join(', ') || 'none';
     throw new Error(`The managed ComfyUI install is not available on ${plat} yet — this build of the app only ships a dependency set for: ${have}. Install ComfyUI yourself and point Settings → ComfyUI at it.`);
   }
   const cuda = driverCuda();
   if (cuda == null) {
-    throw new Error('No NVIDIA GPU / CUDA driver detected. The managed ComfyUI install requires one.');
+    if (detectRocmHost()) {
+      return { platform: plat, cuda: 'rocm', torchArgs: '', lock: null, rocm: true };
+    }
+    throw new Error('No NVIDIA GPU / CUDA driver detected. The managed ComfyUI install requires one (or a ROCm/AMD GPU).');
   }
   const usable = builds.filter((b) => {
     const k = cudaKey(b.cuda);
@@ -960,13 +988,20 @@ async function setupComfyUI({ uv, appRoot, installDir, dataDir, venvDir, appVers
   // torch first, from its own CUDA index. The lock deliberately excludes torch:
   // it carries no index-url context, and every prebuilt wheel in it is ABI-matched
   // to exactly this torch version.
-  phase('Installing PyTorch', 0.42);
-  await installTorch({ uv, vp, build, onLine: log });
+  // On ROCm/AMD there is no flash-attn and torch comes from the ROCm index, so
+  // skip the CUDA torch + flash-attn install — the environment already provides them.
+  const _isRocm = detectRocmVenv(vp);
+  if (!_isRocm) {
+    phase('Installing PyTorch', 0.42);
+    await installTorch({ uv, vp, build, onLine: log });
 
-  // flash-attn from the shared wheel table, ABI-matched to the torch just
-  // installed. Downloaded first because pip/uv can't resolve HF Xet URLs.
-  phase('Installing flash-attn', 0.5);
-  await installFlashAttn({ uv, vp, appRoot, build, venvDir, onLine: log, onStatus: status });
+    // flash-attn from the shared wheel table, ABI-matched to the torch just
+    // installed. Downloaded first because pip/uv can't resolve HF Xet URLs.
+    phase('Installing flash-attn', 0.5);
+    await installFlashAttn({ uv, vp, appRoot, build, venvDir, onLine: log, onStatus: status });
+  } else {
+    log && log('ROCm/AMD detected — skipping CUDA torch + flash-attn install (provided by the ROCm environment).');
+  }
 
   phase('Installing ComfyUI dependencies', 0.6);
   const lockPath = materializeLock({ appRoot, build, manifest, installDir, venvDir });
@@ -1385,6 +1420,12 @@ function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, logStream, 
   try {
     extraArgs = loadManifest(appRoot).launchArgs || [];
   } catch { /* manifest problems already surfaced during setup */ }
+
+  // On ROCm/AMD, flash-attention is unavailable; swap the launch flag for the
+  // SDPA-based cross-attention backend so ComfyUI starts cleanly.
+  if (detectRocmVenv(venvPython(venvDir))) {
+    extraArgs = extraArgs.map((a) => (a === '--use-flash-attention' ? '--use-pytorch-cross-attention' : a));
+  }
 
   // Keep models/input/output/user/temp in the writable data dir so reinstalling
   // ComfyUI never touches the user's models.

@@ -1611,6 +1611,38 @@ async function sleep(ms) {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// ---- ROCm / AMD detection + Trellis2 backend override ----------------------
+// ComfyUI exposes GPU info via /system_stats; on AMD/ROCm the device name
+// contains "AMD"/"Radeon". Cached per base URL so detection runs once.
+const _rocmCache = new Map();
+async function isRocmComfy(baseUrl) {
+  if (_rocmCache.has(baseUrl)) return _rocmCache.get(baseUrl);
+  let rocm = false;
+  try {
+    const res = await fetch(`${baseUrl}/system_stats`, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const stats = await res.json().catch(() => ({}));
+      const devices = Array.isArray(stats?.devices) ? stats.devices : [];
+      rocm = devices.some((d) => /amd|radeon|rocm/i.test(String(d?.name || '')));
+    }
+  } catch { /* assume CUDA/NVIDIA when detection is unavailable */ }
+  _rocmCache.set(baseUrl, rocm);
+  return rocm;
+}
+
+// On ROCm there is no flash-attn build, so force the Trellis2 loader's `backend`
+// input to `sdpa`. Only `backend` is flipped (not `sparse_backend`).
+function forceSdpaBackend(workflowJson) {
+  if (!isPlainObject(workflowJson)) return workflowJson;
+  const next = cloneSerializable(workflowJson);
+  for (const node of Object.values(next)) {
+    if (isPlainObject(node) && isPlainObject(node.inputs) && node.inputs.backend === 'flash_attn') {
+      node.inputs.backend = 'sdpa';
+    }
+  }
+  return next;
+}
+
 async function queueComfyPrompt(baseUrl, workflowJson, identifiers = {}) {
   const clientId = String(identifiers?.clientId || '').trim() || randomUUID();
   const promptId = String(identifiers?.promptId || '').trim() || randomUUID();
@@ -1621,13 +1653,15 @@ async function queueComfyPrompt(baseUrl, workflowJson, identifiers = {}) {
     console.warn(`Client supplied a non-UUID promptId (${promptId}); ComfyUI will likely reject it.`);
   }
 
+  const promptWorkflow = (await isRocmComfy(baseUrl)) ? forceSdpaBackend(workflowJson) : workflowJson;
+
   const response = await fetch(`${baseUrl}/prompt`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json'
     },
     body: JSON.stringify({
-      prompt: workflowJson,
+      prompt: promptWorkflow,
       client_id: clientId,
       prompt_id: promptId
     })
