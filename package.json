@@ -54,7 +54,7 @@
     "sqlite3": "^6.0.1",
     "systeminformation": "^5.31.5",
     "tencentcloud-sdk-nodejs-intl-en": "^3.0.1352",
-    "three": "^0.183.2",
+    "three": "^0.185.1",
     "three-bvh-csg": "^0.0.18",
     "three-mesh-bvh": "^0.9.9",
     "ws": "^8.21.0",

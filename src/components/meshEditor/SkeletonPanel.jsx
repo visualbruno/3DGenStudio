@@ -689,74 +689,6 @@ function KimodoTab({ animation, kimodo }) {
   )
 }
 
-// Rename / delete for the saved animation currently picked in the Custom tab.
-// Its own component so its transient state (the rename draft, the delete
-// confirmation) is bound to the row by key rather than reset by an effect.
-function SavedAnimationActions({ animation, busy, onRename, onDelete }) {
-  const [renaming, setRenaming] = useState(false)
-  const [draftName, setDraftName] = useState(animation.name)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  if (renaming) {
-    const commit = () => {
-      if (draftName.trim()) onRename?.(animation.id, draftName)
-      setRenaming(false)
-    }
-    return (
-      <div className="mesh-editor-anim__controls">
-        <input
-          type="text"
-          className="mesh-editor-panel__input"
-          value={draftName}
-          autoFocus
-          onChange={e => setDraftName(e.target.value)}
-          onKeyDown={e => {
-            if (e.key === 'Enter') commit()
-            else if (e.key === 'Escape') { setDraftName(animation.name); setRenaming(false) }
-          }}
-          aria-label="Animation name"
-        />
-        <button type="button" className="mesh-editor-icon-btn" onClick={commit}
-          disabled={!draftName.trim()} title="Rename">
-          <span className="material-symbols-outlined">check</span>
-        </button>
-        <button type="button" className="mesh-editor-icon-btn"
-          onClick={() => { setDraftName(animation.name); setRenaming(false) }} title="Cancel">
-          <span className="material-symbols-outlined">close</span>
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
-      <button type="button" className="mesh-editor-btn" onClick={() => setRenaming(true)}
-        disabled={busy} title="Rename this saved animation">
-        <span className="material-symbols-outlined">edit</span>
-        <span>Rename</span>
-      </button>
-      {/* Deletes the STORED animation. A clip already applied keeps playing until
-          the page is left — nothing is yanked out from under a preview. */}
-      <button
-        type="button"
-        className={`mesh-editor-btn ${confirmDelete ? 'mesh-editor-btn--primary' : ''}`}
-        onClick={() => {
-          if (!confirmDelete) { setConfirmDelete(true); return }
-          setConfirmDelete(false)
-          onDelete?.(animation.id)
-        }}
-        disabled={busy}
-        title={confirmDelete
-          ? 'Click again to delete it for good'
-          : 'Delete this saved animation (clips already applied keep playing)'}
-      >
-        <span className="material-symbols-outlined">delete</span>
-        <span>{confirmDelete ? 'Sure?' : 'Delete'}</span>
-      </button>
-    </div>
-  )
-}
-
 // "Custom" tab: the animations you saved yourself.
 //
 // A custom animation is a clip that was corrected in the animation dock and saved
@@ -769,8 +701,6 @@ function SavedAnimationActions({ animation, busy, onRename, onDelete }) {
 // everywhere else. Like Kimodo it takes the single source-rig slot, and says so.
 function CustomTab({ animation, custom }) {
   const c = custom || {}
-  const rows = c.animations || []
-  const selected = rows.find(a => String(a.id) === String(c.selectedId)) || null
   const busy = !!c.applying
 
   return (
@@ -796,72 +726,32 @@ function CustomTab({ animation, custom }) {
       )}
 
       <div className="mesh-editor-panel__section">
-        <span className="mesh-editor-panel__section-title">Saved animations</span>
+        <span className="mesh-editor-panel__section-title">Animation library</span>
         <span className="mesh-editor-panel__hint">
-          Clips you edited and saved, from any mesh. Pick one to put it on this mesh — the skeleton
-          it was made on came with it, so it can be retargeted like any other source.
+          Animations you saved from the editor, plus any you imported from an FBX, GLB or BVH file —
+          a marketplace pack, a Mixamo download, anything with a skeleton in it. Each one carries the
+          rig it was made on, so it can be retargeted onto this mesh whatever it came from.
         </span>
+        <button
+          type="button"
+          className={`mesh-editor-btn ${c.ownsSource ? '' : 'mesh-editor-btn--primary'}`}
+          onClick={c.onOpenLibrary}
+          disabled={busy}
+          title="Browse, search, import, apply or delete your animations"
+        >
+          <span className="material-symbols-outlined">
+            {c.loading || busy ? 'progress_activity' : 'video_library'}
+          </span>
+          <span>
+            {busy ? 'Applying…' : 'Select animations'}
+            {c.animations?.length ? ` (${c.animations.length})` : ''}
+          </span>
+        </button>
 
-        <div className="mesh-editor-anim__controls">
-          <label className="mesh-editor-anim__field">
-            <span className="mesh-editor-panel__hint">Animation</span>
-            <select
-              className="mesh-editor-panel__input mesh-editor-panel__select"
-              value={c.selectedId || ''}
-              onChange={e => c.onSelect?.(e.target.value)}
-              disabled={busy || c.loading || !rows.length}
-            >
-              <option value="" disabled>
-                {c.loading ? 'Loading…' : (rows.length ? 'Select an animation…' : 'Nothing saved yet')}
-              </option>
-              {rows.map(row => (
-                <option key={row.id} value={row.id}>
-                  {row.name}{row.duration ? ` — ${row.duration.toFixed(1)}s` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="mesh-editor-btn"
-            onClick={c.onRefresh}
-            disabled={busy || c.loading}
-            title="Reload the list — another session may have saved something since"
-          >
-            <span className="material-symbols-outlined">{c.loading ? 'progress_activity' : 'refresh'}</span>
-            <span>Refresh</span>
-          </button>
-        </div>
-
-        {busy && (
-          <span className="mesh-editor-panel__hint">Applying the animation to your mesh…</span>
-        )}
-
-        {selected && (
-          <>
-            <div className="mesh-editor-texture-workflow-meta">
-              {!!selected.sourceMesh && <span><strong>From:</strong> {selected.sourceMesh}</span>}
-              {!!selected.frameCount && <span><strong>Frames:</strong> {selected.frameCount}</span>}
-              {!!selected.fps && <span><strong>Rate:</strong> {Math.round(selected.fps)} fps</span>}
-              {!!selected.boneCount && <span><strong>Bones:</strong> {selected.boneCount}</span>}
-            </div>
-
-            {/* Keyed on the row, so switching animations cannot leave a rename
-                box (or a half-confirmed delete) open over a different one. */}
-            <SavedAnimationActions
-              key={selected.id}
-              animation={selected}
-              busy={busy}
-              onRename={c.onRename}
-              onDelete={c.onDelete}
-            />
-          </>
-        )}
-
-        {!rows.length && !c.loading && (
+        {!c.animations?.length && !c.loading && (
           <span className="mesh-editor-panel__hint">
-            Nothing here yet. Play an animation, open the animation editor under the viewport, and use
-            &ldquo;Save animation&rdquo; — what you save lands in this list.
+            Nothing here yet — import a file, or edit a clip in the animation editor and use
+            &ldquo;Save animation&rdquo;.
           </span>
         )}
       </div>

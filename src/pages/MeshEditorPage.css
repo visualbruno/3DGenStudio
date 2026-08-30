@@ -2460,6 +2460,77 @@
   margin: 0.75rem 1.25rem 0;
 }
 
+/* The import preview inside the animation picker: what a parsed file turned out to
+   contain, before a single row is written. The clip list is a grid because a
+   marketplace pack is dozens of short names — one per line would push the library
+   itself off the popup. */
+.mesh-editor-animpick__import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  margin: 0 0.75rem;
+  border: 1px solid rgba(143, 245, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(143, 245, 255, 0.06);
+}
+
+.mesh-editor-animpick__import-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--on-surface);
+}
+
+.mesh-editor-animpick__import-clips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.25rem;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.mesh-editor-animpick__clip {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mesh-editor-animpick__clip:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mesh-editor-animpick__clip--on {
+  color: var(--on-surface);
+}
+
+.mesh-editor-animpick__clip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesh-editor-animpick__clip .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.mesh-editor-animpick__import-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+
 .mesh-editor-motionpick__list {
   flex: 1;
   min-height: 0;

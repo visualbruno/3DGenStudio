@@ -15,11 +15,18 @@
 //     bones: [{ name, parent, position, quaternion, scale }],
 //     clip: <AnimationClip.toJSON, tracks named "BoneName.quaternion"> }
 //
-// The bones list is a pre-order traversal, so `parent` is always an index that
-// has already been seen (-1 for the root). The root carries its WORLD transform
-// rather than its local one: bone roots often sit under an armature node with a
-// scale or an axis flip, and dropping that would rebuild a skeleton of the wrong
-// size — which the retargeter turns into a wrongly scaled hip translation.
+// The bones list is a pre-order traversal, so `parent` is always an index that has
+// already been seen (-1 for a root). A root also carries `parentTransform`: whatever
+// its ANCESTORS contributed — the armature node that FBX and Blender exports hang a
+// rig from, often carrying a 0.01 scale or an axis flip.
+//
+// That transform has to be stored SEPARATELY rather than folded into the root bone,
+// which is what version 1 of this format did. A clip usually animates the root, and
+// an animation track overwrites the bone's local transform wholesale — so a baked-in
+// ancestor transform survives exactly until the first frame plays, and then the whole
+// animation runs in the wrong frame. Rebuilding the ancestor as a parent Group keeps
+// the original hierarchy's shape, where the track only ever drove the bone.
+
 import { AnimationClip, Bone, Group, Quaternion, Skeleton, Vector3 } from 'three'
 import { clone as cloneSkinnedScene } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { API_BASE } from '../config'
@@ -30,7 +37,7 @@ import { autoMapBones, detectHipBone, rebindClipForExport } from './animationLib
 export const CUSTOM_SOURCE_ID = 'custom'
 
 const LIBRARY_BASE = `${API_BASE}/animations/library`
-const DOCUMENT_VERSION = 1
+const DOCUMENT_VERSION = 2
 
 // Rounding: a hand-edited 10 s clip is a key per bone per frame, and full float
 // precision triples the file for motion nobody can see. 6 decimals on a unit
@@ -94,9 +101,21 @@ export function mapCustomBones(sourceNames, targetNames) {
 // The scene is cloned before posing: the live one is what the viewport preview is
 // playing, and putting it back into its bind pose mid-preview would freeze the
 // mesh on screen. (Same reasoning as exportAnimatedGlb.)
-function snapshotSkeleton(scene) {
+//
+// `useBindPose` decides WHICH rest pose, and the two are not always the same rig:
+//
+//  - Saving a hand-edited clip, the scene is mid-animation with the mixer writing
+//    every bone, so the only way back to a rest pose is the skin's bind pose.
+//  - Importing a file, the bones already stand in the transforms the file's own
+//    node hierarchy declares — which is what the clip's tracks drive, and therefore
+//    the only pose in the same frame as the animation. A skin's bind matrices are
+//    stored in the file's raw coordinate system, so on an FBX whose up axis had to
+//    be corrected they describe a rig lying on its back while the animation plays
+//    upright. Posing there does not just pick a different pose, it picks a
+//    different WORLD, and the retarget measures its deltas across the two.
+function snapshotSkeleton(scene, useBindPose = true) {
   const snapshot = cloneSkinnedScene(scene)
-  snapshot.traverse(o => { if (o.isSkinnedMesh) o.skeleton.pose() })
+  if (useBindPose) snapshot.traverse(o => { if (o.isSkinnedMesh) o.skeleton.pose() })
   snapshot.updateMatrixWorld(true)
 
   const bones = []
@@ -109,18 +128,28 @@ function snapshotSkeleton(scene) {
   snapshot.traverse(object => {
     if (!object.isBone) return
     const parent = indexByBone.has(object.parent) ? indexByBone.get(object.parent) : -1
-    // The root keeps everything its ancestors contributed (see the header note);
-    // every other bone is local to the parent that is being rebuilt with it.
-    if (parent < 0) object.matrixWorld.decompose(position, quaternion, scale)
-    else { position.copy(object.position); quaternion.copy(object.quaternion); scale.copy(object.scale) }
     indexByBone.set(object, bones.length)
-    bones.push({
+    const entry = {
       name: object.name,
       parent,
-      position: position.toArray().map(v => round(v, VALUE_DECIMALS)),
-      quaternion: quaternion.toArray().map(v => round(v, VALUE_DECIMALS)),
-      scale: scale.toArray().map(v => round(v, VALUE_DECIMALS)),
-    })
+      position: object.position.toArray().map(v => round(v, VALUE_DECIMALS)),
+      quaternion: object.quaternion.toArray().map(v => round(v, VALUE_DECIMALS)),
+      scale: object.scale.toArray().map(v => round(v, VALUE_DECIMALS)),
+    }
+    // A root's ancestors are not bones and will not be rebuilt, so what they
+    // contribute is recorded beside it — see the header. Identity is left out.
+    if (parent < 0 && object.parent) {
+      object.parent.matrixWorld.decompose(position, quaternion, scale)
+      if (position.lengthSq() > 1e-12 || Math.abs(quaternion.w) < 1 - 1e-9
+        || Math.abs(scale.x - 1) > 1e-9 || Math.abs(scale.y - 1) > 1e-9 || Math.abs(scale.z - 1) > 1e-9) {
+        entry.parentTransform = {
+          position: position.toArray().map(v => round(v, VALUE_DECIMALS)),
+          quaternion: quaternion.toArray().map(v => round(v, VALUE_DECIMALS)),
+          scale: scale.toArray().map(v => round(v, VALUE_DECIMALS)),
+        }
+      }
+    }
+    bones.push(entry)
   })
   return bones
 }
@@ -140,11 +169,11 @@ function serializeClip(clip) {
 // `scene` is the retarget TARGET scene (the user's rigged mesh) — that skeleton is
 // the one the clip's rotations are expressed in, so it is the one that has to
 // travel with it.
-export function buildCustomAnimationDocument({ clip, scene, fps = 30 }) {
+export function buildCustomAnimationDocument({ clip, scene, fps = 30, useBindPose = true }) {
   if (!clip) throw new Error('There is no animation to save.')
   if (!scene) throw new Error('The rigged mesh is not loaded, so its skeleton cannot be saved.')
 
-  const bones = snapshotSkeleton(scene)
+  const bones = snapshotSkeleton(scene, useBindPose)
   if (!bones.length) throw new Error('This mesh has no bones to save the animation against.')
 
   const frameCount = clip.tracks?.[0]?.times?.length || 0
@@ -167,7 +196,7 @@ export function buildCustomAnimationDocument({ clip, scene, fps = 30 }) {
 // `skinnedMesh` is a bare { skeleton } stand-in for the same reason the Kimodo
 // source uses one: retargetAnimationClip only ever reads `.skeleton` off it, and
 // there is no mesh here to skin.
-function buildSourceScene(bones) {
+function buildSourceScene(bones, version = DOCUMENT_VERSION) {
   const objects = bones.map(entry => {
     const bone = new Bone()
     bone.name = entry.name
@@ -180,8 +209,24 @@ function buildSourceScene(bones) {
   const scene = new Group()
   scene.name = 'custom-animation-source'
   bones.forEach((entry, index) => {
-    const parent = entry.parent >= 0 ? objects[entry.parent] : null
-    ;(parent || scene).add(objects[index])
+    if (entry.parent >= 0) {
+      objects[entry.parent].add(objects[index])
+      return
+    }
+    // Version 1 folded the ancestor transform into the root bone itself, so there
+    // is nothing to rebuild — and nothing to protect it from the clip's own root
+    // track, which is the bug version 2 exists to fix.
+    if (version >= 2 && entry.parentTransform) {
+      const holder = new Group()
+      holder.name = `${entry.name}-parent`
+      holder.position.fromArray(entry.parentTransform.position || [0, 0, 0])
+      holder.quaternion.fromArray(entry.parentTransform.quaternion || [0, 0, 0, 1])
+      holder.scale.fromArray(entry.parentTransform.scale || [1, 1, 1])
+      holder.add(objects[index])
+      scene.add(holder)
+      return
+    }
+    scene.add(objects[index])
   })
   scene.updateMatrixWorld(true)
 
@@ -200,7 +245,7 @@ export function customSourceFromDocument(document, clipName) {
   if (!Array.isArray(bones) || !bones.length) {
     throw new Error('That animation has no skeleton stored with it.')
   }
-  const { scene, skeleton } = buildSourceScene(bones)
+  const { scene, skeleton } = buildSourceScene(bones, Number(document.version) || 1)
   const boneNames = bones.map(b => b.name)
   return {
     scene,

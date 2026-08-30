@@ -172,23 +172,54 @@ const SYNONYMS = [
   [/spine0|spine1|spine2|spine3/g, 'spine'],
   [/foot|ankle/g, 'foot'],
   [/toebase|toe|ball/g, 'toe'],
-  [/forefinger/g, 'index'],
+  // Finger naming is where rigs disagree most: mixamo says "LeftHandIndex1", a
+  // marketplace pack says "indexFinger01", Blender says "f_index.01". Folding them
+  // all onto the bare finger name is what lets a bought animation drive fingers at
+  // all — and fingers are half the bones in a hand-heavy clip.
+  [/handindex|indexfinger|forefinger|findex/g, 'index'],
+  [/handmiddle|middlefinger|fmiddle/g, 'middle'],
+  [/handring|ringfinger|fring/g, 'ring'],
+  [/handpinky|pinkyfinger|littlefinger|fpinky/g, 'pinky'],
+  [/handthumb|thumbfinger|fthumb/g, 'thumb'],
 ]
 
 function normalizeBoneName(name) {
-  let s = String(name || '').toLowerCase()
-  // Strip common rig prefixes.
-  s = s.replace(/^mixamorig[:_]?/, '')
-  // Extract side (l/r) before stripping separators.
+  const raw = String(name || '')
+  let s = raw.toLowerCase()
+  // Strip common rig prefixes. `mixamorig` is ours; the rest are the conventions
+  // marketplace and Blender rigs ship with ("B-upperArmR", "DEF-spine", "jnt_hand"),
+  // and leaving them on costs an EXACT token match — "bupperarm" only ever scores as
+  // a substring of the target it should have matched outright.
+  s = s.replace(/^mixamorig[:_]?/, '').replace(/^(?:def|org|mch|ctrl|jnt|joint|bone|bn|b)[-_.\s]/, '')
+  // Extract the side before separators are stripped. Three conventions turn up, and
+  // every one of them appears in real packs:
+  //   separated — "upperarm_l", "left_arm", "Bip01 L Hand"
+  //   camelCase — "B-upperArmR", "IndexFinger02L", "HandRight"
+  // The camelCase suffix is read off the RAW name: lowercasing first destroys the
+  // only thing that tells the side letter of "upperArmR" from the last letter of
+  // "heel". Getting this wrong is not a near miss — it silently maps the right arm
+  // onto the left one, and every imported animation plays mirrored.
   let side = ''
-  if (/(^|[._-])(l|left)([._-]|\d|$)/.test(s)) side = 'l'
-  else if (/(^|[._-])(r|right)([._-]|\d|$)/.test(s)) side = 'r'
+  if (/(^|[._\-\s])(l|left)([._\-\s]|\d|$)/.test(s)) side = 'l'
+  else if (/(^|[._\-\s])(r|right)([._\-\s]|\d|$)/.test(s)) side = 'r'
+  // A camelCase side WORD, anywhere in the name: "mixamorigLeftArm", "LeftUpLeg",
+  // "HandRight". It must be followed by another capital or the end, so "Leftover"
+  // is not a side. This is the case our OWN rigs use — Auto Rig emits mixamo names
+  // — and it was invisible to the rule above, which wants a separator after the
+  // word: in "leftarm" the "left" runs straight into "arm".
+  else if (/Left(?=[A-Z0-9]|$)/.test(raw)) side = 'l'
+  else if (/Right(?=[A-Z0-9]|$)/.test(raw)) side = 'r'
+  else if (/[a-z0-9](?:L|R)$/.test(raw)) side = raw.endsWith('L') ? 'l' : 'r'
   // Remove side tokens, separators, "leaf"/"tip"/"end" suffixes and digits.
   s = s
-    .replace(/(^|[._-])(left|right)([._-]|$)/g, '$1$3')
-    .replace(/(^|[._-])(l|r)([._-]|$)/g, '$1$3')
+    .replace(/(^|[._\-\s])(left|right)([._\-\s]|$)/g, '$1$3')
+    .replace(/(^|[._\-\s])(l|r)([._\-\s]|$)/g, '$1$3')
     .replace(/leaf|_tip|\.tip|tip|_end/g, '')
     .replace(/[._\-\s]/g, '')
+  // A camelCase side survives all of that ("upperarmr", "handright"), and with it
+  // still attached the token can never equal its counterpart on the other rig.
+  if (side) s = s.replace(/left|right/, '')
+  if (side && /[a-z0-9](?:L|R)$/.test(raw)) s = s.replace(/[lr]$/, '')
   for (const [re, to] of SYNONYMS) s = s.replace(re, to)
   s = s.replace(/\d+/g, '')
   return { token: s, side }

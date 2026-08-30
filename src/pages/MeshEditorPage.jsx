@@ -181,6 +181,8 @@ import { KIMODO_SOURCE_ID, countPromptSegments, generateMotionClip, loadKimodoSk
 import { CUSTOM_SOURCE_ID, buildCustomAnimationDocument, customClipFromDocument,
   customMappingKey, customSourceFromDocument, fetchCustomAnimationDocument, listCustomAnimations,
   mapCustomBones, saveCustomAnimation, deleteCustomAnimation, renameCustomAnimation } from '../utils/customAnimations'
+import { parseAnimationFile, buildImportedDocuments } from '../utils/animationImport'
+import AnimationLibraryModal from '../components/meshEditor/AnimationLibraryModal'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
@@ -634,7 +636,19 @@ export default function MeshEditorPage() {
   const [customAnimations, setCustomAnimations] = useState([])
   const [customLibLoading, setCustomLibLoading] = useState(false)
   const [customLibError, setCustomLibError] = useState(null)
-  const [customSelectedId, setCustomSelectedId] = useState('')
+  // The picker popup, and the file being imported through it. A dropdown was the
+  // first shape of this and did not survive contact with the point of the feature:
+  // a marketplace pack is dozens of clips, which needs search, multi-select and
+  // somewhere to put an import button.
+  const [customLibOpen, setCustomLibOpen] = useState(false)
+  const [customBusyId, setCustomBusyId] = useState(null)
+  // A parsed file's CONTENTS, before anything is written: the user picks which of
+  // its clips to keep. The scenes stay in a ref — they carry whole skeletons (and
+  // sometimes a character mesh) and have no business in React state.
+  const [customParsed, setCustomParsed] = useState(null)
+  const [customImporting, setCustomImporting] = useState(false)
+  const [customImportProgress, setCustomImportProgress] = useState(null)
+  const customParsedRef = useRef([])
   const [customApplying, setCustomApplying] = useState(false)
   const [customSavingClip, setCustomSavingClip] = useState(false)
   const [customSavedNotice, setCustomSavedNotice] = useState(null)
@@ -2449,7 +2463,6 @@ export default function MeshEditorPage() {
           setCheckedAnimations(new Set())
           animSourceRef.current = null
           customRigKeyRef.current = null
-          setCustomSelectedId('')
           animTargetRef.current = null
           retargetedClipsRef.current.clear()
           editedClipsRef.current.clear()
@@ -5558,7 +5571,6 @@ export default function MeshEditorPage() {
     setCheckedAnimations(new Set())
     animSourceRef.current = null
     customRigKeyRef.current = null
-    setCustomSelectedId('')
     retargetedClipsRef.current.clear()
     resetAnimEdits()
     if (!referenceId) return
@@ -6598,85 +6610,203 @@ export default function MeshEditorPage() {
     void refreshCustomAnimations()
   }, [refreshCustomAnimations])
 
-  // Put a saved animation on the open mesh.
+  // Put saved animations on the open mesh.
   //
-  // Two paths, and the difference matters: an animation authored on the SAME rig
-  // as the one already in the source slot is added beside the clips that are
-  // there, mapping and all — a set of animations saved off one character is the
-  // normal case, and re-mapping between each of them would be absurd. A different
-  // rig replaces the slot, exactly as picking another reference does.
-  const handleSelectCustomAnimation = useCallback(async (animationId) => {
-    const row = customAnimations.find(a => String(a.id) === String(animationId))
-    if (!row || customApplying) return
+  // Takes a LIST because the picker applies a selection, and one animation is a
+  // list of one. Three things this has to get right:
+  //
+  // 1. An animation authored on the SAME rig as the one already in the source slot
+  //    is added beside the clips that are there, mapping and all — a set of
+  //    animations off one character is the normal case, and re-mapping between each
+  //    of them would be absurd. A different rig replaces the slot, exactly as
+  //    picking another reference does.
+  // 2. The slot holds ONE skeleton, so a selection spanning two rigs cannot all be
+  //    applied. The first one's rig wins and the rest are reported by name rather
+  //    than silently dropped.
+  // 3. Only the LAST clip is retargeted and played: baking twenty up front would
+  //    cost twenty retargets for nineteen results nobody asked to see. The others
+  //    bake on click, as everywhere else.
+  const handleApplyCustomAnimations = useCallback(async (rows) => {
+    const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean)
+    if (!list.length || customApplying) return
     setCustomApplying(true)
     setCustomLibError(null)
     setAnimError(null)
     try {
-      const stored = await fetchCustomAnimationDocument(row.id)
       const target = await ensureAnimTargetScene()
-
-      const sameRig = animReferenceId === CUSTOM_SOURCE_ID
-        && !!animSourceRef.current
-        && !!customRigKeyRef.current
-        && customRigKeyRef.current === stored.rigKey
-
+      const added = []
+      const skipped = []
       let source = animSourceRef.current
-      let mapping = sameRig ? animMapping : null
+      let mapping = animReferenceId === CUSTOM_SOURCE_ID ? animMapping : null
+      let rigKey = animReferenceId === CUSTOM_SOURCE_ID ? customRigKeyRef.current : null
+      let taken = new Set(rigKey && source ? (source.clips || []).map(c => c.name) : [])
 
-      // Clip names are the retarget cache key, so the same animation applied
-      // twice in one session must not collide with its earlier copy.
-      const taken = new Set(sameRig ? (source.clips || []).map(c => c.name) : [])
-      let name = row.name
-      for (let n = 2; taken.has(name); n += 1) name = `${row.name} (${n})`
+      for (const row of list) {
+        setCustomBusyId(row.id)
+        const stored = await fetchCustomAnimationDocument(row.id)
 
-      if (sameRig) {
-        source.clips = [...(source.clips || []), customClipFromDocument(stored, name)]
-      } else {
-        source = customSourceFromDocument(stored, name)
-        animSourceRef.current = source
-        customRigKeyRef.current = source.rigKey
-        setAnimReferenceId(CUSTOM_SOURCE_ID)
-        setBoneMapSkeletons(null)
-        setSelectedAnimation(null)
-        setAnimPreview(null)
-        setCheckedAnimations(new Set())
-        retargetedClipsRef.current.clear()
-        resetAnimEdits()
+        // Clip names are the retarget cache key, so the same animation applied
+        // twice in one session must not collide with its earlier copy.
+        let name = row.name
+        for (let n = 2; taken.has(name); n += 1) name = `${row.name} (${n})`
 
-        // Mapping, in order of confidence: what this mesh already stored for this
-        // rig, then a name-for-name match — the usual case, because a custom
-        // animation normally comes off a rig named by the same Auto Rig pass.
-        mapping = restoreBoneMapping(CUSTOM_SOURCE_ID, source.boneNames, target.boneNames)
-        setCustomAutoMapped(false)
-        setBoneMappingRestored(!!mapping)
-        if (!mapping) {
-          const auto = mapCustomBones(source.boneNames, target.boneNames)
-          if (Object.keys(auto).length) {
-            mapping = auto
-            setCustomAutoMapped(true)
+        const sameRig = !!rigKey && !!source && rigKey === stored.rigKey
+        if (sameRig) {
+          source.clips = [...(source.clips || []), customClipFromDocument(stored, name)]
+        } else if (!added.length) {
+          // The FIRST one always gets the slot, whatever is in it: picking an
+          // animation is an instruction, not a suggestion. Only the ones after it
+          // can collide with the rig it just installed.
+          source = customSourceFromDocument(stored, name)
+          animSourceRef.current = source
+          customRigKeyRef.current = source.rigKey
+          rigKey = source.rigKey
+          setAnimReferenceId(CUSTOM_SOURCE_ID)
+          setBoneMapSkeletons(null)
+          setSelectedAnimation(null)
+          setAnimPreview(null)
+          setCheckedAnimations(new Set())
+          retargetedClipsRef.current.clear()
+          resetAnimEdits()
+
+          // Mapping, in order of confidence: what this mesh already stored for this
+          // rig, then a name-for-name match — the usual case for an animation off a
+          // rig named by the same Auto Rig pass, and for a Mixamo-named pack on a
+          // Mixamo-named rig.
+          mapping = restoreBoneMapping(CUSTOM_SOURCE_ID, source.boneNames, target.boneNames)
+          setCustomAutoMapped(false)
+          setBoneMappingRestored(!!mapping)
+          if (!mapping) {
+            const auto = mapCustomBones(source.boneNames, target.boneNames)
+            if (Object.keys(auto).length) {
+              mapping = auto
+              setCustomAutoMapped(true)
+            }
           }
+          setAnimMapping(mapping || null)
+          setAnimArmTargets(mapping ? findUpperArmTargets(mapping) : null)
+          // The old slot's clip names went with it, so nothing can collide yet.
+          taken = new Set()
+        } else {
+          // A different skeleton from the one in the slot: it would need its own
+          // mapping, and there is only one slot.
+          skipped.push(row.name)
+          continue
         }
-        setAnimMapping(mapping || null)
-        setAnimArmTargets(mapping ? findUpperArmTargets(mapping) : null)
+
+        taken.add(name)
+        added.push(name)
       }
 
-      setAnimClips((source.clips || []).map(c => ({ name: c.name })))
-      setCustomSelectedId(String(row.id))
+      if (added.length) {
+        setAnimClips((source.clips || []).map(c => ({ name: c.name })))
+        setCustomLibOpen(false)
+      }
+      setCustomLibError(skipped.length
+        ? `${skipped.join(', ')} ${skipped.length === 1 ? 'was' : 'were'} made on a different skeleton — apply ${skipped.length === 1 ? 'it' : 'them'} on their own, since a mesh can only be mapped to one source rig at a time.`
+        : null)
 
       // A mapping created a moment ago is invisible to showRetargetedClip through
       // its own closure, so it is handed over explicitly (Kimodo's trap exactly).
-      if (mapping) {
-        setSelectedAnimation(name)
-        await showRetargetedClip(name, animMatchRestPose, animInPlace, mapping)
+      const last = added[added.length - 1]
+      if (mapping && last) {
+        setSelectedAnimation(last)
+        await showRetargetedClip(last, animMatchRestPose, animInPlace, mapping)
       }
     } catch (err) {
       console.error('Could not apply the custom animation:', err)
       setCustomLibError(err?.message || 'Could not apply that animation.')
     } finally {
       setCustomApplying(false)
+      setCustomBusyId(null)
     }
-  }, [customAnimations, customApplying, animReferenceId, animMapping, ensureAnimTargetScene,
+  }, [customApplying, animReferenceId, animMapping, ensureAnimTargetScene,
     resetAnimEdits, restoreBoneMapping, showRetargetedClip, animMatchRestPose, animInPlace])
+
+  // --- importing animation files -------------------------------------------
+  // Read the picked files and show what they contain; nothing is written yet. A
+  // pack FBX with fifty takes should not silently become fifty library rows, and
+  // this is also where a file carrying no skeleton is caught.
+  const handleParseAnimationFiles = useCallback(async (fileList) => {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    setCustomImporting(true)
+    setCustomLibError(null)
+    try {
+      const results = []
+      const failures = []
+      // Names must be unique across the whole batch, not just within a file: twenty
+      // Mixamo downloads are twenty files each holding one clip called "mixamo.com",
+      // and the clip name is what the library row is called.
+      const taken = new Set(customAnimations.map(a => a.name))
+      for (const file of files) {
+        try {
+          const parsed = await parseAnimationFile(file)
+          for (const clip of parsed.clips) {
+            let name = clip.name
+            for (let n = 2; taken.has(name); n += 1) name = `${clip.name} (${n})`
+            taken.add(name)
+            clip.name = name
+          }
+          results.push(parsed)
+        } catch (err) {
+          console.error('Could not read the animation file:', err)
+          failures.push(err?.message || file.name)
+        }
+      }
+      customParsedRef.current = results
+      setCustomParsed(results.length ? {
+        fileName: files.length === 1 ? files[0].name : `${results.length} of ${files.length} files`,
+        boneNames: results[0].boneNames,
+        clips: results.flatMap(r => r.clips.map(c => ({
+          name: c.name, duration: c.duration, frameCount: c.frameCount,
+        }))),
+      } : null)
+      setCustomLibError(failures.length ? failures.join(' ') : null)
+    } finally {
+      setCustomImporting(false)
+    }
+  }, [customAnimations])
+
+  // Write the picked clips to the library. Each one is stored with the skeleton its
+  // file carried, which is what makes it retargetable onto any mesh later.
+  const handleImportParsedClips = useCallback(async (names) => {
+    const picked = names?.length ? names : null
+    const parsedFiles = customParsedRef.current
+    if (!parsedFiles.length) return
+    setCustomImporting(true)
+    setCustomLibError(null)
+    try {
+      const documents = parsedFiles.flatMap(parsed => buildImportedDocuments(parsed, picked))
+      const saved = []
+      const failures = []
+      for (const [index, entry] of documents.entries()) {
+        setCustomImportProgress({ done: index, total: documents.length })
+        try {
+          saved.push(await saveCustomAnimation(entry))
+        } catch (err) {
+          console.error('Could not import an animation:', err)
+          failures.push(entry.name)
+        }
+      }
+      customLibraryLoadedRef.current = true
+      if (saved.length) setCustomAnimations(prev => [...saved.reverse(), ...prev])
+      customParsedRef.current = []
+      setCustomParsed(null)
+      setCustomLibError(failures.length ? `Could not import: ${failures.join(', ')}.` : null)
+      if (saved.length) {
+        setFeedback(`Imported ${saved.length} animation${saved.length === 1 ? '' : 's'} — apply them to any rigged mesh.`)
+      }
+    } finally {
+      setCustomImporting(false)
+      setCustomImportProgress(null)
+    }
+  }, [])
+
+  const handleCancelImport = useCallback(() => {
+    customParsedRef.current = []
+    setCustomParsed(null)
+  }, [])
 
   const handleCustomOpenMapping = useCallback(() => {
     if (!animSourceRef.current || animReferenceId !== CUSTOM_SOURCE_ID) {
@@ -6732,19 +6862,34 @@ export default function MeshEditorPage() {
     }
   }, [])
 
-  // Deletes the STORED animation, not this session's clip: one already applied
-  // keeps playing until the page is left, which is the behaviour that does not
-  // yank something out from under a preview mid-play.
-  const handleDeleteCustomAnimation = useCallback(async (animationId) => {
-    try {
-      await deleteCustomAnimation(animationId)
-      setCustomAnimations(prev => prev.filter(a => a.id !== animationId))
-      setCustomSelectedId(prev => (String(prev) === String(animationId) ? '' : prev))
-    } catch (err) {
-      console.error('Could not delete the custom animation:', err)
-      setCustomLibError(err?.message || 'Could not delete that animation.')
+  // Deletes STORED animations, not this session's clips: one already applied keeps
+  // playing until the page is left, which is the behaviour that does not yank
+  // something out from under a preview mid-play.
+  //
+  // Each delete is independent, so one failure does not strand the rest.
+  const handleDeleteCustomAnimations = useCallback(async (rows) => {
+    const list = (Array.isArray(rows) ? rows : [rows]).filter(Boolean)
+    if (!list.length) return
+    const removed = []
+    const failures = []
+    for (const row of list) {
+      setCustomBusyId(row.id)
+      try {
+        await deleteCustomAnimation(row.id)
+        removed.push(row.id)
+      } catch (err) {
+        console.error('Could not delete the custom animation:', err)
+        failures.push(row.name)
+      }
     }
+    setCustomBusyId(null)
+    if (removed.length) {
+      const gone = new Set(removed)
+      setCustomAnimations(prev => prev.filter(a => !gone.has(a.id)))
+    }
+    setCustomLibError(failures.length ? `Could not delete: ${failures.join(', ')}.` : null)
   }, [])
+
 
   // What the Auto Rig panel reports about the bone mappings this mesh carries.
   // Named per source, because "3 mappings" says nothing: what the user wants to
@@ -6756,9 +6901,11 @@ export default function MeshEditorPage() {
       if (key.startsWith(`${CUSTOM_SOURCE_ID}:`)) return 'Custom animations'
       return getReference(key)?.label || key
     })
-    // Several custom rigs collapse to one label; show it once.
+    // Several custom rigs collapse to one label; show it once. While a mapping is
+    // only in memory the list stays empty — the dirty warning speaks instead.
     return { labels: boneMappingsDirty ? [] : [...new Set(labels)], dirty: boneMappingsDirty }
   }, [storedBoneMappings, boneMappingsDirty])
+
 
   // Bundle for the SkeletonPanel Custom tab.
   const customPanelProps = useMemo(() => ({
@@ -6766,24 +6913,21 @@ export default function MeshEditorPage() {
     animations: customAnimations,
     loading: customLibLoading,
     error: customLibError,
-    selectedId: customSelectedId,
     applying: customApplying,
-    onSelect: handleSelectCustomAnimation,
-    onRefresh: refreshCustomAnimations,
-    onRename: handleRenameCustomAnimation,
-    onDelete: handleDeleteCustomAnimation,
+    // The library is a POPUP, not a list in the panel — the same call the Kimodo
+    // tab makes, and for the same reason twice over: this column already carries
+    // the mapping step and the clip gallery, and an imported pack is dozens of
+    // rows that need search and multi-select.
+    onOpenLibrary: () => { setCustomLibOpen(true); refreshCustomAnimations() },
     onOpenMapping: handleCustomOpenMapping,
-    // Whether the shared source-rig slot currently belongs to a custom animation,
-    // which is what decides whether this tab shows clips or a "pick one first".
     ownsSource: animReferenceId === CUSTOM_SOURCE_ID,
     autoMapped: customAutoMapped,
     mappingRestored: boneMappingRestored,
     savedNotice: customSavedNotice,
     onDismissSaved: () => setCustomSavedNotice(null),
-  }), [handleCustomTabOpen, customAnimations, customLibLoading, customLibError, customSelectedId,
-    customApplying, handleSelectCustomAnimation, refreshCustomAnimations, handleRenameCustomAnimation,
-    handleDeleteCustomAnimation, handleCustomOpenMapping, animReferenceId, customAutoMapped, boneMappingRestored,
-    customSavedNotice])
+  }), [handleCustomTabOpen, customAnimations, customLibLoading, customLibError,
+    customApplying, refreshCustomAnimations, handleCustomOpenMapping, animReferenceId,
+    customAutoMapped, boneMappingRestored, customSavedNotice])
 
   // Bundle for the SkeletonPanel Kimodo tab.
   // --- Auto Rig → MoCap (video-to-motion) -----------------------------------
@@ -11016,6 +11160,26 @@ export default function MeshEditorPage() {
           onClose={() => setShowBoneMapping(false)}
         />
       )}
+      {customLibOpen && (
+        <AnimationLibraryModal
+          animations={customAnimations}
+          loading={customLibLoading}
+          error={customLibError}
+          busy={customApplying || customImporting}
+          busyId={customBusyId}
+          importing={customImporting}
+          importProgress={customImportProgress}
+          parsed={customParsed}
+          onParseFiles={handleParseAnimationFiles}
+          onImport={handleImportParsedClips}
+          onCancelImport={handleCancelImport}
+          onApply={handleApplyCustomAnimations}
+          onRename={handleRenameCustomAnimation}
+          onDelete={handleDeleteCustomAnimations}
+          onClose={() => setCustomLibOpen(false)}
+        />
+      )}
+
       {motionLibOpen && (
         <MotionLibraryModal
           motions={motionLibrary}
