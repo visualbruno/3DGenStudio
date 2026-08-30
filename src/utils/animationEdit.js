@@ -21,7 +21,7 @@
 // a quaternion, and written back as a delta quaternion premultiplied onto each
 // affected key — never as re-composed Euler per frame, which would throw away the
 // bake's continuity and flip axes wherever the Euler decomposition jumps.
-import { AnimationClip, Euler, Quaternion, VectorKeyframeTrack } from 'three'
+import { AnimationClip, Euler, Quaternion, QuaternionKeyframeTrack, VectorKeyframeTrack } from 'three'
 
 const DEG2RAD = Math.PI / 180
 const RAD2DEG = 180 / Math.PI
@@ -252,22 +252,58 @@ export function applyFramePosition(clip, trackName, frame, vector, {
 // The name follows whatever convention the bone's existing track uses instead of
 // assuming ".bones[Name].": a clip parsed from BVH or glTF uses the bare "Name." form.
 export function ensurePositionTrack(clip, boneName, restPosition) {
-  const grid = clipGrid(clip)
-  if (!grid || !boneName || !restPosition) return null
-  const row = grid.bones.find(b => b.boneName === boneName)
-  if (!row || row.position) return null          // unknown bone, or it already has one
-  const sibling = row.rotation ? findTrack(clip, row.rotation) : null
-  if (!sibling) return null
-  const trackName = sibling.name.replace(/\.quaternion$/, '.position')
+  return ensureTrack(clip, boneName, 'position', restPosition)
+}
 
-  const values = new Float32Array(grid.frameCount * 3)
-  for (let i = 0; i < grid.frameCount; i++) {
-    values[i * 3] = restPosition[0]
-    values[i * 3 + 1] = restPosition[1]
-    values[i * 3 + 2] = restPosition[2]
+// The same for a ROTATION track, which is what makes a bone the clip does not
+// animate at all editable: the reference the clip was retargeted from had nothing
+// to map onto it (a tail, an ear, Auto Rig's leftover `extra_*` bones), so the
+// retarget wrote no track and the bone cannot be posed until one exists.
+//
+// Every key is the bone's rest orientation, so adding one changes nothing on
+// screen — it only gives the dock and the gizmo something to write to.
+export function ensureRotationTrack(clip, boneName, restQuaternion) {
+  return ensureTrack(clip, boneName, 'rotation', restQuaternion)
+}
+
+// Track NAMES follow whatever convention the clip already uses: a playback clip
+// binds through the SkinnedMesh's skeleton (".bones[Name].quaternion"), while a
+// source clip binds against scene nodes ("Name.quaternion"). Copying the shape off
+// an existing track is what keeps a clip readable by whichever of the two is
+// playing it — guessing one would produce a track the mixer silently ignores.
+function trackNameFor(clip, boneName, kind) {
+  const property = kind === 'rotation' ? 'quaternion' : 'position'
+  const sample = clip?.tracks?.[0]?.name || ''
+  return sample.startsWith('.bones[')
+    ? `.bones[${boneName}].${property}`
+    : `${boneName}.${property}`
+}
+
+// Shared by both: build a constant track on the clip's own frame grid and return a
+// NEW clip carrying it. The clip has to be rebuilt rather than mutated because the
+// mixer binds a clip's tracks once and never notices an appended one.
+function ensureTrack(clip, boneName, kind, restValue) {
+  const stride = kind === 'rotation' ? 4 : 3
+  const description = describeClip(clip)
+  if (!description || !boneName || restValue?.length !== stride) return null
+
+  const row = description.bones.find(b => b.boneName === boneName)
+  // Already has one, or the bone is off-grid (hand-curl tracks, rebuilt per bake).
+  if (row && (row[kind] || !row.editable)) return null
+
+  // Share the grid's `times` array, as every baked track does.
+  const grid = clip.tracks.find(t => t.times.length === description.frameCount)
+  if (!grid) return null
+
+  const values = new Float32Array(description.frameCount * stride)
+  for (let i = 0; i < description.frameCount; i++) {
+    for (let a = 0; a < stride; a++) values[i * stride + a] = restValue[a]
   }
-  // Shares the grid's `times` array, as every baked track does.
-  const track = new VectorKeyframeTrack(trackName, sibling.times, values)
+  const trackName = trackNameFor(clip, boneName, kind)
+  const track = kind === 'rotation'
+    ? new QuaternionKeyframeTrack(trackName, grid.times, values)
+    : new VectorKeyframeTrack(trackName, grid.times, values)
+
   const out = new AnimationClip(clip.name, clip.duration, [...clip.tracks, track])
   out.userData = { ...(clip.userData || {}) }
   return { clip: out, trackName }
@@ -524,6 +560,57 @@ export function clearFrameValue(clip, trackName, frame) {
   if (!changed) return null
   return { before, after: Float32Array.from(track.values) }
 }
+
+// Stop a clip animating one bone at all: every key on its tracks takes the bone's
+// REST value, so the bone stands where it would if the clip had never touched it.
+//
+// Why flatten rather than delete the tracks: the dock is built on frame == index,
+// and a clip with one track shorter than the rest has no frame grid any more.
+// A constant track is also what the user is really asking for — the bone still
+// exists, still exports, and the edit is one undo away — whereas a removed track
+// would leave the bone frozen at whatever pose the mixer last wrote to it.
+//
+// `rest` is { rotation: [x,y,z,w], position: [x,y,z] } read off the bind pose by
+// the caller (which is the only place that has the skeleton). Either half may be
+// missing, in which case that track holds its OWN first frame instead — still a
+// bone that does not move, just posed as the clip started.
+export function clearBoneAnimation(clip, boneName, rest = null) {
+  const description = describeClip(clip)
+  const row = description?.bones.find(b => b.boneName === boneName)
+  // Off-grid bones (the hand-curl finger tracks) are rebuilt by every bake, so
+  // clearing one would be undone by the next toggle.
+  if (!row || !row.editable) return null
+
+  const entries = []
+  for (const [kind, trackName, stride] of [
+    ['rotation', row.rotation, 4],
+    ['position', row.position, 3],
+  ]) {
+    if (!trackName) continue
+    const track = findTrack(clip, trackName)
+    const n = track ? Math.floor(track.values.length / stride) : 0
+    if (!n) continue
+
+    const restValue = rest?.[kind]
+    const target = restValue?.length === stride ? restValue : track.values.slice(0, stride)
+    const before = Float32Array.from(track.values)
+    for (let i = 0; i < n; i++) {
+      for (let a = 0; a < stride; a++) track.values[i * stride + a] = target[a]
+    }
+
+    let changed = false
+    for (let i = 0; i < before.length; i++) {
+      if (Math.abs(track.values[i] - before[i]) > 1e-7) { changed = true; break }
+    }
+    // Already constant: put the exact bytes back so an unchanged track never
+    // lands in the history as a no-op entry.
+    if (!changed) { track.values.set(before); continue }
+    entries.push({ trackName, before, after: Float32Array.from(track.values) })
+  }
+
+  return entries.length ? { entries } : null
+}
+
 
 // --- Smoothing the loop seam ------------------------------------------------
 // A looping clip plays … f[n-2], f[n-1], then wraps to f[0]. It shakes at the seam

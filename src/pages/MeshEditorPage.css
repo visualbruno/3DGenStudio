@@ -2665,6 +2665,21 @@
   gap: 0.3rem;
 }
 
+/* The inline "save this clip as a custom animation" field, which replaces its own
+   button in the header row while it is open. Narrow on purpose: it shares the row
+   with undo/redo/revert, and a name box wide enough to be comfortable would push
+   them off a 1280px window. */
+.mesh-editor-anim-dock__save {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.mesh-editor-anim-dock__save input {
+  width: 11rem;
+}
+
+
 .mesh-editor-anim-dock__frame {
   width: 5rem;
   text-align: right;
@@ -2765,6 +2780,34 @@
   font-size: 1rem;
   opacity: 0.7;
 }
+
+/* A bone of the rig that this clip does not animate. Listed so it can be brought
+   in, dimmed so the list still reads as "what this clip does" at a glance. */
+.mesh-editor-anim-dock__bone--idle .mesh-editor-anim-dock__bone-name {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* "Stop animating this bone". Hidden until the row is hovered, focused or
+   selected: a delete icon on all 27 rows at once reads as clutter in a column
+   this narrow, and this is a deliberate action rather than a frequent one. */
+.mesh-editor-anim-dock__bone-clear,
+.mesh-editor-anim-dock__bone-add {
+  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mesh-editor-anim-dock__bone:hover .mesh-editor-anim-dock__bone-clear,
+.mesh-editor-anim-dock__bone:focus-within .mesh-editor-anim-dock__bone-clear,
+.mesh-editor-anim-dock__bone--selected .mesh-editor-anim-dock__bone-clear,
+.mesh-editor-anim-dock__bone:hover .mesh-editor-anim-dock__bone-add,
+.mesh-editor-anim-dock__bone:focus-within .mesh-editor-anim-dock__bone-add,
+.mesh-editor-anim-dock__bone--selected .mesh-editor-anim-dock__bone-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 
 .mesh-editor-anim-dock__editor {
   display: flex;

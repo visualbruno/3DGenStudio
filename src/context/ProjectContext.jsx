@@ -819,6 +819,14 @@ export function ProjectProvider({ children }) {
     formData.append('name', payload?.name ?? '')
     formData.append('saveMode', payload?.saveMode ?? 'replace')
 
+    // Bone mappings the mesh editor wants stored ALONGSIDE the file (in the
+    // asset's metadata), so a later session can retarget animations onto this
+    // mesh without redoing the mapping. Omitted when the editor has none, which
+    // the server reads as "leave whatever is already stored alone".
+    if (payload?.boneMappings) {
+      formData.append('boneMappings', JSON.stringify(payload.boneMappings))
+    }
+
     if (payload?.meshFile) {
       formData.append('meshFile', payload.meshFile)
     }
@@ -835,6 +843,24 @@ export function ProjectProvider({ children }) {
     }
 
     return data
+  }
+
+  // The asset row itself (name, filePath, metadata, ...). The mesh editor reads
+  // it for the bone mappings saved with a mesh; anything else that needs the
+  // stored metadata of the thing it is editing can use it too.
+  const getAssetRecord = async ({ assetId, filePath, type = 'mesh' } = {}) => {
+    const params = new URLSearchParams()
+    if (Number.isFinite(Number(assetId)) && Number(assetId) > 0) params.set('assetId', String(Number(assetId)))
+    else if (filePath) { params.set('filePath', filePath); params.set('type', type) }
+    else return null
+
+    const res = await fetch(`${API_BASE}/assets/record?${params.toString()}`)
+    if (res.status === 404) return null
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to read the asset record')
+    }
+    return await res.json()
   }
 
   const getPaintDocument = async (assetId) => {
@@ -1450,6 +1476,7 @@ export function ProjectProvider({ children }) {
       saveImageEditorFile,
       uploadAssetThumbnail,
       saveMeshEdit,
+      getAssetRecord,
       getPaintDocument,
       savePaintDocument,
       attachExistingAsset,

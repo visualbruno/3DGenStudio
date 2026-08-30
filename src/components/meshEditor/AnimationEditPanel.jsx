@@ -80,6 +80,80 @@ function timeLabel(seconds) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${String(Math.round((s % 1) * 100)).padStart(2, '0')}`
 }
 
+// Save the clip on screen — hand edits included — to the custom-animation
+// library, where it can be put on any other rigged mesh later.
+//
+// The name field is inline rather than a modal: this is a two-second action at
+// the end of an edit, and the only decision in it is what to call the result.
+// It defaults to the clip's own name, which is right more often than not.
+function SaveAnimationControl({ clipName, saving, onSave }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const inputRef = useRef(null)
+
+  useEffect(() => { if (open) inputRef.current?.select() }, [open])
+
+  if (!onSave) return null
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="mesh-editor-btn mesh-editor-btn--ghost"
+        onClick={() => { setName(clipName || ''); setOpen(true) }}
+        title="Save this animation — with the edits — to your custom animations, so it can be applied to any other rigged mesh later"
+      >
+        <span className="material-symbols-outlined">bookmark_add</span>
+        <span>Save animation</span>
+      </button>
+    )
+  }
+
+  const commit = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    await onSave(trimmed)
+    setOpen(false)
+  }
+
+  return (
+    <div className="mesh-editor-anim-dock__save">
+      <input
+        ref={inputRef}
+        type="text"
+        className="mesh-editor-panel__input"
+        value={name}
+        disabled={saving}
+        onChange={e => setName(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter') commit()
+          else if (e.key === 'Escape') setOpen(false)
+        }}
+        placeholder="Animation name"
+        aria-label="Name for the saved animation"
+      />
+      <button
+        type="button"
+        className="mesh-editor-icon-btn"
+        onClick={commit}
+        disabled={saving || !name.trim()}
+        title="Save it"
+      >
+        <span className="material-symbols-outlined">{saving ? 'progress_activity' : 'check'}</span>
+      </button>
+      <button
+        type="button"
+        className="mesh-editor-icon-btn"
+        onClick={() => setOpen(false)}
+        disabled={saving}
+        title="Cancel"
+      >
+        <span className="material-symbols-outlined">close</span>
+      </button>
+    </div>
+  )
+}
+
 export default function AnimationEditPanel({
   clipName,
   description,          // from describeClip: { fps, frameCount, duration, times, bones }
@@ -97,6 +171,9 @@ export default function AnimationEditPanel({
   onSpanChange,
   onEdit,               // (trackName, [x, y, z]) — nulls mean "leave this axis"
   onClearValue,         // (trackName) — this frame takes the value between its neighbours
+  onClearBone,          // (boneName) — every frame of that bone takes its rest pose
+  allBones,             // every bone NAME in the rig, hierarchy order — see `rows`
+  onAddBone,            // (boneName) — give a bone the clip ignores a rotation track
   onFrameOperation,     // ('insert' | 'append' | 'delete' | 'trimBefore' | 'trimAfter')
   onSmoothLoop,         // ease the last `seamFrames` into the start pose
   seamFrames,
@@ -114,22 +191,41 @@ export default function AnimationEditPanel({
   canRedo,
   onUndo,
   onRedo,
+  onSaveCustom,         // (name) — store this clip in the custom-animation library
+  savingCustom,
   onClose,
 }) {
   const [search, setSearch] = useState('')
   const rowRefs = useRef(new Map())
   const bones = useMemo(() => description?.bones || [], [description])
+  // The list is the RIG, not the clip. A clip only carries tracks for the bones its
+  // reference could be mapped onto, so a tail, an ear or one of Auto Rig's leftover
+  // `extra_*` bones simply had no row — and no way to be animated at all. Bones the
+  // clip does not drive are listed too, and adding one is a click.
+  //
+  // Hierarchy order comes from the skeleton; a described bone that is somehow not in
+  // it (a renamed rig mid-session) is kept at the end rather than dropped.
+  const rows = useMemo(() => {
+    if (!allBones?.length) return bones
+    const described = new Map(bones.map(b => [b.boneName, b]))
+    const ordered = allBones.map(name => described.get(name) || {
+      boneName: name, rotation: null, position: null, editable: true, keyCount: 0,
+    })
+    const seen = new Set(allBones)
+    return [...ordered, ...bones.filter(b => !seen.has(b.boneName))]
+  }, [bones, allBones])
+  const animatedCount = bones.length
   const frameCount = description?.frameCount || 0
   const row = useMemo(
-    () => bones.find(b => b.boneName === selectedBone) || null,
-    [bones, selectedBone],
+    () => rows.find(b => b.boneName === selectedBone) || null,
+    [rows, selectedBone],
   )
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return bones
-    return bones.filter(b => b.boneName.toLowerCase().includes(q))
-  }, [bones, search])
+    if (!q) return rows
+    return rows.filter(b => b.boneName.toLowerCase().includes(q))
+  }, [rows, search])
 
   // Values are read straight off the clip, which is mutated in place — `revision`
   // and `frame` are what make that safe to memoise.
@@ -204,6 +300,11 @@ export default function AnimationEditPanel({
         </div>
 
         <div className="mesh-editor-anim-dock__head-actions">
+          <SaveAnimationControl
+            clipName={clipName}
+            saving={savingCustom}
+            onSave={onSaveCustom}
+          />
           <button type="button" className="mesh-editor-icon-btn" onClick={onUndo} disabled={!canUndo} title="Undo the last edit">
             <span className="material-symbols-outlined">undo</span>
           </button>
@@ -318,9 +419,9 @@ export default function AnimationEditPanel({
       <div className="mesh-editor-anim-dock__body">
         <div className="mesh-editor-anim-dock__bones">
           <div className="mesh-editor-anim-dock__bones-head">
-            <span className="mesh-editor-panel__hint">Animated bones ({bones.length})</span>
+            <span className="mesh-editor-panel__hint">Bones ({rows.length}) · {animatedCount} animated</span>
           </div>
-          {bones.length > 8 && (
+          {rows.length > 8 && (
             <div className="mesh-editor-anim__search">
               <span className="material-symbols-outlined">search</span>
               <input
@@ -340,22 +441,59 @@ export default function AnimationEditPanel({
           )}
           <div className="mesh-editor-anim-dock__bones-list">
             {filtered.length === 0 ? (
-              <div className="mesh-editor-layers-panel__empty">No animated bone matches that.</div>
+              <div className="mesh-editor-layers-panel__empty">No bone matches that.</div>
             ) : filtered.map(b => (
-              <button
+              <div
                 key={b.boneName}
-                type="button"
+                role="button"
+                tabIndex={0}
                 ref={el => { if (el) rowRefs.current.set(b.boneName, el); else rowRefs.current.delete(b.boneName) }}
-                className={`mesh-editor-anim-dock__bone ${b.boneName === selectedBone ? 'mesh-editor-anim-dock__bone--selected' : ''}`}
+                className={`mesh-editor-anim-dock__bone ${b.boneName === selectedBone ? 'mesh-editor-anim-dock__bone--selected' : ''} ${b.rotation || b.position ? '' : 'mesh-editor-anim-dock__bone--idle'}`}
                 onClick={() => onSelectBone(b.boneName)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectBone(b.boneName) }
+                }}
                 title={b.editable
-                  ? `${b.boneName} — ${b.rotation ? 'rotation' : ''}${b.rotation && b.position ? ' + ' : ''}${b.position ? 'position' : ''}`
+                  ? (b.rotation || b.position
+                    ? `${b.boneName} — ${b.rotation ? 'rotation' : ''}${b.rotation && b.position ? ' + ' : ''}${b.position ? 'position' : ''}`
+                    : `${b.boneName} is not animated by this clip — add it to pose it`)
                   : `${b.boneName} is driven by the Hand curl sliders (${b.keyCount} keys, off the frame grid) and is rebuilt on every bake — not editable here`}
               >
                 <span className="mesh-editor-anim-dock__bone-name">{b.boneName}</span>
                 {b.position && <span className="material-symbols-outlined" title="Has a position track">open_with</span>}
                 {!b.editable && <span className="material-symbols-outlined">lock</span>}
-              </button>
+                {/* Two mutually exclusive actions, because a row is in one of two
+                    states: a bone the clip drives can be cleared, and one it
+                    ignores can be brought in. */}
+                {b.editable && onClearBone && (b.rotation || b.position) && (
+                  <button
+                    type="button"
+                    className="mesh-editor-icon-btn mesh-editor-anim-dock__bone-clear"
+                    onClick={e => { e.stopPropagation(); onClearBone(b.boneName) }}
+                    disabled={playing}
+                    title={playing
+                      ? 'Pause the clip to clear a bone'
+                      : `Clear ${b.boneName}'s animation — every frame takes the bone's rest pose, so the clip stops moving it. Undoable.`}
+                    aria-label={`Clear ${b.boneName}'s animation`}
+                  >
+                    <span className="material-symbols-outlined">delete_sweep</span>
+                  </button>
+                )}
+                {b.editable && onAddBone && !b.rotation && !b.position && (
+                  <button
+                    type="button"
+                    className="mesh-editor-icon-btn mesh-editor-anim-dock__bone-add"
+                    onClick={e => { e.stopPropagation(); onAddBone(b.boneName) }}
+                    disabled={playing}
+                    title={playing
+                      ? 'Pause the clip to add a bone'
+                      : `Add ${b.boneName} to this animation — every frame starts at its rest pose, so nothing changes until you pose it`}
+                    aria-label={`Add ${b.boneName} to this animation`}
+                  >
+                    <span className="material-symbols-outlined">add</span>
+                  </button>
+                )}
+              </div>
             ))}
           </div>
         </div>
@@ -399,6 +537,30 @@ export default function AnimationEditPanel({
                   ))}
                 </div>
               </div>
+
+              {/* The bone is in the rig but not in the clip. Adding it is the same
+                  operation the gizmo performs on the first drag, offered here so it
+                  does not depend on finding the gizmo first. */}
+              {!rotation && row.editable && (
+                <div className="mesh-editor-anim-dock__row">
+                  <span className="mesh-editor-anim-dock__row-label">Rotation (°)</span>
+                  <button
+                    type="button"
+                    className="mesh-editor-anim-dock__scope"
+                    onClick={() => onAddBone?.(row.boneName)}
+                    disabled={playing || !onAddBone}
+                    title="Give this bone a rotation track, every key at its rest pose — nothing moves until you edit it. Rotating the bone with the gizmo does this for you."
+                  >
+                    <span className="material-symbols-outlined">add</span>
+                    <span>Add to animation</span>
+                  </button>
+                  <span className="mesh-editor-panel__hint">
+                    This clip does not animate this bone — the reference it came from had nothing
+                    mapped onto it.
+                  </span>
+                </div>
+              )}
+
 
               {rotation && (
                 <div className="mesh-editor-anim-dock__row">

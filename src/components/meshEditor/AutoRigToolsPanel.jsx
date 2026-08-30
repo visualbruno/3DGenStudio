@@ -35,6 +35,7 @@ export default function AutoRigToolsPanel({
   rigBoneCount,
   rigDropped,
   rigEdited,
+  boneMappings,
   weightPaint,
   disabled,
 }) {
@@ -92,6 +93,29 @@ export default function AutoRigToolsPanel({
           <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em', color: '#8ff5ff' }}>
             <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>edit</span>
             <span>Rig edited by hand — save the mesh (or a new version) to keep the bone and weight changes.</span>
+          </div>
+        )}
+        {/* Bone mappings are as much a part of an animatable mesh as its weights,
+            and they are just as invisible: the Animations / Kimodo / Custom tabs
+            all read them, but nothing else in the editor shows they exist. Saying
+            it here is also the only place that can warn that a mapping made this
+            session is still only in memory. */}
+        {!!boneMappings?.labels?.length && (
+          <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '1.1em', color: '#4caf50' }}>link</span>
+            <span>
+              Bone mapping saved with this mesh for {boneMappings.labels.join(', ')} — reopening it
+              goes straight to the clips.
+            </span>
+          </div>
+        )}
+        {boneMappings?.dirty && (
+          <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em', color: '#8ff5ff' }}>
+            <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>info</span>
+            <span>
+              The bone mapping you just made is only in memory — save the mesh (or a new version) to
+              keep it with the mesh.
+            </span>
           </div>
         )}
         {rigDropped && (

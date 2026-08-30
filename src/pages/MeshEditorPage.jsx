@@ -168,7 +168,7 @@ import AnimationBoneGizmo from '../components/meshEditor/AnimationBoneGizmo'
 import { loadReferenceScene, loadReferenceRigScene, loadTargetScene, autoMapBones, retargetAnimationClip, makeClipInPlace, exportAnimatedGlb, findUpperArmTargets, getReference } from '../utils/animationLibrary'
 import { withHandPose } from '../utils/handPose'
 import { describeClip, applyFrameEdit, applyFrameOperation, applyFrameRotation, applyFramePosition,
-  copyFramePose, pasteFramePose, ensurePositionTrack, clearFrameValue, smoothLoopSeam,
+  copyFramePose, pasteFramePose, ensurePositionTrack, ensureRotationTrack, clearFrameValue, clearBoneAnimation, smoothLoopSeam,
   restoreTrackValues, frameTime,
   DEFAULT_EDIT_SCOPE, DEFAULT_EDIT_SPAN } from '../utils/animationEdit'
 import { MOCAP_SOURCE_ID, MOCAP_MAX_FRAMES, MOCAP_MIN_FRAMES, MOCAP_ASSUMED_FPS,
@@ -178,6 +178,9 @@ import { MOCAP_SOURCE_ID, MOCAP_MAX_FRAMES, MOCAP_MIN_FRAMES, MOCAP_ASSUMED_FPS,
   forgetMocapRig, MOCAP_BONE_GROUPS } from '../utils/mocapGen'
 import { KIMODO_SOURCE_ID, countPromptSegments, generateMotionClip, loadKimodoSkeletonSource,
   listSavedMotions, saveMotion, deleteSavedMotion, loadSavedMotionClip } from '../utils/motionGen'
+import { CUSTOM_SOURCE_ID, buildCustomAnimationDocument, customClipFromDocument,
+  customMappingKey, customSourceFromDocument, fetchCustomAnimationDocument, listCustomAnimations,
+  mapCustomBones, saveCustomAnimation, deleteCustomAnimation, renameCustomAnimation } from '../utils/customAnimations'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
@@ -423,6 +426,7 @@ export default function MeshEditorPage() {
     subscribeToComfyWorkflowProgress,
     updateProjectNode,
     uploadAssetThumbnail,
+    getAssetRecord,
     getPaintDocument,
     savePaintDocument
   } = useProjects()
@@ -606,6 +610,40 @@ export default function MeshEditorPage() {
   const [animArmTargets, setAnimArmTargets] = useState(null)     // { left:[], right:[] } upper-arm target bones
   const [checkedAnimations, setCheckedAnimations] = useState(() => new Set())  // clip names ticked for Save
   const [animSaving, setAnimSaving] = useState(false)            // exporting/saving the animated mesh
+  // --- Bone mappings stored WITH the mesh -----------------------------------
+  // Mapping a reference skeleton onto a rig is a minute of careful work and it is
+  // valid for as long as the rig is, so it is kept in the asset's metadata rather
+  // than thrown away with the page: { [sourceKey]: { [targetBone]: sourceBone } },
+  // where sourceKey is the animation source ('human', 'kimodo', 'custom:<rig>'…).
+  //
+  // A ref as well as state because Save reads it from callbacks that must not be
+  // rebuilt (and re-memoised down the tree) every time a mapping changes.
+  const [storedBoneMappings, setStoredBoneMappings] = useState(null)
+  const storedBoneMappingsRef = useRef(null)
+  // True once a mapping has been made or changed but not yet written to the mesh —
+  // the panel says so, because the only thing that persists it is a save.
+  const [boneMappingsDirty, setBoneMappingsDirty] = useState(false)
+  // The current mapping came back off the mesh rather than from the modal or the
+  // auto-matcher. Worth saying: the clips simply appear, and without a word about
+  // why, a mapping that was silently reused looks like one that was guessed.
+  const [boneMappingRestored, setBoneMappingRestored] = useState(false)
+
+  // --- Auto Rig → Custom animations (hand-edited clips, reusable on any mesh) ---
+  // The library rows only (no clip data): applying one fetches its document, which
+  // carries the skeleton it was authored on and becomes the source rig.
+  const [customAnimations, setCustomAnimations] = useState([])
+  const [customLibLoading, setCustomLibLoading] = useState(false)
+  const [customLibError, setCustomLibError] = useState(null)
+  const [customSelectedId, setCustomSelectedId] = useState('')
+  const [customApplying, setCustomApplying] = useState(false)
+  const [customSavingClip, setCustomSavingClip] = useState(false)
+  const [customSavedNotice, setCustomSavedNotice] = useState(null)
+  const [customAutoMapped, setCustomAutoMapped] = useState(false)
+  // The rig the animations in the source slot were authored on. Two animations
+  // that share it share a bone mapping, so a second one can be added to the slot
+  // without asking the user to map anything again.
+  const customRigKeyRef = useRef(null)
+
   // --- Auto Rig → Kimodo (text-to-motion) ---
   // Kimodo shares the Animations pipeline above rather than duplicating it: a
   // generated clip becomes a clip on animSourceRef, is retargeted by the same
@@ -2401,6 +2439,7 @@ export default function MeshEditorPage() {
           // A new mesh means a new target skeleton — reset the Animations feature.
           setAnimReferenceId('')
           setAnimMapping(null)
+          setBoneMappingRestored(false)
           setAnimClips([])
           setSelectedAnimation(null)
           setAnimPreview(null)
@@ -2409,6 +2448,8 @@ export default function MeshEditorPage() {
           setAnimArmExtension(0)
           setCheckedAnimations(new Set())
           animSourceRef.current = null
+          customRigKeyRef.current = null
+          setCustomSelectedId('')
           animTargetRef.current = null
           retargetedClipsRef.current.clear()
           editedClipsRef.current.clear()
@@ -4885,6 +4926,7 @@ export default function MeshEditorPage() {
       retargetedClipsRef.current.clear()
       resetAnimEdits()
       setAnimMapping(null)
+      setBoneMappingRestored(false)
       setAnimClips([])
       setSelectedAnimation(null)
       setAnimPreview(null)
@@ -4962,6 +5004,7 @@ export default function MeshEditorPage() {
     setSelectedAnimation(null)
     if (mappingToo) {
       setAnimMapping(null)
+      setBoneMappingRestored(false)
       setAnimClips([])
       setAnimArmTargets(null)
       setAnimArmExtension(0)
@@ -5391,9 +5434,122 @@ export default function MeshEditorPage() {
     return target
   }, [modelUrl])
 
+  // --- Bone mappings that live on the mesh ---------------------------------
+  // Mapping a source skeleton onto a rig is careful, fiddly work, and it stays
+  // valid for as long as the rig does — so it is stored in the asset's metadata
+  // and read back here, rather than redone from scratch every time the mesh is
+  // opened to add another animation.
+
+  // Read once per asset. The mesh-editor save route carries metadata onto every
+  // new version, so a mapping made on one version is still on the next.
+  const hydratedBoneMappingsForRef = useRef(null)
+  useEffect(() => {
+    const hasAsset = Number.isFinite(numericAssetId) && numericAssetId > 0
+    const key = hasAsset ? `asset:${numericAssetId}` : (filePath ? `path:${filePath}` : '')
+    if (!key) {
+      storedBoneMappingsRef.current = null
+      setStoredBoneMappings(null)
+      setBoneMappingsDirty(false)
+      return undefined
+    }
+    // The context's functions are rebuilt on every provider render, so the guard
+    // — not the dependency list — is what makes this run once per mesh.
+    if (hydratedBoneMappingsForRef.current === key) return undefined
+    hydratedBoneMappingsForRef.current = key
+
+    let cancelled = false
+    let settled = false
+    ;(async () => {
+      try {
+        const record = await getAssetRecord({
+          assetId: hasAsset ? numericAssetId : null,
+          filePath,
+          type: 'mesh',
+        })
+        settled = true
+        if (cancelled) return
+        const raw = record?.metadata
+        const metadata = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {})
+        const mappings = metadata?.boneMappings && typeof metadata.boneMappings === 'object'
+          ? metadata.boneMappings
+          : null
+        storedBoneMappingsRef.current = mappings
+        setStoredBoneMappings(mappings)
+        setBoneMappingsDirty(false)
+      } catch (err) {
+        // Not being able to read them is not a reason to stop: the tab still
+        // works, it just starts from an unmapped skeleton.
+        settled = true
+        console.warn('Could not read the bone mappings saved with this mesh:', err)
+      }
+    })()
+    // StrictMode mounts, tears down and mounts again. Without RELEASING the guard
+    // here, that sequence loses the read entirely: the first run starts the fetch
+    // and is then cancelled, and the second run skips because the guard already
+    // names this mesh — so the mapping silently never arrives, which is exactly
+    // how this shipped broken.
+    return () => {
+      cancelled = true
+      if (!settled) hydratedBoneMappingsForRef.current = null
+    }
+  }, [numericAssetId, filePath, getAssetRecord])
+
+  // Which key a mapping is filed under: the animation SOURCE it belongs to.
+  const mappingStorageKey = useCallback((referenceId) => {
+    if (!referenceId) return null
+    // Custom animations key by the RIG they were authored on, not by the clip, so
+    // mapping one maps every animation saved off the same skeleton.
+    if (referenceId === CUSTOM_SOURCE_ID) {
+      return customRigKeyRef.current ? customMappingKey(customRigKeyRef.current) : null
+    }
+    // MoCap has no mapping to remember: the service is conditioned on this rig and
+    // returns our own bone names, so the mapping is computed, not authored — and
+    // it is re-filtered live by the "what the capture drives" toggles.
+    if (referenceId === MOCAP_SOURCE_ID) return null
+    return referenceId
+  }, [])
+
+  const rememberBoneMapping = useCallback((referenceId, mapping) => {
+    const key = mappingStorageKey(referenceId)
+    if (!key || !mapping || !Object.keys(mapping).length) return
+    const next = { ...(storedBoneMappingsRef.current || {}), [key]: mapping }
+    storedBoneMappingsRef.current = next
+    setStoredBoneMappings(next)
+    // Nothing has written it to the mesh yet — that is what Save does.
+    setBoneMappingsDirty(true)
+  }, [mappingStorageKey])
+
+  // A stored mapping is only worth restoring if it still addresses THIS rig and
+  // THIS source: bones get renamed, deleted and re-rigged under it. Pairs that no
+  // longer resolve are dropped, and a mapping that lost more than half of itself
+  // is treated as belonging to a different skeleton — restoring a shredded one
+  // would animate a handful of bones and look like a bug, where an empty mapping
+  // at least says plainly that the bones need mapping.
+  const restoreBoneMapping = useCallback((referenceId, sourceNames, targetNames) => {
+    const key = mappingStorageKey(referenceId)
+    const stored = key ? storedBoneMappingsRef.current?.[key] : null
+    if (!stored) return null
+    const targets = new Set(targetNames || [])
+    const sources = new Set(sourceNames || [])
+    const usable = {}
+    for (const [target, source] of Object.entries(stored)) {
+      if (targets.has(target) && sources.has(source)) usable[target] = source
+    }
+    const kept = Object.keys(usable).length
+    return kept && kept * 2 >= Object.keys(stored).length ? usable : null
+  }, [mappingStorageKey])
+
+  // Put a mapping into play: the arm controls and the clip list both hang off it.
+  const applyAnimMapping = useCallback((mapping, source) => {
+    setAnimMapping(mapping)
+    setAnimArmTargets(findUpperArmTargets(mapping))
+    setAnimClips((source?.clips || []).map(c => ({ name: c.name })))
+  }, [])
+
   const handleSelectAnimReference = useCallback(async (referenceId) => {
     setAnimReferenceId(referenceId)
     setAnimMapping(null)
+    setBoneMappingRestored(false)
     setBoneMapSkeletons(null)
     setAnimClips([])
     setSelectedAnimation(null)
@@ -5401,6 +5557,8 @@ export default function MeshEditorPage() {
     setAnimError(null)
     setCheckedAnimations(new Set())
     animSourceRef.current = null
+    customRigKeyRef.current = null
+    setCustomSelectedId('')
     retargetedClipsRef.current.clear()
     resetAnimEdits()
     if (!referenceId) return
@@ -5408,6 +5566,11 @@ export default function MeshEditorPage() {
     try {
       const [source] = await Promise.all([loadReferenceScene(referenceId), ensureAnimTargetScene()])
       animSourceRef.current = source
+      // The mesh remembers how this reference was mapped onto it last time, so
+      // picking it again goes straight to the clip list instead of the modal.
+      const restored = restoreBoneMapping(referenceId, source.boneNames, animTargetRef.current?.boneNames)
+      if (restored) applyAnimMapping(restored, source)
+      setBoneMappingRestored(!!restored)
     } catch (err) {
       console.error('Failed to load animation reference:', err)
       setAnimError(err?.message || 'Failed to load the animation reference.')
@@ -5415,7 +5578,7 @@ export default function MeshEditorPage() {
     } finally {
       setAnimLoading(false)
     }
-  }, [ensureAnimTargetScene, resetAnimEdits])
+  }, [ensureAnimTargetScene, resetAnimEdits, restoreBoneMapping, applyAnimMapping])
 
   // `referenceIdOverride` exists because of a stale-closure trap: the Kimodo tab
   // calls ensureKimodoSource() (which setAnimReferenceId's to 'kimodo') and then
@@ -5431,6 +5594,13 @@ export default function MeshEditorPage() {
     if (!animSourceRef.current || !animTargetRef.current) {
       setAnimLoading(true)
       try {
+        if (!animSourceRef.current && referenceId === CUSTOM_SOURCE_ID) {
+          // Its skeleton lives in the stored document, so there is nothing to
+          // reload here — the animation has to be picked first.
+          setAnimError('Pick a saved animation first — its skeleton is what gets mapped.')
+          setAnimLoading(false)
+          return
+        }
         if (!animSourceRef.current) {
           animSourceRef.current = referenceId === KIMODO_SOURCE_ID
             ? await loadKimodoSkeletonSource()
@@ -5453,7 +5623,9 @@ export default function MeshEditorPage() {
     let source = null
     // Kimodo has no rig GLB — its source scene IS a bare armature parsed from the
     // service's rest-pose BVH, so go straight to the fallback below.
-    if (referenceId !== KIMODO_SOURCE_ID) {
+    // A custom animation is in the same position: its skeleton is the one stored
+    // in its document, and there is no separate rig file for it either.
+    if (referenceId !== KIMODO_SOURCE_ID && referenceId !== CUSTOM_SOURCE_ID) {
       try {
         const rig = await loadReferenceRigScene(referenceId)
         source = extractSkeletonFromObject(rig.scene)
@@ -5479,14 +5651,22 @@ export default function MeshEditorPage() {
     const source = animSourceRef.current
     const target = animTargetRef.current
     if (!source || !target) return {}
+    // A custom animation gets the identity-first matcher: it usually came off a
+    // rig named exactly like this one, where an exact name beats the heuristic.
+    if (animReferenceId === CUSTOM_SOURCE_ID) return mapCustomBones(source.boneNames, target.boneNames)
     return autoMapBones(source.boneNames, target.boneNames, animReferenceId)
   }, [animReferenceId])
 
   const handleSaveBoneMapping = useCallback((mapping) => {
+    // Stored on the mesh (written out by the next save), so the next session
+    // that opens it can retarget straight away.
+    rememberBoneMapping(animReferenceId, mapping)
+    setBoneMappingRestored(false)
     setAnimMapping(mapping)
     setAnimArmTargets(findUpperArmTargets(mapping))
     // The user has now seen and accepted the mapping, so stop calling it automatic.
     setKimodoAutoMapped(false)
+    setCustomAutoMapped(false)
     setShowBoneMapping(false)
     const clips = animSourceRef.current?.clips || []
     setAnimClips(clips.map(c => ({ name: c.name })))
@@ -5498,7 +5678,7 @@ export default function MeshEditorPage() {
     retargetedClipsRef.current.clear()
     resetAnimEdits()
     setCheckedAnimations(new Set())
-  }, [resetAnimEdits])
+  }, [resetAnimEdits, rememberBoneMapping, animReferenceId])
 
   // Retarget a reference clip onto the target skeleton, memoised by clip name so
   // playback and Save reuse the same bake. Returns the THREE.AnimationClip.
@@ -5643,6 +5823,18 @@ export default function MeshEditorPage() {
     () => (animPreview?.clip ? describeClip(animPreview.clip) : null),
     [animPreview?.clip],
   )
+
+  // Every bone of the rig being animated, in hierarchy order — NOT only the ones
+  // the clip drives. The reference a clip was retargeted from rarely covers a whole
+  // rig (a tail, an ear, Auto Rig's leftover `extra_*` bones map to nothing), and
+  // those bones were unreachable while the dock listed the clip's tracks alone.
+  // Read off the skeleton the mixer is playing, which is what a track name has to
+  // resolve against.
+  const animAllBones = useMemo(
+    () => animPreview?.skinnedMesh?.skeleton?.bones?.map(b => b.name) || [],
+    [animPreview],
+  )
+
 
   // Single source of truth for "the dock is on screen": the canvas shell shrinks by
   // exactly the dock's height, so if this and the dock's own render condition ever
@@ -5846,13 +6038,17 @@ export default function MeshEditorPage() {
     if (!clipName || !clip || !bone) return
     const description = describeClip(clip)
     const row = description?.bones.find(b => b.boneName === bone.name)
-    if (!row?.editable) return
+    // A bone with no tracks at all has no row; only a LOCKED row is refused.
+    if (row && !row.editable) return
 
-    let trackName = mode === 'translate' ? row.position : row.rotation
-    if (mode === 'translate' && !trackName) {
-      // `bone.position` is the bind local position for a bone with no position track:
-      // the mixer only ever writes the ones a track drives.
-      const created = ensurePositionTrack(clip, bone.name, bone.position.toArray())
+    let trackName = mode === 'translate' ? row?.position : row?.rotation
+    if (!trackName) {
+      // The bone's current local transform is its rest one — the mixer only writes
+      // what a track drives — so the new track holds the pose the clip already
+      // shows, and the drag about to happen is the first thing that changes it.
+      const created = mode === 'translate'
+        ? ensurePositionTrack(clip, bone.name, bone.position.toArray())
+        : ensureRotationTrack(clip, bone.name, bone.quaternion.toArray())
       if (!created) return
       clip = created.clip
       trackName = created.trackName
@@ -5863,6 +6059,7 @@ export default function MeshEditorPage() {
       setAnimPreview(prev => (prev ? { ...prev, clip } : prev))
       setAnimEditRevision(r => r + 1)
     }
+
     if (!trackName) return
     const track = clip.tracks.find(t => t.name === trackName)
     if (!track) return
@@ -5932,6 +6129,34 @@ export default function MeshEditorPage() {
     setAnimEditRevision(r => r + 1)
   }, [selectedAnimation, animGizmoBone])
 
+  // Bring a bone the clip does not animate into it: a rotation track whose every
+  // key is the bone's rest orientation. Nothing moves until an edit does — this
+  // only gives the fields and the gizmo something to write to.
+  //
+  // `bone.quaternion` IS the rest orientation for such a bone: the mixer only ever
+  // writes the properties a track drives, and the retarget leaves the skeleton in
+  // its bind pose. (Same reasoning as `bone.position` for a position track.)
+  //
+  // Not recorded in history for the same reason as the position track: it changes
+  // no pose. What it does change is the clip OBJECT, so the preview and the drag's
+  // own ref are swapped synchronously.
+  const handleAnimAddBone = useCallback((boneName) => {
+    const clipName = selectedAnimation
+    const clip = animClipRef.current
+    const bone = animPreview?.skinnedMesh?.skeleton?.getBoneByName?.(boneName)
+    if (!clipName || !clip || !bone) return
+    const created = ensureRotationTrack(clip, boneName, bone.quaternion.toArray())
+    if (!created) return
+    animClipRef.current = created.clip
+    editedClipsRef.current.set(clipName, created.clip)
+    retargetedClipsRef.current.delete(clipName)
+    setAnimEditedClips(prev => (prev.has(clipName) ? prev : new Set(prev).add(clipName)))
+    setAnimPreview(prev => (prev ? { ...prev, clip: created.clip } : prev))
+    setAnimEditBone(boneName)
+    setAnimEditRevision(r => r + 1)
+    setFeedback(`${boneName} is now part of this animation — pose it with the gizmo or the fields.`)
+  }, [selectedAnimation, animPreview])
+
   // Clear one track's value at this frame: the frame takes the interpolation of its
   // neighbours, which is what deleting its key would look like without taking the
   // track off the frame grid.
@@ -5950,6 +6175,42 @@ export default function MeshEditorPage() {
     syncAnimEditCounts(clipName)
     setAnimEditRevision(r => r + 1)
   }, [selectedAnimation, animPlaying, animEditFrame, historyFor, syncAnimEditCounts])
+
+  // Stop the clip animating one bone entirely — the whole track flattened to the
+  // bone's rest pose, rather than clearing rotation and position frame by frame.
+  //
+  // The rest pose is read off the live skeleton with `skeleton.pose()`, which is
+  // the only place it exists (the clip carries poses, not the bind pose). Posing
+  // the skeleton is safe here even mid-preview: the mixer re-applies the clip on
+  // the very next frame, and the one bone it no longer drives is exactly the one
+  // that should now be standing at rest.
+  const handleAnimClearBone = useCallback((boneName) => {
+    const clipName = selectedAnimation
+    const clip = animClipRef.current
+    if (!clipName || !clip || animPlaying || !boneName) return
+
+    let rest = null
+    const skeleton = animPreview?.skinnedMesh?.skeleton
+    const bone = skeleton?.getBoneByName?.(boneName)
+    if (bone) {
+      skeleton.pose()
+      rest = { rotation: bone.quaternion.toArray(), position: bone.position.toArray() }
+    }
+
+    const result = clearBoneAnimation(clip, boneName, rest)
+    if (!result) return
+    editedClipsRef.current.set(clipName, clip)
+    setAnimEditedClips(prev => (prev.has(clipName) ? prev : new Set(prev).add(clipName)))
+    const history = historyFor(clipName)
+    // One entry for the bone, not one per track: undoing a cleared bone half way
+    // would leave it rotating in place with its position pinned, or the reverse.
+    history.undo.push({ kind: 'tracks', entries: result.entries })
+    if (history.undo.length > ANIM_EDIT_HISTORY_LIMIT) history.undo.shift()
+    history.redo.length = 0
+    syncAnimEditCounts(clipName)
+    setAnimEditRevision(r => r + 1)
+    setFeedback(`Cleared ${boneName}'s animation — it now holds its rest pose for the whole clip.`)
+  }, [selectedAnimation, animPlaying, animPreview, historyFor, syncAnimEditCounts])
 
   // Make the clip loop without a hitch: the last frame becomes the value halfway
   // between the penultimate and the first, so the step the wrap produces matches the
@@ -6058,7 +6319,11 @@ export default function MeshEditorPage() {
         name: `${baseName} (animated)`,
         saveMode: 'version',
         meshFile,
+        // Whatever bone mappings this session made ride along in the asset's
+        // metadata, so the version that comes out is ready to animate again.
+        boneMappings: storedBoneMappingsRef.current,
       })
+      setBoneMappingsDirty(false)
       setFeedback(`Saved mesh with ${clips.length} animation${clips.length === 1 ? '' : 's'} as a new version.`)
     } catch (err) {
       console.error('Failed to save animated mesh:', err)
@@ -6077,6 +6342,7 @@ export default function MeshEditorPage() {
     if (animReferenceId === KIMODO_SOURCE_ID && animSourceRef.current) return animSourceRef.current
     // Switching source rigs invalidates the mapping and every bake made against it.
     setAnimMapping(null)
+    setBoneMappingRestored(false)
     setBoneMapSkeletons(null)
     setAnimClips([])
     setSelectedAnimation(null)
@@ -6122,6 +6388,16 @@ export default function MeshEditorPage() {
       // SOMA->Mixamo table makes auto-mapping reliable for rigs Auto Rig
       // produced; the user can still refine it in the modal.
       let mapping = animMapping
+      if (!mapping) {
+        // A mapping the user made for Kimodo on an earlier visit is stored on
+        // the mesh; prefer it over guessing again.
+        mapping = restoreBoneMapping(KIMODO_SOURCE_ID, source.boneNames, target.boneNames)
+        if (mapping) {
+          setAnimMapping(mapping)
+          setAnimArmTargets(findUpperArmTargets(mapping))
+          setKimodoAutoMapped(false)
+        }
+      }
       if (!mapping) {
         mapping = autoMapBones(source.boneNames, target.boneNames, KIMODO_SOURCE_ID)
         if (Object.keys(mapping).length) {
@@ -6181,7 +6457,7 @@ export default function MeshEditorPage() {
       setKimodoProgress(null)
     }
   }, [kimodoRunning, kimodoPrompt, kimodoDuration, ensureKimodoSource,
-    ensureAnimTargetScene, animMapping, animMatchRestPose, showRetargetedClip])
+    ensureAnimTargetScene, animMapping, animMatchRestPose, showRetargetedClip, restoreBoneMapping])
 
   // --- Saved motion library -------------------------------------------------
   // Generations are persisted server-side as BVH, so they survive leaving the
@@ -6294,6 +6570,221 @@ export default function MeshEditorPage() {
     }
   }, [motionLibBusy])
 
+  // --- Custom animations (hand-edited clips, reusable on any mesh) ----------
+  // A clip corrected in the animation dock is saved together with the skeleton it
+  // was authored on, which turns it into a proper animation SOURCE — so applying
+  // one runs the same pipeline as a reference species or a Kimodo generation: it
+  // takes the source-rig slot, gets a bone mapping, and is retargeted from there.
+
+  const refreshCustomAnimations = useCallback(async () => {
+    setCustomLibLoading(true)
+    try {
+      setCustomAnimations(await listCustomAnimations())
+      setCustomLibError(null)
+    } catch (err) {
+      console.error('Could not load the custom animations:', err)
+      setCustomLibError(err?.message || 'Could not load your saved animations.')
+    } finally {
+      setCustomLibLoading(false)
+    }
+  }, [])
+
+  // Fetched when the tab is first opened: catalogue rows only (no clip data), and
+  // there is no reason to pay for it in a session that never opens the tab.
+  const customLibraryLoadedRef = useRef(false)
+  const handleCustomTabOpen = useCallback(() => {
+    if (customLibraryLoadedRef.current) return
+    customLibraryLoadedRef.current = true
+    void refreshCustomAnimations()
+  }, [refreshCustomAnimations])
+
+  // Put a saved animation on the open mesh.
+  //
+  // Two paths, and the difference matters: an animation authored on the SAME rig
+  // as the one already in the source slot is added beside the clips that are
+  // there, mapping and all — a set of animations saved off one character is the
+  // normal case, and re-mapping between each of them would be absurd. A different
+  // rig replaces the slot, exactly as picking another reference does.
+  const handleSelectCustomAnimation = useCallback(async (animationId) => {
+    const row = customAnimations.find(a => String(a.id) === String(animationId))
+    if (!row || customApplying) return
+    setCustomApplying(true)
+    setCustomLibError(null)
+    setAnimError(null)
+    try {
+      const stored = await fetchCustomAnimationDocument(row.id)
+      const target = await ensureAnimTargetScene()
+
+      const sameRig = animReferenceId === CUSTOM_SOURCE_ID
+        && !!animSourceRef.current
+        && !!customRigKeyRef.current
+        && customRigKeyRef.current === stored.rigKey
+
+      let source = animSourceRef.current
+      let mapping = sameRig ? animMapping : null
+
+      // Clip names are the retarget cache key, so the same animation applied
+      // twice in one session must not collide with its earlier copy.
+      const taken = new Set(sameRig ? (source.clips || []).map(c => c.name) : [])
+      let name = row.name
+      for (let n = 2; taken.has(name); n += 1) name = `${row.name} (${n})`
+
+      if (sameRig) {
+        source.clips = [...(source.clips || []), customClipFromDocument(stored, name)]
+      } else {
+        source = customSourceFromDocument(stored, name)
+        animSourceRef.current = source
+        customRigKeyRef.current = source.rigKey
+        setAnimReferenceId(CUSTOM_SOURCE_ID)
+        setBoneMapSkeletons(null)
+        setSelectedAnimation(null)
+        setAnimPreview(null)
+        setCheckedAnimations(new Set())
+        retargetedClipsRef.current.clear()
+        resetAnimEdits()
+
+        // Mapping, in order of confidence: what this mesh already stored for this
+        // rig, then a name-for-name match — the usual case, because a custom
+        // animation normally comes off a rig named by the same Auto Rig pass.
+        mapping = restoreBoneMapping(CUSTOM_SOURCE_ID, source.boneNames, target.boneNames)
+        setCustomAutoMapped(false)
+        setBoneMappingRestored(!!mapping)
+        if (!mapping) {
+          const auto = mapCustomBones(source.boneNames, target.boneNames)
+          if (Object.keys(auto).length) {
+            mapping = auto
+            setCustomAutoMapped(true)
+          }
+        }
+        setAnimMapping(mapping || null)
+        setAnimArmTargets(mapping ? findUpperArmTargets(mapping) : null)
+      }
+
+      setAnimClips((source.clips || []).map(c => ({ name: c.name })))
+      setCustomSelectedId(String(row.id))
+
+      // A mapping created a moment ago is invisible to showRetargetedClip through
+      // its own closure, so it is handed over explicitly (Kimodo's trap exactly).
+      if (mapping) {
+        setSelectedAnimation(name)
+        await showRetargetedClip(name, animMatchRestPose, animInPlace, mapping)
+      }
+    } catch (err) {
+      console.error('Could not apply the custom animation:', err)
+      setCustomLibError(err?.message || 'Could not apply that animation.')
+    } finally {
+      setCustomApplying(false)
+    }
+  }, [customAnimations, customApplying, animReferenceId, animMapping, ensureAnimTargetScene,
+    resetAnimEdits, restoreBoneMapping, showRetargetedClip, animMatchRestPose, animInPlace])
+
+  const handleCustomOpenMapping = useCallback(() => {
+    if (!animSourceRef.current || animReferenceId !== CUSTOM_SOURCE_ID) {
+      setCustomLibError('Pick a saved animation first — its skeleton is what gets mapped.')
+      return
+    }
+    setCustomLibError(null)
+    void handleOpenBoneMapping(CUSTOM_SOURCE_ID)
+  }, [animReferenceId, handleOpenBoneMapping])
+
+  // Save the clip that is on screen — hand edits and all — as a reusable
+  // animation. What makes it reusable is the second half of the document: the rig
+  // it is playing on goes with it, because the retarget measures every frame
+  // against that rig's rest pose.
+  const handleSaveEditedAnimation = useCallback(async (name) => {
+    const clip = animPreview?.clip
+    const target = animTargetRef.current
+    if (!clip || !target || customSavingClip) return
+    setCustomSavingClip(true)
+    setCustomLibError(null)
+    try {
+      const stored = buildCustomAnimationDocument({
+        clip,
+        scene: target.scene,
+        fps: describeClip(clip)?.fps || 30,
+      })
+      const saved = await saveCustomAnimation({
+        name: String(name || '').trim() || clip.name,
+        document: stored,
+        sourceMesh: meshName || '',
+        sourceClip: clip.name,
+      })
+      customLibraryLoadedRef.current = true
+      setCustomAnimations(prev => [saved, ...prev.filter(a => a.id !== saved.id)])
+      setCustomSavedNotice(saved.name)
+      setFeedback(`Saved “${saved.name}” to your custom animations.`)
+    } catch (err) {
+      console.error('Could not save the edited animation:', err)
+      setCustomLibError(err?.message || 'Could not save that animation.')
+      setAnimError(err?.message || 'Could not save that animation.')
+    } finally {
+      setCustomSavingClip(false)
+    }
+  }, [animPreview, customSavingClip, meshName])
+
+  const handleRenameCustomAnimation = useCallback(async (animationId, name) => {
+    try {
+      const renamed = await renameCustomAnimation(animationId, name)
+      setCustomAnimations(prev => prev.map(a => (a.id === renamed.id ? renamed : a)))
+    } catch (err) {
+      console.error('Could not rename the custom animation:', err)
+      setCustomLibError(err?.message || 'Could not rename that animation.')
+    }
+  }, [])
+
+  // Deletes the STORED animation, not this session's clip: one already applied
+  // keeps playing until the page is left, which is the behaviour that does not
+  // yank something out from under a preview mid-play.
+  const handleDeleteCustomAnimation = useCallback(async (animationId) => {
+    try {
+      await deleteCustomAnimation(animationId)
+      setCustomAnimations(prev => prev.filter(a => a.id !== animationId))
+      setCustomSelectedId(prev => (String(prev) === String(animationId) ? '' : prev))
+    } catch (err) {
+      console.error('Could not delete the custom animation:', err)
+      setCustomLibError(err?.message || 'Could not delete that animation.')
+    }
+  }, [])
+
+  // What the Auto Rig panel reports about the bone mappings this mesh carries.
+  // Named per source, because "3 mappings" says nothing: what the user wants to
+  // know is whether the reference they are about to pick is already mapped.
+  const boneMappingSummary = useMemo(() => {
+    const keys = Object.keys(storedBoneMappings || {})
+    const labels = keys.map(key => {
+      if (key === KIMODO_SOURCE_ID) return 'Kimodo'
+      if (key.startsWith(`${CUSTOM_SOURCE_ID}:`)) return 'Custom animations'
+      return getReference(key)?.label || key
+    })
+    // Several custom rigs collapse to one label; show it once.
+    return { labels: boneMappingsDirty ? [] : [...new Set(labels)], dirty: boneMappingsDirty }
+  }, [storedBoneMappings, boneMappingsDirty])
+
+  // Bundle for the SkeletonPanel Custom tab.
+  const customPanelProps = useMemo(() => ({
+    onOpen: handleCustomTabOpen,
+    animations: customAnimations,
+    loading: customLibLoading,
+    error: customLibError,
+    selectedId: customSelectedId,
+    applying: customApplying,
+    onSelect: handleSelectCustomAnimation,
+    onRefresh: refreshCustomAnimations,
+    onRename: handleRenameCustomAnimation,
+    onDelete: handleDeleteCustomAnimation,
+    onOpenMapping: handleCustomOpenMapping,
+    // Whether the shared source-rig slot currently belongs to a custom animation,
+    // which is what decides whether this tab shows clips or a "pick one first".
+    ownsSource: animReferenceId === CUSTOM_SOURCE_ID,
+    autoMapped: customAutoMapped,
+    mappingRestored: boneMappingRestored,
+    savedNotice: customSavedNotice,
+    onDismissSaved: () => setCustomSavedNotice(null),
+  }), [handleCustomTabOpen, customAnimations, customLibLoading, customLibError, customSelectedId,
+    customApplying, handleSelectCustomAnimation, refreshCustomAnimations, handleRenameCustomAnimation,
+    handleDeleteCustomAnimation, handleCustomOpenMapping, animReferenceId, customAutoMapped, boneMappingRestored,
+    customSavedNotice])
+
   // Bundle for the SkeletonPanel Kimodo tab.
   // --- Auto Rig → MoCap (video-to-motion) -----------------------------------
   // Like Kimodo, this shares the Animations pipeline rather than duplicating it:
@@ -6403,6 +6894,7 @@ export default function MeshEditorPage() {
   // can only be installed once a capture exists.
   const installMocapSource = useCallback(source => {
     setAnimMapping(null)
+    setBoneMappingRestored(false)
     setBoneMapSkeletons(null)
     setAnimClips([])
     setSelectedAnimation(null)
@@ -6649,9 +7141,13 @@ export default function MeshEditorPage() {
     // Animations tab has to be able to say when Kimodo is holding it — otherwise
     // it would silently list generated clips under a blank reference dropdown.
     ownedByKimodo: animReferenceId === KIMODO_SOURCE_ID,
+    // Same for a custom animation: it takes the same single source slot, and a
+    // blank reference dropdown over someone else's clips reads as a bug.
+    ownedByCustom: animReferenceId === CUSTOM_SOURCE_ID,
     onSelectReference: handleSelectAnimReference,
     onOpenMapping: handleOpenBoneMapping,
     hasMapping: !!animMapping,
+    mappingRestored: boneMappingRestored,
     clips: animClips,
     selectedAnimation,
     onSelectAnimation: handleSelectAnimation,
@@ -6674,7 +7170,7 @@ export default function MeshEditorPage() {
     onToggleChecked: handleToggleAnimationChecked,
     saving: animSaving,
     onSave: handleSaveAnimations,
-  }), [animReferenceId, handleSelectAnimReference, handleOpenBoneMapping, animMapping, animClips,
+  }), [animReferenceId, handleSelectAnimReference, handleOpenBoneMapping, animMapping, boneMappingRestored, animClips,
     selectedAnimation, handleSelectAnimation, animRetargeting, animLoading, animError, animAlignFloor,
     animMatchRestPose, handleToggleMatchRestPose, animInPlace, handleToggleInPlace,
     animEditOpen, handleToggleAnimEdit, animEditedClips,
@@ -7378,8 +7874,12 @@ export default function MeshEditorPage() {
         name: `${baseName} (rigged)`,
         saveMode: 'version',
         meshFile,
+        // Whatever bone mappings this session made ride along in the asset's
+        // metadata, so the version that comes out is ready to animate again.
+        boneMappings: storedBoneMappingsRef.current,
       })
       setRigEditDirty(false)
+      setBoneMappingsDirty(false)
       setFeedback('Rigged mesh saved as a new version.')
     } catch (err) {
       console.error('Failed to save rigged mesh:', err)
@@ -7569,7 +8069,10 @@ export default function MeshEditorPage() {
         filePath,
         name: meshName,
         saveMode,
-        meshFile
+        meshFile,
+        // The mapping is part of what makes a mesh animatable, so it is saved
+        // with it — by every save, not only the ones made from the Auto Rig tab.
+        boneMappings: storedBoneMappingsRef.current
       })
 
       try {
@@ -7662,6 +8165,7 @@ export default function MeshEditorPage() {
         navigate(`/mesh-editor?${nextSearchParams.toString()}`, { replace: true })
       }
 
+      setBoneMappingsDirty(false)
       setFeedback(saveMode === 'version' ? 'New mesh version saved.' : 'Mesh saved.')
     } catch (err) {
       setError(err.message || 'Failed to save mesh')
@@ -9527,6 +10031,7 @@ export default function MeshEditorPage() {
                     rigBoneCount: rigRef.current?.boneCount || 0,
                     rigDropped,
                     rigEdited: rigEditDirty,
+                    boneMappings: boneMappingSummary,
                     weightPaint: weightPaintProps,
                     disabled: !geometry
                   }} />
@@ -9964,6 +10469,11 @@ export default function MeshEditorPage() {
                   onSpanChange={setAnimEditSpan}
                   onEdit={handleAnimEditValue}
                   onClearValue={handleAnimClearFrameValue}
+                  onClearBone={handleAnimClearBone}
+                  allBones={animAllBones}
+                  onAddBone={handleAnimAddBone}
+                  allBones={animAllBones}
+                  onAddBone={handleAnimAddBone}
                   onFrameOperation={handleAnimFrameOperation}
                   onSmoothLoop={handleAnimSmoothLoop}
                   seamFrames={animSeamFrames}
@@ -9981,6 +10491,8 @@ export default function MeshEditorPage() {
                   canRedo={animEditRedoCount > 0}
                   onUndo={() => stepAnimEditHistory('undo')}
                   onRedo={() => stepAnimEditHistory('redo')}
+                  onSaveCustom={handleSaveEditedAnimation}
+                  savingCustom={customSavingClip}
                   onClose={handleToggleAnimEdit}
                 />
               )}
@@ -9994,6 +10506,7 @@ export default function MeshEditorPage() {
                 animation={animationPanelProps}
                 kimodo={kimodoPanelProps}
                 mocap={mocapPanelProps}
+                custom={customPanelProps}
                 edit={{
                   available: rigEditable,
                   active: rigEditing && rigEditable,
@@ -10490,7 +11003,9 @@ export default function MeshEditorPage() {
         <BoneMappingModal
           referenceLabel={animReferenceId === KIMODO_SOURCE_ID
             ? 'Kimodo'
-            : (getReference(animReferenceId)?.label || 'Reference')}
+            : animReferenceId === CUSTOM_SOURCE_ID
+              ? 'Custom animation'
+              : (getReference(animReferenceId)?.label || 'Reference')}
           sourceBones={animSourceRef.current.boneNames}
           targetBones={animTargetRef.current.boneNames}
           sourceSkeleton={boneMapSkeletons?.source}

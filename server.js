@@ -59,6 +59,11 @@ import {
   createMotion,
   renameMotion,
   deleteMotion,
+  listCustomAnimations,
+  readCustomAnimationData,
+  createCustomAnimation,
+  renameCustomAnimation,
+  deleteCustomAnimation,
   listProjectBoards,
   getProjectBatchConfig,
   setCardAssetLink,
@@ -368,6 +373,9 @@ mountLocalOnlyGuard(app, { mode: SERVER_MODE });
 // before the /assets static mount so cached remote assets win.
 mountGateway(app, { mode: SERVER_MODE });
 app.use('/api/meshes/editor/save', express.json({ limit: '50mb' }));
+// A hand-edited clip is a key per bone per frame: a 10-second, 60-bone clip runs
+// to a few megabytes of JSON, which the global 10mb limit would reject.
+app.use('/api/animations/library', express.json({ limit: '50mb' }));
 app.use(express.json({ limit: '10mb' }));
 
 // Authentication gate (server mode only; a no-op in a desktop install).
@@ -7024,9 +7032,42 @@ app.put('/api/cards/:cardKey/processing', express.json({ limit: '1mb' }), async 
   }
 });
 
+// Bone mappings arrive as a JSON string in the multipart body (the editor holds
+// one per animation source: { [sourceKey]: { [targetBone]: sourceBone } }).
+// Anything malformed is dropped rather than rejected: it is a convenience the
+// mesh carries, and losing a save over it would be absurd. The size ceiling is
+// the same reasoning — a mapping is a few kB, and asset metadata is read on
+// every library listing.
+const MAX_BONE_MAPPINGS_BYTES = 256 * 1024;
+
+function parseBoneMappings(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+  if (raw.length > MAX_BONE_MAPPINGS_BYTES) {
+    console.warn('Ignoring an oversized bone-mapping payload on a mesh save.');
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const cleaned = {};
+    for (const [sourceKey, mapping] of Object.entries(parsed)) {
+      if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) continue;
+      const pairs = {};
+      for (const [targetBone, sourceBone] of Object.entries(mapping)) {
+        if (typeof sourceBone === 'string' && sourceBone) pairs[targetBone] = sourceBone;
+      }
+      if (Object.keys(pairs).length) cleaned[sourceKey] = pairs;
+    }
+    return Object.keys(cleaned).length ? cleaned : null;
+  } catch {
+    console.warn('Ignoring an unparseable bone-mapping payload on a mesh save.');
+    return null;
+  }
+}
+
 app.post('/api/meshes/editor/save', meshEditorSaveUpload.single('meshFile'), async (req, res) => {
   try {
-    const { assetId, filePath, name, saveMode = 'replace' } = req.body || {};
+    const { assetId, filePath, name, saveMode = 'replace', boneMappings } = req.body || {};
     const meshFile = req.file;
 
     if (!meshFile?.buffer?.length) {
@@ -7065,6 +7106,14 @@ app.post('/api/meshes/editor/save', meshEditorSaveUpload.single('meshFile'), asy
       savedFromAssetId: sourceAsset.id,
       saveMode
     };
+
+    // Bone mappings ride along with the mesh so the next session can retarget
+    // animations onto it without redoing the mapping by hand. Absent means "the
+    // editor had nothing to say", not "clear them": the spread above already
+    // carried the stored ones onto this save, which is what keeps a mapping
+    // alive across a save made from a mode that never touched the rig.
+    const parsedBoneMappings = parseBoneMappings(boneMappings);
+    if (parsedBoneMappings) metadata.boneMappings = parsedBoneMappings;
 
     // The path above is deliberate — a .glb "replace" overwrites the source in
     // place — so it is passed through rather than letting dataStore invent one.
@@ -7563,6 +7612,75 @@ app.delete('/api/motions/library/:id', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Deleting a motion failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Custom animation library ------------------------------------------------
+// Clips the user corrected by hand in the mesh editor's animation dock, kept so
+// an edit survives the session and can be put on a different mesh later.
+//
+// The stored document is the clip PLUS the skeleton it was authored on: the
+// retargeter measures every frame as a delta from the source rig's rest pose, so
+// a clip on its own could only ever be replayed on the exact mesh it came from.
+// With its skeleton it goes through the same mapping + retarget path as a
+// bundled reference clip or a Kimodo generation.
+app.get('/api/animations/library', async (_req, res) => {
+  try {
+    res.json({ animations: await listCustomAnimations() });
+  } catch (error) {
+    console.error('Listing custom animations failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/animations/library', async (req, res) => {
+  try {
+    const animation = await createCustomAnimation({
+      name: req.body?.name,
+      data: req.body?.data,
+      sourceMesh: req.body?.sourceMesh || '',
+      sourceClip: req.body?.sourceClip || '',
+      rigKey: req.body?.rigKey || '',
+    });
+    res.status(201).json({ animation });
+  } catch (error) {
+    console.error('Saving a custom animation failed:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// The document itself, fetched only when an animation is actually applied — the
+// list view needs none of it, and these run to megabytes each.
+app.get('/api/animations/library/:id/data', async (req, res) => {
+  try {
+    const data = await readCustomAnimationData(req.params.id);
+    if (data === null) return res.status(404).json({ error: 'That animation is no longer available.' });
+    res.json({ data });
+  } catch (error) {
+    console.error('Reading a custom animation failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/animations/library/:id', async (req, res) => {
+  try {
+    const animation = await renameCustomAnimation(req.params.id, req.body?.name);
+    if (!animation) return res.status(404).json({ error: 'Animation not found' });
+    res.json({ animation });
+  } catch (error) {
+    console.error('Renaming a custom animation failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/animations/library/:id', async (req, res) => {
+  try {
+    const result = await deleteCustomAnimation(req.params.id);
+    if (result.status === 'not-found') return res.status(404).json({ error: 'Animation not found' });
+    res.json(result);
+  } catch (error) {
+    console.error('Deleting a custom animation failed:', error);
     res.status(500).json({ error: error.message });
   }
 });

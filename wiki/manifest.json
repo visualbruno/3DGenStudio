@@ -404,6 +404,15 @@
       "position": 3,
       "createdAt": 1787935855857,
       "updatedAt": 1787935864855
+    },
+    {
+      "id": 46,
+      "parentId": 32,
+      "title": "Custom Animations",
+      "icon": "description",
+      "position": 4,
+      "createdAt": 1788103686561,
+      "updatedAt": 1788103686561
     }
   ]
 }

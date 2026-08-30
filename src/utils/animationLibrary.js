@@ -663,7 +663,11 @@ export function retargetAnimationClip({
 // skeleton). GLTFExporter instead resolves tracks against nodes by name, so we
 // rewrite them to "BoneName.quaternion" — matching the bone node the exporter
 // finds while walking the scene.
-function rebindClipForExport(clip) {
+//
+// Exported because the custom-animation library stores clips in the same
+// node-name form: a saved clip is replayed as a SOURCE, and its scene is a bare
+// bone hierarchy with no SkinnedMesh for ".bones[...]" to resolve against.
+export function rebindClipForExport(clip) {
   const tracks = clip.tracks.map(track => {
     const cloned = track.clone()
     const m = /^\.bones\[(.+?)\]\.(.+)$/.exec(cloned.name)

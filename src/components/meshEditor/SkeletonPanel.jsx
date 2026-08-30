@@ -689,6 +689,280 @@ function KimodoTab({ animation, kimodo }) {
   )
 }
 
+// Rename / delete for the saved animation currently picked in the Custom tab.
+// Its own component so its transient state (the rename draft, the delete
+// confirmation) is bound to the row by key rather than reset by an effect.
+function SavedAnimationActions({ animation, busy, onRename, onDelete }) {
+  const [renaming, setRenaming] = useState(false)
+  const [draftName, setDraftName] = useState(animation.name)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  if (renaming) {
+    const commit = () => {
+      if (draftName.trim()) onRename?.(animation.id, draftName)
+      setRenaming(false)
+    }
+    return (
+      <div className="mesh-editor-anim__controls">
+        <input
+          type="text"
+          className="mesh-editor-panel__input"
+          value={draftName}
+          autoFocus
+          onChange={e => setDraftName(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commit()
+            else if (e.key === 'Escape') { setDraftName(animation.name); setRenaming(false) }
+          }}
+          aria-label="Animation name"
+        />
+        <button type="button" className="mesh-editor-icon-btn" onClick={commit}
+          disabled={!draftName.trim()} title="Rename">
+          <span className="material-symbols-outlined">check</span>
+        </button>
+        <button type="button" className="mesh-editor-icon-btn"
+          onClick={() => { setDraftName(animation.name); setRenaming(false) }} title="Cancel">
+          <span className="material-symbols-outlined">close</span>
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mesh-editor-icon-grid mesh-editor-icon-grid--double">
+      <button type="button" className="mesh-editor-btn" onClick={() => setRenaming(true)}
+        disabled={busy} title="Rename this saved animation">
+        <span className="material-symbols-outlined">edit</span>
+        <span>Rename</span>
+      </button>
+      {/* Deletes the STORED animation. A clip already applied keeps playing until
+          the page is left — nothing is yanked out from under a preview. */}
+      <button
+        type="button"
+        className={`mesh-editor-btn ${confirmDelete ? 'mesh-editor-btn--primary' : ''}`}
+        onClick={() => {
+          if (!confirmDelete) { setConfirmDelete(true); return }
+          setConfirmDelete(false)
+          onDelete?.(animation.id)
+        }}
+        disabled={busy}
+        title={confirmDelete
+          ? 'Click again to delete it for good'
+          : 'Delete this saved animation (clips already applied keep playing)'}
+      >
+        <span className="material-symbols-outlined">delete</span>
+        <span>{confirmDelete ? 'Sure?' : 'Delete'}</span>
+      </button>
+    </div>
+  )
+}
+
+// "Custom" tab: the animations you saved yourself.
+//
+// A custom animation is a clip that was corrected in the animation dock and saved
+// together with the skeleton it was authored on — which is what makes it reusable:
+// with its own rig travelling with it, it is an animation SOURCE, and applying it
+// to a different mesh is the same mapping + retarget as a bundled reference clip.
+//
+// So this tab is deliberately the Animations tab with a different list at the top:
+// pick an animation, map its bones once, then preview, edit and save exactly as
+// everywhere else. Like Kimodo it takes the single source-rig slot, and says so.
+function CustomTab({ animation, custom }) {
+  const c = custom || {}
+  const rows = c.animations || []
+  const selected = rows.find(a => String(a.id) === String(c.selectedId)) || null
+  const busy = !!c.applying
+
+  return (
+    // --scroll for the same reason as the Kimodo tab: the picker, the mapping
+    // step and the clip gallery do not fit a fixed column between them.
+    <div className="mesh-editor-skeleton-panel__body mesh-editor-skeleton-panel__body--scroll">
+      {c.savedNotice && (
+        <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+          <span className="material-symbols-outlined" style={{ fontSize: '1.1em', color: '#4caf50' }}>check_circle</span>
+          <span>&ldquo;{c.savedNotice}&rdquo; is in your custom animations.</span>
+          <button type="button" className="mesh-editor-anim__search-clear" onClick={c.onDismissSaved}
+            title="Dismiss" aria-label="Dismiss">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      )}
+
+      {c.error && (
+        <div className="mesh-editor-feedback mesh-editor-feedback--error mesh-editor-anim__error">
+          <span className="material-symbols-outlined">error</span>
+          <span>{c.error}</span>
+        </div>
+      )}
+
+      <div className="mesh-editor-panel__section">
+        <span className="mesh-editor-panel__section-title">Saved animations</span>
+        <span className="mesh-editor-panel__hint">
+          Clips you edited and saved, from any mesh. Pick one to put it on this mesh — the skeleton
+          it was made on came with it, so it can be retargeted like any other source.
+        </span>
+
+        <div className="mesh-editor-anim__controls">
+          <label className="mesh-editor-anim__field">
+            <span className="mesh-editor-panel__hint">Animation</span>
+            <select
+              className="mesh-editor-panel__input mesh-editor-panel__select"
+              value={c.selectedId || ''}
+              onChange={e => c.onSelect?.(e.target.value)}
+              disabled={busy || c.loading || !rows.length}
+            >
+              <option value="" disabled>
+                {c.loading ? 'Loading…' : (rows.length ? 'Select an animation…' : 'Nothing saved yet')}
+              </option>
+              {rows.map(row => (
+                <option key={row.id} value={row.id}>
+                  {row.name}{row.duration ? ` — ${row.duration.toFixed(1)}s` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="mesh-editor-btn"
+            onClick={c.onRefresh}
+            disabled={busy || c.loading}
+            title="Reload the list — another session may have saved something since"
+          >
+            <span className="material-symbols-outlined">{c.loading ? 'progress_activity' : 'refresh'}</span>
+            <span>Refresh</span>
+          </button>
+        </div>
+
+        {busy && (
+          <span className="mesh-editor-panel__hint">Applying the animation to your mesh…</span>
+        )}
+
+        {selected && (
+          <>
+            <div className="mesh-editor-texture-workflow-meta">
+              {!!selected.sourceMesh && <span><strong>From:</strong> {selected.sourceMesh}</span>}
+              {!!selected.frameCount && <span><strong>Frames:</strong> {selected.frameCount}</span>}
+              {!!selected.fps && <span><strong>Rate:</strong> {Math.round(selected.fps)} fps</span>}
+              {!!selected.boneCount && <span><strong>Bones:</strong> {selected.boneCount}</span>}
+            </div>
+
+            {/* Keyed on the row, so switching animations cannot leave a rename
+                box (or a half-confirmed delete) open over a different one. */}
+            <SavedAnimationActions
+              key={selected.id}
+              animation={selected}
+              busy={busy}
+              onRename={c.onRename}
+              onDelete={c.onDelete}
+            />
+          </>
+        )}
+
+        {!rows.length && !c.loading && (
+          <span className="mesh-editor-panel__hint">
+            Nothing here yet. Play an animation, open the animation editor under the viewport, and use
+            &ldquo;Save animation&rdquo; — what you save lands in this list.
+          </span>
+        )}
+      </div>
+
+      {/* Same mapping step as everywhere else, against the skeleton stored with
+          the animation. It is normally already done: an animation saved off a rig
+          with the same bone names as this mesh maps bone-for-bone on its own. */}
+      {c.ownsSource && (
+        <div className="mesh-editor-panel__section">
+          <span className="mesh-editor-panel__section-title">Bone mapping</span>
+          {animation?.hasMapping ? (
+            <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+              <span className="material-symbols-outlined"
+                style={{ fontSize: '1.1em', color: c.autoMapped ? '#e0a030' : '#4caf50' }}>
+                {c.autoMapped ? 'info' : 'check_circle'}
+              </span>
+              <span>
+                {c.autoMapped
+                  ? 'Bones were mapped automatically. If the motion looks wrong, check the mapping.'
+                  : c.mappingRestored
+                    ? 'Bone mapping restored from this mesh — nothing to redo.'
+                    : 'The animation’s skeleton is mapped to your mesh.'}
+              </span>
+            </div>
+          ) : (
+            <span className="mesh-editor-panel__hint">
+              This animation was made on a skeleton this mesh does not share. Map its bones once —
+              every animation saved off that same rig then reuses the mapping.
+            </span>
+          )}
+          <button
+            type="button"
+            className={`mesh-editor-btn ${animation?.hasMapping ? '' : 'mesh-editor-btn--primary'}`}
+            onClick={c.onOpenMapping}
+            disabled={busy || animation?.loading}
+            title="Map the saved animation's bones to your mesh"
+          >
+            <span className="material-symbols-outlined">
+              {animation?.loading ? 'progress_activity' : (animation?.hasMapping ? 'edit' : 'link')}
+            </span>
+            <span>{animation?.hasMapping ? 'Edit mapping' : 'Map bones'}</span>
+          </button>
+          <span className="mesh-editor-panel__hint">
+            The mapping is saved with the mesh, so the next time you open it these animations are
+            ready to apply straight away.
+          </span>
+        </div>
+      )}
+
+      {c.ownsSource && animation?.hasMapping && (
+        <>
+          {/* A mesh whose pivot sits at its centre is drawn half-sunk at rest, so
+              grounding it for playback looks like the mesh jumping upward. It is
+              the preview that is right, but the choice belongs to the user. */}
+          <button
+            type="button"
+            className={`mesh-editor-anim__floor-btn ${animation?.alignFloor ? 'mesh-editor-anim__floor-btn--on' : ''}`}
+            onClick={animation?.onToggleAlignFloor}
+            title="Sit the animated mesh on the floor grid. Turn it off to play the clip where the mesh sits at rest — which is what you want when the mesh's pivot is at its centre rather than on the ground."
+            aria-pressed={!!animation?.alignFloor}
+          >
+            <span className="material-symbols-outlined">
+              {animation?.alignFloor ? 'check_box' : 'check_box_outline_blank'}
+            </span>
+            <span>Auto-align to floor</span>
+          </button>
+
+          <button
+            type="button"
+            className={`mesh-editor-anim__floor-btn ${animation?.matchRestPose ? 'mesh-editor-anim__floor-btn--on' : ''}`}
+            onClick={animation?.onToggleMatchRestPose}
+            disabled={!!animation?.retargeting}
+            title="Pose your mesh like the rig the animation was made on before applying it. Turn off to keep your mesh's own stance."
+            aria-pressed={!!animation?.matchRestPose}
+          >
+            <span className="material-symbols-outlined">
+              {animation?.matchRestPose ? 'check_box' : 'check_box_outline_blank'}
+            </span>
+            <span>Match reference rest pose</span>
+          </button>
+
+          <InPlaceToggle animation={animation} />
+
+          <ClipGallery
+            animation={animation}
+            previewsAvailable={false}
+            emptyLabel="No animation applied yet — pick one above."
+          />
+        </>
+      )}
+
+      {c.ownsSource && !animation?.hasMapping && (
+        <div className="mesh-editor-feedback mesh-editor-anim__error" style={{ color: '#e0a030' }}>
+          <span className="material-symbols-outlined">warning</span>
+          <span>Map the bones above, then the animation plays on your mesh.</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // "MoCap" tab: drive this rig with a video of something moving.
 //
 // Two steps, and the tab is honest that the first one exists. A video can only
@@ -962,9 +1236,8 @@ function MoCapTab({ animation, mocap }) {
   )
 }
 
-// The four Auto Rig tabs. A table rather than four hand-written buttons: the bar
-// is compact enough now that a fifth would fit, and the markup should not have
-// to be rewritten again to add one.
+// The Auto Rig tabs. A table rather than hand-written buttons: the bar
+// stays this size whether it carries four of them or six.
 const RIG_TABS = [
   { id: 'skeleton', icon: 'accessibility_new', label: 'Skeleton',
     title: 'Every bone in the rig — and where an Auto Rig mistake gets fixed' },
@@ -974,9 +1247,11 @@ const RIG_TABS = [
     title: 'Generate an animation from a text prompt (NVIDIA Kimodo)' },
   { id: 'mocap', icon: 'videocam', label: 'MoCap',
     title: 'Capture motion from a video and drive this rig with it (MoCapAnything)' },
+  { id: 'custom', icon: 'bookmarks', label: 'Custom',
+    title: 'Animations you edited and saved yourself — reusable on any rigged mesh' },
 ]
 
-export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, animation, kimodo, mocap, edit }) {
+export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, animation, kimodo, mocap, custom, edit }) {
   const [tab, setTab] = useState('skeleton')
   const [collapsed, setCollapsed] = useState(() => new Set())
   const rowRefs = useRef(new Map())
@@ -1020,15 +1295,32 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
     if (tab === 'mocap') mocapOnOpen?.()
   }, [tab, mocapOnOpen])
 
+  // The custom-animation catalogue is fetched the first time the tab is opened,
+  // for the same reason: rows nobody looked at cost a request each session.
+  const customOnOpen = custom?.onOpen
+  useEffect(() => {
+    if (tab === 'custom') customOnOpen?.()
+  }, [tab, customOnOpen])
+
+  // The Animations tab owns the bundled references and nothing else. Kimodo, MoCap
+  // and custom animations park their own id in the same single source slot, so an
+  // id that is not in the reference list means the slot belongs to another tab —
+  // and this one must show an empty dropdown rather than list somebody else's
+  // clips under a blank selection.
+  const libraryReferenceId = ANIMATION_REFERENCES.some(r => r.id === animation?.referenceId)
+    ? animation.referenceId
+    : ''
+
+
   const boneCount = skeleton?.jointCount ?? names.length
 
   return (
     <aside className="mesh-editor-layers-panel mesh-editor-skeleton-panel">
-      {/* Four tabs no longer fit as labelled pills in this column, so they are
+      {/* Five tabs no longer fit as labelled pills in this column, so they are
           icon-over-label buttons — the same shape the Tools panel uses, which
           keeps the two panels reading as one system. The labels stay (rather
-          than icon-only) because "Kimodo" and "MoCap" are not guessable from a
-          glyph. */}
+          than icon-only) because "Kimodo", "MoCap" and "Custom" are not guessable
+          from a glyph. */}
       <div className="mesh-editor-skeleton-panel__tabs" role="tablist">
         {RIG_TABS.map(t => (
           <button
@@ -1186,6 +1478,23 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
         </div>
       ) : tab === 'animations' ? (
         <div className="mesh-editor-skeleton-panel__body">
+          {animation?.mappingRestored && (
+            <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '1.1em', color: '#4caf50' }}>link</span>
+              <span>
+                Bone mapping restored from this mesh — the clips below are ready to play.
+              </span>
+            </div>
+          )}
+          {animation?.ownedByCustom && (
+            <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4em' }}>
+              <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>info</span>
+              <span>
+                Your mesh is currently mapped to a saved custom animation — it is on the Custom tab.
+                Picking a reference below replaces that mapping.
+              </span>
+            </div>
+          )}
           {animation?.ownedByKimodo && (
             <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'flex-start', gap: '0.4em' }}>
               <span className="material-symbols-outlined" style={{ fontSize: '1.1em' }}>info</span>
@@ -1200,7 +1509,7 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
               <span className="mesh-editor-panel__hint">Reference mesh</span>
               <select
                 className="mesh-editor-panel__input mesh-editor-panel__select"
-                value={animation?.ownedByKimodo ? '' : (animation?.referenceId || '')}
+                value={libraryReferenceId}
                 onChange={e => animation?.onSelectReference(e.target.value)}
                 disabled={animation?.loading}
               >
@@ -1214,7 +1523,7 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
               type="button"
               className="mesh-editor-btn mesh-editor-btn--primary"
               onClick={animation?.onOpenMapping}
-              disabled={!animation?.referenceId || animation?.loading}
+              disabled={!libraryReferenceId || animation?.loading}
               title="Map the reference skeleton's bones to your mesh"
             >
               <span className="material-symbols-outlined">
@@ -1231,7 +1540,7 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
             </div>
           )}
 
-          {!animation?.referenceId || animation?.ownedByKimodo ? (
+          {!libraryReferenceId ? (
             <div className="mesh-editor-layers-panel__empty">
               Select a reference mesh, then map its bones to animate your mesh.
             </div>
@@ -1303,6 +1612,8 @@ export default function SkeletonPanel({ skeleton, selectedBone, onSelectBone, an
         </div>
       ) : tab === 'kimodo' ? (
         <KimodoTab animation={animation} kimodo={kimodo} />
+      ) : tab === 'custom' ? (
+        <CustomTab animation={animation} custom={custom} />
       ) : (
         <MoCapTab animation={animation} mocap={mocap} />
       )}

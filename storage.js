@@ -37,6 +37,10 @@ export const WIKI_ASSETS_DIR = path.join(ASSETS_DIR, 'wiki');
 // Generated motion clips (Kimodo), as BVH text. Not under a project — see the
 // Motions table for why.
 export const MOTION_ASSETS_DIR = path.join(ASSETS_DIR, 'motions');
+// Hand-edited animation clips saved from the mesh editor's animation dock, as
+// JSON (a bone hierarchy + one clip). Not under a project — see the
+// CustomAnimations table for why.
+export const ANIMATION_ASSETS_DIR = path.join(ASSETS_DIR, 'animations');
 
 const DATA_ASSETS_PREFIX = 'data/assets/';
 const KANBAN_COLUMNS = [
@@ -1662,6 +1666,36 @@ const SQLITE_SCHEMA = `
       createdAt INTEGER NOT NULL
     );
 
+    -- Hand-edited animation clips, saved from the mesh editor's animation dock
+    -- so a correction survives the session and can be put on ANY other rigged
+    -- mesh later. Global, like Motions and the bundled reference clips: an
+    -- animation belongs to a skeleton, not to a project.
+    --
+    -- What is stored is the clip PLUS the skeleton it was authored on (bone
+    -- hierarchy + rest transforms), as one JSON file. Both halves are needed:
+    -- the retargeter measures every frame as a delta from the source rig's rest
+    -- pose, so a clip without its skeleton can only ever be replayed on the exact
+    -- mesh it came from. With the skeleton it goes through the same bone-mapping
+    -- and retarget path as a mesh2motion reference or a Kimodo generation.
+    CREATE TABLE IF NOT EXISTS CustomAnimations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      -- Where the clip came from, for the library row: the mesh it was edited on
+      -- and the clip name it started life as.
+      sourceMesh TEXT NOT NULL DEFAULT '',
+      sourceClip TEXT NOT NULL DEFAULT '',
+      duration REAL NOT NULL DEFAULT 0,
+      frameCount INTEGER NOT NULL DEFAULT 0,
+      fps REAL NOT NULL DEFAULT 0,
+      boneCount INTEGER NOT NULL DEFAULT 0,
+      -- Identifies the SKELETON the clip was authored on (a hash of its bone
+      -- names). Two animations saved off the same rig share it, which is what
+      -- lets a bone mapping made for one be reused for the others.
+      rigKey TEXT NOT NULL DEFAULT '',
+      filePath TEXT NOT NULL,
+      createdAt INTEGER NOT NULL
+    );
+
     -- Free-form labels an asset can be filtered by in the library. Many tags per
     -- asset, many assets per tag, and no separate tag registry: the vocabulary is
     -- whatever rows exist here, so a tag disappears once nothing carries it.
@@ -1728,6 +1762,7 @@ export async function initializeStorage() {
   await fs.mkdir(PAINT_DOCS_DIR, { recursive: true });
   await fs.mkdir(WIKI_ASSETS_DIR, { recursive: true });
   await fs.mkdir(MOTION_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(ANIMATION_ASSETS_DIR, { recursive: true });
 
   // Back up the DB before the one-time Nodes→Cards migration touches it. That
   // migration only ever applies to a SQLite file that predates the unified Cards
@@ -1765,6 +1800,7 @@ export async function initializeStorage() {
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_projects_projectId ON Assets_Projects(projectId)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_tags_tag ON Assets_Tags(tag)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_motions_createdAt ON Motions(createdAt)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_customanimations_createdAt ON CustomAnimations(createdAt)');
 
   // Columns added after the fact, each probed rather than versioned. A fresh
   // PostgreSQL schema already has all of them, so every branch here is simply
@@ -3541,6 +3577,134 @@ export async function deleteMotion(motionId) {
   // dead weight, but failing the delete over it would strand the row instead.
   if (row.filePath) {
     try { await fs.unlink(motionFilePath(row.filePath)); } catch { /* already gone */ }
+  }
+  return { status: 'deleted' };
+}
+
+// ---------------------------------------------------------------------------
+// Custom animation library (hand-edited clips)
+// ---------------------------------------------------------------------------
+// The stored artifact is a JSON document: the source skeleton (bone hierarchy +
+// rest transforms) and one animation clip authored against it. See the
+// CustomAnimations table for why both halves travel together.
+
+function mapCustomAnimationRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    sourceMesh: row.sourceMesh || '',
+    sourceClip: row.sourceClip || '',
+    duration: Number(row.duration) || 0,
+    frameCount: Number(row.frameCount) || 0,
+    fps: Number(row.fps) || 0,
+    boneCount: Number(row.boneCount) || 0,
+    rigKey: row.rigKey || '',
+    createdAt: Number(row.createdAt) || 0,
+  };
+}
+
+function customAnimationFilePath(fileName) {
+  return path.join(ANIMATION_ASSETS_DIR, fileName);
+}
+
+export async function listCustomAnimations() {
+  const db = await getDb();
+  const rows = await all(db, 'SELECT * FROM CustomAnimations ORDER BY createdAt DESC, id DESC');
+  return rows.map(mapCustomAnimationRow);
+}
+
+export async function getCustomAnimationById(animationId) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT * FROM CustomAnimations WHERE id = ?', [Number(animationId)]);
+  return row ? mapCustomAnimationRow(row) : null;
+}
+
+// The stored document, or null when the row or its file is gone. A missing file
+// is reported rather than thrown for the same reason as readMotionBvh: a row
+// that outlived its file is recoverable, and a 404 says so far better than a 500.
+export async function readCustomAnimationData(animationId) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT filePath FROM CustomAnimations WHERE id = ?', [Number(animationId)]);
+  if (!row) return null;
+  try {
+    return JSON.parse(await fs.readFile(customAnimationFilePath(row.filePath), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export async function createCustomAnimation({
+  name,
+  data,
+  sourceMesh = '',
+  sourceClip = '',
+  rigKey = '',
+} = {}) {
+  if (!data || !Array.isArray(data.bones) || !data.bones.length) {
+    throw new Error('An animation needs the skeleton it was authored on.');
+  }
+  if (!data.clip?.tracks?.length) {
+    throw new Error('An animation needs at least one animated bone.');
+  }
+
+  await fs.mkdir(ANIMATION_ASSETS_DIR, { recursive: true });
+
+  // Read back off the document rather than trusting the request, so the
+  // catalogue always describes what is actually in the file.
+  const duration = Number(data.clip.duration) || 0;
+  const fps = Number(data.fps) || 0;
+  const frameCount = Number(data.frameCount) || 0;
+
+  // The row goes in first so the file can be named after its id (no collision
+  // possible), then filePath is filled in; a failed write takes the row with it.
+  const db = await getDb();
+  const result = await run(
+    db,
+    `INSERT INTO CustomAnimations
+       (name, sourceMesh, sourceClip, duration, frameCount, fps, boneCount, rigKey, filePath, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', ?)`,
+    [
+      String(name || '').trim() || String(sourceClip || 'animation').slice(0, 60),
+      String(sourceMesh || ''),
+      String(sourceClip || ''),
+      duration,
+      frameCount,
+      fps,
+      data.bones.length,
+      String(rigKey || data.rigKey || ''),
+      Date.now(),
+    ]
+  );
+
+  const fileName = `animation-${result.lastID}.json`;
+  try {
+    await fs.writeFile(customAnimationFilePath(fileName), JSON.stringify(data), 'utf8');
+  } catch (error) {
+    await run(db, 'DELETE FROM CustomAnimations WHERE id = ?', [result.lastID]);
+    throw error;
+  }
+  await run(db, 'UPDATE CustomAnimations SET filePath = ? WHERE id = ?', [fileName, result.lastID]);
+
+  return await getCustomAnimationById(result.lastID);
+}
+
+export async function renameCustomAnimation(animationId, name) {
+  const db = await getDb();
+  const trimmed = String(name || '').trim();
+  if (!trimmed) return await getCustomAnimationById(animationId);
+  await run(db, 'UPDATE CustomAnimations SET name = ? WHERE id = ?', [trimmed, Number(animationId)]);
+  return await getCustomAnimationById(animationId);
+}
+
+export async function deleteCustomAnimation(animationId) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT filePath FROM CustomAnimations WHERE id = ?', [Number(animationId)]);
+  if (!row) return { status: 'not-found' };
+
+  await run(db, 'DELETE FROM CustomAnimations WHERE id = ?', [Number(animationId)]);
+  if (row.filePath) {
+    try { await fs.unlink(customAnimationFilePath(row.filePath)); } catch { /* already gone */ }
   }
   return { status: 'deleted' };
 }

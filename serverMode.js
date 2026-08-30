@@ -112,6 +112,7 @@ const REMOTE_DATA_PREFIXES = [
   '/api/wiki',
   '/api/tasks',
   '/api/motions/library',         // the shared clip catalogue (not /generate)
+  '/api/animations/library',      // hand-edited clips, shared like the motions
   '/api/library/comfy-workflows', // workflow DEFINITIONS are shared; execution is local
   '/api/auth',                    // login/logout/me on the shared server
   '/api/users',
