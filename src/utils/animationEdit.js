@@ -749,3 +749,137 @@ export function smoothLoopSeam(clip, { span = DEFAULT_EDIT_SPAN } = {}) {
 
   return entries.length ? { entries, applied: entries.length, skipped } : null
 }
+
+// --- Range operations: the dopesheet's delete and move ----------------------
+// A selection in the dopesheet is a rectangle — some tracks × a run of frames. Two
+// things can be done to it, and neither can be the literal operation an editor with
+// sparse tracks would perform, for the reason this whole file is built on: the bake
+// puts a key on EVERY frame, so there is no removing one without leaving the grid.
+//
+// What they mean here instead:
+//
+//   flattenFrameRange — "delete these keys". The selected frames stop holding their
+//     own values and take the interpolation between the frames either side of the
+//     selection, which is what deleting a run of keys looks like on screen. Select a
+//     bone's whole row and it stops moving; select twenty frames and that stretch
+//     becomes one clean transition.
+//
+//   shiftFrameRange — "move these keys". The block of values slides by N frames
+//     inside the track, and the frames it vacates are filled by interpolating from
+//     the untouched frame before them into the block's new leading value, so the
+//     join has no step in it. The block is CLAMPED to the clip rather than allowed
+//     to fall off the end: on a dense grid a value pushed past the last frame has
+//     nowhere to go, and silently dropping it is worse than moving one frame less.
+//
+// Both take many track names and return ONE `entries` list, so a rectangle is a
+// single undo step — undoing half a shift would leave a pose that never existed.
+
+function copyKey(values, source, stride, fromFrame, toFrame) {
+  for (let a = 0; a < stride; a++) values[toFrame * stride + a] = source[fromFrame * stride + a]
+}
+
+// Frame `target` takes the value between frames `aFrame` and `bFrame` OF THE
+// SNAPSHOT — reading from the snapshot rather than the live array is what lets a
+// destination overlap a source without a range walking over its own input.
+function lerpKey(values, source, kind, target, aFrame, bFrame, t) {
+  if (kind === 'quaternion') {
+    _q.fromArray(source, aFrame * 4)
+    _qTarget.fromArray(source, bFrame * 4)
+    _q.slerp(_qTarget, t).normalize().toArray(values, target * 4)
+  } else {
+    const u = 1 - t
+    for (let a = 0; a < 3; a++) {
+      values[target * 3 + a] = source[aFrame * 3 + a] * u + source[bFrame * 3 + a] * t
+    }
+  }
+}
+
+function differsFrom(values, before) {
+  for (let i = 0; i < before.length; i++) {
+    if (Math.abs(values[i] - before[i]) > 1e-7) return true
+  }
+  return false
+}
+
+// The tracks of a selection this dock may rewrite: present, parseable, and on the
+// clip's frame grid. Off-grid ones (the hand-curl finger tracks) are rebuilt by
+// every bake, so editing one would be silently thrown away.
+function gridTracks(clip, trackNames, frameCount) {
+  const out = []
+  for (const trackName of trackNames || []) {
+    const track = findTrack(clip, trackName)
+    const parsed = parseTrackName(trackName)
+    if (!track || !parsed) continue
+    const stride = parsed.kind === 'quaternion' ? 4 : 3
+    if (Math.floor(track.values.length / stride) !== frameCount) continue
+    out.push({ track, kind: parsed.kind, stride })
+  }
+  return out
+}
+
+export function flattenFrameRange(clip, trackNames, from, to) {
+  const description = describeClip(clip)
+  if (!description) return null
+  const n = description.frameCount
+  const a = Math.max(0, Math.min(n - 1, Math.round(from) || 0))
+  const b = Math.max(a, Math.min(n - 1, Math.round(to) || 0))
+  // Anchors are the frames OUTSIDE the selection. With neither — the whole clip is
+  // selected — there is nothing to interpolate from; clearing a bone entirely is
+  // clearBoneAnimation's job, which knows the rest pose.
+  const lo = a > 0 ? a - 1 : null
+  const hi = b < n - 1 ? b + 1 : null
+  if (lo === null && hi === null) return null
+
+  const entries = []
+  for (const { track, kind, stride } of gridTracks(clip, trackNames, n)) {
+    const before = Float32Array.from(track.values)
+    for (let f = a; f <= b; f++) {
+      if (lo === null) copyKey(track.values, before, stride, hi, f)
+      else if (hi === null) copyKey(track.values, before, stride, lo, f)
+      else lerpKey(track.values, before, kind, f, lo, hi, (f - lo) / (hi - lo))
+    }
+    // Already flat: put the exact bytes back so an unchanged track never lands in
+    // the history as a no-op entry.
+    if (!differsFrom(track.values, before)) { track.values.set(before); continue }
+    entries.push({ trackName: track.name, before, after: Float32Array.from(track.values) })
+  }
+  return entries.length ? { entries, from: a, to: b } : null
+}
+
+export function shiftFrameRange(clip, trackNames, from, to, delta) {
+  const description = describeClip(clip)
+  if (!description) return null
+  const n = description.frameCount
+  const a = Math.max(0, Math.min(n - 1, Math.round(from) || 0))
+  const b = Math.max(a, Math.min(n - 1, Math.round(to) || 0))
+  const d = Math.max(-a, Math.min(n - 1 - b, Math.round(delta) || 0))
+  if (!d) return null
+
+  const entries = []
+  for (const { track, kind, stride } of gridTracks(clip, trackNames, n)) {
+    const before = Float32Array.from(track.values)
+    for (let f = a; f <= b; f++) copyKey(track.values, before, stride, f, f + d)
+
+    if (d > 0) {
+      // Vacated: [a, a+d-1]. Interpolate from the untouched frame a-1 into the
+      // block's leading value, which now sits at a+d.
+      const anchor = a - 1
+      for (let f = a; f < a + d; f++) {
+        if (anchor < 0) copyKey(track.values, before, stride, a, f)
+        else lerpKey(track.values, before, kind, f, anchor, a, (f - anchor) / (a + d - anchor))
+      }
+    } else {
+      // Vacated: [b+d+1, b], between the block's trailing value (now at b+d) and
+      // the untouched frame b+1.
+      const anchor = b + 1
+      for (let f = b + d + 1; f <= b; f++) {
+        if (anchor > n - 1) copyKey(track.values, before, stride, b, f)
+        else lerpKey(track.values, before, kind, f, b, anchor, (f - (b + d)) / (anchor - (b + d)))
+      }
+    }
+
+    if (!differsFrom(track.values, before)) { track.values.set(before); continue }
+    entries.push({ trackName: track.name, before, after: Float32Array.from(track.values) })
+  }
+  return entries.length ? { entries, delta: d, from: a + d, to: b + d } : null
+}

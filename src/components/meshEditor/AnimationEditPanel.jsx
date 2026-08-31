@@ -12,8 +12,10 @@
 //
 // Presentational: every value comes from the clip description the page passes in,
 // and every change goes back out through a handler.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { EDIT_SCOPES, MAX_EDIT_SPAN, readFrameValues } from '../../utils/animationEdit'
+import { buildDopesheet } from '../../utils/animationDopesheet'
+import AnimationDopesheet from './AnimationDopesheet'
 
 // One editable axis. Kept as local text so typing "-" or "1." is possible, and
 // committed on Enter/blur — a commit per keystroke would rewrite the whole track
@@ -172,6 +174,8 @@ export default function AnimationEditPanel({
   onEdit,               // (trackName, [x, y, z]) — nulls mean "leave this axis"
   onClearValue,         // (trackName) — this frame takes the value between its neighbours
   onClearBone,          // (boneName) — every frame of that bone takes its rest pose
+  onDeleteRange,        // (trackNames, from, to) — the dopesheet's "delete these keys"
+  onShiftRange,         // (trackNames, from, to, delta) — the dopesheet's "move these keys"
   allBones,             // every bone NAME in the rig, hierarchy order — see `rows`
   onAddBone,            // (boneName) — give a bone the clip ignores a rotation track
   onFrameOperation,     // ('insert' | 'append' | 'delete' | 'trimBefore' | 'trimAfter')
@@ -195,8 +199,6 @@ export default function AnimationEditPanel({
   savingCustom,
   onClose,
 }) {
-  const [search, setSearch] = useState('')
-  const rowRefs = useRef(new Map())
   const bones = useMemo(() => description?.bones || [], [description])
   // The list is the RIG, not the clip. A clip only carries tracks for the bones its
   // reference could be mapped onto, so a tail, an ear or one of Auto Rig's leftover
@@ -221,11 +223,13 @@ export default function AnimationEditPanel({
     [rows, selectedBone],
   )
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(b => b.boneName.toLowerCase().includes(q))
-  }, [rows, search])
+  // What the sheet draws: where each track's value actually CHANGES. Rebuilt with
+  // the clip revision, because an edit is exactly the thing that moves those runs.
+  const sheet = useMemo(
+    () => buildDopesheet(clip, description),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [clip, description, revision],
+  )
 
   // Values are read straight off the clip, which is mutated in place — `revision`
   // and `frame` are what make that safe to memoise.
@@ -240,17 +244,47 @@ export default function AnimationEditPanel({
     [clip, row?.position, frame, revision],
   )
 
-  // Keep the selected bone's row visible when the selection comes from the
-  // viewport or the skeleton tree rather than from this list.
-  useEffect(() => {
-    if (selectedBone) rowRefs.current.get(selectedBone)?.scrollIntoView({ block: 'nearest' })
-  }, [selectedBone])
-
   const step = delta => onFrameChange(Math.max(0, Math.min(frameCount - 1, frame + delta)))
   const fieldsDisabled = playing || !row?.editable
 
+  // The dock's height is a budget the canvas shell subtracts from its own, held in
+  // a custom property on the root — so dragging the grip resizes the sheet and the
+  // 3D view together, which is the only way to give a 60-bone rig more lanes
+  // without pushing anything off a page that does not scroll.
+  const resizeRef = useRef(null)
+  const handleResizeDown = useCallback(e => {
+    e.preventDefault()
+    e.currentTarget.setPointerCapture?.(e.pointerId)
+    const start = e.clientY
+    const from = document.querySelector('.mesh-editor-anim-dock')?.getBoundingClientRect().height || 340
+    resizeRef.current = { start, from }
+  }, [])
+  const handleResizeMove = useCallback(e => {
+    const state = resizeRef.current
+    if (!state) return
+    // The floor is what the dock's rows plus the sheet's own minimum need; below it
+    // the sheet would overflow a panel that clips (`overflow: hidden`) and lose its
+    // bottom lanes rather than getting smaller.
+    const next = Math.max(280, Math.min(720, state.from + (state.start - e.clientY)))
+    document.documentElement.style.setProperty('--mesh-editor-anim-dock-height', `${Math.round(next)}px`)
+  }, [])
+  const handleResizeUp = useCallback(e => {
+    resizeRef.current = null
+    e.currentTarget.releasePointerCapture?.(e.pointerId)
+  }, [])
+
   return (
     <section className="mesh-editor-anim-dock" aria-label="Animation edit">
+      <div
+        className="mesh-editor-anim-dock__grip"
+        role="separator"
+        aria-label="Resize the animation editor"
+        title="Drag to make the animation editor taller or shorter"
+        onPointerDown={handleResizeDown}
+        onPointerMove={handleResizeMove}
+        onPointerUp={handleResizeUp}
+        onPointerCancel={handleResizeUp}
+      />
       <header className="mesh-editor-anim-dock__head">
         <span className="mesh-editor-anim-dock__title">
           <span className="material-symbols-outlined">animation</span>
@@ -322,24 +356,11 @@ export default function AnimationEditPanel({
         </div>
       </header>
 
-      {/* Scrub bar, plus the frame-structure buttons on the same row — they cost no
-          vertical space there, and the dock's height is a fixed budget.
-
-          A range input rather than a canvas timeline: the bake puts a key on every
-          frame, so there are no per-key marks to draw. */}
+      {/* The frame-structure buttons. The scrub slider that used to lead this row is
+          gone: the dopesheet's ruler scrubs the same clip with the frame numbers
+          visible, and the dock's height is a fixed budget in which a redundant row
+          costs the sheet three lanes. */}
       <div className="mesh-editor-anim-dock__scrub-row">
-        <input
-          type="range"
-          className="mesh-editor-anim-dock__scrub"
-          min={0}
-          max={Math.max(0, frameCount - 1)}
-          step={1}
-          value={frame}
-          disabled={playing}
-          onChange={e => onFrameChange(Number(e.target.value))}
-          aria-label="Scrub to frame"
-        />
-
         <div className="mesh-editor-anim-dock__frame-ops">
           <button type="button" className="mesh-editor-icon-btn" disabled={playing}
             onClick={() => onFrameOperation?.('insert')}
@@ -417,86 +438,22 @@ export default function AnimationEditPanel({
       </div>
 
       <div className="mesh-editor-anim-dock__body">
-        <div className="mesh-editor-anim-dock__bones">
-          <div className="mesh-editor-anim-dock__bones-head">
-            <span className="mesh-editor-panel__hint">Bones ({rows.length}) · {animatedCount} animated</span>
-          </div>
-          {rows.length > 8 && (
-            <div className="mesh-editor-anim__search">
-              <span className="material-symbols-outlined">search</span>
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search bones…"
-                aria-label="Search animated bones"
-              />
-              {search && (
-                <button type="button" className="mesh-editor-anim__search-clear" onClick={() => setSearch('')}
-                  title="Clear search" aria-label="Clear search">
-                  <span className="material-symbols-outlined">close</span>
-                </button>
-              )}
-            </div>
-          )}
-          <div className="mesh-editor-anim-dock__bones-list">
-            {filtered.length === 0 ? (
-              <div className="mesh-editor-layers-panel__empty">No bone matches that.</div>
-            ) : filtered.map(b => (
-              <div
-                key={b.boneName}
-                role="button"
-                tabIndex={0}
-                ref={el => { if (el) rowRefs.current.set(b.boneName, el); else rowRefs.current.delete(b.boneName) }}
-                className={`mesh-editor-anim-dock__bone ${b.boneName === selectedBone ? 'mesh-editor-anim-dock__bone--selected' : ''} ${b.rotation || b.position ? '' : 'mesh-editor-anim-dock__bone--idle'}`}
-                onClick={() => onSelectBone(b.boneName)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectBone(b.boneName) }
-                }}
-                title={b.editable
-                  ? (b.rotation || b.position
-                    ? `${b.boneName} — ${b.rotation ? 'rotation' : ''}${b.rotation && b.position ? ' + ' : ''}${b.position ? 'position' : ''}`
-                    : `${b.boneName} is not animated by this clip — add it to pose it`)
-                  : `${b.boneName} is driven by the Hand curl sliders (${b.keyCount} keys, off the frame grid) and is rebuilt on every bake — not editable here`}
-              >
-                <span className="mesh-editor-anim-dock__bone-name">{b.boneName}</span>
-                {b.position && <span className="material-symbols-outlined" title="Has a position track">open_with</span>}
-                {!b.editable && <span className="material-symbols-outlined">lock</span>}
-                {/* Two mutually exclusive actions, because a row is in one of two
-                    states: a bone the clip drives can be cleared, and one it
-                    ignores can be brought in. */}
-                {b.editable && onClearBone && (b.rotation || b.position) && (
-                  <button
-                    type="button"
-                    className="mesh-editor-icon-btn mesh-editor-anim-dock__bone-clear"
-                    onClick={e => { e.stopPropagation(); onClearBone(b.boneName) }}
-                    disabled={playing}
-                    title={playing
-                      ? 'Pause the clip to clear a bone'
-                      : `Clear ${b.boneName}'s animation — every frame takes the bone's rest pose, so the clip stops moving it. Undoable.`}
-                    aria-label={`Clear ${b.boneName}'s animation`}
-                  >
-                    <span className="material-symbols-outlined">delete_sweep</span>
-                  </button>
-                )}
-                {b.editable && onAddBone && !b.rotation && !b.position && (
-                  <button
-                    type="button"
-                    className="mesh-editor-icon-btn mesh-editor-anim-dock__bone-add"
-                    onClick={e => { e.stopPropagation(); onAddBone(b.boneName) }}
-                    disabled={playing}
-                    title={playing
-                      ? 'Pause the clip to add a bone'
-                      : `Add ${b.boneName} to this animation — every frame starts at its rest pose, so nothing changes until you pose it`}
-                    aria-label={`Add ${b.boneName} to this animation`}
-                  >
-                    <span className="material-symbols-outlined">add</span>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        <AnimationDopesheet
+          rows={rows}
+          sheet={sheet}
+          frameCount={frameCount}
+          frame={frame}
+          onFrameChange={onFrameChange}
+          selectedBone={selectedBone}
+          onSelectBone={onSelectBone}
+          onClearBone={onClearBone}
+          onAddBone={onAddBone}
+          onDeleteRange={onDeleteRange}
+          onShiftRange={onShiftRange}
+          playing={playing}
+          animatedCount={animatedCount}
+        />
+
 
         <div className="mesh-editor-anim-dock__editor">
           {!row ? (

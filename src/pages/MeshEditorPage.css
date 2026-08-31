@@ -2650,7 +2650,9 @@
    inside that budget, so no bone count and no viewport height can push the dock
    (or the canvas) off a page that does not scroll. */
 :root {
-  --mesh-editor-anim-dock-height: 260px;
+  /* Taller than it used to be: the dopesheet wants lanes, and the grip in the
+     dock's top edge rewrites this property live to trade height with the canvas. */
+  --mesh-editor-anim-dock-height: 360px;
 }
 
 .mesh-editor-viewport {
@@ -2668,6 +2670,7 @@
 }
 
 .mesh-editor-anim-dock {
+  position: relative;   /* the resize grip sits on the top edge */
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -2790,93 +2793,247 @@
      bottom of the panel past the budget, where `overflow: hidden` clips it. */
   min-height: 0;
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  gap: 0.8rem;
+  /* The sheet takes whatever is left; the numeric editor is a fixed column, so no
+     bone name and no window width can squeeze the timeline. Wide enough for three
+     axis fields to show a full value (-137.5 / 0.4772) side by side — at 268px they
+     clipped their last digit. */
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 0.7rem;
   align-items: stretch;
 }
 
-.mesh-editor-anim-dock__bones {
+/* --- Dopesheet ------------------------------------------------------------- */
+/* Bone names on the left, the time grid (one canvas) on the right, the two locked
+   to a single vertical scroll — see AnimationDopesheet.jsx.
+
+   The row height is a CONTRACT, not a style choice: the canvas places its lanes at
+   multiples of it, so it must equal SHEET_ROW_H in that file exactly or every name
+   drifts off its own keys. */
+:root {
+  --anim-sheet-row-h: 20px;
+}
+
+.mesh-editor-anim-sheet {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
 }
 
-.mesh-editor-anim-dock__bones-list {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.mesh-editor-anim-dock__bone {
+ /* One line, always. Wrapping it costs the sheet a lane per line, and the sheet is
+    the point of the dock — so the parts that can shrink (the search box, the
+    selection label) shrink instead. */
+.mesh-editor-anim-sheet__toolbar {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.25rem 0.4rem;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.mesh-editor-anim-sheet__toolbar .mesh-editor-anim__search {
+  flex: 0 1 10rem;
+  min-width: 4rem;
+}
+
+.mesh-editor-anim-sheet__selection {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 0.72rem;
   color: var(--on-surface-variant);
-  font-size: 0.78rem;
-  text-align: left;
+  opacity: 0.55;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesh-editor-anim-sheet__selection--on {
+  opacity: 1;
+  color: #8ff5ff;
+}
+
+.mesh-editor-anim-sheet__zoom {
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.mesh-editor-anim-sheet__body {
+  flex: 1;
+  /* A floor, unlike everywhere else in this dock: below about five lanes the sheet
+     stops being a sheet. If the dock is dragged shorter than its parts, this is what
+     scrolls the numeric editor beside it rather than shaving the grid to nothing. */
+  min-height: 100px;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(9, 10, 12, 0.55);
+}
+
+.mesh-editor-anim-sheet__left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mesh-editor-anim-sheet__left-head {
+  display: flex;
+  align-items: center;
+  height: 22px;                       /* the ruler's height, so the columns start level */
+  padding: 0 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.68rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* The grid owns the only vertical scroll; this column is translated to match it
+   (see handleGridScroll), so it must not scroll on its own. */
+.mesh-editor-anim-sheet__names {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mesh-editor-anim-sheet__names-inner {
+  will-change: transform;
+}
+
+.mesh-editor-anim-sheet__name {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  height: var(--anim-sheet-row-h);
+  padding: 0 0.3rem;
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
   cursor: pointer;
 }
 
-.mesh-editor-anim-dock__bone:hover {
+.mesh-editor-anim-sheet__name:hover {
   background: rgba(143, 245, 255, 0.06);
   color: var(--on-surface);
 }
 
-.mesh-editor-anim-dock__bone--selected {
+.mesh-editor-anim-sheet__name--selected {
   color: #8ff5ff;
-  border-color: rgba(143, 245, 255, 0.5);
   background: rgba(143, 245, 255, 0.1);
 }
 
-.mesh-editor-anim-dock__bone-name {
+/* A bone of the rig this clip does not animate. Listed so its absence is not a
+   mystery, dimmed so the column still reads as "what this clip does". */
+.mesh-editor-anim-sheet__name--idle .mesh-editor-anim-sheet__name-text {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.mesh-editor-anim-sheet__name--track {
+  cursor: default;
+  padding-left: 0.5rem;
+  opacity: 0.75;
+  font-size: 0.66rem;
+}
+
+.mesh-editor-anim-sheet__name-text {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.mesh-editor-anim-dock__bone .material-symbols-outlined {
-  font-size: 1rem;
+.mesh-editor-anim-sheet__name .material-symbols-outlined {
+  font-size: 0.85rem;
   opacity: 0.7;
 }
 
-/* A bone of the rig that this clip does not animate. Listed so it can be brought
-   in, dimmed so the list still reads as "what this clip does" at a glance. */
-.mesh-editor-anim-dock__bone--idle .mesh-editor-anim-dock__bone-name {
-  opacity: 0.55;
-  font-style: italic;
+.mesh-editor-anim-sheet__caret,
+.mesh-editor-anim-sheet__caret-spacer {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
 }
 
-/* "Stop animating this bone". Hidden until the row is hovered, focused or
-   selected: a delete icon on all 27 rows at once reads as clutter in a column
-   this narrow, and this is a deliberate action rather than a frequent one. */
-.mesh-editor-anim-dock__bone-clear,
-.mesh-editor-anim-dock__bone-add {
+.mesh-editor-anim-sheet__caret .material-symbols-outlined {
+  font-size: 1rem;
+  line-height: 14px;
+}
+
+/* Row actions stay hidden until the row is hovered or selected: a delete icon on
+   sixty rows at once is noise in a column this narrow. */
+.mesh-editor-anim-sheet__row-btn {
   flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
   opacity: 0;
   pointer-events: none;
 }
 
-.mesh-editor-anim-dock__bone:hover .mesh-editor-anim-dock__bone-clear,
-.mesh-editor-anim-dock__bone:focus-within .mesh-editor-anim-dock__bone-clear,
-.mesh-editor-anim-dock__bone--selected .mesh-editor-anim-dock__bone-clear,
-.mesh-editor-anim-dock__bone:hover .mesh-editor-anim-dock__bone-add,
-.mesh-editor-anim-dock__bone:focus-within .mesh-editor-anim-dock__bone-add,
-.mesh-editor-anim-dock__bone--selected .mesh-editor-anim-dock__bone-add {
+.mesh-editor-anim-sheet__row-btn .material-symbols-outlined {
+  font-size: 0.9rem;
+}
+
+.mesh-editor-anim-sheet__name:hover .mesh-editor-anim-sheet__row-btn,
+.mesh-editor-anim-sheet__name--selected .mesh-editor-anim-sheet__row-btn {
   opacity: 1;
   pointer-events: auto;
+}
+
+.mesh-editor-anim-sheet__right {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.mesh-editor-anim-sheet__ruler {
+  height: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.mesh-editor-anim-sheet__ruler canvas {
+  display: block;
+}
+
+.mesh-editor-anim-sheet__grid {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.mesh-editor-anim-sheet__grid:focus-visible {
+  box-shadow: inset 0 0 0 1px rgba(143, 245, 255, 0.4);
+}
+
+/* The spacer that gives the scrollbars something to measure. The canvas inside it
+   is only ever the size of the VISIBLE window — a full-content canvas would be
+   tens of megabytes on a long clip — and sticks to the corner while the spacer
+   scrolls underneath it. */
+.mesh-editor-anim-sheet__content {
+  position: relative;
+}
+
+.mesh-editor-anim-sheet__canvas {
+  position: sticky;
+  top: 0;
+  left: 0;
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
 }
 
 
@@ -2893,6 +3050,7 @@
 .mesh-editor-anim-dock__editor-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;      /* the Move/Rotate pair drops to its own line rather than clipping */
   gap: 0.5rem;
   color: var(--on-surface);
   font-size: 0.85rem;
@@ -2987,6 +3145,45 @@
 /* Docked, the canvas shares the column with the dock: `flex: 1` on the canvas and a
    fixed height on the dock already split it exactly, so all this has to do is lower
    the floor enough for the dock to fit on a short viewport. */
+/* Drag the dock's top edge to trade height with the 3D view. It writes the same
+   custom property the canvas shell subtracts, so both move together. */
+.mesh-editor-anim-dock__grip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.mesh-editor-anim-dock__grip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 48px;
+  height: 2px;
+  margin-left: -24px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.mesh-editor-anim-dock__grip:hover::after {
+  background: rgba(143, 245, 255, 0.6);
+}
+
+/* The numeric editor is a narrow column now, so its rows stack: the label owns a
+   line, the three axes sit under it. */
+.mesh-editor-anim-dock__editor .mesh-editor-anim-dock__row-label {
+  min-width: 100%;
+  margin-bottom: -0.2rem;
+}
+
+.mesh-editor-anim-dock__editor .mesh-editor-anim-dock__axis input {
+  width: 5rem;
+}
+
 .mesh-editor-canvas-shell--docked {
   min-height: 320px;
 }
@@ -2994,6 +3191,6 @@
 /* Short viewports: the dock keeps its controls but gives the 3D view room. */
 @media (max-height: 900px) {
   :root {
-    --mesh-editor-anim-dock-height: 220px;
+    --mesh-editor-anim-dock-height: 300px;
   }
 }

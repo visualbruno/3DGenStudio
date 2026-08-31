@@ -169,7 +169,7 @@ import { loadReferenceScene, loadReferenceRigScene, loadTargetScene, autoMapBone
 import { withHandPose } from '../utils/handPose'
 import { describeClip, applyFrameEdit, applyFrameOperation, applyFrameRotation, applyFramePosition,
   copyFramePose, pasteFramePose, ensurePositionTrack, ensureRotationTrack, clearFrameValue, clearBoneAnimation, smoothLoopSeam,
-  restoreTrackValues, frameTime,
+  restoreTrackValues, frameTime, flattenFrameRange, shiftFrameRange,
   DEFAULT_EDIT_SCOPE, DEFAULT_EDIT_SPAN } from '../utils/animationEdit'
 import { MOCAP_SOURCE_ID, MOCAP_MAX_FRAMES, MOCAP_MIN_FRAMES, MOCAP_ASSUMED_FPS,
   MOCAP_DEFAULT_SECONDS, estimateMocapVram, mocapFramesForSeconds, mocapMaxSeconds,
@@ -6188,6 +6188,44 @@ export default function MeshEditorPage() {
     setAnimEditRevision(r => r + 1)
   }, [selectedAnimation, animPlaying, animEditFrame, historyFor, syncAnimEditCounts])
 
+  // The dopesheet's two rectangle operations. Both rewrite whole tracks in place —
+  // the clip object the mixer is already playing — so the mesh shows the result on
+  // the next frame with nothing to rebuild, and both land as ONE undo entry: half a
+  // shifted block is a pose that never existed.
+  const handleAnimDeleteRange = useCallback((trackNames, from, to) => {
+    const clipName = selectedAnimation
+    const clip = animClipRef.current
+    if (!clipName || !clip || animPlaying || !trackNames?.length) return
+    const result = flattenFrameRange(clip, trackNames, from, to)
+    if (!result) return
+    editedClipsRef.current.set(clipName, clip)
+    setAnimEditedClips(prev => (prev.has(clipName) ? prev : new Set(prev).add(clipName)))
+    const history = historyFor(clipName)
+    history.undo.push({ kind: 'tracks', entries: result.entries })
+    if (history.undo.length > ANIM_EDIT_HISTORY_LIMIT) history.undo.shift()
+    history.redo.length = 0
+    syncAnimEditCounts(clipName)
+    setAnimEditRevision(r => r + 1)
+    const span = result.to - result.from + 1
+    setFeedback(`Deleted ${span} frame${span === 1 ? '' : 's'} of keys on ${result.entries.length} track${result.entries.length === 1 ? '' : 's'} — they now interpolate across the gap.`)
+  }, [selectedAnimation, animPlaying, historyFor, syncAnimEditCounts])
+
+  const handleAnimShiftRange = useCallback((trackNames, from, to, delta) => {
+    const clipName = selectedAnimation
+    const clip = animClipRef.current
+    if (!clipName || !clip || animPlaying || !trackNames?.length || !delta) return
+    const result = shiftFrameRange(clip, trackNames, from, to, delta)
+    if (!result) return
+    editedClipsRef.current.set(clipName, clip)
+    setAnimEditedClips(prev => (prev.has(clipName) ? prev : new Set(prev).add(clipName)))
+    const history = historyFor(clipName)
+    history.undo.push({ kind: 'tracks', entries: result.entries })
+    if (history.undo.length > ANIM_EDIT_HISTORY_LIMIT) history.undo.shift()
+    history.redo.length = 0
+    syncAnimEditCounts(clipName)
+    setAnimEditRevision(r => r + 1)
+  }, [selectedAnimation, animPlaying, historyFor, syncAnimEditCounts])
+
   // Stop the clip animating one bone entirely — the whole track flattened to the
   // bone's rest pose, rather than clearing rotation and position frame by frame.
   //
@@ -10614,8 +10652,8 @@ export default function MeshEditorPage() {
                   onEdit={handleAnimEditValue}
                   onClearValue={handleAnimClearFrameValue}
                   onClearBone={handleAnimClearBone}
-                  allBones={animAllBones}
-                  onAddBone={handleAnimAddBone}
+                  onDeleteRange={handleAnimDeleteRange}
+                  onShiftRange={handleAnimShiftRange}
                   allBones={animAllBones}
                   onAddBone={handleAnimAddBone}
                   onFrameOperation={handleAnimFrameOperation}
