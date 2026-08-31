@@ -1807,7 +1807,7 @@
 }
 
 .mesh-editor-panel__input {
-  width: 100%;
+  width: 300px;
   min-height: 38px;
   padding: 0.65rem 0.8rem;
   border-radius: var(--radius-md);
@@ -2795,9 +2795,10 @@
   display: grid;
   /* The sheet takes whatever is left; the numeric editor is a fixed column, so no
      bone name and no window width can squeeze the timeline. Wide enough for three
-     axis fields to show a full value (-137.5 / 0.4772) side by side — at 268px they
-     clipped their last digit. */
-  grid-template-columns: minmax(0, 1fr) 340px;
+     axis fields to show a full value (-137.5 / 0.4772) side by side AND the row's
+     clear button beside them — at 268px the values clipped, at 340px the button
+     wrapped onto a line of its own. */
+  grid-template-columns: minmax(0, 1fr) 380px;
   gap: 0.7rem;
   align-items: stretch;
 }
