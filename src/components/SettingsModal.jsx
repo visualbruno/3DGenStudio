@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSettings } from '../context/SettingsContext.shared'
 import { API_BASE } from '../config'
 import ServerSettingsTab from './ServerSettingsTab'
@@ -15,6 +15,26 @@ const CUSTOM_API_TYPE_OPTIONS = [
 
 function getCustomApiTypeLabel(type) {
   return CUSTOM_API_TYPE_OPTIONS.find(option => option.value === type)?.label || 'Image Generation'
+}
+
+async function fetchCreateOptions() {
+  const res = await fetch(`${API_BASE}/create/options`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data?.error || `Failed to load Create options (HTTP ${res.status})`)
+  return data
+}
+
+function CreateEngineOptions({ engines = [] }) {
+  const grouped = new Map()
+  for (const engine of engines) {
+    const group = engine.group || 'Available engines'
+    grouped.set(group, [...(grouped.get(group) || []), engine])
+  }
+  return [...grouped.entries()].map(([group, items]) => (
+    <optgroup key={group} label={group}>
+      {items.map(engine => <option key={engine.id} value={engine.id}>{engine.label}</option>)}
+    </optgroup>
+  ))
 }
 
 const MANAGED_FIELD_HINT = 'Set automatically for the ComfyUI that 3D Gen Studio manages. Switch to your own ComfyUI to edit it.'
@@ -674,11 +694,47 @@ export default function SettingsModal({ onClose }) {
   const [llamaAccepted, setLlamaAccepted] = useState(false)
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [newCustom, setNewCustom] = useState({ name: '', url: '', headers: '', body: '', type: 'image-generation' })
+  const [createOptions, setCreateOptions] = useState(null)
+  const [createOptionsLoading, setCreateOptionsLoading] = useState(false)
+  const [createOptionsError, setCreateOptionsError] = useState('')
+  const createOptionsRequested = useRef(false)
 
   // Ensure local state is updated if context settings load/change
   useEffect(() => {
     setLocalSettings(settings)
   }, [settings])
+
+  // Create options can be expensive (workflow discovery plus service probes), so
+  // load them once and only when this tab is opened.
+  useEffect(() => {
+    if (activeTab !== 'create' || createOptionsRequested.current) return
+    createOptionsRequested.current = true
+    setCreateOptionsLoading(true)
+    fetchCreateOptions()
+      .then(data => {
+        setCreateOptions(data)
+        setCreateOptionsError('')
+      })
+      .catch(err => setCreateOptionsError(err?.message || 'Could not load Create options'))
+      .finally(() => setCreateOptionsLoading(false))
+  }, [activeTab])
+
+  const updateCreate = (updates) => {
+    setLocalSettings(prev => ({
+      ...prev,
+      create: { ...(prev?.create || {}), ...updates }
+    }))
+  }
+
+  const updateCreateDefault = (key, value) => {
+    setLocalSettings(prev => ({
+      ...prev,
+      create: {
+        ...(prev?.create || {}),
+        defaults: { ...(prev?.create?.defaults || {}), [key]: value }
+      }
+    }))
+  }
 
   // Server-side truth, not the form copy: the managed flag is written by the main
   // process, and gating the inputs on the local copy would let a stale form make
@@ -753,6 +809,12 @@ export default function SettingsModal({ onClose }) {
               onClick={() => setActiveTab('server')}
             >
               Server
+            </button>
+            <button
+              className={`settings-tab ${activeTab === 'create' ? 'settings-tab--active' : ''}`}
+              onClick={() => setActiveTab('create')}
+            >
+              Create
             </button>
           </div>
 
@@ -1550,6 +1612,189 @@ export default function SettingsModal({ onClose }) {
           )}
 
           {activeTab === 'server' && <ServerSettingsTab />}
+          {activeTab === 'create' && (
+            <section className="settings-section">
+              <h3 className="settings-section-title font-label">Creation Experience</h3>
+              <div className="settings-api-card">
+                <div className="settings-input-group">
+                  <span id="create-mode-label" className="settings-label">Mode</span>
+                  <div role="radiogroup" aria-labelledby="create-mode-label" style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="create-mode"
+                        value="simple"
+                        checked={localSettings?.create?.mode === 'simple'}
+                        onChange={() => updateCreate({ mode: 'simple' })}
+                      />
+                      <span className="settings-helper-text" style={{ margin: 0 }}>Simple</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="create-mode"
+                        value="advanced"
+                        checked={localSettings?.create?.mode !== 'simple'}
+                        onChange={() => updateCreate({ mode: 'advanced' })}
+                      />
+                      <span className="settings-helper-text" style={{ margin: 0 }}>Advanced</span>
+                    </label>
+                  </div>
+                  <p className="settings-helper-text">
+                    Simple keeps Create focused on project, reference, brief, name and Auto. Advanced exposes every engine and finishing control.
+                  </p>
+                </div>
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5em', marginTop: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={!!localSettings?.create?.autoRun}
+                    onChange={e => updateCreate({ autoRun: e.target.checked })}
+                  />
+                  <span className="settings-helper-text" style={{ margin: 0 }}>
+                    Run new Create pipelines automatically without pausing for step review
+                  </span>
+                </label>
+              </div>
+
+              <h3 className="settings-section-title font-label">Simple-mode defaults</h3>
+              <div className="settings-api-card">
+                {createOptionsLoading && <p className="settings-helper-text">Loading Create options…</p>}
+                {createOptionsError && (
+                  <p className="settings-helper-text" style={{ color: '#f87171' }}>{createOptionsError}</p>
+                )}
+                {!createOptionsLoading && !createOptionsError && createOptions && (
+                  <p className="settings-helper-text">
+                    Leave an engine on Automatic to use the server&apos;s highest-ranked available option.
+                  </p>
+                )}
+
+                <div className="settings-grid">
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-template">Prompt template</label>
+                    <select
+                      id="create-default-template"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.templateId ?? ''}
+                      onChange={e => updateCreateDefault('templateId', e.target.value || null)}
+                    >
+                      <option value="">Server default template</option>
+                      {(createOptions?.templates || []).map(template => (
+                        <option key={template.id} value={template.id}>{template.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-image-engine">Image engine</label>
+                    <select
+                      id="create-default-image-engine"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.imageEngineId ?? ''}
+                      onChange={e => updateCreateDefault('imageEngineId', e.target.value || null)}
+                    >
+                      <option value="">Automatic — best available</option>
+                      <CreateEngineOptions engines={createOptions?.imageEngines} />
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-mesh-engine">Mesh engine</label>
+                    <select
+                      id="create-default-mesh-engine"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.meshEngineId ?? ''}
+                      onChange={e => updateCreateDefault('meshEngineId', e.target.value || null)}
+                    >
+                      <option value="">Automatic — best available</option>
+                      <CreateEngineOptions engines={createOptions?.meshEngines} />
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-cutout">Cut-out</label>
+                    <select
+                      id="create-default-cutout"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.cutoutEngine || 'auto'}
+                      onChange={e => updateCreateDefault('cutoutEngine', e.target.value)}
+                    >
+                      <option value="auto">Auto — remove opaque backgrounds</option>
+                      <option value="off">Off</option>
+                      <CreateEngineOptions engines={createOptions?.cutoutEngines} />
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-views">Turntable views</label>
+                    <select
+                      id="create-default-views"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.views || 'turntable'}
+                      onChange={e => updateCreateDefault('views', e.target.value)}
+                    >
+                      <option value="turntable">Turntable</option>
+                      <option value="single">Front view only</option>
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-clean">Clean mesh</label>
+                    <select
+                      id="create-default-clean"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.cleanEngine || 'auto'}
+                      onChange={e => updateCreateDefault('cleanEngine', e.target.value)}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-refine">Refine mesh</label>
+                    <select
+                      id="create-default-refine"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.refineEngine || 'off'}
+                      onChange={e => updateCreateDefault('refineEngine', e.target.value)}
+                    >
+                      <option value="off">Off</option>
+                      <option value="auto">Auto</option>
+                      <CreateEngineOptions engines={createOptions?.refineEngines} />
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-texture">Texture mesh</label>
+                    <select
+                      id="create-default-texture"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.textureEngine || 'auto'}
+                      onChange={e => updateCreateDefault('textureEngine', e.target.value)}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="off">Off</option>
+                      <CreateEngineOptions engines={createOptions?.textureEngines} />
+                    </select>
+                  </div>
+
+                  <div className="settings-input-group">
+                    <label className="settings-label" htmlFor="create-default-rig">Auto-rig</label>
+                    <select
+                      id="create-default-rig"
+                      className="settings-input"
+                      value={localSettings?.create?.defaults?.rig || 'auto'}
+                      onChange={e => updateCreateDefault('rig', e.target.value)}
+                    >
+                      <option value="auto">Auto</option>
+                      <option value="off">Off</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
         </div>
 
         <div className="settings-footer">

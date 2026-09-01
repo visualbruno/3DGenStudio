@@ -73,6 +73,21 @@ export const DEFAULT_SETTINGS = {
     avatar: null
   },
   initialSetupComplete: false,
+  create: {
+    mode: 'advanced',
+    autoRun: false,
+    defaults: {
+      templateId: null,
+      imageEngineId: null,
+      meshEngineId: null,
+      cutoutEngine: 'auto',
+      views: 'turntable',
+      cleanEngine: 'auto',
+      refineEngine: 'off',
+      textureEngine: 'auto',
+      rig: 'auto'
+    }
+  },
   apis: {
     google: {
       apiKey: '',

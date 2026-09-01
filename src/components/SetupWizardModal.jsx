@@ -235,7 +235,11 @@ export default function SetupWizardModal({ onComplete, onClose }) {
 
   const handleSkip = async () => {
     try {
-      await updateSettings({ ...settings, initialSetupComplete: true })
+      await updateSettings({
+        ...settings,
+        initialSetupComplete: true,
+        create: { ...(settings?.create || {}), mode: 'simple' }
+      })
     } catch (err) {
       console.error('Failed to mark setup complete:', err)
     }
@@ -244,7 +248,11 @@ export default function SetupWizardModal({ onComplete, onClose }) {
 
   const handleCloseAndMarkComplete = async () => {
     try {
-      await updateSettings({ ...settings, initialSetupComplete: true })
+      await updateSettings({
+        ...settings,
+        initialSetupComplete: true,
+        create: { ...(settings?.create || {}), mode: 'simple' }
+      })
     } catch (err) {
       console.error('Failed to mark setup complete:', err)
     }
@@ -400,7 +408,11 @@ export default function SetupWizardModal({ onComplete, onClose }) {
 
   const handleFinish = async () => {
     try {
-      await updateSettings({ ...settings, initialSetupComplete: true })
+      await updateSettings({
+        ...settings,
+        initialSetupComplete: true,
+        create: { ...(settings?.create || {}), mode: 'simple' }
+      })
     } catch (err) {
       console.error('Failed to mark setup complete:', err)
     }
