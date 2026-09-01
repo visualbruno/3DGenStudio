@@ -9996,20 +9996,42 @@ bootstrapDatabase().then(() => initializeStorage()).then(async () => {
     }
   });
 
-  // A port collision is the one startup failure with an obvious fix, so say what
-  // it is. The desktop shell picks a free port before spawning this process, but
-  // that check and this bind are not atomic — and a bare `npm start` or a
-  // container with a clashing publish gets here with no shell to help.
+  // A failed bind is fatal whatever caused it: this process has no server and
+  // nothing else will bring one up, so it names the cause and exits non-zero.
+  // Rethrowing instead would land in the uncaughtException handler at the top of
+  // this file, which deliberately keeps the process alive — leaving a backend
+  // that listens to nothing, and a desktop shell that can only report "Backend
+  // did not start in time" with the real error nowhere in sight.
   server.on('error', (err) => {
-    if (err.code !== 'EADDRINUSE') throw err;
     // The banner above may already have printed: binding the unspecified address
     // can report `listening` for the IPv6 half and only then fail on the IPv4 one,
-    // so say plainly that the server is not up.
-    console.error(
-      `❌ Port ${PORT} is already in use — another 3D Gen Studio (or another program) has it.\n` +
-      `   The backend did NOT start.\n` +
-      `   Start it on a different port with:  PORT=${PORT + 1} npm start`
-    );
+    // so every branch below says plainly that the server is not up.
+    if (err.code === 'EADDRINUSE') {
+      // A port collision is the startup failure with the most obvious fix, so give
+      // it. The desktop shell picks a free port before spawning this process, but
+      // that check and this bind are not atomic — and a bare `npm start` or a
+      // container with a clashing publish gets here with no shell to help.
+      console.error(
+        `❌ Port ${PORT} is already in use — another 3D Gen Studio (or another program) has it.\n` +
+        `   The backend did NOT start.\n` +
+        `   Start it on a different port with:  PORT=${PORT + 1} npm start`
+      );
+    } else if (err.code === 'EACCES') {
+      // Ports below 1024 need elevated rights on Linux/macOS. On Windows the usual
+      // culprit is a Hyper-V/WinNAT reservation, which swallows high ports too.
+      console.error(
+        `❌ Port ${PORT} cannot be opened — permission denied.\n` +
+        `   The backend did NOT start.\n` +
+        `   Ports below 1024 need elevated rights; on Windows the port may sit in a\n` +
+        `   reserved range (netsh int ipv4 show excludedportrange protocol=tcp).\n` +
+        `   Start it on a different port with:  PORT=${PORT + 1} npm start`
+      );
+    } else {
+      // Rarer than the two above and with no advice worth guessing at, so print the
+      // error itself: the cause belongs in the log rather than behind a timeout.
+      console.error(`❌ The backend did NOT start — ${err.code || 'listen error'} on port ${PORT}:`);
+      console.error(err);
+    }
     process.exit(1);
   });
 }).catch(err => {
