@@ -175,7 +175,10 @@ def ensure_patches() -> list[str]:
 #   1: original
 #   2: aligned mesh in the reference render, root-yaw fix, ffs scale, T5 joint
 #      names disambiguated, per-species pose memory
-BAKE_VERSION = 2
+#   3: reference sequence moves EVERY bone (a bone that never moves is locked at
+#      inference, and the old keyword table left every foot/toe/paw static), and
+#      textures are written out so the reference render is not magenta
+BAKE_VERSION = 3
 
 # build_scale_cache.py's default output name, which the loader and
 # species_fps_memory both expect verbatim.
