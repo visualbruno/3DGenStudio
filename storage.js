@@ -2717,7 +2717,47 @@ export async function listProjects(viewerId = null) {
      ORDER BY p.creationDate DESC, p.id DESC`,
     params
   );
-  return rows.map(mapProjectRow);
+  if (rows.length === 0) {
+    return [];
+  }
+
+  // Card art is the newest finished mesh, falling back to the newest image for
+  // a project that has not reached the mesh stage yet. Scoped to the projects
+  // this viewer can already see, so a shared deployment does not scan every
+  // other tenant's assets. Rows arrive oldest-first, so each Map write keeps
+  // the newest thumbnail-bearing asset.
+  const projectIds = rows.map(row => row.id);
+  const thumbnailRows = await all(
+    db,
+    `SELECT ap.projectId, t.name AS assetTypeName, a.thumbnail
+     FROM Assets_Projects ap
+     JOIN Assets a ON a.id = ap.assetId
+     JOIN AssetTypes t ON t.id = a.assetTypeId
+     WHERE ap.projectId IN (${projectIds.map(() => '?').join(', ')})
+       AND t.name IN ('Mesh', 'Image')
+       AND a.thumbnail IS NOT NULL AND a.thumbnail != ''
+     ORDER BY a.creationDate ASC, a.id ASC`,
+    projectIds
+  );
+
+  const latestMeshThumbnailByProjectId = new Map();
+  const latestImageThumbnailByProjectId = new Map();
+  for (const row of thumbnailRows) {
+    const byProjectId = row.assetTypeName === 'Mesh'
+      ? latestMeshThumbnailByProjectId
+      : latestImageThumbnailByProjectId;
+    byProjectId.set(row.projectId, row.thumbnail);
+  }
+
+  return rows.map(row => {
+    const thumbnail = latestMeshThumbnailByProjectId.get(row.id)
+      ?? latestImageThumbnailByProjectId.get(row.id)
+      ?? null;
+    return {
+      ...mapProjectRow(row),
+      thumbnail: thumbnail ? toAssetUrlPath(thumbnail) : null
+    };
+  });
 }
 
 export async function createProject(projectData = {}) {

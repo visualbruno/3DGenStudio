@@ -17,6 +17,7 @@
     "start": "node server.js",
     "serve": "vite build && node server.js",
     "lint": "eslint .",
+    "test": "node --test tests/",
     "preview": "vite preview",
     "mcp:stdio": "node mcp/stdio.js",
     "electron:dev": "npm run build && electron .",
