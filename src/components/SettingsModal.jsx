@@ -19,6 +19,10 @@ function getCustomApiTypeLabel(type) {
 
 async function fetchCreateOptions() {
   const res = await fetch(`${API_BASE}/create/options`)
+  // Engine discovery is served by the Create pipeline API, which ships
+  // separately. Until it is present the tab still edits and saves the stored
+  // preferences, so a missing route is an absence rather than a failure.
+  if (res.status === 404) return null
   const data = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(data?.error || `Failed to load Create options (HTTP ${res.status})`)
   return data
@@ -1666,6 +1670,11 @@ export default function SettingsModal({ onClose }) {
                 {!createOptionsLoading && !createOptionsError && createOptions && (
                   <p className="settings-helper-text">
                     Leave an engine on Automatic to use the server&apos;s highest-ranked available option.
+                  </p>
+                )}
+                {!createOptionsLoading && !createOptionsError && !createOptions && (
+                  <p className="settings-helper-text">
+                    Engine discovery is not available in this build, so only the built-in choices are listed. Your selections are still saved.
                   </p>
                 )}
 
