@@ -5,7 +5,7 @@ import pickle
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from . import bvh as BVH
+from utils import bvh as BVH  # MOCAP_ABS_IMPORT: run as a script, not a package member
 from utils.common import parent_to_kinematic_tree
 
 

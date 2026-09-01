@@ -433,7 +433,11 @@ def quadruped_character_restpose_alignment(bvh_pth, save_dir, front=None):
                                        (seq_len, 1, 1)))[:, 0]  # (T,3)
     transl_rot = transl @ R  # (T,3)
     positions = np.zeros((seq_len, J, 3), dtype=np.float32)
-    positions[:, 0] = transl_rot + anim.offsets[0][None]
+    # MOCAP_ROOT_YAW_FIX: the rotated offset, not the pre-rotation one. With
+    # anim.offsets[0] the root keeps a residual translation of
+    # (off_old - R @ off_old) forever, which is zero for a root on the Y axis
+    # (every Truebones/Mixamo hips) and a full body-length for a quadruped.
+    positions[:, 0] = transl_rot + offsets[0][None]
 
     # 5) 回欧拉（顺序与 BVH 'order' 完全一致）
     euler = matrix_to_euler_angles(rot_mat, 'ZYX').cpu().numpy()

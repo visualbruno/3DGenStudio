@@ -76,7 +76,13 @@ def face_forward_in_place(bvh_path):
     face_forward_bvh_with_scale(bvh_path, anim, names, frametime)
 
 
-def write_ffs_bvh(character_name, target_dir, rest_bvh_path, scale=0.01):
+# MOCAP_FFS_SCALE_FIX: 0.01 assumes a CENTIMETRE source rig (Truebones). This
+# template is what utils/npy2bvh.py builds every output BVH on, so a metre-native
+# rig (anything out of glTF) got its motion back on a skeleton 100x too small.
+_FFS_SCALE = float(os.environ.get("MOCAP_BVH_SCALE", "0.01"))
+
+
+def write_ffs_bvh(character_name, target_dir, rest_bvh_path, scale=_FFS_SCALE):
     """Regenerate `{character}_ffs.bvh` from the ALIGNED rest pose.
 
     extract_character_from_fbx.py already wrote one next to the unaligned rest

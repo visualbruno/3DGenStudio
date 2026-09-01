@@ -29,9 +29,13 @@ from pathlib import Path
 import mocap_paths as P
 
 # ----------------------------------------------------------------- patching --
-# Two upstream defaults are wrong for any rig that did not come from Truebones.
-# Applied textually and idempotently so a clean checkout works, and so an
-# upgrade of the checkout does not silently revert them.
+# Upstream defaults and bugs that only show up on a rig that did not come from
+# Truebones. Applied textually and idempotently so a clean checkout works, and
+# so an upgrade of the checkout does not silently revert them.
+#
+# Every one of these was invisible on a biped and load-bearing on a quadruped,
+# because the assumption they all share is "the root joint sits on the vertical
+# axis through the model origin" — true of a Mixamo hips, false of an animal's.
 
 _PATCH_OBJ_AXES = (
     """    bpy.ops.wm.obj_export(
@@ -66,37 +70,117 @@ _BVH_SCALE = float(os.environ.get("MOCAP_BVH_SCALE", "0.01"))
 def face_forward_bvh_external(bvh_path, scale=_BVH_SCALE, out_path=None):""",
 )
 
+# The alignment stage yaws the whole rig so it faces +Z: rest offsets, every
+# joint's local rotation, and the root's translation channel. The root is the one
+# it gets wrong — it adds the PRE-rotation offset back instead of the rotated
+# one, leaving a residual of (off_old - R*off_old) in the root position of every
+# frame of every yaw variant. That residual is zero only when the root offset is
+# invariant under the yaw, i.e. when it lies on the Y axis; a quadruped's hips
+# sit a body-length forward of the mesh origin, so it is not.
+#
+# Downstream, extract_mesh_from_bvh reads (root position - rest offset) as "how
+# far the character has walked" and translates the reference mesh by it, which
+# is what pushes the render out of frame.
+_PATCH_ROOT_YAW = (
+    "    positions[:, 0] = transl_rot + anim.offsets[0][None]",
+    """    # MOCAP_ROOT_YAW_FIX: the rotated offset, not the pre-rotation one. With
+    # anim.offsets[0] the root keeps a residual translation of
+    # (off_old - R @ off_old) forever, which is zero for a root on the Y axis
+    # (every Truebones/Mixamo hips) and a full body-length for a quadruped.
+    positions[:, 0] = transl_rot + offsets[0][None]""",
+)
+
+# extract_character_from_fbx writes a *_ffs.bvh next to the UNaligned rest pose
+# and honours MOCAP_BVH_SCALE (see _PATCH_SCALE). This function then regenerates
+# it from the ALIGNED rest pose with a hardcoded 0.01 — and utils/npy2bvh.py
+# builds every returned clip on that template, so the scale override was undone
+# exactly where it mattered.
+_PATCH_FFS_SCALE = (
+    "def write_ffs_bvh(character_name, target_dir, rest_bvh_path, scale=0.01):",
+    """# MOCAP_FFS_SCALE_FIX: 0.01 assumes a CENTIMETRE source rig (Truebones). This
+# template is what utils/npy2bvh.py builds every output BVH on, so a metre-native
+# rig (anything out of glTF) got its motion back on a skeleton 100x too small.
+_FFS_SCALE = float(os.environ.get("MOCAP_BVH_SCALE", "0.01"))
+
+
+def write_ffs_bvh(character_name, target_dir, rest_bvh_path, scale=_FFS_SCALE):""",
+)
+
+# species_fps_memory.py is the only preprocess script written as a package
+# member; every other one anchors its imports to the repo root. We run all of
+# them as plain scripts with PYTHONPATH=REPO_DIR, so the relative import is the
+# one thing standing between us and a usable pose memory bank.
+_PATCH_MEMORY_IMPORT = (
+    "from . import bvh as BVH",
+    "from utils import bvh as BVH  # MOCAP_ABS_IMPORT: run as a script, not a package member",
+)
+
+# (relative path, [(marker, find, replace, label), ...])
+_PATCH_TARGETS = (
+    ("preprocess/extract_character_from_fbx.py", (
+        ("forward_axis='Y'", *_PATCH_OBJ_AXES, "obj_export axes"),
+        ("_BVH_SCALE", *_PATCH_SCALE, "bvh scale env override"),
+    )),
+    ("utils/bvh_tools.py", (
+        ("MOCAP_ROOT_YAW_FIX", *_PATCH_ROOT_YAW, "root translation yaw"),
+    )),
+    ("preprocess/align_character_face_zplus.py", (
+        ("MOCAP_FFS_SCALE_FIX", *_PATCH_FFS_SCALE, "ffs template scale"),
+    )),
+    ("preprocess/species_fps_memory.py", (
+        ("MOCAP_ABS_IMPORT", *_PATCH_MEMORY_IMPORT, "pose memory import"),
+    )),
+)
+
 
 def ensure_patches() -> list[str]:
     """Make the checkout usable. Returns a list of what was changed."""
-    target = P.REPO_DIR / "preprocess" / "extract_character_from_fbx.py"
-    if not target.exists():
+    if not (P.REPO_DIR / "preprocess" / "extract_character_from_fbx.py").exists():
         raise RuntimeError(f"MoCapAnything checkout not found at {P.REPO_DIR}")
-    src = target.read_text(encoding="utf-8")
+
     applied = []
-
-    if "forward_axis='Y'" not in src:
-        if _PATCH_OBJ_AXES[0] not in src:
-            raise RuntimeError("cannot patch obj_export axes: upstream code changed shape")
-        src = src.replace(*_PATCH_OBJ_AXES, 1)
-        applied.append("obj_export axes")
-
-    if "_BVH_SCALE" not in src:
-        if _PATCH_SCALE[0] not in src:
-            raise RuntimeError("cannot patch bvh scale: upstream code changed shape")
-        src = src.replace(*_PATCH_SCALE, 1)
-        src = src.replace("face_forward_bvh_external(rest_bvh_path, scale=0.01, out_path=ffs_path)",
-                          "face_forward_bvh_external(rest_bvh_path, scale=_BVH_SCALE, out_path=ffs_path)")
-        src = src.replace("face_forward_bvh_external(bvh_pth, scale=0.01)",
-                          "face_forward_bvh_external(bvh_pth, scale=_BVH_SCALE)")
-        applied.append("bvh scale env override")
-
-    if applied:
-        target.write_text(src, encoding="utf-8")
+    for relative, patches in _PATCH_TARGETS:
+        target = P.REPO_DIR / relative
+        if not target.exists():
+            raise RuntimeError(f"MoCapAnything checkout is missing {relative}")
+        src = target.read_text(encoding="utf-8")
+        changed = False
+        for marker, find, replace, label in patches:
+            if marker in src:
+                continue
+            if find not in src:
+                raise RuntimeError(f"cannot patch {label} in {relative}: upstream code changed shape")
+            src = src.replace(find, replace, 1)
+            applied.append(label)
+            changed = True
+        # The scale override is spelled out at three call sites, and only the
+        # definition carries the marker.
+        if changed and relative.endswith("extract_character_from_fbx.py"):
+            src = src.replace("face_forward_bvh_external(rest_bvh_path, scale=0.01, out_path=ffs_path)",
+                              "face_forward_bvh_external(rest_bvh_path, scale=_BVH_SCALE, out_path=ffs_path)")
+            src = src.replace("face_forward_bvh_external(bvh_pth, scale=0.01)",
+                              "face_forward_bvh_external(bvh_pth, scale=_BVH_SCALE)")
+        if changed:
+            target.write_text(src, encoding="utf-8")
     return applied
 
 
 # ------------------------------------------------------------------ helpers --
+
+# Bump whenever a change in prepare() alters what the baked artifacts MEAN, as
+# opposed to just how they are produced. The bake is content-addressed, so
+# without this a rig baked by an older version reports "already prepared" and the
+# fix never gets exercised. Old bakes are left on disk rather than deleted — they
+# simply stop being addressed.
+#   1: original
+#   2: aligned mesh in the reference render, root-yaw fix, ffs scale, T5 joint
+#      names disambiguated, per-species pose memory
+BAKE_VERSION = 2
+
+# build_scale_cache.py's default output name, which the loader and
+# species_fps_memory both expect verbatim.
+SCALE_CACHE_NAME = "__mesh2pose1002_species_scale_cache.pkl"
+
 
 def rig_id_for(glb_bytes: bytes, rig_key: str = "") -> str:
     """Cache key for a bake.
@@ -108,9 +192,10 @@ def rig_id_for(glb_bytes: bytes, rig_key: str = "") -> str:
     rig that is already on disk. A skeleton key changes when the skeleton
     changes, which is exactly when the bake stops describing the rig.
     """
+    salt = f"v{BAKE_VERSION}|".encode("utf-8")
     if rig_key:
-        return hashlib.sha256(rig_key.encode("utf-8")).hexdigest()[:16]
-    return hashlib.sha256(glb_bytes).hexdigest()[:16]
+        return hashlib.sha256(salt + rig_key.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(salt + glb_bytes).hexdigest()[:16]
 
 
 def rig_dir(rig_id: str) -> Path:
@@ -289,14 +374,116 @@ def compute_front(rest_bvh: Path) -> list[float]:
     return [float(x) for x in (vec / n)]
 
 
+# ------------------------------------------------------- motion root anchor --
+
+def anchor_motion_root(bvh_path: Path) -> list[float] | None:
+    """Make a motion BVH's root position channel agree with its own OFFSET.
+
+    The motion export zeroes the root's HORIZONTAL position channel and keeps
+    only its height — (0, hipY, 0) — while the root OFFSET beside it is the real
+    rest position of the hips. Two consumers then disagree about what the channel
+    means:
+
+      * utils/animation.transforms_global (and so the reference pose npz) reads
+        it as the root's world position, which is standard BVH.
+      * utils/mesh.extract_mesh_from_bvh reads (channel - OFFSET) as "how far the
+        character has travelled" and translates the reference mesh by it.
+
+    They only agree when the channel equals the OFFSET at rest. It does in
+    rest.bvh; it does not in the motion BVH, and the gap is exactly the hips'
+    horizontal distance from the mesh origin. A biped's hips sit on that origin
+    (iceman: 18mm) so nobody noticed; a quadruped's sit a half-body forward
+    (this boar: 641mm), and the reference render gets shoved that far out of
+    frame.
+
+    Anchoring is a rigid translation of the root track, so any real travel in the
+    clip survives untouched. Edited textually rather than through BVH.save_dict:
+    a round trip there re-derives the euler angles and rewrites the channel order,
+    which is a lot of change to make for three numbers per line.
+
+    Returns the applied offset, or None if nothing needed doing.
+    """
+    text = bvh_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    try:
+        root_at = next(i for i, l in enumerate(lines) if l.strip().startswith("ROOT "))
+        offset_at = next(i for i in range(root_at, len(lines)) if lines[i].strip().startswith("OFFSET "))
+        channels_at = next(i for i in range(offset_at, len(lines)) if lines[i].strip().startswith("CHANNELS "))
+        motion_at = next(i for i, l in enumerate(lines) if l.strip() == "MOTION")
+    except StopIteration:
+        raise RuntimeError(f"{bvh_path.name} is not a BVH we can read")
+
+    offset = [float(v) for v in lines[offset_at].split()[1:4]]
+
+    # Only safe if the root's first three channels are X/Y/Z position, in order —
+    # which is what makes "the first three numbers on a motion line" the root
+    # position. Anything else and we leave the file alone.
+    channels = lines[channels_at].split()[2:]
+    if channels[:3] != ["Xposition", "Yposition", "Zposition"]:
+        return None
+
+    first_data = motion_at + 3          # MOTION, Frames:, Frame Time:
+    if first_data >= len(lines):
+        return None
+    head = lines[first_data].split()
+    if len(head) < 3:
+        return None
+
+    delta = [offset[i] - float(head[i]) for i in range(3)]
+    if max(abs(d) for d in delta) < 1e-6:
+        return None
+
+    for i in range(first_data, len(lines)):
+        parts = lines[i].split()
+        if len(parts) < 3:
+            continue
+        for axis in range(3):
+            parts[axis] = f"{float(parts[axis]) + delta[axis]:.6f}"
+        lines[i] = " ".join(parts)
+
+    bvh_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return delta
+
+
 # ------------------------------------------------------------- joint naming --
 # build_species_info embeds each joint's NAME with T5, after stripping trailing
 # digits. On a Mixamo rig that collapses 52 joints to 30 unique names: all three
 # spine joints become "Spine", every finger segment becomes one name. Spelling
 # the ordinals out restores a distinct embedding per joint.
+#
+# The joint-name embedding is how the model knows which joint is which, so a
+# collision is not cosmetic — two joints that share a name share an identity.
 
-_ORD = {"1": "One", "2": "Two", "3": "Three", "4": "Four", "5": "Five",
-        "6": "Six", "7": "Seven", "8": "Eight", "9": "Nine"}
+_ONES = ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight",
+         "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+         "Sixteen", "Seventeen", "Eighteen", "Nineteen")
+_TENS = ("", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy",
+         "Eighty", "Ninety")
+
+
+def _ordinal_words(digits: str) -> str:
+    """Spell out a joint name's trailing number.
+
+    Has to cope with what real rigs produce, not just "Spine_1":
+      - zero-padded ordinals from our own Auto Rig ("extra_05")
+      - two-digit ones ("extra_10")
+      - Blender's duplicate suffix, which survives name sanitising as a run of
+        digits ("Spine_2.001" -> "Spine_2001")
+    A plain dict lookup on the digit string missed all three, so six `extra_*`
+    joints came back as the single name "extra" and the boar's NECK
+    ("Spine_2001") came back as the bare word "Spine".
+    """
+    value = int(digits)
+    if value < len(_ONES):
+        return _ONES[value]
+    if value < 100:
+        tail = f" {_ONES[value % 10]}" if value % 10 else ""
+        return f"{_TENS[value // 10]}{tail}"
+    # Past ninety-nine the digits themselves are what make the name unique, and
+    # t5 tokenizes them fine — the released zoo's curated names use digits too
+    # ("quadruped spine 01").
+    return digits.lstrip("0") or "Zero"
 
 
 def build_joint_name_map(rig: str, names: list[str]) -> dict:
@@ -307,7 +494,18 @@ def build_joint_name_map(rig: str, names: list[str]) -> dict:
     for n in names:
         base = auto_clean(n)
         m = re.search(r"(\d+)$", n)
-        out[n] = f"{base} {_ORD[m.group(1)]}" if (m and m.group(1) in _ORD) else base
+        out[n] = f"{base} {_ordinal_words(m.group(1))}".strip() if m else base
+
+    # Whatever the naming scheme, no two joints may end up with the same name.
+    # Falling back to the joint's index is ugly to read but it is a name, which
+    # is more than a duplicate is.
+    seen: dict[str, str] = {}
+    for index, n in enumerate(names):
+        label = out[n]
+        if label and label not in seen:
+            seen[label] = n
+            continue
+        out[n] = f"{label or 'Joint'} Index {index}".strip()
     return {rig: out}
 
 
@@ -356,6 +554,16 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
     _run(blender_cmd(P.REPO_DIR / "preprocess" / "extract_character_from_fbx.py"),
          cwd=P.REPO_DIR, env=env, label="extract_character_from_fbx")
 
+    # 2b. anchor the motion BVH's root to its own rest offset, BEFORE anything
+    #     reads it — align, the yaw variants, the pose npz and the render all
+    #     inherit whatever this file says the root position is.
+    for motion_bvh in sorted((zoo_root / "motions").glob("*.bvh")):
+        delta = anchor_motion_root(motion_bvh)
+        if delta:
+            report("anchor", 0.18,
+                   "Anchored the reference root to the rest pose "
+                   f"({', '.join('%.3f' % d for d in delta)}).")
+
     # 3. facing: computed from the rig, never inferred (see compute_front)
     rest_bvh = zoo_root / "characters_fix_facezplus" / rig / "rest.bvh"
     if not rest_bvh.exists():
@@ -399,6 +607,37 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
           "--joint_name_map", str(name_map)], cwd=P.REPO_DIR, env=env, label="build_species_info")
     _run([py, "preprocess/build_scale_cache.py"], cwd=P.REPO_DIR, env=env, label="build_scale_cache")
 
+    # 5b. per-species pose memory. The checkpoint is Pose2RotMemoryRestModel:
+    #     four layers whose whole job is to attend over a bank of poses for THIS
+    #     species. Without a bank, inference falls back to a bank of exactly one
+    #     frame (the reference rest pose) — a shape the model never saw, since
+    #     training always had 32.
+    #
+    #     Honest limit: a bank can only be as varied as the reference motion, and
+    #     ours is a single idle, so the 32 sampled poses differ mainly by yaw.
+    #     That is more than one frame but a long way from what training used, so
+    #     this is the one stage here whose benefit is unproven — MOCAP_MEMORY=0
+    #     skips it and takes the one-frame fallback, which is the A/B to run.
+    memory_pkl = None
+    memory_mode = os.environ.get("MOCAP_MEMORY_MODE", "both")
+    if os.environ.get("MOCAP_MEMORY", "1") != "0":
+        report("memory", 0.55, "Sampling reference poses…")
+        memory_root = zoo_root / "species_fps_memory"
+        try:
+            _run([py, "preprocess/species_fps_memory.py",
+                  "--bvh_pose_root", str(zoo_root / "bvh_pose"),
+                  "--scale_cache_path", str(zoo_root / "cache" / SCALE_CACHE_NAME),
+                  "--save_root", str(memory_root),
+                  "--reset_existing_pkl"],
+                 cwd=P.REPO_DIR, env=env, label="species_fps_memory")
+            candidate = memory_root / f"fps_select_by_{memory_mode}_32.pkl"
+            if candidate.exists():
+                memory_pkl = str(candidate)
+        except RuntimeError as exc:
+            # A missing bank is the status quo, not a failed bake.
+            first = str(exc).splitlines()[0][:140]
+            report("memory", 0.58, f"No pose memory built ({first}) — using the reference frame.")
+
     # 6. render one view + embed it. Only y0 is needed, so we render one of the
     #    twelve. The stage's own mp4 encode uses `-pattern_type glob`, which
     #    Windows ffmpeg builds do not implement — we do not need the mp4, so its
@@ -406,6 +645,23 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
     report("render", 0.6, "Rendering the reference view…")
     try:
         _run([py, "preprocess/render_bvh_videos_fast.py", "--zoo-root", str(zoo_root),
+              # --character-root defaults to characters_fix_facezplus — the mesh
+              # BEFORE alignment — while the BVH being rendered comes from
+              # zoo/bvh, which is aligned to face +Z. Same mesh, two folders, one
+              # yaw apart, and at the idle rest pose LBS is the identity, so the
+              # render is literally the unaligned mesh. That makes the reference
+              # IMAGE disagree with the reference POSE about which way the
+              # character faces — and that pair is the model's whole
+              # conditioning. Upstream gets away with the default because its
+              # characters_fix_facezplus is already +Z-facing; ours is the raw
+              # rig, and alignment is what produces the +Z copy.
+              "--character-root", str(zoo_root / "characters_face_zplus"),
+              # Inference reads ref_image_embed_all[ref_idx=0] — ONE frame. The
+              # reference motion is a static idle, so the other 149 renders are
+              # identical copies of it, and Blender was spending ~170s of the
+              # bake producing them. A small margin over 1 in case a stage ever
+              # indexes a few frames in.
+              "--max-frames", "8",
               "--blender", blender_exe_for_subtools(), "--views", "y0"],
              cwd=P.REPO_DIR, env=env, label="render_bvh_videos_fast")
     except RuntimeError as exc:
@@ -449,6 +705,11 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
         "joints": len(bones),
         "bones": bones,
         "front": front,
+        # Absent on a bake from before the memory stage existed, which is exactly
+        # when generate() should keep taking the one-frame fallback.
+        "memory_pkl": memory_pkl,
+        "memory_mode": memory_mode if memory_pkl else None,
+        "bake_version": BAKE_VERSION,
         "cached": False,
     }
     (root / "prepared.json").write_text(json.dumps(info, indent=1), encoding="utf-8")
@@ -461,6 +722,38 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
 # --------------------------------------------------------------- generate ----
 
 MAX_FRAMES = 301          # upstream hard cap; longer input is silently truncated
+
+
+def _video_fps(video_path: Path) -> float | None:
+    """The clip's real frame rate, or None if it cannot be read.
+
+    cv2 is already a hard dependency of inference (video2pose2rot extracts the
+    frames with it), so this adds nothing to the environment.
+    """
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(video_path))
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        cap.release()
+    except Exception:
+        return None
+    return fps if 1.0 < fps < 1000.0 else None
+
+
+def _retime_bvh(text: str, fps: float) -> str:
+    """Stamp the source video's frame rate onto the returned clip.
+
+    utils/npy2bvh.py writes `Frame Time: 0.033333` unconditionally and
+    cfg output.fps never reaches it, so a 24 fps video came back labelled 30 fps
+    and every clip played ~25% fast. The model emits one pose per input frame,
+    which is what makes the input rate the right answer.
+    """
+    return re.sub(
+        r"(?m)^([ \t]*Frame Time:[ \t]*)[0-9.eE+-]+[ \t]*$",
+        lambda m: f"{m.group(1)}{1.0 / fps:.6f}",
+        text,
+        count=1,
+    )
 
 
 def generate(rig_id: str, video_path: Path, report, max_frames: int = MAX_FRAMES) -> dict:
@@ -490,6 +783,16 @@ def generate(rig_id: str, video_path: Path, report, max_frames: int = MAX_FRAMES
     def _p(path):
         return Path(path).as_posix()
 
+    # The model emits one pose per input frame, so the clip's rate IS the video's
+    # rate. Read it here to stamp onto the BVH below.
+    video_fps = _video_fps(video_path)
+
+    # A bake from before the memory stage has no bank; "" is what makes inference
+    # take its documented one-frame fallback.
+    memory_pkl = info.get("memory_pkl") or ""
+    if memory_pkl and not os.path.exists(memory_pkl):
+        memory_pkl = ""
+
     cfg = {
         "runtime": {"device": "cuda", "seed": 42},
         "weights": {
@@ -503,8 +806,8 @@ def generate(rig_id: str, video_path: Path, report, max_frames: int = MAX_FRAMES
         "data": {
             "base_dir": _p(zoo_root),
             "character_dir": _p(zoo_root / "characters_face_zplus"),
-            "memory_pkl_path": "",
-            "scale_dict_path": _p(zoo_root / "cache" / "__mesh2pose1002_species_scale_cache.pkl"),
+            "memory_pkl_path": _p(memory_pkl) if memory_pkl else "",
+            "scale_dict_path": _p(zoo_root / "cache" / SCALE_CACHE_NAME),
             "bvh_roots": [_p(zoo_root / "bvh")],
             "video_roots": [_p(videos)],
             "image_roots": [_p(videos)],
@@ -519,7 +822,9 @@ def generate(rig_id: str, video_path: Path, report, max_frames: int = MAX_FRAMES
             "blender_path": None,          # no mesh render: we only want the BVH
             "output_tag": "mocap",
             "save_dir": _p(work / "out"),
-            "fps": 30,
+            # Only reaches the debug previews — utils/npy2bvh.py hardcodes the
+            # BVH frame time, so _retime_bvh below is what actually fixes it.
+            "fps": int(round(video_fps)) if video_fps else 30,
             "export_gt_mesh": False,
             "export_gt_video": False,
         },
@@ -539,10 +844,16 @@ def generate(rig_id: str, video_path: Path, report, max_frames: int = MAX_FRAMES
         raise RuntimeError("inference produced no BVH — the clip may contain no visible subject")
 
     bvh_text = found[0].read_text(encoding="utf-8")
+    if video_fps:
+        bvh_text = _retime_bvh(bvh_text, video_fps)
     stats = _bvh_stats(bvh_text)
     shutil.rmtree(work, ignore_errors=True)
     report("done", 1.0, "Motion ready.")
-    return {"bvh": bvh_text, "stats": {**stats, "rig": rig, "rig_id": rig_id}}
+    return {"bvh": bvh_text, "stats": {
+        **stats, "rig": rig, "rig_id": rig_id,
+        "source_fps": round(video_fps, 3) if video_fps else None,
+        "pose_memory": bool(memory_pkl),
+    }}
 
 
 def _bvh_stats(text: str) -> dict:

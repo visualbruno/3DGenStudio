@@ -1119,6 +1119,16 @@ function MoCapTab({ animation, mocap }) {
             <span><strong>Bones driven:</strong> {m.lastStats.joints}</span>
           </div>
         )}
+        {/* The model puts the whole body orientation on the root bone and gets
+            the upright part of it wrong, which used to swing the entire mesh
+            around the hips. Said here so a corrected capture does not look like
+            the model simply got it right. */}
+        {m.lastStats?.rootTiltRemoved > 5 && (
+          <span className="mesh-editor-panel__hint">
+            Straightened the capture: {m.lastStats.rootTiltRemoved}° of body tilt was removed from
+            the root bone. The direction it faces and all limb motion are kept.
+          </span>
+        )}
       </div>
 
       <ClipGallery animation={animation} emptyLabel="No captured motion yet." />
