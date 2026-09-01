@@ -176,8 +176,9 @@ import { MOCAP_SOURCE_ID, MOCAP_MAX_FRAMES, MOCAP_MIN_FRAMES, MOCAP_ASSUMED_FPS,
   detectVideoFps, inspectMocapRig,
   prepareMocapRig, generateMocapClip, mocapIdentityMapping, mocapRigKey,
   forgetMocapRig, MOCAP_BONE_GROUPS } from '../utils/mocapGen'
-import { KIMODO_SOURCE_ID, countPromptSegments, generateMotionClip, loadKimodoSkeletonSource,
-  listSavedMotions, saveMotion, deleteSavedMotion, loadSavedMotionClip } from '../utils/motionGen'
+import { KIMODO_SOURCE_ID, MOTION_SOURCE_MOCAP, countPromptSegments, generateMotionClip,
+  loadKimodoSkeletonSource, listSavedMotions, saveMotion, deleteSavedMotion,
+  loadSavedMotionClip } from '../utils/motionGen'
 import { CUSTOM_SOURCE_ID, buildCustomAnimationDocument, customClipFromDocument,
   customMappingKey, customSourceFromDocument, fetchCustomAnimationDocument, listCustomAnimations,
   mapCustomBones, saveCustomAnimation, deleteCustomAnimation, renameCustomAnimation } from '../utils/customAnimations'
@@ -7173,7 +7174,14 @@ export default function MeshEditorPage() {
       // The capture is minutes of GPU time and the BVH is the mesh-independent
       // artifact worth keeping, so persist before anything else can fail. A save
       // failure must not fail the capture: the clip is already in hand.
-      saveMotion({ name, prompt: `Video: ${mocapVideo.name || 'clip'}`, bvh })
+      // `source` matters on the way back out: the stored BVH is raw, and only a
+      // MoCap row may have its root tilt corrected when it is re-applied.
+      saveMotion({
+        name,
+        prompt: `Video: ${mocapVideo.name || 'clip'}`,
+        bvh,
+        source: MOTION_SOURCE_MOCAP,
+      })
         .then(saved => setMotionLibrary(prev => [saved, ...prev]))
         .catch(err => {
           console.error('Could not save the captured motion:', err)

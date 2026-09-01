@@ -14,12 +14,20 @@
 import { Group } from 'three'
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
 import { API_BASE } from '../config'
-import { detectHipBone } from './animationLibrary'
+import { detectHipBone, uprightRootRotation } from './animationLibrary'
 import { ensureDesktopService, readSseStream } from './meshTools'
 
 // Kimodo occupies the same single "source rig" slot as a mesh2motion reference,
 // so it needs an id that cannot collide with one.
 export const KIMODO_SOURCE_ID = 'kimodo'
+
+// Which generator a saved motion came from — mirrors the Motions.source column.
+// The library is shared, and the two sources need different treatment on the way
+// back OUT of it (see loadSavedMotionClip), so this has to be recorded at save
+// time. 'kimodo' is the default because it is the only value rows written before
+// MoCap joined the library can have.
+export const MOTION_SOURCE_KIMODO = 'kimodo'
+export const MOTION_SOURCE_MOCAP = 'mocap'
 
 // The joints Kimodo ACTUALLY animates. Its checkpoint denoises the compact
 // 30-joint SOMA skeleton and expands the result to 77 for output, filling the
@@ -93,10 +101,18 @@ function bvhToSource(bvhText) {
 // already loaded — which is what lets a saved motion drop into a session that
 // generated its source rig minutes ago, and what keeps the user's bone mapping
 // alive across generations.
-function bvhToClip(bvhText, name) {
-  const { clip } = bvhLoader.parse(bvhText)
+function bvhToClip(bvhText, name, { upright = false } = {}) {
+  const { clip, skeleton } = bvhLoader.parse(bvhText)
   if (!clip) throw new Error('The motion could not be parsed.')
   clip.name = name || 'motion'
+  // `upright` is only ever set for a MoCap capture, whose root carries a bogus
+  // body tilt. A Kimodo clip's root tilt is real motion ("lie down"), so the
+  // default has to be off.
+  const rootName = upright ? skeleton?.bones?.[0]?.name : null
+  if (rootName) {
+    const tilt = uprightRootRotation(clip, rootName)
+    clip.userData = { ...(clip.userData || {}), rootTiltRemoved: Math.round(tilt) }
+  }
   return clip
 }
 
@@ -227,12 +243,14 @@ export async function listSavedMotions() {
 // `inPlace` records that the BVH ITSELF was baked in place, which only motions
 // saved before the conversion became a bake-time post-process ever are. New saves
 // leave it false: the stored motion travels, and in-place is applied on apply.
-export async function saveMotion({ name, prompt, bvh, inPlace = false, seed = null } = {}) {
+export async function saveMotion({
+  name, prompt, bvh, inPlace = false, seed = null, source = MOTION_SOURCE_KIMODO,
+} = {}) {
   const body = await libraryJson(
     await fetch(LIBRARY_BASE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, prompt, bvh, inPlace, seed }),
+      body: JSON.stringify({ name, prompt, bvh, inPlace, seed, source }),
     }),
     'Could not save the motion',
   )
@@ -258,15 +276,21 @@ export async function deleteSavedMotion(id) {
   )
 }
 
-// Turn a saved motion back into an AnimationClip, ready to append to the Kimodo
-// source's clip list exactly as a fresh generation would be.
+// Turn a saved motion back into an AnimationClip, ready to append to the source's
+// clip list exactly as a fresh generation would be.
+//
+// What is stored is the RAW BVH the generator returned, so any correction a fresh
+// capture gets has to be re-applied here or a library motion is subtly worse than
+// the one the user saved. For MoCap that correction is the root tilt — hence the
+// `source` column: it is the only thing that says whether this clip's root
+// orientation can be trusted.
 export async function loadSavedMotionClip(motion) {
   const body = await libraryJson(
     await fetch(`${LIBRARY_BASE}/${motion.id}/bvh`),
     'Could not load that motion',
   )
   if (!body.bvh) throw new Error('That motion has no stored animation data.')
-  return bvhToClip(body.bvh, motion.name)
+  return bvhToClip(body.bvh, motion.name, { upright: motion?.source === MOTION_SOURCE_MOCAP })
 }
 
 // How many prompt segments (and therefore how many x duration) a prompt is worth.

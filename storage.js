@@ -1660,8 +1660,12 @@ const SQLITE_SCHEMA = `
       inPlace INTEGER NOT NULL DEFAULT 0,
       seed INTEGER,
       filePath TEXT NOT NULL,
-      -- Which generator produced it. Only 'kimodo' today; recorded so a second
-      -- source can share the library without the rows becoming ambiguous.
+      -- Which generator produced it: 'kimodo' (text to motion) or 'mocap' (video
+      -- to motion). Not bookkeeping — it decides how the stored BVH is treated on
+      -- the way back out. What is saved is the RAW generator output, and a MoCap
+      -- root carries a bogus body tilt that has to be straightened on apply,
+      -- whereas a Kimodo root tilt is real motion ("lie down"). Without this
+      -- column a re-applied capture comes back tipped over.
       source TEXT NOT NULL DEFAULT 'kimodo',
       createdAt INTEGER NOT NULL
     );
@@ -1851,6 +1855,7 @@ export async function initializeStorage() {
   }
 
   await backfillBatchInputAssetLinks(db);
+  await backfillMocapMotionSource(db);
 
   await seedReferenceTables(db);
   await migrateGraphNodeTypes(db);
@@ -3480,6 +3485,31 @@ function readBvhTiming(bvhText) {
 
 function motionFilePath(fileName) {
   return path.join(MOTION_ASSETS_DIR, fileName);
+}
+
+// One-time backfill: MoCap captures saved before the client started sending
+// `source` all landed on the column default, 'kimodo'. That matters because the
+// value decides whether the stored BVH's root orientation is trusted when the
+// motion is re-applied (see loadSavedMotionClip) — a mislabelled MoCap row comes
+// back with the body tilted over, exactly the bug the correction exists for.
+//
+// The marker is the prompt, which the MoCap path writes verbatim as
+// "Video: <filename>" while a Kimodo prompt is the user's own description of a
+// motion. A Kimodo prompt that happened to start with "Video: " would be
+// misclassified; the cost is one clip's root being straightened, which is why a
+// prompt sniff is worth more here than a schema version.
+//
+// Self-limiting: after the first run no row matches both conditions.
+async function backfillMocapMotionSource(db) {
+  const result = await run(
+    db,
+    `UPDATE Motions SET source = 'mocap'
+     WHERE source = 'kimodo' AND prompt LIKE 'Video: %'`
+  );
+  const moved = result?.changes ?? 0;
+  if (moved > 0) {
+    console.log(`Motions backfill: relabelled ${moved} video capture(s) as source='mocap'.`);
+  }
 }
 
 export async function listMotions() {

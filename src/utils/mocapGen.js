@@ -18,10 +18,10 @@
 // that has been BAKED first (skeleton topology, joint-name embeddings, a
 // reference pose, a rendered view). The bake needs Blender, takes minutes, and
 // is cached by mesh content hash — once per rig, not once per clip.
-import { Group, Quaternion } from 'three'
+import { Group } from 'three'
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js'
 import { API_BASE } from '../config'
-import { detectHipBone } from './animationLibrary'
+import { detectHipBone, uprightRootRotation } from './animationLibrary'
 import { readSseStream } from './meshTools'
 
 // MoCap occupies the same single "source rig" slot as a mesh2motion reference or
@@ -204,69 +204,6 @@ function bvhToSource(bvhText) {
     hipName: detectHipBone(boneNames),
     clips: [],
   }
-}
-
-// Keep the root bone's HEADING and throw away its TILT.
-//
-// The model puts the character's whole global orientation on the root bone, and
-// it gets that orientation wrong in a specific, measurable way. On a boar walking
-// in profile the root came back with a rotation of 90.7 deg +/- 4.3, which splits
-// into two very different parts:
-//
-//   heading (yaw about Y) : +78 deg, near-constant
-//   tilt (everything else): +44 deg, near-constant
-//
-// The heading is legitimate — it is how far the animal in the video is turned
-// from the reference view the rig was baked against (head-on), so a profile clip
-// SHOULD read ~90 deg. The tilt is pure error: it pitches the character nose-down
-// through the floor, and because every other bone hangs off the root it takes the
-// entire mesh with it. That is the "it rotated the whole mesh around the Hips"
-// failure — and it hides the fact that the rest of the capture is fine. Measured
-// on the same clip, with the root's rotation cancelled, every other bone sits
-// within 5 deg of its rest direction and the legs carry 255 deg of real walk.
-//
-// So: reduce the root to its twist about +Y (the w and y components of the
-// quaternion, which is exactly the yaw), then subtract the first frame's heading
-// so the character starts facing its own forward instead of at an angle inherited
-// from where the reference camera happened to be. Genuine turning DURING the clip
-// survives, because only the constant part is removed.
-//
-// Verified on LTX_2.5_t2v_00002: tilt 44.07 -> 0.00 deg, head height -0.89 ->
-// -0.31 (rest pose is -0.30), lowest foot -1.25 -> -0.99 (rest is -0.94).
-function uprightRootRotation(clip, rootName) {
-  // BVHLoader names its tracks after the NODE ("Hips.quaternion"). The
-  // ".bones[Hips].quaternion" form is what retargetAnimationClip writes for
-  // playback against a SkinnedMesh, so accept either and this keeps working
-  // wherever it is called from.
-  const track = clip.tracks.find(t =>
-    t.name === `${rootName}.quaternion` || t.name === `.bones[${rootName}].quaternion`)
-  if (!track) return 0
-
-  const q = new Quaternion()
-  const first = new Quaternion()
-  const count = Math.floor(track.values.length / 4)
-  let maxTilt = 0
-
-  for (let i = 0; i < count; i += 1) {
-    q.fromArray(track.values, i * 4)
-
-    // How far this rotation tips the character, reported so the caller can say
-    // whether it actually did anything.
-    const up = 1 - 2 * (q.x * q.x + q.z * q.z)      // (q * +Y).y
-    maxTilt = Math.max(maxTilt, Math.acos(Math.min(1, Math.max(-1, up))))
-
-    // Twist about +Y. A 180 deg rotation about an axis in the XZ plane leaves
-    // w and y both zero and has no meaningful heading — fall back to identity
-    // rather than normalising a zero vector.
-    const n = Math.hypot(q.w, q.y)
-    if (n < 1e-6) q.set(0, 0, 0, 1)
-    else q.set(0, q.y / n, 0, q.w / n)
-
-    if (i === 0) first.copy(q).invert()
-    q.premultiply(first).normalize()
-    q.toArray(track.values, i * 4)
-  }
-  return (maxTilt * 180) / Math.PI
 }
 
 function bvhToClip(bvhText, name) {

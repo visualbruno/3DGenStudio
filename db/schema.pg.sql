@@ -209,8 +209,12 @@ CREATE TABLE IF NOT EXISTS Motions (
       inPlace BIGINT NOT NULL DEFAULT 0,
       seed BIGINT,
       filePath TEXT NOT NULL,
-      -- Which generator produced it. Only 'kimodo' today; recorded so a second
-      -- source can share the library without the rows becoming ambiguous.
+      -- Which generator produced it: 'kimodo' (text to motion) or 'mocap' (video
+      -- to motion). Not bookkeeping — it decides how the stored BVH is treated on
+      -- the way back out. What is saved is the RAW generator output, and a MoCap
+      -- root carries a bogus body tilt that has to be straightened on apply,
+      -- whereas a Kimodo root tilt is real motion ("lie down"). Without this
+      -- column a re-applied capture comes back tipped over.
       source TEXT NOT NULL DEFAULT 'kimodo',
       createdAt BIGINT NOT NULL
 );
