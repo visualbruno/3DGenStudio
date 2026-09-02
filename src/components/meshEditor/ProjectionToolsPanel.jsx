@@ -19,6 +19,9 @@ export default function ProjectionToolsPanel({
   projectionRebuilding,
   handleStartProjectionSession,
   handleRunProjectionWorkflow,
+  canCancelComfyRun,
+  comfyRunCancelling,
+  handleCancelComfyRun,
   projectionReady,
   comfyLoading,
   projectionWorkflowId,
@@ -99,6 +102,18 @@ export default function ProjectionToolsPanel({
             <span className="material-symbols-outlined">play_arrow</span>
             <span>{projecting ? 'Projecting…' : 'Project view'}</span>
           </button>
+          {canCancelComfyRun && (
+            <button
+              type="button"
+              className="mesh-editor-btn mesh-editor-btn--danger"
+              onClick={handleCancelComfyRun}
+              disabled={Boolean(comfyRunCancelling)}
+              title="Stop this ComfyUI run — it stops at the next node/step boundary"
+            >
+              <span className="material-symbols-outlined">stop_circle</span>
+              <span>{comfyRunCancelling ? 'Cancelling…' : 'Cancel'}</span>
+            </button>
+          )}
         </div>
       </div>
 

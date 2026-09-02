@@ -262,6 +262,17 @@
   color: var(--primary);
 }
 
+/* Stops an in-flight ComfyUI run; only shown while one is running. */
+.image-editor-btn--danger {
+  border-color: rgba(255, 113, 108, 0.28);
+  background: rgba(255, 113, 108, 0.1);
+  color: var(--error);
+}
+
+.image-editor-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 113, 108, 0.18);
+}
+
 .image-editor-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;

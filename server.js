@@ -315,6 +315,16 @@ const comfyProgressSnapshots = new Map();
 // receives progress for every promptId. This keeps a handful of concurrent
 // workflows from exhausting the browser's ~6 connection-per-origin cap.
 const comfyProgressGlobalSubscribers = new Set();
+// In-flight ComfyUI runs, keyed by promptId, so a cancel request can reach the
+// execution monitor that is waiting on them. A run stays registered from the
+// moment its monitor is created until it settles (success, failure or cancel).
+const comfyActiveRuns = new Map();
+// Cancels that landed before their run registered itself — the request was
+// still uploading input files to ComfyUI, so there was nothing to stop yet.
+// Kept briefly so the run honours the cancel the moment it starts, instead of
+// executing with nobody listening to it.
+const comfyPendingCancels = new Map();
+const COMFY_PENDING_CANCEL_TTL_MS = 10 * 60 * 1000;
 const TENCENT_MESH_GENERATION_API_ID = 'tencent_meshgeneration';
 const TENCENT_HUNYUAN_ENDPOINT = 'hunyuan.intl.tencentcloudapi.com';
 const TENCENT_HUNYUAN_VERSION = '2023-09-01';
@@ -1574,7 +1584,7 @@ function publishComfyProgress(promptId, payload) {
     response.write(serialized);
   }
 
-  if (message.status === 'completed' || message.status === 'error') {
+  if (message.status === 'completed' || message.status === 'error' || message.status === 'cancelled') {
     setTimeout(() => {
       if ((comfyProgressSubscribers.get(key)?.size || 0) === 0) {
         comfyProgressSubscribers.delete(key);
@@ -1582,6 +1592,152 @@ function publishComfyProgress(promptId, payload) {
       }
     }, 60000);
   }
+}
+
+// A run the user asked to stop. Thrown by the execution monitor so the routes
+// can tell "the user cancelled" apart from "ComfyUI failed" and report a
+// cancellation instead of an error.
+class ComfyCancelledError extends Error {
+  constructor(message = 'Workflow cancelled') {
+    super(message);
+    this.name = 'ComfyCancelledError';
+    this.cancelled = true;
+  }
+}
+
+function markComfyCancelledBeforeStart(promptId) {
+  const now = Date.now();
+  for (const [id, requestedAt] of comfyPendingCancels) {
+    if (now - requestedAt > COMFY_PENDING_CANCEL_TTL_MS) {
+      comfyPendingCancels.delete(id);
+    }
+  }
+  comfyPendingCancels.set(String(promptId || ''), now);
+}
+
+function registerComfyRun(promptId, run) {
+  const key = String(promptId || '');
+  if (!key) {
+    return () => {};
+  }
+
+  // Cancelled while this run was still being prepared: carry that decision
+  // into the run so it stops instead of queueing.
+  if (comfyPendingCancels.delete(key)) {
+    run.cancelRequested = true;
+  }
+
+  comfyActiveRuns.set(key, run);
+  return () => {
+    if (comfyActiveRuns.get(key) === run) {
+      comfyActiveRuns.delete(key);
+    }
+  };
+}
+
+// Ask ComfyUI to stop a prompt. The v2 jobs API cancels a specific job (queued
+// or running); older builds have no such endpoint, so fall back to the legacy
+// pair: delete it from the pending queue, or interrupt it if it is the one
+// currently executing. Either way the stop only takes effect at a node/step
+// boundary, so the monitor is settled locally by the caller.
+async function cancelComfyPrompt(baseUrl, promptId) {
+  const key = String(promptId || '');
+
+  try {
+    const response = await fetch(`${baseUrl}/api/v2/jobs/${encodeURIComponent(key)}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+
+    if (response.ok) {
+      return { cancelled: true, via: 'jobs-v2' };
+    }
+  } catch (err) {
+    console.warn(`ComfyUI v2 cancel endpoint unreachable for ${key}:`, err.message);
+  }
+
+  // Legacy path: find out whether the prompt is still pending or already running.
+  let isPending = false;
+  let isRunning = false;
+
+  try {
+    const queueResponse = await fetch(`${baseUrl}/queue`);
+    const queue = await queueResponse.json().catch(() => ({}));
+    const matches = (entries) => (Array.isArray(entries) ? entries : []).some(entry => String(entry?.[1] || '') === key);
+    isPending = matches(queue?.queue_pending);
+    isRunning = matches(queue?.queue_running);
+  } catch (err) {
+    console.warn(`Failed to read the ComfyUI queue while cancelling ${key}:`, err.message);
+  }
+
+  if (isPending) {
+    const response = await fetch(`${baseUrl}/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delete: [key] })
+    });
+
+    if (!response.ok) {
+      throw new Error('ComfyUI refused to remove the queued workflow');
+    }
+
+    return { cancelled: true, via: 'queue-delete' };
+  }
+
+  if (isRunning) {
+    const response = await fetch(`${baseUrl}/interrupt`, { method: 'POST' });
+
+    if (!response.ok) {
+      throw new Error('ComfyUI refused to interrupt the running workflow');
+    }
+
+    return { cancelled: true, via: 'interrupt' };
+  }
+
+  // Neither queued nor running: it finished (or never reached ComfyUI) between
+  // the click and this request. Nothing to stop on the ComfyUI side.
+  return { cancelled: false, via: 'already-terminal' };
+}
+
+// Stop a run this server is tracking: tell ComfyUI, then settle the local
+// monitor so the waiting route stops immediately instead of hanging until the
+// WebSocket happens to close (a prompt deleted while still queued never emits
+// an interruption message at all).
+async function cancelComfyRun(promptId) {
+  const key = String(promptId || '');
+  const run = comfyActiveRuns.get(key);
+
+  if (!run) {
+    return { cancelled: false, tracked: false };
+  }
+
+  run.cancelRequested = true;
+
+  let outcome = { cancelled: false, via: 'already-terminal' };
+  let settledByMonitor = false;
+  try {
+    outcome = await cancelComfyPrompt(run.baseUrl, key);
+  } finally {
+    settledByMonitor = Boolean(run.monitor?.cancel?.('Workflow cancelled'));
+  }
+
+  // The monitor had already settled — the run finished on ComfyUI's side and is
+  // somewhere in the finalize phase (waiting on /history, downloading, saving).
+  // Nothing left will publish a terminal event for it, so publish one here or
+  // the client sits on "Cancelling…" until it gives up. The finalizer sees
+  // cancelRequested at its next checkpoint and stops.
+  if (!settledByMonitor) {
+    publishComfyProgress(key, {
+      status: 'cancelled',
+      detail: 'Workflow cancelled',
+      currentNodeLabel: 'Cancelled',
+      done: true,
+      cancelled: true
+    });
+  }
+
+  return { ...outcome, tracked: true, settledByMonitor };
 }
 
 function subscribeToAllComfyProgress(req, res) {
@@ -1654,6 +1810,7 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
   let isReady = false;
   let isSettled = false;
   let rejectCompletion = null;
+  let rejectReady = null;
 
   const normalizeNodeId = (nodeId) => String(nodeId || '');
   const isTrackedNode = (nodeId) => trackedNodeIds.size === 0 || trackedNodeIds.has(normalizeNodeId(nodeId));
@@ -1692,6 +1849,7 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
   };
 
   const ready = new Promise((resolve, reject) => {
+    rejectReady = reject;
     socket = new WebSocketImpl(wsUrl);
 
     if (Number.isFinite(timeout) && timeout > 0) {
@@ -1856,6 +2014,23 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
         return;
       }
 
+      // ComfyUI answers an interrupt with this once the running node reaches a
+      // step boundary. It is a cancellation, not a failure.
+      if (messageType === 'execution_interrupted') {
+        isSettled = true;
+
+        publishState({
+          status: 'cancelled',
+          detail: 'ComfyUI execution cancelled',
+          currentNodeLabel: 'Cancelled'
+        });
+
+        clearTimeout(timer);
+        socket.close();
+        reject(new ComfyCancelledError('Workflow cancelled'));
+        return;
+      }
+
       if (messageType === 'execution_error') {
         const errorMessage = messageData.exception_message || 'Unknown ComfyUI error';
 
@@ -1888,9 +2063,41 @@ function createComfyExecutionMonitor(baseUrl, { clientId, promptId, workflowJson
     };
   });
 
+  // The completion promise can reject before a caller gets to await it (a cancel
+  // that lands while the prompt is still being queued). Marking it handled here
+  // keeps that from surfacing as an unhandled rejection; awaiting it still
+  // rejects for the caller.
+  completion.catch(() => {});
+
   return {
     ready,
     completion,
+    // Settle the run as cancelled without waiting for ComfyUI to say anything:
+    // a prompt removed from the queue before it started emits no message at all,
+    // and an interrupted one only answers at the next node/step boundary.
+    cancel: (reason = 'Workflow cancelled') => {
+      if (isSettled) {
+        return false;
+      }
+
+      isSettled = true;
+      clearTimeout(timer);
+      publishState({
+        status: 'cancelled',
+        detail: reason,
+        currentNodeLabel: 'Cancelled'
+      });
+      rejectCompletion?.(new ComfyCancelledError(reason));
+      // A cancel can land while the progress socket is still connecting: the
+      // open event will never arrive once it is closed, so settle `ready` too
+      // rather than leaving the caller awaiting it forever.
+      rejectReady?.(new ComfyCancelledError(reason));
+      if (socket && socket.readyState < WebSocketImpl.CLOSING) {
+        socket.close();
+      }
+
+      return true;
+    },
     close: () => {
       isSettled = true;
       clearTimeout(timer);
@@ -1988,8 +2195,14 @@ async function queueComfyPrompt(baseUrl, workflowJson, identifiers = {}) {
   };
 }
 
-async function waitForComfyHistory(baseUrl, promptId, maxAttempts = 180) {
+// `isCancelled` is polled between attempts so a cancel during the finalize
+// phase stops here instead of holding the run open for the full timeout.
+async function waitForComfyHistory(baseUrl, promptId, maxAttempts = 180, { isCancelled = null } = {}) {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (isCancelled?.()) {
+      throw new ComfyCancelledError('Workflow cancelled');
+    }
+
     const response = await fetch(`${baseUrl}/history/${promptId}`);
     const history = await response.json().catch(() => ({}));
     const promptHistory = history?.[promptId];
@@ -3937,8 +4150,67 @@ app.get('/api/comfyui/workflows/events', (req, res) => {
   subscribeToAllComfyProgress(req, res);
 });
 
+// Cancel a running (or still queued) ComfyUI workflow. The stop takes effect at
+// the next node/step boundary on the ComfyUI side; the run is settled here right
+// away so the client stops waiting either way.
+app.post('/api/comfyui/workflows/:promptId/cancel', async (req, res) => {
+  const promptId = String(req.params.promptId || '').trim();
+
+  if (!promptId) {
+    return res.status(400).json({ error: 'promptId is required' });
+  }
+
+  try {
+    const outcome = await cancelComfyRun(promptId);
+
+    if (!outcome.tracked) {
+      // Not tracked here: it already finished, or it was started before a
+      // restart / by another process. Still worth asking ComfyUI to drop it.
+      const settings = await getSettings();
+      const baseUrl = buildComfyUiBaseUrl(settings || DEFAULT_SETTINGS);
+      const fallback = await cancelComfyPrompt(baseUrl, promptId);
+
+      // It may not be tracked because its request is still uploading inputs;
+      // remember the cancel so the run stops as soon as it registers.
+      markComfyCancelledBeforeStart(promptId);
+
+      // Either way nothing here is going to report on this run again, so end it
+      // for the client instead of leaving it waiting on a run that is gone.
+      publishComfyProgress(promptId, {
+        status: 'cancelled',
+        detail: fallback.cancelled ? 'Workflow cancelled' : 'Workflow already finished',
+        currentNodeLabel: 'Cancelled',
+        done: true,
+        cancelled: true
+      });
+
+      return res.json({
+        promptId,
+        cancelled: fallback.cancelled,
+        via: fallback.via,
+        tracked: false,
+        alreadyFinished: !fallback.cancelled
+      });
+    }
+
+    res.json({
+      promptId,
+      cancelled: outcome.cancelled,
+      via: outcome.via,
+      tracked: true,
+      // ComfyUI had nothing left to stop: the run was already past execution
+      // and only the finalize phase was cut short.
+      alreadyFinished: !outcome.cancelled
+    });
+  } catch (err) {
+    console.error('Failed to cancel ComfyUI workflow:', err);
+    res.status(502).json({ error: err.message || 'Failed to cancel the ComfyUI workflow' });
+  }
+});
+
 app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req, res) => {
   let executionMonitor = null;
+  let unregisterRun = null;
   let processingCardId = null;
   let processingProjectId = null;
   let processingCardName = null;
@@ -4102,6 +4374,15 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       }
     });
 
+    // Reachable by /cancel from here on, including while it is only queued.
+    const activeRun = { baseUrl, monitor: executionMonitor, cancelRequested: false };
+    unregisterRun = registerComfyRun(executionPromptId, activeRun);
+
+    // Cancelled while the inputs were still being uploaded: never queue it.
+    if (activeRun.cancelRequested) {
+      throw new ComfyCancelledError('Workflow cancelled');
+    }
+
     await executionMonitor.ready;
     publishComfyProgress(executionPromptId, {
       status: 'queued',
@@ -4114,6 +4395,16 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
       clientId: executionClientId,
       promptId: executionPromptId
     });
+
+    // A cancel that landed while the prompt was still on its way to ComfyUI
+    // found nothing to stop, so ask again now that it is queued — otherwise it
+    // would run to completion with nobody waiting for it.
+    if (activeRun.cancelRequested) {
+      await cancelComfyPrompt(baseUrl, executionPromptId).catch(err => {
+        console.warn('Failed to cancel a just-queued ComfyUI workflow:', err.message);
+      });
+      throw new ComfyCancelledError('Workflow cancelled');
+    }
 
     // Respond immediately once the prompt is queued so the browser connection
     // isn't held open for the entire (possibly multi-minute) generation. The
@@ -4133,7 +4424,17 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
     (async () => {
       try {
         await executionMonitor.completion;
-        const historyRecord = await waitForComfyHistory(baseUrl, queuedPromptId);
+        // A cancel that lands after execution finished still stops the run here,
+        // so nothing is downloaded or saved for a workflow the user let go of.
+        if (activeRun.cancelRequested) {
+          throw new ComfyCancelledError('Workflow cancelled');
+        }
+        const historyRecord = await waitForComfyHistory(baseUrl, queuedPromptId, 180, {
+          isCancelled: () => activeRun.cancelRequested
+        });
+        if (activeRun.cancelRequested) {
+          throw new ComfyCancelledError('Workflow cancelled');
+        }
     const workflowFiles = getComfyHistoryFiles(historyRecord, workflow.outputs);
     const workflowTexts = getComfyHistoryTexts(historyRecord, workflow.outputs);
 
@@ -4300,6 +4601,14 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           });
         }
 
+        // A cancel that arrived while the outputs were being saved: they are on
+        // disk now, but the client has already been told the run is cancelled, so
+        // don't overwrite that with a completed snapshot a reconnecting stream
+        // would replay and act on.
+        if (activeRun.cancelRequested) {
+          throw new ComfyCancelledError('Workflow cancelled');
+        }
+
         // Terminal event: `done` + `result` signal the client that the run has
         // fully completed and carry the generated assets it used to receive in
         // the (now non-blocking) POST response body.
@@ -4312,14 +4621,75 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
           result: generatedAssets
         });
       } catch (finalizeErr) {
-        console.error('ComfyUI workflow finalization failed:', finalizeErr);
+        const wasCancelled = Boolean(finalizeErr?.cancelled);
+
+        if (wasCancelled) {
+          console.log(`ComfyUI workflow ${executionPromptId} cancelled by the user`);
+        } else {
+          console.error('ComfyUI workflow finalization failed:', finalizeErr);
+        }
+
         if (processingProjectId && processingCardId) {
-          await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+          // A cancelled run leaves no result, so the processing card goes back to
+          // idle instead of being marked failed.
+          const restoreCard = wasCancelled
+            ? clearCardProcessing(processingProjectId, processingCardId, { name: processingCardName })
+            : updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+                columnName: 'Images',
+                name: processingCardName,
+                status: 'error',
+                progressPercent: null,
+                detail: finalizeErr.message || 'Failed to execute ComfyUI workflow',
+                currentNodeLabel: 'ComfyUI execution failed',
+                promptId: executionPromptId,
+                source: 'ComfyUI',
+                operationType: 'workflow',
+                workflowId: processingWorkflowId,
+                workflowName: processingWorkflowName,
+                startedAt: processingStartedAt
+              });
+
+          await restoreCard.catch(persistErr => {
+            console.warn('Failed to persist the ComfyUI workflow terminal state:', persistErr.message);
+          });
+        }
+        publishComfyProgress(executionPromptId, wasCancelled
+          ? {
+              status: 'cancelled',
+              detail: finalizeErr.message || 'Workflow cancelled',
+              currentNodeLabel: 'Cancelled',
+              done: true,
+              cancelled: true
+            }
+          : {
+              status: 'error',
+              detail: finalizeErr.message || 'Failed to execute ComfyUI workflow',
+              currentNodeLabel: 'ComfyUI execution failed',
+              done: true
+            });
+      } finally {
+        unregisterRun?.();
+        executionMonitor?.close();
+      }
+    })();
+  } catch (err) {
+    const wasCancelled = Boolean(err?.cancelled);
+
+    if (wasCancelled) {
+      console.log('ComfyUI workflow cancelled before it started running');
+    } else {
+      console.error('ComfyUI workflow execution failed:', err);
+    }
+
+    if (processingProjectId && processingCardId) {
+      const restoreCard = wasCancelled
+        ? clearCardProcessing(processingProjectId, processingCardId, { name: processingCardName })
+        : updateCardProcessingSnapshot(processingProjectId, processingCardId, {
             columnName: 'Images',
             name: processingCardName,
             status: 'error',
             progressPercent: null,
-            detail: finalizeErr.message || 'Failed to execute ComfyUI workflow',
+            detail: err.message || 'Failed to execute ComfyUI workflow',
             currentNodeLabel: 'ComfyUI execution failed',
             promptId: executionPromptId,
             source: 'ComfyUI',
@@ -4327,57 +4697,41 @@ app.post('/api/comfyui/workflows/run', workflowExecutionUpload.any(), async (req
             workflowId: processingWorkflowId,
             workflowName: processingWorkflowName,
             startedAt: processingStartedAt
-          }).catch(persistErr => {
-            console.warn('Failed to persist ComfyUI workflow error state:', persistErr.message);
           });
-        }
-        publishComfyProgress(executionPromptId, {
-          status: 'error',
-          detail: finalizeErr.message || 'Failed to execute ComfyUI workflow',
-          currentNodeLabel: 'ComfyUI execution failed',
-          done: true
-        });
-      } finally {
-        executionMonitor?.close();
-      }
-    })();
-  } catch (err) {
-    console.error('ComfyUI workflow execution failed:', err);
-    if (processingProjectId && processingCardId) {
-      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
-        columnName: 'Images',
-        name: processingCardName,
-        status: 'error',
-        progressPercent: null,
-        detail: err.message || 'Failed to execute ComfyUI workflow',
-        currentNodeLabel: 'ComfyUI execution failed',
-        promptId: executionPromptId,
-        source: 'ComfyUI',
-        operationType: 'workflow',
-        workflowId: processingWorkflowId,
-        workflowName: processingWorkflowName,
-        startedAt: processingStartedAt
-      }).catch(persistErr => {
-        console.warn('Failed to persist ComfyUI workflow error state:', persistErr.message);
+
+      await restoreCard.catch(persistErr => {
+        console.warn('Failed to persist the ComfyUI workflow terminal state:', persistErr.message);
       });
     }
-    const failedPromptId = String(req.body?.promptId || '').trim();
+    const failedPromptId = String(req.body?.promptId || '').trim() || String(executionPromptId || '').trim();
     if (failedPromptId) {
-      publishComfyProgress(failedPromptId, {
-        status: 'error',
-        detail: err.message || 'Failed to execute ComfyUI workflow',
-        currentNodeLabel: 'ComfyUI execution failed',
-        done: true
-      });
+      publishComfyProgress(failedPromptId, wasCancelled
+        ? {
+            status: 'cancelled',
+            detail: err.message || 'Workflow cancelled',
+            currentNodeLabel: 'Cancelled',
+            done: true,
+            cancelled: true
+          }
+        : {
+            status: 'error',
+            detail: err.message || 'Failed to execute ComfyUI workflow',
+            currentNodeLabel: 'ComfyUI execution failed',
+            done: true
+          });
     }
 
     if (!responded) {
-      res.status(500).json({ error: err.message || 'Failed to execute ComfyUI workflow' });
+      res.status(wasCancelled ? 409 : 500).json({
+        error: err.message || 'Failed to execute ComfyUI workflow',
+        ...(wasCancelled ? { cancelled: true } : {})
+      });
     }
   } finally {
     // The background finalizer owns the monitor once it has started; only close
     // here for failures that happen before the response is sent.
     if (!backgroundStarted) {
+      unregisterRun?.();
       executionMonitor?.close();
     }
   }
@@ -8798,6 +9152,7 @@ app.post('/api/image-edits/api', async (req, res) => {
 
 app.post('/api/image-edits/comfy', async (req, res) => {
   let executionMonitor = null;
+  let unregisterRun = null;
   let processingProjectId = null;
   let processingCardId = null;
   let processingCardName = null;
@@ -8946,6 +9301,15 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       }
     });
 
+    // Reachable by /cancel from here on, including while it is only queued.
+    const activeRun = { baseUrl, monitor: executionMonitor, cancelRequested: false };
+    unregisterRun = registerComfyRun(executionPromptId, activeRun);
+
+    // Cancelled while the inputs were still being uploaded: never queue it.
+    if (activeRun.cancelRequested) {
+      throw new ComfyCancelledError('Workflow cancelled');
+    }
+
     await executionMonitor.ready;
     publishComfyProgress(executionPromptId, {
       status: 'queued',
@@ -8958,8 +9322,28 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       clientId: executionClientId,
       promptId: executionPromptId
     });
+
+    // A cancel that landed while the prompt was still on its way to ComfyUI found
+    // nothing to stop, so ask again now that it is queued.
+    if (activeRun.cancelRequested) {
+      await cancelComfyPrompt(baseUrl, executionPromptId).catch(err => {
+        console.warn('Failed to cancel a just-queued ComfyUI image edit:', err.message);
+      });
+      throw new ComfyCancelledError('Image edit cancelled');
+    }
+
     await executionMonitor.completion;
-    const historyRecord = await waitForComfyHistory(baseUrl, promptId);
+    // As above: a cancel that lands after execution finished still stops the
+    // run before anything is downloaded or saved.
+    if (activeRun.cancelRequested) {
+      throw new ComfyCancelledError('Image edit cancelled');
+    }
+    const historyRecord = await waitForComfyHistory(baseUrl, promptId, 180, {
+      isCancelled: () => activeRun.cancelRequested
+    });
+    if (activeRun.cancelRequested) {
+      throw new ComfyCancelledError('Image edit cancelled');
+    }
     const workflowImages = getComfyHistoryImages(historyRecord, workflow.outputs);
 
     if (workflowImages.length === 0) {
@@ -8996,35 +9380,61 @@ app.post('/api/image-edits/comfy', async (req, res) => {
       savedEdits
     });
   } catch (err) {
-    console.error('ComfyUI image edit execution failed:', err);
+    const wasCancelled = Boolean(err?.cancelled);
+
+    if (wasCancelled) {
+      console.log('ComfyUI image edit cancelled by the user');
+    } else {
+      console.error('ComfyUI image edit execution failed:', err);
+    }
+
     executionMonitor?.close();
     if (processingProjectId && processingCardId) {
-      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
-        columnName: 'Image Edit',
-        name: processingCardName,
-        status: 'error',
-        progressPercent: null,
-        detail: err.message || 'Failed to run ComfyUI image edit',
-        currentNodeLabel: 'ComfyUI image edit failed',
-        promptId: executionPromptId,
-        source: 'ComfyUI',
-        operationType: 'image-edit',
-        workflowId: processingWorkflowId,
-        workflowName: processingWorkflowName,
-        startedAt: processingStartedAt
-      }).catch(persistErr => {
-        console.warn('Failed to persist ComfyUI image edit error state:', persistErr.message);
+      // A cancelled run leaves no result, so the card goes back to idle rather
+      // than being marked failed.
+      const restoreCard = wasCancelled
+        ? clearCardProcessing(processingProjectId, processingCardId, { name: processingCardName })
+        : updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+            columnName: 'Image Edit',
+            name: processingCardName,
+            status: 'error',
+            progressPercent: null,
+            detail: err.message || 'Failed to run ComfyUI image edit',
+            currentNodeLabel: 'ComfyUI image edit failed',
+            promptId: executionPromptId,
+            source: 'ComfyUI',
+            operationType: 'image-edit',
+            workflowId: processingWorkflowId,
+            workflowName: processingWorkflowName,
+            startedAt: processingStartedAt
+          });
+
+      await restoreCard.catch(persistErr => {
+        console.warn('Failed to persist the ComfyUI image edit terminal state:', persistErr.message);
       });
     }
-    const failedPromptId = String(req.body?.promptId || '').trim();
+    const failedPromptId = String(req.body?.promptId || '').trim() || String(executionPromptId || '').trim();
     if (failedPromptId) {
-      publishComfyProgress(failedPromptId, {
-        status: 'error',
-        detail: err.message || 'Failed to run ComfyUI image edit',
-        currentNodeLabel: 'ComfyUI image edit failed'
-      });
+      publishComfyProgress(failedPromptId, wasCancelled
+        ? {
+            status: 'cancelled',
+            detail: err.message || 'Image edit cancelled',
+            currentNodeLabel: 'Cancelled',
+            done: true,
+            cancelled: true
+          }
+        : {
+            status: 'error',
+            detail: err.message || 'Failed to run ComfyUI image edit',
+            currentNodeLabel: 'ComfyUI image edit failed'
+          });
     }
-    res.status(500).json({ error: err.message || 'Failed to run ComfyUI image edit' });
+    res.status(wasCancelled ? 409 : 500).json({
+      error: err.message || 'Failed to run ComfyUI image edit',
+      ...(wasCancelled ? { cancelled: true } : {})
+    });
+  } finally {
+    unregisterRun?.();
   }
 });
 

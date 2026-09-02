@@ -152,6 +152,7 @@ export default function GraphPage({ project }) {
     getComfyWorkflows,
     updateComfyWorkflow,
     runComfyWorkflow,
+    cancelComfyWorkflow,
     runImageEditApi,
     runImageEditComfy,
     runMeshGenerationApi,
@@ -164,7 +165,7 @@ export default function GraphPage({ project }) {
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
   const location = useLocation()
-  const { jobs: workflowJobs, registerJob, completeJob, removeJobsForTarget } = useWorkflowJobs()
+  const { jobs: workflowJobs, registerJob, completeJob, cancelJob, removeJobsForTarget } = useWorkflowJobs()
 
   const [showSettings, setShowSettings] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -606,7 +607,7 @@ export default function GraphPage({ project }) {
       job.projectId === project.id
       && job.page === 'graph'
       && job.targetId
-      && (job.status === 'queued' || job.status === 'processing')
+      && (job.status === 'queued' || job.status === 'processing' || job.status === 'cancelling')
     ))
     if (activeJobs.length === 0) {
       return
@@ -622,11 +623,16 @@ export default function GraphPage({ project }) {
         const nextProgress = Math.max(Number(item.data.progress) || 0, Number(job.progressPercent) || 0)
         const nextDetail = job.detail || item.data.progressDetail || null
         const nextLabel = job.currentNodeLabel || item.data.currentNodeLabel || null
+        // Carried so the node can offer (and disable) its Cancel button: the
+        // promptId is the job id the backend cancels by.
+        const nextIsCancelling = job.status === 'cancelling'
         if (
           item.data.status === nextStatus
           && item.data.progress === nextProgress
           && item.data.progressDetail === nextDetail
           && item.data.currentNodeLabel === nextLabel
+          && item.data.activeJobId === job.id
+          && item.data.isCancelling === nextIsCancelling
         ) {
           return item
         }
@@ -638,7 +644,9 @@ export default function GraphPage({ project }) {
             status: nextStatus,
             progress: nextProgress,
             progressDetail: nextDetail,
-            currentNodeLabel: nextLabel
+            currentNodeLabel: nextLabel,
+            activeJobId: job.id,
+            isCancelling: nextIsCancelling
           }
         }
       })
@@ -708,6 +716,64 @@ export default function GraphPage({ project }) {
         : node
     )))
   }, [setNodes])
+
+  // Stop the ComfyUI run a node is waiting on. While the run is live the node is
+  // put back to idle by the run's own cancellation (see finishFailedRun below),
+  // so a cancel ComfyUI refuses leaves the node running rather than lying.
+  const handleCancelNodeRun = useCallback(async (nodeId) => {
+    const job = workflowJobs.find(item => (
+      item.projectId === project.id
+      && item.targetId === String(nodeId)
+      && (item.status === 'queued' || item.status === 'processing')
+    ))
+
+    if (job) {
+      await cancelJob(job.id)
+      return
+    }
+
+    // No live job: the run was started before a page reload, so nothing in this
+    // browser is waiting on it. Cancel it by the promptId saved on the node and
+    // clear the node here — no pending run is going to do it.
+    const orphanedNode = nodes.find(item => item.id === String(nodeId))
+    const orphanedPromptId = orphanedNode?.data?.metadata?.promptId
+
+    if (!orphanedPromptId) {
+      return
+    }
+
+    setNodeTransientData(nodeId, { isCancelling: true })
+
+    try {
+      await cancelComfyWorkflow(orphanedPromptId)
+    } catch (err) {
+      setNodeTransientData(nodeId, { isCancelling: false })
+      addNotification({
+        title: 'Cancel failed',
+        message: err.message || 'Failed to cancel the workflow',
+        source: 'ComfyUI',
+        tone: 'error'
+      })
+      return
+    }
+
+    try {
+      const updatedNode = await updateProjectNode(project.id, Number(nodeId), {
+        status: null,
+        progress: null,
+        metadata: { error: null, cancelled: true }
+      })
+      replaceFlowNodeData(updatedNode)
+      setNodeTransientData(nodeId, {
+        progressDetail: null,
+        currentNodeLabel: null,
+        activeJobId: null,
+        isCancelling: false
+      })
+    } catch (err) {
+      console.error('Failed to reset a cancelled graph node:', err)
+    }
+  }, [addNotification, cancelComfyWorkflow, cancelJob, nodes, project.id, replaceFlowNodeData, setNodeTransientData, updateProjectNode, workflowJobs])
 
   const ensureLibraryLoaded = useCallback(async () => {
     if (libraryLoadedRef.current) {
@@ -1207,6 +1273,7 @@ export default function GraphPage({ project }) {
       },
 			onOpenAssetSelector: (nodeId, type) => handleOpenAssetSelector(nodeId, type),
       onOpenMeshPreview: handleOpenMeshPreview,
+      onCancelRun: handleCancelNodeRun,
       actionDraft: actionDraftsByNodeId[node.id] || null,
       connectedInputAsset: getConnectedInputAssetFrom(nodes, edges, node.id),
       imageGenerationApis,
@@ -1488,8 +1555,27 @@ export default function GraphPage({ project }) {
           replaceFlowNodeData(updatedNode)
           setNodeTransientData(targetNodeId, {
             progressDetail: transientData.progressDetail ?? null,
-            currentNodeLabel: transientData.currentNodeLabel ?? null
+            currentNodeLabel: transientData.currentNodeLabel ?? null,
+            // Dropped on every state change: the live job mirror re-attaches
+            // them while a run is in flight, so a stale id can't outlive it and
+            // leave a Cancel button pointing at a finished job.
+            activeJobId: null,
+            isCancelling: false
           })
+        }
+
+        // A run the user cancelled is not a failure: the node goes back to idle
+        // with its parameters intact instead of showing an error. Node metadata
+        // is merged server-side, so a previous run's `error` is cleared here.
+        const finishFailedRun = async (err, promptId, fallbackMessage) => {
+          if (err?.cancelled) {
+            await setProcessingState(null, null, { error: null, cancelled: true, promptId })
+            completeJob(promptId, { status: 'cancelled' })
+            return
+          }
+
+          await setProcessingState('error', null, { error: err.message || fallbackMessage, promptId })
+          completeJob(promptId, { status: 'error', error: err.message || fallbackMessage })
         }
 
         const applyNodeResult = async (asset, metadata = {}) => {
@@ -1503,7 +1589,9 @@ export default function GraphPage({ project }) {
           replaceFlowNodeData(updatedNode)
           setNodeTransientData(targetNodeId, {
             progressDetail: null,
-            currentNodeLabel: null
+            currentNodeLabel: null,
+            activeJobId: null,
+            isCancelling: false
           })
         }
 
@@ -1672,8 +1760,7 @@ export default function GraphPage({ project }) {
             })
             completeJob(promptId, { status: 'completed' })
           } catch (err) {
-            await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
-            completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
+            await finishFailedRun(err, promptId, 'ComfyUI workflow failed')
           }
           return
         }
@@ -1900,8 +1987,7 @@ export default function GraphPage({ project }) {
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
               completeJob(promptId, { status: 'completed' })
             } catch (err) {
-              await setProcessingState('error', null, { error: err.message || 'ComfyUI workflow failed', promptId })
-              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
+              await finishFailedRun(err, promptId, 'ComfyUI workflow failed')
             }
             return
           }
@@ -2052,8 +2138,7 @@ export default function GraphPage({ project }) {
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
               completeJob(promptId, { status: 'completed' })
             } catch (err) {
-              await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
-              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI image edit failed' })
+              await finishFailedRun(err, promptId, 'ComfyUI image edit failed')
             }
             return
           }
@@ -2689,8 +2774,7 @@ export default function GraphPage({ project }) {
               await persistWorkflowDefaultsIfRequested(targetDraft, workflow, inputValues)
               completeJob(promptId, { status: 'completed' })
             } catch (err) {
-              await setProcessingState('error', null, { error: err.message || 'ComfyUI mesh generation failed', promptId })
-              completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI mesh generation failed' })
+              await finishFailedRun(err, promptId, 'ComfyUI mesh generation failed')
             }
             return
           }
@@ -2828,8 +2912,7 @@ export default function GraphPage({ project }) {
             }
             completeJob(promptId, { status: 'completed' })
           } catch (err) {
-            await setProcessingState('error', null, { error: err.message || 'ComfyUI image edit failed', promptId })
-            completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI image edit failed' })
+            await finishFailedRun(err, promptId, 'ComfyUI image edit failed')
           }
         }
       },
@@ -3030,7 +3113,7 @@ export default function GraphPage({ project }) {
       onToggleDraftCollapsed: toggleDraftCollapsed,
       isDraftCollapsed: collapsedDraftNodeIds.has(String(node.id))
     }
-  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, updateProjectNode])
+  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, handleCancelNodeRun, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]

@@ -67,6 +67,10 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
   const progressDetail = data.progressDetail || data.metadata?.detail || ''
   const currentNodeLabel = data.currentNodeLabel || data.metadata?.currentNodeLabel || ''
   const draft = data.actionDraft
+  // Cancellable while a ComfyUI run is in flight. `activeJobId` covers the live
+  // job; the persisted promptId keeps the button working for a run that was
+  // started before a page reload, when this browser no longer tracks the job.
+  const canCancelRun = Boolean(data.activeJobId || data.metadata?.promptId)
   // The panel outlives a run: it stays mounted and its controls go inert until
   // the node leaves 'processing', so the parameters are still there afterwards.
   const isPanelLocked = isProcessing
@@ -390,6 +394,19 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                 style={{ width: `${Math.max(0, Math.min(100, data.progress || 0))}%` }}
               />
             </div>
+          )}
+
+          {isProcessing && canCancelRun && (
+            <button
+              type="button"
+              className="image-card__cancel-btn nodrag"
+              onClick={() => data.onCancelRun?.(data.id)}
+              disabled={Boolean(data.isCancelling)}
+              title="Stop this ComfyUI run — it stops at the next node/step boundary"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>stop_circle</span>
+              {data.isCancelling ? 'Cancelling…' : 'Cancel'}
+            </button>
           )}
 
           <div className="graph-node__ports-summary font-label">

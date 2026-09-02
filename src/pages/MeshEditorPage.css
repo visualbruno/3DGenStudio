@@ -2344,6 +2344,16 @@
   color: var(--secondary);
 }
 
+/* Stops an in-flight ComfyUI run; only shown while one is running. */
+.mesh-editor-btn--danger {
+  background: rgba(255, 113, 108, 0.14);
+  color: var(--error);
+}
+
+.mesh-editor-btn--danger:hover:not(:disabled) {
+  background: rgba(255, 113, 108, 0.22);
+}
+
 .mesh-editor-btn--ghost {
   background: rgba(255, 255, 255, 0.04);
   color: var(--on-surface);

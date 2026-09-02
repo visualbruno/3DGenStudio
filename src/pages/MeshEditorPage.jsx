@@ -455,6 +455,7 @@ export default function MeshEditorPage() {
     getComfyWorkflows,
     updateComfyWorkflow,
     runComfyWorkflow,
+    cancelComfyWorkflow,
     saveMeshEdit,
     subscribeToComfyWorkflowProgress,
     updateProjectNode,
@@ -493,6 +494,18 @@ export default function MeshEditorPage() {
   const [projectionStarted, setProjectionStarted] = useState(false)
   const [projectionKeepTexture, setProjectionKeepTexture] = useState(false)
   const [projecting, setProjecting] = useState(false)
+  // The ComfyUI run in flight, so Texturing and Projection can stop it. Only one
+  // runs at a time — Texturing's multi-view pass runs its views in sequence, so
+  // this holds whichever view is currently with ComfyUI.
+  const [comfyRunPromptId, setComfyRunPromptId] = useState(null)
+  const [comfyRunCancelling, setComfyRunCancelling] = useState(false)
+  // Read inside the progress subscriptions, which close over their own render's
+  // state: without it ComfyUI's next progress line would overwrite "Cancelling…".
+  const comfyRunCancellingRef = useRef(false)
+  // Survives view boundaries: Texturing sends one ComfyUI run per view, so a
+  // cancel that lands between two views has to stop the whole pass rather than
+  // being forgotten when the next view starts.
+  const comfyRunCancelRequestedRef = useRef(false)
   const [projectionRebuilding, setProjectionRebuilding] = useState(false)
   const [projectionRebuildProgress, setProjectionRebuildProgress] = useState(0)
   const [projectionLayerDrafts, setProjectionLayerDrafts] = useState({})
@@ -9859,6 +9872,9 @@ export default function MeshEditorPage() {
     try {
       setProjecting(true)
       setError('')
+      setComfyRunCancelling(false)
+      comfyRunCancellingRef.current = false
+      comfyRunCancelRequestedRef.current = false
       setFeedback('Capturing position view...')
 
       const projectionCamera = buildFramedProjectionCamera(cameraRef.current, texturableMesh.root, 1)
@@ -10075,10 +10091,11 @@ export default function MeshEditorPage() {
 
       const promptId = createExecutionId('mesh-projection-prompt')
       const clientId = createExecutionId('mesh-projection-client')
+      setComfyRunPromptId(promptId)
       const stopProgress = subscribeToComfyWorkflowProgress(promptId, {
         onMessage: payload => {
           const detail = payload?.detail || payload?.currentNodeLabel
-          if (detail) {
+          if (detail && !comfyRunCancellingRef.current) {
             setFeedback(detail)
           }
         },
@@ -10164,17 +10181,26 @@ export default function MeshEditorPage() {
         }
       }
     } catch (projectionError) {
-      const failureMessage = projectionError?.message || 'Failed to project workflow result to texture.'
-      setError(failureMessage)
-      setFeedback('')
-      addNotification({
-        title: 'Projection failed',
-        message: failureMessage,
-        source: 'ComfyUI',
-        tone: 'error'
-      })
+      // A run the user stopped is not a failure: no error banner, no notification.
+      if (projectionError?.cancelled) {
+        setFeedback('Workflow cancelled.')
+      } else {
+        const failureMessage = projectionError?.message || 'Failed to project workflow result to texture.'
+        setError(failureMessage)
+        setFeedback('')
+        addNotification({
+          title: 'Projection failed',
+          message: failureMessage,
+          source: 'ComfyUI',
+          tone: 'error'
+        })
+      }
     } finally {
       setProjecting(false)
+      setComfyRunPromptId(null)
+      setComfyRunCancelling(false)
+      comfyRunCancellingRef.current = false
+      comfyRunCancelRequestedRef.current = false
     }
   }, [
     addNotification,
@@ -10257,6 +10283,9 @@ export default function MeshEditorPage() {
     try {
       setTexturing(true);
       setError('');
+      setComfyRunCancelling(false);
+      comfyRunCancellingRef.current = false;
+      comfyRunCancelRequestedRef.current = false;
 
       // Pre‑upload static images (assets / local files) to ComfyUI once
       const staticFiles = {};
@@ -10279,6 +10308,14 @@ export default function MeshEditorPage() {
       let anyViewApplied = false;
 
       for (let viewIndex = 0; viewIndex < cameras.length; viewIndex += 1) {
+        // Cancelled between views (while the previous patch was being baked):
+        // end the pass here instead of sending the next view to ComfyUI.
+        if (comfyRunCancelRequestedRef.current) {
+          const cancelledError = new Error('Workflow cancelled');
+          cancelledError.cancelled = true;
+          throw cancelledError;
+        }
+
         const viewCamera = cameras[viewIndex];
         const viewLabel = cameras.length > 1 ? ` (view ${viewIndex + 1}/${cameras.length})` : '';
 
@@ -10344,10 +10381,12 @@ export default function MeshEditorPage() {
         const viewPromptId = createExecutionId('mesh-texture-prompt');
         const viewClientId = createExecutionId('mesh-texture-client');
 
+        setComfyRunPromptId(viewPromptId);
+
         const stopProgress = subscribeToComfyWorkflowProgress(viewPromptId, {
           onMessage: payload => {
             const detail = payload?.detail || payload?.currentNodeLabel;
-            if (detail) setFeedback(`${detail}${viewLabel}`);
+            if (detail && !comfyRunCancellingRef.current) setFeedback(`${detail}${viewLabel}`);
           },
           onError: () => { }
         });
@@ -10556,17 +10595,27 @@ export default function MeshEditorPage() {
         }
       }
     } catch (textureError) {
-      const failureMessage = textureError.message || 'Failed to regenerate the mesh texture.'
-      setError(failureMessage);
-      setFeedback('');
-      addNotification({
-        title: 'Mesh edit failed',
-        message: failureMessage,
-        source: 'ComfyUI',
-        tone: 'error'
-      })
+      // Cancelling a view aborts the whole multi-view pass: the rejection lands
+      // here, so no later view is captured or sent.
+      if (textureError?.cancelled) {
+        setFeedback('Workflow cancelled.');
+      } else {
+        const failureMessage = textureError.message || 'Failed to regenerate the mesh texture.'
+        setError(failureMessage);
+        setFeedback('');
+        addNotification({
+          title: 'Mesh edit failed',
+          message: failureMessage,
+          source: 'ComfyUI',
+          tone: 'error'
+        })
+      }
     } finally {
       setTexturing(false);
+      setComfyRunPromptId(null);
+      setComfyRunCancelling(false);
+      comfyRunCancellingRef.current = false;
+      comfyRunCancelRequestedRef.current = false;
     }
   }, [
     cropPadding, featherRadius, meshName, multiViewCount, nodeId,
@@ -10577,6 +10626,30 @@ export default function MeshEditorPage() {
     updateComfyWorkflow, getComfyWorkflows,
     updateMaskOverlay, imageParamSources, addNotification
   ]);
+
+  // Stop the ComfyUI run in flight (Texturing or Projection). The run itself
+  // ends through its own cancellation — the pending call rejects with
+  // `cancelled` — so a cancel ComfyUI refuses leaves the run going rather than
+  // pretending it stopped.
+  const handleCancelComfyRun = useCallback(async () => {
+    if (!comfyRunPromptId || comfyRunCancelling) {
+      return
+    }
+
+    setComfyRunCancelling(true)
+    comfyRunCancellingRef.current = true
+    comfyRunCancelRequestedRef.current = true
+    setFeedback('Cancelling…')
+
+    try {
+      await cancelComfyWorkflow(comfyRunPromptId)
+    } catch (cancelError) {
+      setComfyRunCancelling(false)
+      comfyRunCancellingRef.current = false
+      comfyRunCancelRequestedRef.current = false
+      setFeedback(cancelError.message || 'Failed to cancel the workflow.')
+    }
+  }, [cancelComfyWorkflow, comfyRunCancelling, comfyRunPromptId])
 
   const handleApplyPatch = useCallback(() => {
     if (!pendingPatch) {
@@ -10799,7 +10872,9 @@ export default function MeshEditorPage() {
                       projectionOpacities, setProjectionOpacities, patchNoise, setPatchNoise,
                       patchSharpness, setPatchSharpness, patchSaturation, setPatchSaturation,
                       handleApplyPatch, handleCancelPatch, handleRunTextureWorkflow, texturingReady,
-                      textureSetAsDefault, setTextureSetAsDefault
+                      textureSetAsDefault, setTextureSetAsDefault,
+                      canCancelComfyRun: Boolean(texturing && comfyRunPromptId),
+                      comfyRunCancelling, handleCancelComfyRun
                     }} />
                   ) : activeMenu === 'projection' ? (
                     <ProjectionToolsPanel {...{
@@ -10812,7 +10887,9 @@ export default function MeshEditorPage() {
                       handleProjectionImageParamSourceChange, setPendingAssetParamId,
                       setPendingAssetSelectorMode, setShowAssetSelector, projectionWorkflowParameters,
                       projectionWorkflowInputs, setProjectionWorkflowInputs,
-                      projectionSetAsDefault, setProjectionSetAsDefault
+                      projectionSetAsDefault, setProjectionSetAsDefault,
+                      canCancelComfyRun: Boolean(projecting && comfyRunPromptId),
+                      comfyRunCancelling, handleCancelComfyRun
                     }} />
                   ) : activeMenu === 'autouv' ? (
                     <AutoUvToolsPanel {...{

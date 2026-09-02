@@ -5,6 +5,9 @@ import { useNotifications } from './NotificationContext'
 
 const WorkflowJobsContext = createContext(null)
 
+// Statuses a job never leaves: further progress frames for them are ignored.
+const TERMINAL_JOB_STATUSES = ['completed', 'error', 'cancelled']
+
 // App-level registry of in-flight ComfyUI workflow jobs. It owns the SSE
 // progress connection for each job so progress keeps flowing while the user
 // navigates between pages/projects, and fires a global notification when a job
@@ -38,7 +41,7 @@ function createJobsStore() {
 }
 
 export function WorkflowJobsProvider({ children }) {
-  const { subscribeToComfyWorkflowProgress } = useProjects()
+  const { subscribeToComfyWorkflowProgress, cancelComfyWorkflow } = useProjects()
   const { addNotification } = useNotifications()
 
   const [store] = useState(createJobsStore)
@@ -79,12 +82,15 @@ export function WorkflowJobsProvider({ children }) {
     const unsubscribe = subscribeToComfyWorkflowProgress(id, {
       onMessage: (payload) => {
         const current = store.get(id)
-        if (!current || current.status === 'completed' || current.status === 'error') {
+        if (!current || TERMINAL_JOB_STATUSES.includes(current.status)) {
           return
         }
+        const isCancelled = payload?.status === 'cancelled' || payload?.cancelled
         store.set(id, {
           ...current,
-          status: payload?.status === 'error' ? 'error' : 'processing',
+          // A cancel that is still pending stays 'cancelling' until the run
+          // actually stops, so the button can't be pressed twice.
+          status: isCancelled ? 'cancelled' : payload?.status === 'error' ? 'error' : (current.status === 'cancelling' ? 'cancelling' : 'processing'),
           progressPercent: Math.max(current.progressPercent || 0, Number(payload?.progressPercent) || 0),
           detail: payload?.detail || current.detail,
           currentNodeLabel: payload?.currentNodeLabel || current.currentNodeLabel
@@ -102,7 +108,11 @@ export function WorkflowJobsProvider({ children }) {
     closeSubscription(id)
 
     const current = store.get(id)
-    const status = result.status === 'error' ? 'error' : 'completed'
+    const status = result.status === 'error'
+      ? 'error'
+      : result.status === 'cancelled'
+        ? 'cancelled'
+        : 'completed'
     const label = current?.label || result.label || 'Workflow'
     const projectName = current?.projectName || result.projectName || ''
     const suffix = projectName ? ` — ${projectName}` : ''
@@ -115,14 +125,23 @@ export function WorkflowJobsProvider({ children }) {
         ...current,
         status,
         progressPercent: status === 'completed' ? 100 : current.progressPercent,
-        detail: result.detail || current.detail,
+        detail: result.detail || (status === 'cancelled' ? 'Workflow cancelled' : current.detail),
         error: status === 'error' ? (result.error || current.error || 'Workflow failed') : null,
         completedAt: Date.now()
       })
       store.emit()
     }
 
-    if (status === 'completed') {
+    if (status === 'cancelled') {
+      addNotification({
+        title: 'Workflow cancelled',
+        message: `${label}${suffix}`,
+        source: 'ComfyUI',
+        tone: 'warning',
+        projectId,
+        targetId
+      })
+    } else if (status === 'completed') {
       addNotification({
         title: 'Workflow completed',
         message: `${label}${suffix}`,
@@ -142,6 +161,44 @@ export function WorkflowJobsProvider({ children }) {
       })
     }
   }, [store, closeSubscription, addNotification])
+
+  // Ask the backend to stop a job. The run's own terminal `cancelled` event is
+  // what finishes the job (via completeJob from the page that started it); this
+  // only marks it as stopping so the UI can show that and block a second click.
+  const cancelJob = useCallback(async (id) => {
+    const current = store.get(id)
+    if (!current || TERMINAL_JOB_STATUSES.includes(current.status) || current.status === 'cancelling') {
+      return false
+    }
+
+    store.set(id, {
+      ...current,
+      status: 'cancelling',
+      detail: 'Cancelling…'
+    })
+    store.emit()
+
+    try {
+      await cancelComfyWorkflow(id)
+      return true
+    } catch (err) {
+      // The run is still going: put the job back so the button works again.
+      const latest = store.get(id)
+      if (latest && latest.status === 'cancelling') {
+        store.set(id, { ...latest, status: 'processing', detail: current.detail })
+        store.emit()
+      }
+      addNotification({
+        title: 'Cancel failed',
+        message: err.message || 'Failed to cancel the workflow',
+        source: 'ComfyUI',
+        tone: 'error',
+        projectId: current.projectId ?? null,
+        targetId: current.targetId ?? null
+      })
+      return false
+    }
+  }, [store, cancelComfyWorkflow, addNotification])
 
   const removeJob = useCallback((id) => {
     closeSubscription(id)
@@ -179,9 +236,10 @@ export function WorkflowJobsProvider({ children }) {
     store,
     registerJob,
     completeJob,
+    cancelJob,
     removeJob,
     removeJobsForTarget
-  }), [store, registerJob, completeJob, removeJob, removeJobsForTarget])
+  }), [store, registerJob, completeJob, cancelJob, removeJob, removeJobsForTarget])
 
   return (
     <WorkflowJobsContext.Provider value={value}>
@@ -202,6 +260,7 @@ export function useWorkflowJobs() {
     jobs,
     registerJob: context.registerJob,
     completeJob: context.completeJob,
+    cancelJob: context.cancelJob,
     removeJob: context.removeJob,
     removeJobsForTarget: context.removeJobsForTarget
   }

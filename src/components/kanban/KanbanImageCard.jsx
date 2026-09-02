@@ -40,6 +40,7 @@ export default function KanbanImageCard({
   attributeTypes,
   // derived selectors
   getCardRuntimeState,
+  getCardComfyPromptId,
   getCardPreviewItems,
   getCardImageSourceGroups,
   getCardMeshSourceGroups,
@@ -66,6 +67,7 @@ export default function KanbanImageCard({
   handleImageEditPreviewStep,
   openImageEditActionMenu,
   handleGetAsyncMeshResult,
+  handleCancelCardRun,
   handleImageEditDraftChange,
   handleImageEditParameterSourceChange,
   handleImageEditParameterValueChange,
@@ -80,6 +82,9 @@ export default function KanbanImageCard({
   const runtimeState = getCardRuntimeState(card)
   const cardLocked = runtimeState?.status === 'processing' || runtimeState?.status === 'queued'
   const canFetchAsyncResult = canFetchTencentMeshResult(runtimeState) || canFetchTripoMeshResult(runtimeState) || canFetchHitemMeshResult(runtimeState)
+  // Only ComfyUI runs can be stopped: an async mesh API job is queued with the
+  // provider, not with a local ComfyUI, so it has nothing to cancel here.
+  const canCancelRun = Boolean(cardLocked && getCardComfyPromptId?.(card))
   const displaySourceLabel = runtimeState?.source
     ? String(runtimeState.source).toUpperCase()
     : card.sourceLabel
@@ -407,6 +412,18 @@ export default function KanbanImageCard({
                   style={{ width: `${Math.max(0, Math.min(100, runtimeState.progressPercent || 0))}%` }}
                 />
               </div>
+            )}
+            {canCancelRun && (
+              <button
+                type="button"
+                className="image-card__cancel-btn"
+                onClick={() => handleCancelCardRun?.(card)}
+                disabled={Boolean(runtimeState.isCancelling)}
+                title="Stop this ComfyUI run — it stops at the next node/step boundary"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>stop_circle</span>
+                {runtimeState.isCancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
             )}
           </div>
         )}

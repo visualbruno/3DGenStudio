@@ -122,11 +122,12 @@ export default function KanbanPage() {
     getComfyWorkflows,
     updateComfyWorkflow,
     runComfyWorkflow,
+    cancelComfyWorkflow,
     subscribeToComfyWorkflowProgress
   } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
-  const { jobs: workflowJobs, registerJob, completeJob } = useWorkflowJobs()
+  const { jobs: workflowJobs, registerJob, completeJob, cancelJob, removeJobsForTarget } = useWorkflowJobs()
 
   const [project, setProject] = useState(null)
   const [assets, setAssets] = useState([])
@@ -159,6 +160,11 @@ export default function KanbanPage() {
   const pendingMeshProgressSubscriptionRef = useRef(null)
   const pendingComfyProgressSubscriptionRef = useRef(null)
   const imageEditProgressSubscriptionsRef = useRef(new Map())
+  // Runs whose terminal event has already been handled here. A card can keep a
+  // stale "processing" snapshot for a moment after its run ends (the backend
+  // clears it asynchronously); without this the page would keep re-subscribing
+  // to a finished run, and every replayed terminal event would refresh the board.
+  const handledTerminalPromptIdsRef = useRef(new Set())
   const statusMessageTimeoutRef = useRef(null)
   const pendingResultFocusRef = useRef(null)
 	
@@ -588,6 +594,24 @@ export default function KanbanPage() {
         await deleteCard(projectId, cardId)
       }
 
+      // Nothing is left to show progress on, so drop what the card was carrying:
+      // its progress subscription, its page-local progress state, and its job in
+      // the app-level store. Left behind, these keep referring to a card that no
+      // longer exists.
+      if (cardId) {
+        closeImageEditProgressSubscription(cardId)
+        setImageEditProgressByCardId(prev => {
+          if (!(cardId in prev)) {
+            return prev
+          }
+
+          const nextState = { ...prev }
+          delete nextState[cardId]
+          return nextState
+        })
+        removeJobsForTarget(projectId, cardId)
+      }
+
       await Promise.all([refreshProjectAssets(), refreshCardAttributes()])
     } catch (err) {
       console.error('Failed to remove image card:', err)
@@ -665,10 +689,15 @@ export default function KanbanPage() {
         await refreshProjectAssets()
         completeJob(promptId, { status: 'completed' })
       } catch (err) {
-        console.error('ComfyUI workflow failed:', err)
+        // A run the user stopped is not a failure: report it as a cancellation
+        // and hand the draft back so the parameters can be reused.
+        const wasCancelled = Boolean(err?.cancelled)
+        console[wasCancelled ? 'log' : 'error']('ComfyUI workflow ' + (wasCancelled ? 'cancelled' : 'failed'), wasCancelled ? '' : err)
         setImageDraft(draft)
-        showStatusMessage(err.message || 'ComfyUI workflow failed', 'error')
-        completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
+        showStatusMessage(wasCancelled ? 'Workflow cancelled.' : (err.message || 'ComfyUI workflow failed'), wasCancelled ? 'info' : 'error')
+        completeJob(promptId, wasCancelled
+          ? { status: 'cancelled' }
+          : { status: 'error', error: err.message || 'ComfyUI workflow failed' })
         await refreshProjectAssets().catch(refreshErr => {
           console.error('Failed to refresh project assets after ComfyUI workflow error:', refreshErr)
         })
@@ -922,8 +951,14 @@ export default function KanbanPage() {
         .map(card => [card.id, card.processing.promptId])
     )
 
+    // Only runs that are still going want a subscription. Treating a finished
+    // one as active resurrects its subscription, which immediately replays the
+    // cached terminal event, which rewrites this state, which re-runs this
+    // effect — an infinite loop that froze the page after a cancelled (or
+    // failed) run, most visibly once its card had been deleted.
+    const TERMINAL_RUNTIME_STATUSES = ['completed', 'error', 'cancelled']
     Object.entries(imageEditProgressByCardId).forEach(([cardId, runtimeState]) => {
-      if (runtimeState?.promptId && runtimeState?.status !== 'completed') {
+      if (runtimeState?.promptId && !TERMINAL_RUNTIME_STATUSES.includes(runtimeState?.status)) {
         activePromptIdsByCardId.set(cardId, runtimeState.promptId)
       }
     })
@@ -949,26 +984,30 @@ export default function KanbanPage() {
         }
       }
 
-      if (imageEditProgressSubscriptionsRef.current.has(cardId)) {
+      if (imageEditProgressSubscriptionsRef.current.has(cardId) || handledTerminalPromptIdsRef.current.has(promptId)) {
         return
       }
 
       imageEditProgressSubscriptionsRef.current.set(cardId, subscribeToComfyWorkflowProgress(promptId, {
         onMessage: async (payload) => {
-          setImageEditProgressByCardId(prev => ({
-            ...prev,
-            [cardId]: {
-              ...(prev[cardId] || {}),
-              ...payload,
-              promptId
-            }
-          }))
+          setImageEditProgressByCardId(prev => {
+            const current = prev[cardId] || {}
+            const next = { ...current, ...payload, promptId }
+            // A re-subscribe replays the last terminal event verbatim; storing an
+            // equivalent-but-new object would re-render for nothing (and, with a
+            // dependent effect above, loop).
+            const unchanged = Object.keys(next).length === Object.keys(current).length
+              && Object.keys(next).every(key => Object.is(next[key], current[key]))
+
+            return unchanged ? prev : { ...prev, [cardId]: next }
+          })
 
           // Refresh only on the true terminal event: the ComfyUI monitor emits
           // an intermediate `status: 'completed'` on execution_success, before
           // the server has persisted outputs and cleared the processing card.
           // The finalizer's `done` flag fires only after that work is finished.
-          if (payload?.done || payload?.status === 'error') {
+          if (payload?.done || payload?.status === 'error' || payload?.status === 'cancelled') {
+            handledTerminalPromptIdsRef.current.add(promptId)
             closeImageEditProgressSubscription(cardId)
 
             try {
@@ -997,7 +1036,7 @@ export default function KanbanPage() {
     const finished = workflowJobs.filter(job => (
       job.page === 'kanban'
       && job.projectId === projectId
-      && (job.status === 'completed' || job.status === 'error')
+      && (job.status === 'completed' || job.status === 'error' || job.status === 'cancelled')
       && !handledTerminalJobsRef.current.has(job.id)
     ))
     if (finished.length === 0) {
@@ -1302,10 +1341,13 @@ export default function KanbanPage() {
         await refreshProjectAssets()
         completeJob(promptId, { status: 'completed' })
       } catch (err) {
-        console.error('ComfyUI mesh workflow failed:', err)
+        const wasCancelled = Boolean(err?.cancelled)
+        console[wasCancelled ? 'log' : 'error']('ComfyUI mesh workflow ' + (wasCancelled ? 'cancelled' : 'failed'), wasCancelled ? '' : err)
         setMeshDraft(draft)
-        showStatusMessage(err.message || 'ComfyUI workflow failed', 'error')
-        completeJob(promptId, { status: 'error', error: err.message || 'ComfyUI workflow failed' })
+        showStatusMessage(wasCancelled ? 'Workflow cancelled.' : (err.message || 'ComfyUI workflow failed'), wasCancelled ? 'info' : 'error')
+        completeJob(promptId, wasCancelled
+          ? { status: 'cancelled' }
+          : { status: 'error', error: err.message || 'ComfyUI workflow failed' })
         await refreshProjectAssets().catch(refreshErr => {
           console.error('Failed to refresh project assets after ComfyUI workflow error:', refreshErr)
         })
@@ -2927,6 +2969,22 @@ export default function KanbanPage() {
             ? 'Mesh rigging completed successfully.'
           : 'Image edit completed successfully.', 'success')
     } catch (err) {
+      // Only a ComfyUI run can be cancelled; the API and Auto Rig paths below
+      // never set this flag, so their failure reporting is untouched.
+      const wasCancelled = Boolean(err?.cancelled)
+      if (wasCancelled) {
+        console.log(`${actionLabel} cancelled`)
+        await refreshProjectAssets().catch(refreshErr => {
+          console.error('Failed to refresh project assets after cancelling:', refreshErr)
+        })
+        closeImageEditActionMenu()
+        if (comfyEditPromptId) {
+          completeJob(comfyEditPromptId, { status: 'cancelled' })
+        }
+        showStatusMessage('Workflow cancelled.', 'info')
+        return
+      }
+
       console.error(`Failed to run ${actionLabel}:`, err)
       await refreshProjectAssets().catch(refreshErr => {
         console.error('Failed to refresh project assets after action error:', refreshErr)
@@ -3018,7 +3076,9 @@ export default function KanbanPage() {
         job.page === 'kanban'
         && job.projectId === projectId
         && job.targetId
-        && (job.status === 'queued' || job.status === 'processing')
+        // 'cancelling' belongs here too: the run is still live until ComfyUI
+        // stops it, so the card stays locked and keeps showing its progress.
+        && (job.status === 'queued' || job.status === 'processing' || job.status === 'cancelling')
       ) {
         map.set(String(job.targetId), job)
       }
@@ -3028,12 +3088,17 @@ export default function KanbanPage() {
 
   const getCardRuntimeState = (card) => {
     const liveState = imageEditProgressByCardId[card.id]
-    if (liveState?.status === 'completed') {
+    if (liveState?.status === 'completed' || liveState?.status === 'cancelled') {
       return null
     }
 
     if (liveState) {
-      return liveState
+      // The cancel itself is tracked by the app-level store, so read the
+      // "cancelling" flag from there rather than from the page-local progress.
+      const cancellingJob = activeStoreJobsByCardId.get(String(card.id))
+      return cancellingJob?.status === 'cancelling'
+        ? { ...liveState, isCancelling: true }
+        : liveState
     }
 
     const storeJob = activeStoreJobsByCardId.get(String(card.id))
@@ -3043,11 +3108,106 @@ export default function KanbanPage() {
         source: 'ComfyUI',
         progressPercent: storeJob.progressPercent,
         detail: storeJob.detail,
-        currentNodeLabel: storeJob.currentNodeLabel
+        currentNodeLabel: storeJob.currentNodeLabel,
+        isCancelling: storeJob.status === 'cancelling'
       }
     }
 
     return card.processing || null
+  }
+
+  // The promptId of the ComfyUI run a card is waiting on, if any. Async mesh API
+  // jobs (Tencent / Tripo / Hitem3D) also occupy a card's runtime state but are
+  // queued with those providers, not with ComfyUI, so they are not cancellable
+  // here — hence the source check rather than a bare promptId lookup.
+  const getCardComfyPromptId = (card) => {
+    const storeJob = activeStoreJobsByCardId.get(String(card.id))
+    if (storeJob) {
+      return storeJob.id
+    }
+
+    const liveState = imageEditProgressByCardId[card.id]
+    if (liveState && liveState.status !== 'completed' && liveState.source === 'ComfyUI' && liveState.promptId) {
+      return liveState.promptId
+    }
+
+    // Persisted on the card by the backend, so a run started before a page
+    // reload can still be cancelled even though this browser has forgotten it.
+    if (card.processing?.status === 'processing' && card.processing?.source === 'ComfyUI' && card.processing?.promptId) {
+      return card.processing.promptId
+    }
+
+    return null
+  }
+
+  // Stop the ComfyUI run a card is waiting on. A live job is cancelled through
+  // the app-level store, so its terminal event lands where the run is awaited;
+  // a run this browser no longer tracks (page reloaded mid-run) is cancelled by
+  // its persisted promptId and the card is refreshed from the backend, since no
+  // pending call here is going to clear it.
+  const handleCancelCardRun = async (card) => {
+    const storeJob = activeStoreJobsByCardId.get(String(card.id))
+    if (storeJob) {
+      await cancelJob(storeJob.id)
+      return
+    }
+
+    const promptId = getCardComfyPromptId(card)
+    if (!promptId) {
+      return
+    }
+
+    const runtimeState = getCardRuntimeState(card)
+    setImageEditProgressByCardId(prev => ({
+      ...prev,
+      [card.id]: { ...(runtimeState || {}), status: 'processing', promptId, isCancelling: true }
+    }))
+
+    try {
+      await cancelComfyWorkflow(promptId)
+    } catch (err) {
+      setImageEditProgressByCardId(prev => ({
+        ...prev,
+        [card.id]: { ...(prev[card.id] || {}), isCancelling: false }
+      }))
+      showStatusMessage(err.message || 'Failed to cancel the workflow', 'error')
+      return
+    }
+
+    // Drop the local progress entry so the card can't stay stuck on it, but
+    // leave the card's progress subscription open: its terminal `cancelled`
+    // event refreshes the board once the backend has cleared the snapshot.
+    setImageEditProgressByCardId(prev => {
+      if (!(card.id in prev)) {
+        return prev
+      }
+
+      const nextState = { ...prev }
+      delete nextState[card.id]
+      return nextState
+    })
+
+    await refreshProjectAssets().catch(refreshErr => {
+      console.error('Failed to refresh cards after cancelling a workflow:', refreshErr)
+    })
+    showStatusMessage('Workflow cancelled.', 'info')
+  }
+
+  // The "Add New Image/Mesh" flows run before their card exists, so their
+  // progress lives in a pending overlay rather than on a card. Both register
+  // their job under the promptId, so the store can cancel them the same way.
+  const handleCancelPendingGeneration = async (pendingState, setPendingState) => {
+    const promptId = pendingState?.promptId
+    if (!promptId || pendingState.isCancelling) {
+      return
+    }
+
+    setPendingState(prev => prev?.promptId === promptId ? { ...prev, isCancelling: true } : prev)
+
+    const cancelled = await cancelJob(promptId)
+    if (!cancelled) {
+      setPendingState(prev => prev?.promptId === promptId ? { ...prev, isCancelling: false } : prev)
+    }
   }
 
   const isCardLocked = (card) => {
@@ -3314,6 +3474,8 @@ export default function KanbanPage() {
     imageEditProgressByCardId,
     attributeTypes,
     getCardRuntimeState,
+    getCardComfyPromptId,
+    handleCancelCardRun,
     getCardPreviewItems,
     getCardImageSourceGroups,
     getCardMeshSourceGroups,
@@ -3638,6 +3800,18 @@ export default function KanbanPage() {
                     style={{ width: `${Math.max(0, Math.min(100, pendingImageGeneration.progressPercent || 0))}%` }}
                   />
                 </div>
+                {pendingImageGeneration.promptId && (
+                  <button
+                    type="button"
+                    className="image-card__cancel-btn"
+                    onClick={() => handleCancelPendingGeneration(pendingImageGeneration, setPendingImageGeneration)}
+                    disabled={Boolean(pendingImageGeneration.isCancelling)}
+                    title="Stop this ComfyUI run — it stops at the next node/step boundary"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>stop_circle</span>
+                    {pendingImageGeneration.isCancelling ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -3901,6 +4075,18 @@ export default function KanbanPage() {
                     style={{ width: `${Math.max(0, Math.min(100, pendingMeshGeneration.progressPercent || 0))}%` }}
                   />
                 </div>
+                {pendingMeshGeneration.promptId && (
+                  <button
+                    type="button"
+                    className="image-card__cancel-btn"
+                    onClick={() => handleCancelPendingGeneration(pendingMeshGeneration, setPendingMeshGeneration)}
+                    disabled={Boolean(pendingMeshGeneration.isCancelling)}
+                    title="Stop this ComfyUI run — it stops at the next node/step boundary"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>stop_circle</span>
+                    {pendingMeshGeneration.isCancelling ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                )}
               </div>
             </div>
           )}

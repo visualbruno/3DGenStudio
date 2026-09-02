@@ -769,6 +769,32 @@
   font-size: 0.72rem;
 }
 
+/* Stops an in-flight ComfyUI run. Shown only while a card/node is processing. */
+.image-card__cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  width: fit-content;
+  border: 1px solid rgba(255, 113, 108, 0.28);
+  background: rgba(255, 113, 108, 0.1);
+  color: var(--error);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.65rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.image-card__cancel-btn:hover:not(:disabled) {
+  background: rgba(255, 113, 108, 0.18);
+}
+
+.image-card__cancel-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .image-card__edit-action-menu {
   display: flex;
   gap: 0.5rem;

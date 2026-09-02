@@ -16,6 +16,9 @@ export default function ComfyUIFullControls({ workflow, onChangeImageParamSource
     onWorkflowValueChange,
     imageParamSources,
     aiRunning,
+    aiCancelling,
+    canCancelAi,
+    onCancelRun,
     setAsDefault,
     onToggleSetAsDefault
   } = workflow
@@ -72,6 +75,19 @@ export default function ComfyUIFullControls({ workflow, onChangeImageParamSource
       >
         {aiRunning ? 'Running...' : 'Run ComfyUI'}
       </button>
+
+      {canCancelAi && (
+        <button
+          type="button"
+          className="image-editor-btn image-editor-btn--danger"
+          disabled={Boolean(aiCancelling)}
+          onClick={onCancelRun}
+          title="Stop this ComfyUI run — it stops at the next node/step boundary"
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>stop_circle</span>
+          {aiCancelling ? 'Cancelling…' : 'Cancel'}
+        </button>
+      )}
 
       <p className="image-editor-help">Sends the full composited image to ComfyUI and adds the result as a new layer.</p>
     </div>

@@ -5,6 +5,14 @@ import { useRemote } from './RemoteContext.shared'
 
 const ProjectContext = createContext(null)
 
+// A workflow the user stopped. Flagged so callers can tell it apart from a
+// failure and put their card/node back to idle instead of showing an error.
+export function createWorkflowCancelledError(message = 'Workflow cancelled') {
+  const error = new Error(message)
+  error.cancelled = true
+  return error
+}
+
 export function ProjectProvider({ children }) {
   const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
@@ -32,7 +40,7 @@ export function ProjectProvider({ children }) {
     const dispatch = (payload) => {
       const promptId = String(payload?.promptId || '')
       if (!promptId) return
-      if (payload?.done || payload?.status === 'error') {
+      if (payload?.done || payload?.status === 'error' || payload?.status === 'cancelled') {
         lastTerminal.set(promptId, payload)
       }
       const handlers = listeners.get(promptId)
@@ -387,7 +395,31 @@ export function ProjectProvider({ children }) {
     const data = await res.json()
 
     if (!res.ok) {
+      if (res.status === 409 || data?.cancelled) {
+        throw createWorkflowCancelledError(data?.error || 'Image edit cancelled')
+      }
       throw new Error(data?.error || 'Failed to run ComfyUI image edit')
+    }
+
+    return data
+  }
+
+  // Stop a queued or running ComfyUI workflow. ComfyUI applies the interruption
+  // at the next node/step boundary; the run's terminal `cancelled` event arrives
+  // on the progress stream, which is what actually resets the caller's UI.
+  const cancelComfyWorkflow = async (promptId) => {
+    const key = String(promptId || '').trim()
+    if (!key) {
+      throw new Error('promptId is required')
+    }
+
+    const res = await fetch(`${API_BASE}/comfyui/workflows/${encodeURIComponent(key)}/cancel`, {
+      method: 'POST'
+    })
+    const data = await res.json().catch(() => ({}))
+
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to cancel the ComfyUI workflow')
     }
 
     return data
@@ -1267,7 +1299,10 @@ export function ProjectProvider({ children }) {
       ? new Promise((resolve, reject) => {
           stopCompletion = subscribeToComfyWorkflowProgress(promptId, {
             onMessage: (payload) => {
-              if (payload?.status === 'error') {
+              if (payload?.status === 'cancelled' || payload?.cancelled) {
+                stopCompletion?.()
+                reject(createWorkflowCancelledError(payload?.detail || 'Workflow cancelled'))
+              } else if (payload?.status === 'error') {
                 stopCompletion?.()
                 reject(new Error(payload?.detail || payload?.error || 'ComfyUI workflow failed'))
               } else if (payload?.done) {
@@ -1517,6 +1552,7 @@ export function ProjectProvider({ children }) {
       importComfyWorkflow,
       updateComfyWorkflow,
       runComfyWorkflow,
+      cancelComfyWorkflow,
       subscribeToComfyWorkflowProgress,
       getWikiConfig,
       getWikiPages,

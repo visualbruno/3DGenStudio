@@ -42,6 +42,9 @@ export default function TexturingToolsPanel({
   handleApplyPatch,
   handleCancelPatch,
   handleRunTextureWorkflow,
+  canCancelComfyRun,
+  comfyRunCancelling,
+  handleCancelComfyRun,
   texturingReady,
   textureSetAsDefault,
   setTextureSetAsDefault
@@ -310,6 +313,18 @@ export default function TexturingToolsPanel({
             <button type="button" className="mesh-editor-btn mesh-editor-btn--primary" onClick={handleRunTextureWorkflow} disabled={!texturingReady || texturing || comfyLoading}>
               {texturing ? 'Regenerating…' : 'Regenerate zone'}
             </button>
+            {canCancelComfyRun && (
+            <button
+              type="button"
+              className="mesh-editor-btn mesh-editor-btn--danger"
+              onClick={handleCancelComfyRun}
+              disabled={Boolean(comfyRunCancelling)}
+              title="Stop this ComfyUI run — it stops at the next node/step boundary"
+            >
+              <span className="material-symbols-outlined">stop_circle</span>
+              <span>{comfyRunCancelling ? 'Cancelling…' : 'Cancel'}</span>
+            </button>
+            )}
           </>
         )}
       </div>

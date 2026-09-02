@@ -47,7 +47,7 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
   const { getComfyWorkflows, runComfyWorkflow, generateImage, resolveAssetSourceReference } = useProjects()
   const { settings } = useSettings()
   const { addNotification } = useNotifications()
-  const { registerJob, completeJob } = useWorkflowJobs()
+  const { jobs: workflowJobs, registerJob, completeJob, cancelJob } = useWorkflowJobs()
 
   const [tab, setTab] = useState('comfy')
   const [workflows, setWorkflows] = useState([])
@@ -60,9 +60,19 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
   const [apiName, setApiName] = useState('')
 
   const [running, setRunning] = useState(false)
+  // The ComfyUI run in flight, so it can be cancelled. Its "cancelling" state is
+  // read from the job store, which owns the cancel request.
+  const [comfyPromptId, setComfyPromptId] = useState(null)
   const [status, setStatus] = useState(null)
   const [assetPickerParam, setAssetPickerParam] = useState(null) // { paramId, valueType }
   const fileInputsRef = useRef({})
+
+  // The job store is the source of truth for a pending cancel, so the button can
+  // show it and refuse a second click.
+  const comfyCancelling = useMemo(
+    () => workflowJobs.some(job => job.id === comfyPromptId && job.status === 'cancelling'),
+    [workflowJobs, comfyPromptId]
+  )
 
   const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
   const imageApis = useMemo(() => ([
@@ -148,6 +158,7 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
     const promptId = createComfyExecutionId('comfy-prompt')
     const clientId = createComfyExecutionId('comfy-client')
     setRunning(true)
+    setComfyPromptId(promptId)
     flash('Running ComfyUI workflow…')
     registerJob({
       id: promptId,
@@ -182,12 +193,33 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
       completeJob(promptId, { status: 'completed' })
       flash(`Added ${imageAssets.length} image${imageAssets.length === 1 ? '' : 's'} to the board.`, 'success')
     } catch (err) {
-      console.error('ComfyUI board generation failed', err)
-      completeJob(promptId, { status: 'error', error: err.message })
-      flash(err.message || 'ComfyUI workflow failed.', 'error')
-      addNotification({ title: 'Board generation failed', message: err.message || 'ComfyUI workflow failed', tone: 'error', source: selectedWorkflow.name, projectId })
+      // A run the user stopped is not a failure: no error status, no notification.
+      if (err?.cancelled) {
+        completeJob(promptId, { status: 'cancelled' })
+        flash('Workflow cancelled.')
+      } else {
+        console.error('ComfyUI board generation failed', err)
+        completeJob(promptId, { status: 'error', error: err.message })
+        flash(err.message || 'ComfyUI workflow failed.', 'error')
+        addNotification({ title: 'Board generation failed', message: err.message || 'ComfyUI workflow failed', tone: 'error', source: selectedWorkflow.name, projectId })
+      }
     } finally {
       setRunning(false)
+      setComfyPromptId(null)
+    }
+  }
+
+  // Stop the ComfyUI run in flight. The store owns the cancel request; the run
+  // ends through its own cancellation (the pending call rejects with
+  // `cancelled`), which is what clears the panel.
+  const cancelComfy = async () => {
+    if (!comfyPromptId) {
+      return
+    }
+
+    flash('Cancelling…')
+    if (!await cancelJob(comfyPromptId)) {
+      flash('Failed to cancel the workflow.', 'error')
     }
   }
 
@@ -389,6 +421,17 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
             <button className="board-ai-panel__run" onClick={runComfy} disabled={running || !selectedWorkflow}>
               {running ? 'Working…' : 'Run workflow'}
             </button>
+
+            {running && comfyPromptId && (
+              <button
+                className="board-ai-panel__run board-ai-panel__run--danger"
+                onClick={cancelComfy}
+                disabled={comfyCancelling}
+                title="Stop this ComfyUI run — it stops at the next node/step boundary"
+              >
+                {comfyCancelling ? 'Cancelling…' : 'Cancel'}
+              </button>
+            )}
           </>
         ) : (
           <>

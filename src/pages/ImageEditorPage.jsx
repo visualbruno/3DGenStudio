@@ -47,7 +47,7 @@ const ZOOM_STEP = 1.15
 export default function ImageEditorPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { getComfyWorkflows, updateComfyWorkflow, runComfyWorkflow, subscribeToComfyWorkflowProgress, saveImageEditorFile } = useProjects()
+  const { getComfyWorkflows, updateComfyWorkflow, runComfyWorkflow, cancelComfyWorkflow, subscribeToComfyWorkflowProgress, saveImageEditorFile } = useProjects()
   const { addNotification } = useNotifications()
 
   const [showSettings, setShowSettings] = useState(false)
@@ -100,6 +100,14 @@ export default function ImageEditorPage() {
   const [showAssetSelector, setShowAssetSelector] = useState(false)
   const [pendingAssetParamId, setPendingAssetParamId] = useState(null)
   const [aiRunning, setAiRunning] = useState(false)
+  // The ComfyUI run currently in flight, so it can be cancelled. Both AI modes
+  // (mask and full image) use these; only one can run at a time.
+  const [aiPromptId, setAiPromptId] = useState(null)
+  const [aiCancelling, setAiCancelling] = useState(false)
+  // Read inside the progress subscription, which closes over its own render's
+  // state: without it, ComfyUI's next progress line would overwrite "Cancelling…"
+  // and make the cancel look like it never registered.
+  const aiCancellingRef = useRef(false)
   const [saving, setSaving] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
@@ -1048,10 +1056,13 @@ export default function ImageEditorPage() {
 
     const promptId = createExecutionId('image-editor-prompt')
     const clientId = createExecutionId('image-editor-client')
+    setAiPromptId(promptId)
+    setAiCancelling(false)
+    aiCancellingRef.current = false
     const stopProgress = subscribeToComfyWorkflowProgress(promptId, {
       onMessage: payload => {
         const detail = payload?.detail || payload?.currentNodeLabel
-        if (detail) {
+        if (detail && !aiCancellingRef.current) {
           setFeedback(String(detail))
         }
       },
@@ -1189,17 +1200,24 @@ export default function ImageEditorPage() {
         }
       }
     } catch (err) {
-      const failureMessage = err.message || 'ComfyUI execution failed.'
-      setFeedback(failureMessage)
-      addNotification({
-        title: 'Image edit failed',
-        message: failureMessage,
-        source: 'ComfyUI',
-        tone: 'error'
-      })
+      if (err?.cancelled) {
+        setFeedback('Workflow cancelled.')
+      } else {
+        const failureMessage = err.message || 'ComfyUI execution failed.'
+        setFeedback(failureMessage)
+        addNotification({
+          title: 'Image edit failed',
+          message: failureMessage,
+          source: 'ComfyUI',
+          tone: 'error'
+        })
+      }
     } finally {
       stopProgress()
       setAiRunning(false)
+      setAiPromptId(null)
+      setAiCancelling(false)
+      aiCancellingRef.current = false
     }
   }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, getComfyWorkflows, imageName, imageParamSources, layers, loadAssetAsFile, maskHasPixels, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, setAsDefault, subscribeToComfyWorkflowProgress, updateComfyWorkflow, workflowValues])
 
@@ -1220,10 +1238,13 @@ export default function ImageEditorPage() {
 
     const promptId = createExecutionId('image-editor-prompt')
     const clientId = createExecutionId('image-editor-client')
+    setAiPromptId(promptId)
+    setAiCancelling(false)
+    aiCancellingRef.current = false
     const stopProgress = subscribeToComfyWorkflowProgress(promptId, {
       onMessage: payload => {
         const detail = payload?.detail || payload?.currentNodeLabel
-        if (detail) {
+        if (detail && !aiCancellingRef.current) {
           setFeedback(String(detail))
         }
       },
@@ -1348,19 +1369,48 @@ export default function ImageEditorPage() {
         }
       }
     } catch (err) {
-      const failureMessage = err.message || 'ComfyUI execution failed.'
-      setFeedback(failureMessage)
-      addNotification({
-        title: 'Image edit failed',
-        message: failureMessage,
-        source: 'ComfyUI',
-        tone: 'error'
-      })
+      if (err?.cancelled) {
+        setFeedback('Workflow cancelled.')
+      } else {
+        const failureMessage = err.message || 'ComfyUI execution failed.'
+        setFeedback(failureMessage)
+        addNotification({
+          title: 'Image edit failed',
+          message: failureMessage,
+          source: 'ComfyUI',
+          tone: 'error'
+        })
+      }
     } finally {
       stopProgress()
       setAiRunning(false)
+      setAiPromptId(null)
+      setAiCancelling(false)
+      aiCancellingRef.current = false
     }
   }, [addNotification, bumpRender, createEmptyCanvas, exportCurrentComposite, getComfyWorkflows, imageName, imageParamSources, layers, loadAssetAsFile, projectId, pushUndoSnapshot, runComfyWorkflow, selectedWorkflow, setAsDefault, subscribeToComfyWorkflowProgress, updateComfyWorkflow, workflowValues])
+
+  // Stop the ComfyUI run in flight. The run itself ends through its own
+  // cancellation (the pending call rejects with `cancelled`), which is what
+  // clears the panel — so a cancel ComfyUI refuses leaves the run going rather
+  // than pretending it stopped.
+  const handleCancelAiRun = useCallback(async () => {
+    if (!aiPromptId || aiCancelling) {
+      return
+    }
+
+    setAiCancelling(true)
+    aiCancellingRef.current = true
+    setFeedback('Cancelling…')
+
+    try {
+      await cancelComfyWorkflow(aiPromptId)
+    } catch (err) {
+      setAiCancelling(false)
+      aiCancellingRef.current = false
+      setFeedback(err.message || 'Failed to cancel the workflow.')
+    }
+  }, [aiCancelling, aiPromptId, cancelComfyWorkflow])
 
   const handleSaveImage = useCallback(async () => {
     if (!numericAssetId) return
@@ -1697,6 +1747,9 @@ export default function ImageEditorPage() {
     onWorkflowValueChange: handleWorkflowValueChange,
     imageParamSources,
     aiRunning,
+    aiCancelling,
+    canCancelAi: Boolean(aiRunning && aiPromptId),
+    onCancelRun: handleCancelAiRun,
     setAsDefault,
     onToggleSetAsDefault: setSetAsDefault
   }

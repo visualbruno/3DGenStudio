@@ -333,6 +333,16 @@
   cursor: pointer;
 }
 
+/* Stops an in-flight ComfyUI run; only shown while one is running. */
+.board-ai-panel__run--danger {
+  background: rgba(255, 113, 108, 0.14);
+  color: var(--error);
+}
+
+.board-ai-panel__run--danger:hover:not(:disabled) {
+  background: rgba(255, 113, 108, 0.22);
+}
+
 .board-ai-panel__run:disabled {
   opacity: 0.5;
   cursor: not-allowed;
