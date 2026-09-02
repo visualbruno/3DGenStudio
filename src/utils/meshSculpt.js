@@ -10,6 +10,7 @@
 // produced by `loadEditableGeometryFromObject` in src/utils/meshEditor.js).
 
 import * as THREE from 'three'
+import { buildCanonicalVertexIds } from './meshEditor'
 
 const MAX_GRID_CELLS = 4_000_000 // cap memory footprint of the uniform grid
 const INITIAL_QUERY_CAP = 4096
@@ -528,6 +529,281 @@ export function filterFrontFacing(ctx, indices, weights, count,
       weights[writeIdx] = weights[i]
       writeIdx += 1
     }
+  }
+  return writeIdx
+}
+
+// ---------------------------------------------------------------------------
+// Welded surface topology + connectivity filter
+// ---------------------------------------------------------------------------
+
+/**
+ * Vertex graph of the surface welded BY POSITION, built lazily and cached on
+ * the context.
+ *
+ * The editable geometry is welded with `mergeVertices`, which compares every
+ * attribute — so a vertex sitting on a UV or hard-normal seam exists twice and
+ * the index buffer's adjacency (`ctx.vertexNeighbors`) is torn along every
+ * seam. Any walk over the surface has to be done on positions instead, or it
+ * stops dead at a seam that is not a hole in the mesh at all.
+ *
+ * Nodes are canonical positions; `members` maps a node back to the (one or
+ * more) real vertices at it.
+ *
+ * Only rebuilt with the context, i.e. per geometry: brush strokes move
+ * coincident vertices identically (the falloff is a function of position), so
+ * seam twins stay coincident and the graph stays valid across sculpting.
+ */
+export function ensureWeldedTopology(ctx) {
+  if (ctx.welded !== undefined) return ctx.welded
+  ctx.welded = null
+  if (!ctx?.geometry?.attributes?.position || !ctx.indices) return ctx.welded
+
+  const canonicalOf = buildCanonicalVertexIds(ctx.geometry)
+  const vertexCount = ctx.vertexCount
+  let nodeCount = 0
+  for (let v = 0; v < vertexCount; v++) {
+    if (canonicalOf[v] >= nodeCount) nodeCount = canonicalOf[v] + 1
+  }
+  if (!nodeCount) return ctx.welded
+
+  const indices = ctx.indices
+  const triCount = ctx.triCount
+
+  // node -> triangle (CSR), the intermediate the neighbour dedupe walks.
+  const nodeTriOffsets = new Int32Array(nodeCount + 1)
+  for (let i = 0; i < indices.length; i++) nodeTriOffsets[canonicalOf[indices[i]] + 1] += 1
+  for (let i = 1; i <= nodeCount; i++) nodeTriOffsets[i] += nodeTriOffsets[i - 1]
+  const nodeTris = new Int32Array(indices.length)
+  {
+    const cursors = new Int32Array(nodeCount)
+    for (let t = 0; t < triCount; t++) {
+      for (let k = 0; k < 3; k++) {
+        const n = canonicalOf[indices[t * 3 + k]]
+        nodeTris[nodeTriOffsets[n] + cursors[n]] = t
+        cursors[n] += 1
+      }
+    }
+  }
+
+  // node -> unique neighbour nodes (CSR), deduped with the same per-node stamp
+  // trick createSculptContext uses.
+  const stamps = new Int32Array(nodeCount)
+  const neighborOffsets = new Int32Array(nodeCount + 1)
+  let stamp = 0
+  for (let n = 0; n < nodeCount; n++) {
+    stamp += 1
+    stamps[n] = stamp // never count the node itself
+    let count = 0
+    for (let i = nodeTriOffsets[n]; i < nodeTriOffsets[n + 1]; i++) {
+      const t = nodeTris[i]
+      for (let k = 0; k < 3; k++) {
+        const w = canonicalOf[indices[t * 3 + k]]
+        if (stamps[w] !== stamp) { stamps[w] = stamp; count += 1 }
+      }
+    }
+    neighborOffsets[n + 1] = count
+  }
+  for (let n = 1; n <= nodeCount; n++) neighborOffsets[n] += neighborOffsets[n - 1]
+
+  const neighbors = new Int32Array(neighborOffsets[nodeCount])
+  stamps.fill(0)
+  stamp = 0
+  for (let n = 0; n < nodeCount; n++) {
+    stamp += 1
+    stamps[n] = stamp
+    let writeIdx = neighborOffsets[n]
+    for (let i = nodeTriOffsets[n]; i < nodeTriOffsets[n + 1]; i++) {
+      const t = nodeTris[i]
+      for (let k = 0; k < 3; k++) {
+        const w = canonicalOf[indices[t * 3 + k]]
+        if (stamps[w] !== stamp) { stamps[w] = stamp; neighbors[writeIdx++] = w }
+      }
+    }
+  }
+
+  // node -> the vertices at that position (CSR).
+  const memberOffsets = new Int32Array(nodeCount + 1)
+  for (let v = 0; v < vertexCount; v++) memberOffsets[canonicalOf[v] + 1] += 1
+  for (let n = 1; n <= nodeCount; n++) memberOffsets[n] += memberOffsets[n - 1]
+  const members = new Int32Array(vertexCount)
+  {
+    const cursors = new Int32Array(nodeCount)
+    for (let v = 0; v < vertexCount; v++) {
+      const n = canonicalOf[v]
+      members[memberOffsets[n] + cursors[n]] = v
+      cursors[n] += 1
+    }
+  }
+
+  ctx.welded = {
+    canonicalOf,
+    nodeCount,
+    neighborOffsets,
+    neighbors,
+    memberOffsets,
+    members,
+    // Scratch for filterConnected: two stamp arrays and a queue, so a dab
+    // allocates nothing and needs no clearing pass.
+    candidateStamps: new Int32Array(nodeCount),
+    reachedStamps: new Int32Array(nodeCount),
+    queue: new Int32Array(nodeCount),
+    stamp: 0
+  }
+  return ctx.welded
+}
+
+/**
+ * Compact-in-place filter that keeps only the queried vertices reachable ACROSS
+ * THE SURFACE from the triangle under the cursor, walking only through vertices
+ * the radius query already accepted.
+ *
+ * `queryRadius` returns a ball in space, which on any folded shape reaches
+ * surfaces the pointer is nowhere near — the other thigh, the chest behind an
+ * arm, the far side of a limb. Those are the strokes that land "somewhere else
+ * on the mesh". `filterFrontFacing` cannot catch them: a second surface behind
+ * the first is just as front-facing.
+ *
+ * `seedTriangle` is the `faceIndex` the raycast hit. Its corners seed the walk
+ * even when they are outside the ball themselves (a brush smaller than one
+ * triangle), so they can still reach the vertices that are inside it.
+ *
+ * Mutates `brushIndices` / `falloff` and returns the new compacted count.
+ */
+export function filterConnected(ctx, brushIndices, falloff, count, seedTriangle) {
+  if (count <= 0 || seedTriangle == null || seedTriangle < 0 || seedTriangle >= ctx.triCount) {
+    return count
+  }
+  const topo = ensureWeldedTopology(ctx)
+  if (!topo) return count
+
+  const { canonicalOf, neighborOffsets, neighbors, candidateStamps, reachedStamps, queue } = topo
+  const stamp = (topo.stamp += 1)
+
+  for (let i = 0; i < count; i++) candidateStamps[canonicalOf[brushIndices[i]]] = stamp
+
+  let head = 0
+  let tail = 0
+  for (let k = 0; k < 3; k++) {
+    const node = canonicalOf[ctx.indices[seedTriangle * 3 + k]]
+    if (reachedStamps[node] === stamp) continue
+    reachedStamps[node] = stamp
+    queue[tail++] = node
+  }
+  while (head < tail) {
+    const node = queue[head++]
+    for (let i = neighborOffsets[node]; i < neighborOffsets[node + 1]; i++) {
+      const w = neighbors[i]
+      if (reachedStamps[w] === stamp || candidateStamps[w] !== stamp) continue
+      reachedStamps[w] = stamp
+      queue[tail++] = w
+    }
+  }
+
+  let writeIdx = 0
+  for (let i = 0; i < count; i++) {
+    const v = brushIndices[i]
+    if (reachedStamps[canonicalOf[v]] !== stamp) continue
+    brushIndices[writeIdx] = v
+    falloff[writeIdx] = falloff[i]
+    writeIdx += 1
+  }
+  return writeIdx
+}
+
+// ---------------------------------------------------------------------------
+// Needle (spike) triangles
+// ---------------------------------------------------------------------------
+
+// A vertex counts as a needle corner when the triangles it belongs to reach far
+// outside the brush AND far outside the mesh's own tessellation. Both tests have
+// to pass: the first alone would refuse to paint any low-poly mesh with a small
+// brush, the second alone would flag a legitimately coarse region of a mesh that
+// is dense elsewhere.
+const NEEDLE_RADIUS_FACTOR = 2.5
+const NEEDLE_DENSITY_FACTOR = 12
+
+/**
+ * Per-vertex span — the distance to the farthest corner of any triangle the
+ * vertex belongs to — plus the median span over the mesh, built lazily and
+ * cached on the context.
+ *
+ * This is how far editing ONE vertex can be seen: a vertex attribute is
+ * interpolated across every triangle it touches, so a corner shared with a long
+ * sliver shows up along the whole sliver. Generated meshes are full of them
+ * (stray fur spikes, an unwelded vertex dragged across the model), and they can
+ * be two orders of magnitude longer than the mesh's normal edge.
+ */
+export function ensureVertexSpans(ctx) {
+  if (ctx.vertexSpans !== undefined) return ctx.vertexSpans
+  ctx.vertexSpans = null
+  const positions = ctx?.geometry?.attributes?.position?.array
+  if (!positions || !ctx.indices) return ctx.vertexSpans
+
+  const vertexCount = ctx.vertexCount
+  const span = new Float32Array(vertexCount)
+  const indices = ctx.indices
+  for (let t = 0; t < ctx.triCount; t++) {
+    const a = indices[t * 3]
+    const b = indices[t * 3 + 1]
+    const c = indices[t * 3 + 2]
+    const ab = Math.hypot(positions[a * 3] - positions[b * 3],
+      positions[a * 3 + 1] - positions[b * 3 + 1], positions[a * 3 + 2] - positions[b * 3 + 2])
+    const bc = Math.hypot(positions[b * 3] - positions[c * 3],
+      positions[b * 3 + 1] - positions[c * 3 + 1], positions[b * 3 + 2] - positions[c * 3 + 2])
+    const ca = Math.hypot(positions[c * 3] - positions[a * 3],
+      positions[c * 3 + 1] - positions[a * 3 + 1], positions[c * 3 + 2] - positions[a * 3 + 2])
+    const forA = ab > ca ? ab : ca
+    const forB = ab > bc ? ab : bc
+    const forC = bc > ca ? bc : ca
+    if (forA > span[a]) span[a] = forA
+    if (forB > span[b]) span[b] = forB
+    if (forC > span[c]) span[c] = forC
+  }
+
+  // Median over a stride sample: the exact median means sorting half a million
+  // floats to pick one number that only sets a threshold.
+  const stride = Math.max(1, Math.floor(vertexCount / 50000))
+  const sample = new Float32Array(Math.ceil(vertexCount / stride))
+  let n = 0
+  for (let v = 0; v < vertexCount; v += stride) sample[n++] = span[v]
+  const sorted = sample.subarray(0, n).slice().sort()
+  const median = n ? sorted[n >> 1] : 0
+
+  ctx.vertexSpans = { span, median }
+  return ctx.vertexSpans
+}
+
+/**
+ * Compact-in-place filter that drops needle corners from a dab.
+ *
+ * Without it, a dab that happens to cover one corner of a sliver triangle
+ * repaints that whole sliver — on a generated mesh that can be a fifth of the
+ * model away from the cursor, which is the other half of "the brush cleared
+ * something over there". The sliver keeps whatever weight it had instead, which
+ * is the state the user was already looking at; a few junk vertices going
+ * unpainted is not visible, a stripe across the model is.
+ *
+ * `Fill bone` / `Clear bone` still reach them: they are whole-mesh operations
+ * and deliberately not filtered.
+ *
+ * Mutates `brushIndices` / `falloff` and returns the new compacted count.
+ */
+export function filterNeedles(ctx, brushIndices, falloff, count, radius) {
+  if (count <= 0) return count
+  const spans = ensureVertexSpans(ctx)
+  if (!spans) return count
+  const limit = Math.max(radius * NEEDLE_RADIUS_FACTOR, spans.median * NEEDLE_DENSITY_FACTOR)
+  if (!(limit > 0)) return count
+
+  const span = spans.span
+  let writeIdx = 0
+  for (let i = 0; i < count; i++) {
+    const v = brushIndices[i]
+    if (span[v] > limit) continue
+    brushIndices[writeIdx] = v
+    falloff[writeIdx] = falloff[i]
+    writeIdx += 1
   }
   return writeIdx
 }

@@ -38,6 +38,8 @@ export default function WeightPaintSection({
   onTargetChange,
   frontOnly = true,
   onFrontOnlyChange,
+  connectedOnly = true,
+  onConnectedOnlyChange,
   normalize = true,
   onNormalizeChange,
   onFill,
@@ -125,6 +127,13 @@ export default function WeightPaintSection({
           <ToggleField label="Front faces only" value={frontOnly} onChange={onFrontOnlyChange}
             disabled={!hasBone}
             hint="Only paint the surface facing you. Off, the brush reaches through a limb and paints its far side too." />
+          {/* The brush radius is a ball in space, not a disc on the surface, so
+              without this a dab also lands on whatever else happens to be
+              inside it — the other leg, the torso behind an arm — which reads
+              as the stroke appearing somewhere you did not paint. */}
+          <ToggleField label="Only connected surface" value={connectedOnly} onChange={onConnectedOnlyChange}
+            disabled={!hasBone}
+            hint="Keep the brush on the piece of surface under the cursor. Turn off only to paint through to a separate part that sits inside the brush." />
           <ToggleField label="Auto-normalize" value={normalize} onChange={onNormalizeChange}
             disabled={!hasBone}
             hint="Keep every painted vertex's weights summing to 1 by rescaling its other bones. Leave on unless you know why not." />

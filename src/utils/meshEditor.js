@@ -1029,7 +1029,7 @@ export function geometryFaceCount(geometry) {
 // normal/UV seams that split the editable index. Returns a per-vertex id array
 // indexed like geometry.attributes.position. Shared by the watertight check and
 // the non-manifold cleaner so both agree on which corners are the "same point".
-function buildCanonicalVertexIds(geometry) {
+export function buildCanonicalVertexIds(geometry) {
   const positions = geometry.attributes.position.array
   geometry.computeBoundingBox()
   const box = geometry.boundingBox

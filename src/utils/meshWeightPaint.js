@@ -23,6 +23,8 @@
 // too, which matters: glTF requires JOINTS_0 to be an integer accessor, so
 // `skinIndex` must stay Uint16 (see createIndexedGeometry in meshEditor.js).
 
+import { ensureWeldedTopology } from './meshSculpt'
+
 const EPSILON = 1e-5
 
 // ---------------------------------------------------------------------------
@@ -183,7 +185,39 @@ function renormalizeVertex(values, v) {
 // Average of the bone's weight over a vertex's one-ring, for Blur. Vertices the
 // bone does not reach count as 0 rather than being skipped — otherwise blurring
 // the edge of an influence would drag it outwards instead of softening it.
-function neighborAverage(ctx, indices, values, v, boneSkel) {
+//
+// The ring is taken over the POSITION-welded surface (see ensureWeldedTopology)
+// rather than over the index buffer. `mergeVertices` splits a vertex in two
+// wherever a UV or hard-normal seam crosses it, so index adjacency stops at
+// every seam: blurring across one would average each side against itself only
+// and leave the seam standing as a hard line in the weights — the artefact that
+// looks like the brush skipping a strip of the mesh.
+function neighborAverage(ctx, topo, indices, values, v, boneSkel) {
+  if (topo) {
+    const node = topo.canonicalOf[v]
+    const start = topo.neighborOffsets[node]
+    const end = topo.neighborOffsets[node + 1]
+    if (end > start) {
+      let sum = 0
+      let counted = 0
+      for (let i = start; i < end; i += 1) {
+        const w = topo.neighbors[i]
+        const memberStart = topo.memberOffsets[w]
+        const memberEnd = topo.memberOffsets[w + 1]
+        if (memberEnd <= memberStart) continue
+        // One neighbouring POSITION contributes once, however many vertices the
+        // seam split it into, so a seam does not weight its own side double.
+        let local = 0
+        for (let m = memberStart; m < memberEnd; m += 1) {
+          local += currentWeight(indices, values, topo.members[m], boneSkel)
+        }
+        sum += local / (memberEnd - memberStart)
+        counted += 1
+      }
+      if (counted > 0) return sum / counted
+    }
+  }
+
   const start = ctx.vertexNeighborOffsets[v]
   const end = ctx.vertexNeighborOffsets[v + 1]
   if (end <= start) return currentWeight(indices, values, v, boneSkel)
@@ -224,8 +258,9 @@ export function applyWeightBrush(ctx, brushIndices, falloff, count, boneSkel, op
     if (!averages || averages.length < count) {
       averages = ctx._weightBlurScratch = new Float32Array(Math.max(count, 4096))
     }
+    const topo = ensureWeldedTopology(ctx)
     for (let i = 0; i < count; i += 1) {
-      averages[i] = neighborAverage(ctx, indices, values, brushIndices[i], boneSkel)
+      averages[i] = neighborAverage(ctx, topo, indices, values, brushIndices[i], boneSkel)
     }
   }
 

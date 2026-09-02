@@ -77,7 +77,9 @@ import {
   applyStandard as applySculptStandard,
   createSculptContext,
   ensureGrid as ensureSculptGrid,
+  filterConnected as sculptFilterConnected,
   filterFrontFacing as sculptFilterFrontFacing,
+  filterNeedles as sculptFilterNeedles,
   finalizeStroke as finalizeSculptStroke,
   getSymmetryMirrors as sculptGetSymmetryMirrors,
   incrementalRecomputeNormals as sculptIncrementalNormals,
@@ -545,6 +547,7 @@ export default function MeshEditorPage() {
   const [weightHardness, setWeightHardness] = useState(0.5)
   const [weightTarget, setWeightTarget] = useState(1)
   const [weightFrontOnly, setWeightFrontOnly] = useState(true)
+  const [weightConnectedOnly, setWeightConnectedOnly] = useState(true)
   const [weightNormalize, setWeightNormalize] = useState(true)
   const [weightCursor, setWeightCursor] = useState(null)   // { x, y, pixelRadius } or null
   const weightStrokeRef = useRef(null)                     // { pointerId, lastScreen, accumulated }
@@ -1902,8 +1905,10 @@ export default function MeshEditorPage() {
     attribute.needsUpdate = true
   }, [geometry, weightBoneSkel])
 
-  // One brush dab at an object-space point on the surface.
-  const applyWeightStamp = useCallback((point) => {
+  // One brush dab at an object-space point on the surface. `faceIndex` is the
+  // triangle the pointer ray hit, which is what tells the brush which piece of
+  // surface it is on — see the connectivity filter below.
+  const applyWeightStamp = useCallback((point, faceIndex = -1) => {
     const ctx = sculptContextRef.current
     if (!ctx || weightBoneSkel < 0 || !geometryHasSkin(ctx.geometry)) return
     ensureSculptGrid(ctx, weightSize)
@@ -1912,9 +1917,30 @@ export default function MeshEditorPage() {
     if (queried === 0) return
 
     let count = queried
+    // The radius query is a ball in space, so on anything folded it also holds
+    // surface the pointer is nowhere near — the other thigh, the chest behind an
+    // arm — and the stroke shows up over there instead of (or as well as) under
+    // the cursor. Keep only what is reachable across the surface from the
+    // triangle that was actually hit. Runs BEFORE the front-facing pass: that
+    // one compacts vertices away, and a discarded back-facing vertex may be the
+    // only bridge between two front-facing patches of the same surface.
+    if (weightConnectedOnly) {
+      count = sculptFilterConnected(ctx, ctx._outIndices, ctx._outWeights, count, faceIndex)
+      if (count === 0) return
+    }
+    // A vertex is drawn (and skinned) across every triangle it belongs to, so a
+    // dab that clips one corner of a sliver triangle repaints the whole sliver —
+    // on a generated mesh that reaches a fifth of the model away. Those corners
+    // are junk geometry; leave their weight alone rather than paint a stripe
+    // across the mesh. (Fill / Clear still reach them.)
+    count = sculptFilterNeedles(ctx, ctx._outIndices, ctx._outWeights, count, weightSize)
+    if (count === 0) return
+
     if (weightFrontOnly && cameraRef.current) {
       const camera = cameraRef.current.position
-      count = sculptFilterFrontFacing(ctx, ctx._outIndices, ctx._outWeights, queried, camera.x, camera.y, camera.z)
+      // `count`, not `queried`: the passes above have already compacted the
+      // set, and re-reading the full one would undo them.
+      count = sculptFilterFrontFacing(ctx, ctx._outIndices, ctx._outWeights, count, camera.x, camera.y, camera.z)
       if (count === 0) return
     }
 
@@ -1940,7 +1966,7 @@ export default function MeshEditorPage() {
       )
       attribute.needsUpdate = true
     }
-  }, [weightBoneSkel, weightBrush, weightFallbackSkel, weightFrontOnly, weightHardness, weightNormalize, weightSize, weightStrength, weightTarget])
+  }, [weightBoneSkel, weightBrush, weightConnectedOnly, weightFallbackSkel, weightFrontOnly, weightHardness, weightNormalize, weightSize, weightStrength, weightTarget])
 
   const cancelWeightStroke = useCallback(() => {
     const stroke = weightStrokeRef.current
@@ -3540,7 +3566,7 @@ export default function MeshEditorPage() {
       // pushRigSnapshot is declared further down the component, so naming it in
       // this callback's dependency array would read it before initialisation.
       if (!pushRigSnapshotRef.current?.()) return
-      applyWeightStamp(hit.point)
+      applyWeightStamp(hit.point, hit.faceIndex)
 
       weightStrokeRef.current = {
         pointerId: event.pointerId,
@@ -4009,10 +4035,21 @@ export default function MeshEditorPage() {
         traveled += advance
         const stepHit = sculptRaycastMesh(mesh, camera, cursorX, cursorY, rect.width, rect.height)
         if (!stepHit) continue
-        applyWeightStamp(stepHit.point)
+        applyWeightStamp(stepHit.point, stepHit.faceIndex)
       }
 
-      stroke.accumulated = (walked + screenDist) - traveled
+      // Leftover distance toward the NEXT stamp, measured against THIS segment
+      // only: `traveled` already has the previous leftover folded into its
+      // first step, so adding `walked` back in double-counts it. That error
+      // compounds once per pointer event and never resets inside a stroke, so
+      // a held drag inflates it without bound — and since step 0 advances
+      // `stepPixels - accumulated`, the walk starts that far BEHIND the pointer
+      // and stamps its way forward. A couple of seconds of jiggling in one spot
+      // is enough to reach several hundred pixels and tens of thousands of
+      // stamps, which is how a stroke that never moved cleared weights right
+      // across the mesh. Releasing and clicking again hid it: pointerdown
+      // resets `accumulated` to 0.
+      stroke.accumulated = Math.max(0, screenDist - traveled)
       stroke.lastScreen.x = nextPoint.x
       stroke.lastScreen.y = nextPoint.y
       return
@@ -4131,7 +4168,10 @@ export default function MeshEditorPage() {
         applySculptStamp(stepHit.point, stepHit.normal)
       }
 
-      stroke.accumulated = (walked + screenDist) - traveled
+      // Against THIS segment only — see the weight-paint walk above for why
+      // adding `walked` back in compounds into stamps hundreds of pixels off
+      // the pointer over a long drag.
+      stroke.accumulated = Math.max(0, screenDist - traveled)
       stroke.lastScreen.x = stroke.lazyScreen.x
       stroke.lastScreen.y = stroke.lazyScreen.y
       return
@@ -5390,6 +5430,8 @@ export default function MeshEditorPage() {
       onTargetChange: setWeightTarget,
       frontOnly: weightFrontOnly,
       onFrontOnlyChange: setWeightFrontOnly,
+      connectedOnly: weightConnectedOnly,
+      onConnectedOnlyChange: setWeightConnectedOnly,
       normalize: weightNormalize,
       onNormalizeChange: setWeightNormalize,
       onFill: () => applyWeightFill(1),
@@ -5404,7 +5446,7 @@ export default function MeshEditorPage() {
   }, [
     applyWeightFill, handleRigRedo, handleRigRevert, handleRigUndo, handleToggleWeightPaint,
     rigCanRedo, rigCanUndo, rigEditDirty, rigEditable, rigInfluence, selectedBone, skeleton,
-    weightBrush, weightFallbackSkel, weightFrontOnly, weightHardness, weightNormalize,
+    weightBrush, weightConnectedOnly, weightFallbackSkel, weightFrontOnly, weightHardness, weightNormalize,
     weightPainting, weightSize, weightSizeRange, weightStrength, weightTarget,
   ])
 
