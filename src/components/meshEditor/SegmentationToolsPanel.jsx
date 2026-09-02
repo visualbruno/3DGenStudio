@@ -51,6 +51,8 @@ export default function SegmentationToolsPanel({
   pendingSplits,
   appliedSplits,
   pinnedLevel,
+  explode,
+  onExplodeChange,
   onApplyFocus,
   onClearFocus,
   onResetSplits,
@@ -148,6 +150,28 @@ export default function SegmentationToolsPanel({
             {partCount} part{partCount === 1 ? '' : 's'} on screen
             {analysis.minParts > parts ? ` · only ${analysis.minParts} regions available` : ''}
           </div>
+          <RangeField
+            label="Explode"
+            hint="Push the parts apart to see inside the split. Preview only — the mesh and the export are untouched."
+            value={explode}
+            min={0}
+            max={2}
+            step={0.02}
+            decimals={2}
+            onChange={onExplodeChange}
+            disabled={running}
+          />
+          {explode > 0 && (
+            <button
+              type="button"
+              className="mesh-editor-btn mesh-editor-btn--ghost"
+              onClick={() => onExplodeChange(0)}
+              disabled={running}
+            >
+              <span className="material-symbols-outlined">compress</span>
+              <span>Reassemble</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -158,6 +182,12 @@ export default function SegmentationToolsPanel({
             Corrections are stored against the faces themselves, so they survive
             moving the Parts slider afterwards.
           </span>
+          {explode > 0 && (
+            <span className="mesh-editor-panel__hint" style={{ color: '#e0a030' }}>
+              Reassemble first — while the parts are exploded the cursor no longer
+              lands where the mesh is drawn.
+            </span>
+          )}
           <div className="mesh-editor-mode-menu">
             {TOOLS.map(entry => (
               <button
@@ -165,8 +195,8 @@ export default function SegmentationToolsPanel({
                 type="button"
                 className={`mesh-editor-mode-btn ${tool === entry.id ? 'mesh-editor-mode-btn--active' : ''}`}
                 onClick={() => onToolChange(entry.id)}
-                disabled={running}
-                title={entry.hint}
+                disabled={running || explode > 0}
+                title={explode > 0 ? 'Set Explode back to 0 to correct parts' : entry.hint}
               >
                 <span className="material-symbols-outlined">{entry.icon}</span>
                 <span>{entry.label}</span>

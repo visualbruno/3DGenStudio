@@ -586,12 +586,22 @@ export function createSegmentDisplayGeometry(geometry) {
   }
 
   const display = new THREE.BufferGeometry()
+  // The home positions, kept so the explode slider always displaces from rest
+  // rather than from wherever the last amount left things — otherwise dragging
+  // the slider compounds and the parts drift away for good.
+  display.userData.basePositions = positions.slice()
   display.setAttribute('position', new THREE.BufferAttribute(positions, 3))
   display.setAttribute('normal', new THREE.BufferAttribute(normals, 3))
   display.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   if (!sourceNormals) display.computeVertexNormals()
   display.computeBoundingBox()
   display.computeBoundingSphere()
+  // Kept so the explode slider can widen the bounds arithmetically instead of
+  // re-measuring three quarters of a million vertices on every step.
+  display.userData.restBounds = {
+    box: display.boundingBox.clone(),
+    sphere: display.boundingSphere.clone(),
+  }
   return display
 }
 
@@ -654,6 +664,143 @@ export function recolorSegmentFaces(displayGeometry, faces, count, labels, palet
     faceColor(colors, face, palette[p], palette[p + 1], palette[p + 2])
   }
   attribute.needsUpdate = true
+}
+
+// ---------------------------------------------------------------------------
+// Explode
+// ---------------------------------------------------------------------------
+
+// A displacement vector per part: from the centre of the part centroids out to
+// each part's own centroid.
+//
+// Deliberately NOT normalised. Scaling each part by how far it already sits from
+// the middle keeps the model's arrangement legible as it comes apart — an arm
+// travels further than a shoulder pad, so the pieces stay recognisable instead
+// of landing on a uniform sphere around the origin.
+//
+// Measured on the display geometry, which is already split per face, so parts
+// separate cleanly with no shared vertices to tear.
+export function computeExplodeDirections(displayGeometry, labels, count) {
+  const base = displayGeometry?.userData?.basePositions
+  if (!base || count < 1) return null
+
+  const sums = new Float64Array(count * 3)
+  const totals = new Float64Array(count)
+  const faceCount = Math.min(labels.length, Math.floor(base.length / 9))
+  for (let f = 0; f < faceCount; f += 1) {
+    const label = labels[f]
+    const at = f * 9
+    sums[label * 3] += base[at] + base[at + 3] + base[at + 6]
+    sums[label * 3 + 1] += base[at + 1] + base[at + 4] + base[at + 7]
+    sums[label * 3 + 2] += base[at + 2] + base[at + 5] + base[at + 8]
+    totals[label] += 3
+  }
+
+  const directions = new Float32Array(count * 3)
+  let live = 0
+  const middle = [0, 0, 0]
+  for (let i = 0; i < count; i += 1) {
+    if (totals[i] < 1) continue
+    live += 1
+    middle[0] += sums[i * 3] / totals[i]
+    middle[1] += sums[i * 3 + 1] / totals[i]
+    middle[2] += sums[i * 3 + 2] / totals[i]
+  }
+  if (!live) return directions
+  middle[0] /= live
+  middle[1] /= live
+  middle[2] /= live
+
+  let span = 1e-6
+  for (let i = 0; i < count; i += 1) {
+    if (totals[i] < 1) continue
+    const x = sums[i * 3] / totals[i] - middle[0]
+    const y = sums[i * 3 + 1] / totals[i] - middle[1]
+    const z = sums[i * 3 + 2] / totals[i] - middle[2]
+    directions[i * 3] = x
+    directions[i * 3 + 1] = y
+    directions[i * 3 + 2] = z
+    span = Math.max(span, Math.hypot(x, y, z))
+  }
+
+  // A part centred on the middle has no direction to travel and would sit inside
+  // everything else. Fan those out instead, on a stable spiral so a given part
+  // always leaves the same way.
+  for (let i = 0; i < count; i += 1) {
+    if (totals[i] < 1) continue
+    const length = Math.hypot(directions[i * 3], directions[i * 3 + 1], directions[i * 3 + 2])
+    if (length >= span * 1e-3) continue
+    const angle = i * 2.4
+    const fallback = [Math.cos(angle), Math.sin(angle), 0.35]
+    const norm = Math.hypot(fallback[0], fallback[1], fallback[2])
+    directions[i * 3] = (fallback[0] / norm) * span * 0.35
+    directions[i * 3 + 1] = (fallback[1] / norm) * span * 0.35
+    directions[i * 3 + 2] = (fallback[2] / norm) * span * 0.35
+  }
+  return directions
+}
+
+// Push the parts apart by `amount` times their displacement vector.
+//
+// Every part moves rigidly, so the normals stay correct and only the positions
+// and the bounds need touching.
+export function applySegmentExplode(displayGeometry, labels, directions, rawAmount) {
+  const attribute = displayGeometry?.attributes?.position
+  const base = displayGeometry?.userData?.basePositions
+  if (!attribute || !base) return
+  // A non-finite amount would write NaN into every position and the mesh would
+  // vanish with nothing but a three.js bounding-box warning to say why.
+  const amount = Number.isFinite(rawAmount) ? rawAmount : 0
+  // Nothing to undo and nothing to do: the labels change on every step of the
+  // Parts slider, and rewriting 1.6M floats back to where they already are would
+  // put a pointless copy in the middle of a drag.
+  if (amount <= 0 && !displayGeometry.userData.explodeAmount) return
+  displayGeometry.userData.explodeAmount = amount > 0 ? amount : 0
+  const out = attribute.array
+
+  if (!directions || amount <= 0) {
+    out.set(base)
+  } else {
+    const faceCount = Math.min(labels.length, Math.floor(base.length / 9))
+    for (let f = 0; f < faceCount; f += 1) {
+      const d = labels[f] * 3
+      const dx = directions[d] * amount
+      const dy = directions[d + 1] * amount
+      const dz = directions[d + 2] * amount
+      const at = f * 9
+      for (let corner = 0; corner < 3; corner += 1) {
+        out[at + corner * 3] = base[at + corner * 3] + dx
+        out[at + corner * 3 + 1] = base[at + corner * 3 + 1] + dy
+        out[at + corner * 3 + 2] = base[at + corner * 3 + 2] + dz
+      }
+    }
+  }
+
+  attribute.needsUpdate = true
+
+  // The parts now reach well outside the original bounds, and without widening
+  // them the renderer frustum-culls the ones that flew furthest. Done by
+  // arithmetic, not measurement: computeBoundingSphere walks every vertex twice
+  // and cost 30 of the 37ms a slider step used to take. No part can travel
+  // further than the longest displacement, so padding the rest bounds by that is
+  // conservative — it may over-estimate, which only ever means drawing something
+  // that was already on screen.
+  const rest = displayGeometry.userData.restBounds
+  if (!rest) {
+    displayGeometry.computeBoundingBox()
+    displayGeometry.computeBoundingSphere()
+    return
+  }
+  let reach = 0
+  if (directions && amount > 0) {
+    for (let i = 0; i < directions.length; i += 3) {
+      reach = Math.max(reach, Math.hypot(directions[i], directions[i + 1], directions[i + 2]))
+    }
+    reach *= amount
+  }
+  displayGeometry.boundingBox = rest.box.clone().expandByScalar(reach)
+  displayGeometry.boundingSphere = rest.sphere.clone()
+  displayGeometry.boundingSphere.radius += reach
 }
 
 // ---------------------------------------------------------------------------

@@ -194,8 +194,10 @@ import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimiz
 import {
   addSegmentMerge,
   applyBrushFaces,
+  applySegmentExplode,
   applySegmentFocus,
   buildPartGeometries,
+  computeExplodeDirections,
   clearSegmentFocus,
   clearSegmentPaint,
   computeSegmentLabels,
@@ -828,6 +830,9 @@ export default function MeshEditorPage() {
   const [segmentBrushSizeRange, setSegmentBrushSizeRange] = useState({ min: 0.002, max: 1 })
   const [segmentCursor, setSegmentCursor] = useState(null)  // { x, y, pixelRadius } or null
   const [segmentCanUndo, setSegmentCanUndo] = useState(false)
+  // Inspection only: the parts are pushed apart on the display geometry, never on
+  // the editable mesh, so nothing here reaches an export.
+  const [segmentExplode, setSegmentExplode] = useState(0)
   const segmentOverridesRef = useRef(null)
   const segmentStrokeRef = useRef(null)
   const segmentUndoStackRef = useRef([])
@@ -8721,6 +8726,33 @@ export default function MeshEditorPage() {
     }
   }, [segmentDisplayGeometry, segmentLabels, segmentPalette, segmentHighlight])
 
+  const segmentExplodeDirections = useMemo(() => (
+    segmentDisplayGeometry && segmentLabels
+      ? computeExplodeDirections(segmentDisplayGeometry, segmentLabels.labels, segmentLabels.count)
+      : null
+  ), [segmentDisplayGeometry, segmentLabels])
+
+  useEffect(() => {
+    if (!segmentDisplayGeometry || !segmentLabels) return
+    applySegmentExplode(segmentDisplayGeometry, segmentLabels.labels,
+      segmentExplodeDirections, segmentExplode)
+  }, [segmentDisplayGeometry, segmentLabels, segmentExplodeDirections, segmentExplode])
+
+  // The pickers all raycast the UNEXPLODED editable mesh, so once the parts have
+  // moved the cursor no longer lands where it looks like it does. Disarm rather
+  // than let a click reassign a face the user never aimed at.
+  useEffect(() => {
+    if (segmentExplode > 0) {
+      setSegmentTool('none')
+      setSegmentCursor(null)
+    }
+  }, [segmentExplode])
+
+  // A fresh analysis puts the model back together.
+  useEffect(() => {
+    setSegmentExplode(0)
+  }, [segmentation])
+
   // Dispose the PREVIOUS container when a new one replaces it rather than in a
   // cleanup — StrictMode runs every effect cleanup once on mount, which would
   // tear down the geometry still on screen. Unlike weightPaintGeometry this one
@@ -11005,6 +11037,8 @@ export default function MeshEditorPage() {
                     pendingSplits: segmentPendingSplits,
                     appliedSplits: segmentOverrides?.skipMerges?.size || 0,
                     pinnedLevel: segmentOverrides?.anchorK || 0,
+                    explode: segmentExplode,
+                    onExplodeChange: setSegmentExplode,
                     onApplyFocus: handleSegmentApplyFocus,
                     onClearFocus: handleSegmentClearFocus,
                     onResetSplits: handleSegmentResetSplits,
