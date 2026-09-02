@@ -1789,6 +1789,7 @@
 .mesh-editor-panel--compact {
     gap: 0.9rem;
     padding: 0.9rem;
+		padding-top: 0rem;
     max-height: 100%;
     overflow-y: auto;
     min-height: 0;
@@ -1807,7 +1808,14 @@
 }
 
 .mesh-editor-panel__input {
-  width: 300px;
+  /* Fills its container rather than a hard 300px. The sidebar track IS 300px, so
+     a 300px field overflowed it by its own padding and borders — which is what
+     put a horizontal scrollbar on every tool panel. min-width:0 defeats the
+     intrinsic `size=20` floor so the field can still shrink in a narrow column
+     (the 3-up bone-edit axis row, the 220px sidebar under 1200px). */
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 38px;
   padding: 0.65rem 0.8rem;
   border-radius: var(--radius-md);
@@ -1839,6 +1847,76 @@
 }
 
 .mesh-editor-panel__notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+/* Mode picker: a trigger in the Tools panel that opens the grouped popover
+   below. The 13 modes as a flat grid cost ~400px of the sidebar, which pushed
+   the selected mode's own options off-screen. */
+.mesh-editor-mode-select {
+  position: relative;
+}
+
+.mesh-editor-mode-trigger {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 42px;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid rgba(71, 72, 74, 0.28);
+  border-radius: var(--radius-md);
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-base), color var(--transition-base), border-color var(--transition-base);
+}
+
+.mesh-editor-mode-trigger:hover,
+.mesh-editor-mode-trigger--open {
+  border-color: rgba(143, 245, 255, 0.45);
+  color: var(--primary);
+}
+
+.mesh-editor-mode-trigger .material-symbols-outlined {
+  font-size: 1.15rem;
+}
+
+.mesh-editor-mode-trigger__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesh-editor-mode-trigger__chevron {
+  color: var(--on-surface-variant);
+}
+
+/* Fixed, not absolute: the Tools panel and the sidebar both scroll, and either
+   would clip an absolutely-positioned popover. Placement comes from the
+   trigger's bounding rect in ToolModeMenu. */
+.mesh-editor-mode-popover {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--outline-variant, #2a2a30);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-container, #1e1e22);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.mesh-editor-mode-popover__group {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;

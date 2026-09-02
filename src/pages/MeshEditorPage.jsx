@@ -189,6 +189,7 @@ import AnimationLibraryModal from '../components/meshEditor/AnimationLibraryModa
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
 import SegmentationToolsPanel from '../components/meshEditor/SegmentationToolsPanel'
+import ToolModeMenu from '../components/meshEditor/ToolModeMenu'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
 import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, segmentMesh as runSegmentService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_SIMPLIFY_OPTIONS, DEFAULT_AUTO_UV_OPTIONS, DEFAULT_SEGMENT_OPTIONS } from '../utils/meshTools'
 import {
@@ -10735,128 +10736,12 @@ export default function MeshEditorPage() {
           }`}>
             <aside className="mesh-editor-sidebar">
               <div className="mesh-editor-panel mesh-editor-panel--compact">
-                <span className="mesh-editor-panel__label">Tools</span>
-                <div className="mesh-editor-mode-menu">
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'modeling' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('modeling')}
-                  >
-                    <span className="material-symbols-outlined">deployed_code</span>
-                    <span>Modeling</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'texturing' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('texturing')}
-                    disabled={!textureModesSupported}
-                    title={textureModesDisabledReason || undefined}
-                  >
-                    <span className="material-symbols-outlined">texture</span>
-                    <span>Texturing</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'painting' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('painting')}
-                    disabled={!textureModesSupported}
-                    title={textureModesDisabledReason || undefined}
-                  >
-                    <span className="material-symbols-outlined">brush</span>
-                    <span>Painting</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'projection' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('projection')}
-                    disabled={!textureModesSupported}
-                    title={textureModesDisabledReason || undefined}
-                  >
-                    <span className="material-symbols-outlined">filter_center_focus</span>
-                    <span>Projection</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'boolean' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('boolean')}
-                    title="Apply brush-based displacement operations"
-                  >
-                    <span className="material-symbols-outlined">difference</span>
-                    <span>Displace</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'sculpting' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('sculpting')}
-                    title="Sculpt the mesh with brushes"
-                  >
-                    <span className="material-symbols-outlined">back_hand</span>
-                    <span>Sculpting</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'autouv' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('autouv')}
-                    title="Automatic UV unwrapping (Python service)"
-                  >
-                    <span className="material-symbols-outlined">dashboard_customize</span>
-                    <span>Auto UV</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'autoretopo' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('autoretopo')}
-                    title="Automatic retopology (Python service)"
-                  >
-                    <span className="material-symbols-outlined">grid_4x4</span>
-                    <span>Auto Retopo</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'autorig' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('autorig')}
-                    title="Automatically generate a skeleton and skin weights (SkinTokens rigging service)"
-                  >
-                    <span className="material-symbols-outlined">accessibility_new</span>
-                    <span>Auto Rig</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'optimize' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('optimize')}
-                    title="Simplify the mesh or build an LOD chain with gltfpack (meshoptimizer)"
-                  >
-                    <span className="material-symbols-outlined">compress</span>
-                    <span>Optimize / LOD</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'bake' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('bake')}
-                    title="Bake a high-poly source's detail onto this mesh (normal, AO, base colour)"
-                  >
-                    <span className="material-symbols-outlined">flare</span>
-                    <span>Bake</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'segmentation' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('segmentation')}
-                    title="Split the mesh into parts by thickness and creases (Python service)"
-                  >
-                    <span className="material-symbols-outlined">shape_line</span>
-                    <span>Segmentation</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`mesh-editor-mode-btn ${activeMenu === 'gameready' ? 'mesh-editor-mode-btn--active' : ''}`}
-                    onClick={() => setActiveMenu('gameready')}
-                    title="Check the mesh against engine-readiness budgets (read-only)"
-                  >
-                    <span className="material-symbols-outlined">fact_check</span>
-                    <span>Game-Ready</span>
-                  </button>
-                </div>
+                <ToolModeMenu
+                  activeMenu={activeMenu}
+                  onSelect={setActiveMenu}
+                  textureModesSupported={textureModesSupported}
+                  textureModesDisabledReason={textureModesDisabledReason}
+                />
 
                 {texturableMesh?.isBlank && (
                   <div className="mesh-editor-panel__section">
