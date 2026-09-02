@@ -1791,8 +1791,27 @@
     padding: 0.9rem;
 		padding-top: 0rem;
     max-height: 100%;
-    overflow-y: auto;
     min-height: 0;
+}
+
+/* The mode picker is a fixed header and only the tool options below it scroll,
+   so switching tools never means scrolling back to the top of a long panel.
+   That is why the card itself no longer carries the overflow. */
+.mesh-editor-panel--compact .mesh-editor-mode-select {
+  flex: 0 0 auto;
+}
+
+.mesh-editor-panel__tools-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  /* Keeps the scrollbar clear of the fields rather than overlapping them. */
+  padding-right: 0.25rem;
 }
 
 .mesh-editor-panel__label {
@@ -2492,6 +2511,13 @@
   .mesh-editor-panel--compact {
     max-height: none;
     overflow-y: visible;
+  }
+
+  /* Single-column layout: the page scrolls as a whole, so a pinned header with
+     its own scroller would just trap the tool options in a short box. */
+  .mesh-editor-panel__tools-body {
+    overflow-y: visible;
+    padding-right: 0;
   }
 
   .mesh-editor-canvas-shell {

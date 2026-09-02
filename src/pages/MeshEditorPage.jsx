@@ -10743,268 +10743,270 @@ export default function MeshEditorPage() {
                   textureModesDisabledReason={textureModesDisabledReason}
                 />
 
-                {texturableMesh?.isBlank && (
-                  <div className="mesh-editor-panel__section">
-                    <span className="mesh-editor-panel__section-title">Base texture</span>
-                    <div className="mesh-editor-workflow-field">
-                      <span>Resolution</span>
-                      <select
-                        className="mesh-editor-panel__input mesh-editor-panel__select"
-                        value={String(blankTextureSize)}
-                        onChange={event => handleBlankTextureSizeChange(Number(event.target.value))}
-                      >
-                        {[512, 1024, 2048, 4096].map(n => (
-                          <option key={n} value={String(n)}>{n} × {n}</option>
-                        ))}
-                      </select>
+                <div className="mesh-editor-panel__tools-body">
+                  {texturableMesh?.isBlank && (
+                    <div className="mesh-editor-panel__section">
+                      <span className="mesh-editor-panel__section-title">Base texture</span>
+                      <div className="mesh-editor-workflow-field">
+                        <span>Resolution</span>
+                        <select
+                          className="mesh-editor-panel__input mesh-editor-panel__select"
+                          value={String(blankTextureSize)}
+                          onChange={event => handleBlankTextureSizeChange(Number(event.target.value))}
+                        >
+                          {[512, 1024, 2048, 4096].map(n => (
+                            <option key={n} value={String(n)}>{n} × {n}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <span className="mesh-editor-panel__hint">
+                        This mesh has UVs but no texture yet — painting/texturing/projection
+                        start from a blank {blankTextureSize}×{blankTextureSize} canvas.
+                      </span>
                     </div>
-                    <span className="mesh-editor-panel__hint">
-                      This mesh has UVs but no texture yet — painting/texturing/projection
-                      start from a blank {blankTextureSize}×{blankTextureSize} canvas.
-                    </span>
-                  </div>
-                )}
+                  )}
 
-                {activeMenu === 'modeling' ? (
-                  <ModelingToolsPanel {...{
-                    selectionMode, setSelectionMode, resetSelection,
-                    modelingCanUndo, modelingCanRedo, handleModelingUndo, handleModelingRedo,
-                    handleDelete, deleteDisabled, handleSmooth, smoothDisabled,
-                    handleMerge, mergeDisabled, handleSubdivide, subdivideDisabled,
-                    handleBridge, bridgeDisabled, handleFillHole, fillDisabled
-                  }} />
-                ) : activeMenu === 'boolean' ? (
-                  <BooleanToolsPanel {...{
-                    booleanBrushSource, setBooleanBrushSource, booleanBrushAsset, setBooleanBrushAsset,
-                    booleanBrushFile, setBooleanBrushFile, setShowBooleanBrushSelector,
-                    booleanBrushFileInputRef, hasBooleanBrushMask: !!booleanBrushMaskRef.current,
-                    booleanOperation, setBooleanOperation, booleanPlaceMode, setBooleanPlaceMode,
-                    booleanStampBasis, setBooleanStampBasis, booleanStampSize, setBooleanStampSize,
-                    booleanStampDepth, setBooleanStampDepth, booleanTessellation, setBooleanTessellation,
-                    booleanStampRotation, setBooleanStampRotation, booleanStampOffset, setBooleanStampOffset,
-                    booleanStampNudgeX, setBooleanStampNudgeX, booleanStampNudgeY, setBooleanStampNudgeY,
-                    booleanStampLocalGeometry, booleanStampMatrix,
-                    handleApplyBoolean, handleClearBooleanStamp, stats
-                  }} />
-                ) : activeMenu === 'texturing' ? (
-                  <TexturingToolsPanel {...{
-                    brushSize, setBrushSize, cropPadding, setCropPadding,
-                    featherRadius, setFeatherRadius, multiViewCount, setMultiViewCount,
-                    texturingUnavailableReason, pendingPatch, texturing, handleClearTextureMask,
-                    textureWorkflowId, setTextureWorkflowId, comfyLoading, texturingWorkflows,
-                    selectedTextureWorkflow, imageParamSources, handleImageParamSourceChange,
-                    setPendingAssetParamId, setPendingAssetSelectorMode, setShowAssetSelector,
-                    textureWorkflowParameters, textureWorkflowInputs, handleTextureWorkflowInputChange,
-                    projectionOpacities, setProjectionOpacities, patchNoise, setPatchNoise,
-                    patchSharpness, setPatchSharpness, patchSaturation, setPatchSaturation,
-                    handleApplyPatch, handleCancelPatch, handleRunTextureWorkflow, texturingReady,
-                    textureSetAsDefault, setTextureSetAsDefault
-                  }} />
-                ) : activeMenu === 'projection' ? (
-                  <ProjectionToolsPanel {...{
-                    projectionTextureSize, setProjectionTextureSize, projectionStarted, projecting,
-                    projectionKeepTexture, projectionViewResolution, setProjectionViewResolution,
-                    projectionBlendPixels, setProjectionBlendPixels, texturingUnavailableReason,
-                    projectionRebuilding, handleStartProjectionSession, handleRunProjectionWorkflow,
-                    projectionReady, comfyLoading, projectionWorkflowId, setProjectionWorkflowId,
-                    projectionWorkflows, selectedProjectionWorkflow, projectionImageParamSources,
-                    handleProjectionImageParamSourceChange, setPendingAssetParamId,
-                    setPendingAssetSelectorMode, setShowAssetSelector, projectionWorkflowParameters,
-                    projectionWorkflowInputs, setProjectionWorkflowInputs,
-                    projectionSetAsDefault, setProjectionSetAsDefault
-                  }} />
-                ) : activeMenu === 'autouv' ? (
-                  <AutoUvToolsPanel {...{
-                    options: autoUvOptions, setOption: setAutoUvOption,
-                    running: autoUvRunning, result: autoUvResult, progress: autoUvProgress,
-                    onRun: handleRunAutoUv,
-                    onKeepResult: () => setAutoUvResult(null),
-                    onRevertResult: () => handleRevertMeshTool(setAutoUvResult),
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'autoretopo' ? (
-                  <AutoRetopoToolsPanel {...{
-                    options: autoRetopoOptions, setOption: setAutoRetopoOption,
-                    running: autoRetopoRunning, result: autoRetopoResult, progress: autoRetopoProgress,
-                    watertight: watertightResult,
-                    watertightChecking,
-                    onCheckWatertight: handleCheckWatertight,
-                    onCleanNonManifold: handleCleanNonManifold,
-                    repairOptions, setRepairOption,
-                    repairRunning, repairResult, repairProgress,
-                    onKeepRepairResult: () => setRepairResult(null),
-                    onRevertRepairResult: () => handleRevertMeshTool(setRepairResult),
-                    onRun: handleRunAutoRetopo,
-                    onKeepResult: () => setAutoRetopoResult(null),
-                    onRevertResult: () => handleRevertMeshTool(setAutoRetopoResult),
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'autorig' ? (
-                  <AutoRigToolsPanel {...{
-                    options: autoRigOptions, setOption: setAutoRigOption,
-                    running: autoRigRunning, progress: autoRigProgress, result: autoRigResult,
-                    onRun: handleRunAutoRig,
-                    onSaveResult: handleSaveRiggedResult,
-                    onDownloadResult: handleDownloadRiggedResult,
-                    onDismissResult: handleDismissRigResult,
-                    saving: autoRigSaving,
-                    hasSkeleton: !!skeleton,
-                    showSkeleton,
-                    onToggleSkeleton: setShowSkeleton,
-                    showBoneNames,
-                    onToggleBoneNames: setShowBoneNames,
-                    rigPreserved: !!rigRef.current && geometryHasSkin(geometry),
-                    rigBoneCount: rigRef.current?.boneCount || 0,
-                    rigDropped,
-                    rigEdited: rigEditDirty,
-                    boneMappings: boneMappingSummary,
-                    weightPaint: weightPaintProps,
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'optimize' ? (
-                  <OptimizeToolsPanel {...{
-                    options: optimizeOptions, setOption: setOptimizeOption,
-                    currentFaces: stats.faces,
-                    running: optimizeRunning, result: optimizeResult, progress: optimizeProgress,
-                    onRun: handleRunOptimize,
-                    onKeepResult: () => setOptimizeResult(null),
-                    onRevertResult: () => handleRevertMeshTool(setOptimizeResult),
-                    lodLevels, onLodLevelsChange: setLodLevels, lodRatios,
-                    lodChain, lodSourceFaces, lodGenerating, lodProgress,
-                    onGenerateLods: handleGenerateLods,
-                    onApplyLod: handleApplyLod,
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'bake' ? (
-                  <BakeToolsPanel {...{
-                    options: bakeOptions, setOption: setBakeOption,
-                    sources: bakeSources, sourceId: bakeSourceId, onSourceChange: setBakeSourceId,
-                    onPickAsset: () => setShowBakeSourceSelector(true),
-                    loadingSource: bakeSourceLoading,
-                    running: bakeRunning, progress: bakeProgress, result: bakedMaps,
-                    onRun: handleRunBake,
-                    onApply: handleApplyBakedMaps,
-                    hasUvs: !!geometry?.attributes?.uv?.count,
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'segmentation' ? (
-                  <SegmentationToolsPanel {...{
-                    options: segmentOptions, setOption: setSegmentOption,
-                    running: segmentRunning, progress: segmentProgress,
-                    analysis: segmentation,
-                    parts: segmentParts, onPartsChange: setSegmentParts,
-                    partCount: segmentLabels?.visibleCount || 0,
-                    partSizes: segmentPartSizes,
-                    minPartFaces: segmentMinPartFaces,
-                    onMinPartFacesChange: setSegmentMinPartFaces,
-                    onRun: handleRunSegment,
-                    onAuto: handleAutoSegmentParts,
-                    onExport: handleExportSegmentParts,
-                    exporting: segmentExporting,
-                    onClear: handleClearSegmentation,
-                    tool: segmentTool,
-                    onToolChange: handleSegmentToolChange,
-                    targetFace: segmentTargetFace,
-                    targetLabel: segmentTargetFace >= 0 ? segmentLabels?.labels?.[segmentTargetFace] : -1,
-                    palette: segmentPalette,
-                    brushSize: segmentBrushSize,
-                    brushSizeRange: segmentBrushSizeRange,
-                    onBrushSizeChange: setSegmentBrushSize,
-                    paintedFaces: segmentPaintedFaces,
-                    canUndo: segmentCanUndo,
-                    onUndo: handleSegmentUndo,
-                    onClearPaint: handleSegmentClearPaint,
-                    mergePicks: segmentMergePicks.length,
-                    onApplyMerge: handleSegmentApplyMerge,
-                    onResetMerges: handleSegmentResetMerges,
-                    mergeCount: segmentOverrides?.mergePairs?.length || 0,
-                    focused: !!segmentOverrides?.focusMask,
-                    pendingSplits: segmentPendingSplits,
-                    appliedSplits: segmentOverrides?.skipMerges?.size || 0,
-                    pinnedLevel: segmentOverrides?.anchorK || 0,
-                    explode: segmentExplode,
-                    onExplodeChange: setSegmentExplode,
-                    onApplyFocus: handleSegmentApplyFocus,
-                    onClearFocus: handleSegmentClearFocus,
-                    onResetSplits: handleSegmentResetSplits,
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'gameready' ? (
-                  <GameReadyPanel {...{
-                    options: gameReadyOptions, setOption: setGameReadyOption,
-                    running: gameReadyRunning, report: gameReadyReport,
-                    onRun: handleRunGameReady,
-                    onFix: handleGameReadyFix,
-                    disabled: !geometry
-                  }} />
-                ) : activeMenu === 'sculpting' ? (
-                  <>{/* SCULPTING */}
-                    <SculptToolsPanel
-                      brushType={sculptBrush}
-                      onBrushTypeChange={setSculptBrush}
-                      size={sculptSize}
-                      sizeMin={sculptSizeRange.min}
-                      sizeMax={sculptSizeRange.max}
-                      sizeStep={Math.max(0.0001, sculptSizeRange.max / 1000)}
-                      onSizeChange={setSculptSize}
-                      strength={sculptStrength}
-                      onStrengthChange={setSculptStrength}
-                      hardness={sculptHardness}
-                      onHardnessChange={setSculptHardness}
-                      spacing={sculptSpacing}
-                      onSpacingChange={setSculptSpacing}
-                      direction={sculptDirection}
-                      onDirectionChange={setSculptDirection}
-                      frontFacesOnly={sculptFrontFacesOnly}
-                      onFrontFacesOnlyChange={setSculptFrontFacesOnly}
-                      symmetry={sculptSymmetry}
-                      onSymmetryChange={setSculptSymmetry}
-                      steadyStroke={sculptSteadyStroke}
-                      onSteadyStrokeChange={setSculptSteadyStroke}
-                      autoSmooth={sculptAutoSmooth}
-                      onAutoSmoothChange={setSculptAutoSmooth}
-                      // All seven brushes are now wired up.
-                      enabledBrushes={['standard', 'clay', 'inflate', 'smooth', 'flatten', 'pinch', 'grab']}
-                      onUndo={handleSculptUndo}
-                      canUndo={sculptCanUndo}
-                      onRedo={handleSculptRedo}
-                      canRedo={sculptCanRedo}
-                      stampSource={sculptStampSource}
-                      onStampSourceChange={value => {
-                        setSculptStampSource(value)
-                        if (value === 'none') {
-                          setSculptStampAsset(null)
-                          setSculptStampFile(null)
-                        }
-                      }}
-                      stampAsset={sculptStampAsset}
-                      onPickStampAsset={() => setShowSculptStampSelector(true)}
-                      stampFile={sculptStampFile}
-                      onStampFileChange={event => {
-                        const file = event.target.files?.[0]
-                        if (file) {
-                          setSculptStampFile(file)
-                          setSculptStampAsset(null)
-                        }
-                        event.target.value = ''
-                      }}
-                      stampRotation={sculptStampRotation}
-                      onStampRotationChange={setSculptStampRotation}
-                      stampFileInputRef={sculptStampFileInputRef}
-                      disabled={!geometry}
-                    />
-                  </>
-                ) : (
-                  <PaintingToolsPanel {...{
-                    paintMode, setPaintMode, selectedLayerId,
-                    paintBrushSource, setPaintBrushSource, paintBrushAsset, setShowBrushSelector,
-                    paintBrushFileInputRef, paintBrushFile, handlePaintBrushFileChange,
-                    paintBrushSize, setPaintBrushSize, paintOpacity, setPaintOpacity,
-                    paintFlow, setPaintFlow, paintHardness, setPaintHardness,
-                    paintRotation, setPaintRotation, paintBlendMode, setPaintBlendMode,
-                    PAINT_BLEND_MODES, paintColor, setPaintColor, paintLayers, handleClearAllLayers
-                  }} />
-                )}
+                  {activeMenu === 'modeling' ? (
+                    <ModelingToolsPanel {...{
+                      selectionMode, setSelectionMode, resetSelection,
+                      modelingCanUndo, modelingCanRedo, handleModelingUndo, handleModelingRedo,
+                      handleDelete, deleteDisabled, handleSmooth, smoothDisabled,
+                      handleMerge, mergeDisabled, handleSubdivide, subdivideDisabled,
+                      handleBridge, bridgeDisabled, handleFillHole, fillDisabled
+                    }} />
+                  ) : activeMenu === 'boolean' ? (
+                    <BooleanToolsPanel {...{
+                      booleanBrushSource, setBooleanBrushSource, booleanBrushAsset, setBooleanBrushAsset,
+                      booleanBrushFile, setBooleanBrushFile, setShowBooleanBrushSelector,
+                      booleanBrushFileInputRef, hasBooleanBrushMask: !!booleanBrushMaskRef.current,
+                      booleanOperation, setBooleanOperation, booleanPlaceMode, setBooleanPlaceMode,
+                      booleanStampBasis, setBooleanStampBasis, booleanStampSize, setBooleanStampSize,
+                      booleanStampDepth, setBooleanStampDepth, booleanTessellation, setBooleanTessellation,
+                      booleanStampRotation, setBooleanStampRotation, booleanStampOffset, setBooleanStampOffset,
+                      booleanStampNudgeX, setBooleanStampNudgeX, booleanStampNudgeY, setBooleanStampNudgeY,
+                      booleanStampLocalGeometry, booleanStampMatrix,
+                      handleApplyBoolean, handleClearBooleanStamp, stats
+                    }} />
+                  ) : activeMenu === 'texturing' ? (
+                    <TexturingToolsPanel {...{
+                      brushSize, setBrushSize, cropPadding, setCropPadding,
+                      featherRadius, setFeatherRadius, multiViewCount, setMultiViewCount,
+                      texturingUnavailableReason, pendingPatch, texturing, handleClearTextureMask,
+                      textureWorkflowId, setTextureWorkflowId, comfyLoading, texturingWorkflows,
+                      selectedTextureWorkflow, imageParamSources, handleImageParamSourceChange,
+                      setPendingAssetParamId, setPendingAssetSelectorMode, setShowAssetSelector,
+                      textureWorkflowParameters, textureWorkflowInputs, handleTextureWorkflowInputChange,
+                      projectionOpacities, setProjectionOpacities, patchNoise, setPatchNoise,
+                      patchSharpness, setPatchSharpness, patchSaturation, setPatchSaturation,
+                      handleApplyPatch, handleCancelPatch, handleRunTextureWorkflow, texturingReady,
+                      textureSetAsDefault, setTextureSetAsDefault
+                    }} />
+                  ) : activeMenu === 'projection' ? (
+                    <ProjectionToolsPanel {...{
+                      projectionTextureSize, setProjectionTextureSize, projectionStarted, projecting,
+                      projectionKeepTexture, projectionViewResolution, setProjectionViewResolution,
+                      projectionBlendPixels, setProjectionBlendPixels, texturingUnavailableReason,
+                      projectionRebuilding, handleStartProjectionSession, handleRunProjectionWorkflow,
+                      projectionReady, comfyLoading, projectionWorkflowId, setProjectionWorkflowId,
+                      projectionWorkflows, selectedProjectionWorkflow, projectionImageParamSources,
+                      handleProjectionImageParamSourceChange, setPendingAssetParamId,
+                      setPendingAssetSelectorMode, setShowAssetSelector, projectionWorkflowParameters,
+                      projectionWorkflowInputs, setProjectionWorkflowInputs,
+                      projectionSetAsDefault, setProjectionSetAsDefault
+                    }} />
+                  ) : activeMenu === 'autouv' ? (
+                    <AutoUvToolsPanel {...{
+                      options: autoUvOptions, setOption: setAutoUvOption,
+                      running: autoUvRunning, result: autoUvResult, progress: autoUvProgress,
+                      onRun: handleRunAutoUv,
+                      onKeepResult: () => setAutoUvResult(null),
+                      onRevertResult: () => handleRevertMeshTool(setAutoUvResult),
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'autoretopo' ? (
+                    <AutoRetopoToolsPanel {...{
+                      options: autoRetopoOptions, setOption: setAutoRetopoOption,
+                      running: autoRetopoRunning, result: autoRetopoResult, progress: autoRetopoProgress,
+                      watertight: watertightResult,
+                      watertightChecking,
+                      onCheckWatertight: handleCheckWatertight,
+                      onCleanNonManifold: handleCleanNonManifold,
+                      repairOptions, setRepairOption,
+                      repairRunning, repairResult, repairProgress,
+                      onKeepRepairResult: () => setRepairResult(null),
+                      onRevertRepairResult: () => handleRevertMeshTool(setRepairResult),
+                      onRun: handleRunAutoRetopo,
+                      onKeepResult: () => setAutoRetopoResult(null),
+                      onRevertResult: () => handleRevertMeshTool(setAutoRetopoResult),
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'autorig' ? (
+                    <AutoRigToolsPanel {...{
+                      options: autoRigOptions, setOption: setAutoRigOption,
+                      running: autoRigRunning, progress: autoRigProgress, result: autoRigResult,
+                      onRun: handleRunAutoRig,
+                      onSaveResult: handleSaveRiggedResult,
+                      onDownloadResult: handleDownloadRiggedResult,
+                      onDismissResult: handleDismissRigResult,
+                      saving: autoRigSaving,
+                      hasSkeleton: !!skeleton,
+                      showSkeleton,
+                      onToggleSkeleton: setShowSkeleton,
+                      showBoneNames,
+                      onToggleBoneNames: setShowBoneNames,
+                      rigPreserved: !!rigRef.current && geometryHasSkin(geometry),
+                      rigBoneCount: rigRef.current?.boneCount || 0,
+                      rigDropped,
+                      rigEdited: rigEditDirty,
+                      boneMappings: boneMappingSummary,
+                      weightPaint: weightPaintProps,
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'optimize' ? (
+                    <OptimizeToolsPanel {...{
+                      options: optimizeOptions, setOption: setOptimizeOption,
+                      currentFaces: stats.faces,
+                      running: optimizeRunning, result: optimizeResult, progress: optimizeProgress,
+                      onRun: handleRunOptimize,
+                      onKeepResult: () => setOptimizeResult(null),
+                      onRevertResult: () => handleRevertMeshTool(setOptimizeResult),
+                      lodLevels, onLodLevelsChange: setLodLevels, lodRatios,
+                      lodChain, lodSourceFaces, lodGenerating, lodProgress,
+                      onGenerateLods: handleGenerateLods,
+                      onApplyLod: handleApplyLod,
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'bake' ? (
+                    <BakeToolsPanel {...{
+                      options: bakeOptions, setOption: setBakeOption,
+                      sources: bakeSources, sourceId: bakeSourceId, onSourceChange: setBakeSourceId,
+                      onPickAsset: () => setShowBakeSourceSelector(true),
+                      loadingSource: bakeSourceLoading,
+                      running: bakeRunning, progress: bakeProgress, result: bakedMaps,
+                      onRun: handleRunBake,
+                      onApply: handleApplyBakedMaps,
+                      hasUvs: !!geometry?.attributes?.uv?.count,
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'segmentation' ? (
+                    <SegmentationToolsPanel {...{
+                      options: segmentOptions, setOption: setSegmentOption,
+                      running: segmentRunning, progress: segmentProgress,
+                      analysis: segmentation,
+                      parts: segmentParts, onPartsChange: setSegmentParts,
+                      partCount: segmentLabels?.visibleCount || 0,
+                      partSizes: segmentPartSizes,
+                      minPartFaces: segmentMinPartFaces,
+                      onMinPartFacesChange: setSegmentMinPartFaces,
+                      onRun: handleRunSegment,
+                      onAuto: handleAutoSegmentParts,
+                      onExport: handleExportSegmentParts,
+                      exporting: segmentExporting,
+                      onClear: handleClearSegmentation,
+                      tool: segmentTool,
+                      onToolChange: handleSegmentToolChange,
+                      targetFace: segmentTargetFace,
+                      targetLabel: segmentTargetFace >= 0 ? segmentLabels?.labels?.[segmentTargetFace] : -1,
+                      palette: segmentPalette,
+                      brushSize: segmentBrushSize,
+                      brushSizeRange: segmentBrushSizeRange,
+                      onBrushSizeChange: setSegmentBrushSize,
+                      paintedFaces: segmentPaintedFaces,
+                      canUndo: segmentCanUndo,
+                      onUndo: handleSegmentUndo,
+                      onClearPaint: handleSegmentClearPaint,
+                      mergePicks: segmentMergePicks.length,
+                      onApplyMerge: handleSegmentApplyMerge,
+                      onResetMerges: handleSegmentResetMerges,
+                      mergeCount: segmentOverrides?.mergePairs?.length || 0,
+                      focused: !!segmentOverrides?.focusMask,
+                      pendingSplits: segmentPendingSplits,
+                      appliedSplits: segmentOverrides?.skipMerges?.size || 0,
+                      pinnedLevel: segmentOverrides?.anchorK || 0,
+                      explode: segmentExplode,
+                      onExplodeChange: setSegmentExplode,
+                      onApplyFocus: handleSegmentApplyFocus,
+                      onClearFocus: handleSegmentClearFocus,
+                      onResetSplits: handleSegmentResetSplits,
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'gameready' ? (
+                    <GameReadyPanel {...{
+                      options: gameReadyOptions, setOption: setGameReadyOption,
+                      running: gameReadyRunning, report: gameReadyReport,
+                      onRun: handleRunGameReady,
+                      onFix: handleGameReadyFix,
+                      disabled: !geometry
+                    }} />
+                  ) : activeMenu === 'sculpting' ? (
+                    <>{/* SCULPTING */}
+                      <SculptToolsPanel
+                        brushType={sculptBrush}
+                        onBrushTypeChange={setSculptBrush}
+                        size={sculptSize}
+                        sizeMin={sculptSizeRange.min}
+                        sizeMax={sculptSizeRange.max}
+                        sizeStep={Math.max(0.0001, sculptSizeRange.max / 1000)}
+                        onSizeChange={setSculptSize}
+                        strength={sculptStrength}
+                        onStrengthChange={setSculptStrength}
+                        hardness={sculptHardness}
+                        onHardnessChange={setSculptHardness}
+                        spacing={sculptSpacing}
+                        onSpacingChange={setSculptSpacing}
+                        direction={sculptDirection}
+                        onDirectionChange={setSculptDirection}
+                        frontFacesOnly={sculptFrontFacesOnly}
+                        onFrontFacesOnlyChange={setSculptFrontFacesOnly}
+                        symmetry={sculptSymmetry}
+                        onSymmetryChange={setSculptSymmetry}
+                        steadyStroke={sculptSteadyStroke}
+                        onSteadyStrokeChange={setSculptSteadyStroke}
+                        autoSmooth={sculptAutoSmooth}
+                        onAutoSmoothChange={setSculptAutoSmooth}
+                        // All seven brushes are now wired up.
+                        enabledBrushes={['standard', 'clay', 'inflate', 'smooth', 'flatten', 'pinch', 'grab']}
+                        onUndo={handleSculptUndo}
+                        canUndo={sculptCanUndo}
+                        onRedo={handleSculptRedo}
+                        canRedo={sculptCanRedo}
+                        stampSource={sculptStampSource}
+                        onStampSourceChange={value => {
+                          setSculptStampSource(value)
+                          if (value === 'none') {
+                            setSculptStampAsset(null)
+                            setSculptStampFile(null)
+                          }
+                        }}
+                        stampAsset={sculptStampAsset}
+                        onPickStampAsset={() => setShowSculptStampSelector(true)}
+                        stampFile={sculptStampFile}
+                        onStampFileChange={event => {
+                          const file = event.target.files?.[0]
+                          if (file) {
+                            setSculptStampFile(file)
+                            setSculptStampAsset(null)
+                          }
+                          event.target.value = ''
+                        }}
+                        stampRotation={sculptStampRotation}
+                        onStampRotationChange={setSculptStampRotation}
+                        stampFileInputRef={sculptStampFileInputRef}
+                        disabled={!geometry}
+                      />
+                    </>
+                  ) : (
+                    <PaintingToolsPanel {...{
+                      paintMode, setPaintMode, selectedLayerId,
+                      paintBrushSource, setPaintBrushSource, paintBrushAsset, setShowBrushSelector,
+                      paintBrushFileInputRef, paintBrushFile, handlePaintBrushFileChange,
+                      paintBrushSize, setPaintBrushSize, paintOpacity, setPaintOpacity,
+                      paintFlow, setPaintFlow, paintHardness, setPaintHardness,
+                      paintRotation, setPaintRotation, paintBlendMode, setPaintBlendMode,
+                      PAINT_BLEND_MODES, paintColor, setPaintColor, paintLayers, handleClearAllLayers
+                    }} />
+                  )}
+                </div>
               </div>
             </aside>
 
