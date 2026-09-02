@@ -463,3 +463,74 @@ export async function optimizeMesh(meshBlob, { options = {}, fileName = 'mesh.gl
   const blob = base64ToBlob(data.mesh_b64, 'model/gltf-binary')
   return { blob, stats: data.stats || null, previewUrl: null }
 }
+
+// ── Smart Segmentation ──────────────────────────────────────────────────────
+// Speaks the SSE contract like the other Python-service tools, but the terminal
+// event carries the segmentation HIERARCHY instead of a mesh: the merge history,
+// its costs, and the map from each original face onto the analysis proxy. Parts
+// are derived from those client-side (see utils/meshSegment.js), so moving the
+// Parts slider never comes back here.
+//
+// The arrays arrive as base64 raw typed arrays. Decoded straight into typed
+// arrays — going through JSON numbers would cost a megabyte of decimal text and
+// a per-element parse on every analysis.
+function base64ToTypedArray(base64, Ctor) {
+  if (!base64) return new Ctor(0)
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return new Ctor(bytes.buffer)
+}
+
+export async function segmentMesh(meshBlob, { options = {}, fileName = 'mesh.glb', onProgress = null } = {}) {
+  const form = new FormData()
+  form.append('meshFile', meshBlob, fileName)
+  form.append('options', JSON.stringify(options))
+
+  const response = await fetch(`${API_BASE}/meshes/segment`, { method: 'POST', body: form })
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`
+    try {
+      const payload = await response.json()
+      message = payload.detail ? `${payload.error}: ${JSON.stringify(payload.detail)}` : (payload.error || message)
+    } catch {
+      // non-JSON error body — keep the status message
+    }
+    throw new Error(message)
+  }
+
+  const data = await readSseStream(response, onProgress)
+  return {
+    faceCount: data.faceCount,
+    proxyFaceCount: data.proxyFaceCount,
+    shells: data.shells,
+    minParts: data.minParts,
+    escapeRatio: data.escapeRatio,
+    suggestedParts: data.suggestedParts,
+    // 'mesh' when the thickness rays hit the full-resolution geometry, 'proxy'
+    // when they had to fall back to the decimated copy. `note` says why.
+    rayTarget: data.rayTarget,
+    note: data.note || null,
+    // [n][2] flattened: history[2i], history[2i+1] is the i-th merged pair.
+    history: base64ToTypedArray(data.history_b64, Int32Array),
+    costs: base64ToTypedArray(data.costs_b64, Float32Array),
+    mapping: base64ToTypedArray(data.mapping_b64, Int32Array),
+  }
+}
+
+// See SegmentOptions in python-server/app/schemas.py for what each one does.
+// Defaults match it; the panel only exposes the ones worth touching.
+export const DEFAULT_SEGMENT_OPTIONS = {
+  proxy_faces: 3000,
+  sdf_rays: 20,
+  sdf_cone: 120,
+  sdf_alpha: 4,
+  sdf_smooth: 2,
+  sdf_sigma: 0.08,
+  convex_eta: 0.12,
+  w_thickness: 1,
+  w_concavity: 1,
+  precise: true,
+}

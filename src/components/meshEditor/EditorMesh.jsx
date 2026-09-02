@@ -51,6 +51,13 @@ export default function EditorMesh({
           // Lit, so the form still reads, but rough and non-metallic so the
           // colour shown is as close to the stored weight as shading allows.
           <meshStandardMaterial key="weights" vertexColors color="#ffffff" roughness={0.95} metalness={0} />
+        ) : displayMode === 'segments' ? (
+          // Smart Segmentation: one flat colour per part, arriving as a `color`
+          // attribute on a non-indexed display geometry (see
+          // createSegmentDisplayGeometry). Lit only enough that the silhouette
+          // still reads — the job here is telling two adjacent parts apart, and
+          // shading gradients across a part actively work against that.
+          <meshStandardMaterial key="segments" vertexColors color="#ffffff" roughness={1} metalness={0} />
         ) : displayMode === 'sculpt' ? (
           <meshStandardMaterial
             key="sculpt"

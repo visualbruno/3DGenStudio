@@ -12,6 +12,15 @@ scipy>=1.11               # sparse solvers (LSCM/ARAP), KD-trees, ndimage
 scikit-image>=0.22        # marching cubes for the watertight voxel shell
 pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
 
+# --- Ray casting (Smart Segmentation) ----------------------------------------
+# Embree bindings. trimesh detects and uses them automatically; without them its
+# ray casting is pure numpy and its cost scales with the triangle count of the
+# mesh being hit. Measured on an 11k-face test mesh: 28s -> 0.4s for the same
+# 30k thickness rays. services/segment.py degrades to casting against the
+# decimated proxy when this is absent, so it stays optional at runtime — but a
+# real 200k-face asset is only practical with it.
+embreex>=2.17
+
 # --- Collision hulls ---------------------------------------------------------
 # Approximate convex decomposition for the collision proxies the export dialog
 # generates. Optional at runtime: services/collision.py falls back to a single

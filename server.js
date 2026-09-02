@@ -7504,6 +7504,19 @@ app.post('/api/meshes/collision', meshToolsUpload.single('meshFile'), async (req
   }
 });
 
+// Smart Segmentation. Streams SSE like the other mesh tools, but the terminal
+// event carries the merge hierarchy and the face->proxy map instead of a mesh —
+// the editor turns those into parts client-side, so the Parts slider never comes
+// back here.
+app.post('/api/meshes/segment', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/segment', req, res);
+  } catch (err) {
+    console.error('Smart Segmentation proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Smart Segmentation failed' });
+  }
+});
+
 app.post('/api/meshes/auto-retopo', meshToolsUpload.single('meshFile'), async (req, res) => {
   try {
     await proxyMeshTool('/meshes/auto-retopo', req, res);

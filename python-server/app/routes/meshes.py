@@ -31,7 +31,7 @@ from pydantic import ValidationError
 from ..config import MAX_UPLOAD_BYTES
 from ..meshio import export_mesh, load_mesh, load_scene, mesh_stats, scene_to_mesh
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
-                       ConvertOptions, InspectOptions, RepairOptions)
+                       ConvertOptions, InspectOptions, RepairOptions, SegmentOptions)
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
 from ..services.bake import run_bake
@@ -40,6 +40,7 @@ from ..services.convert_fbx import run_convert_fbx
 from ..services.inspect import run_inspect
 from ..services.mesh_thumbnail import render_mesh_thumbnail
 from ..services.repair import run_repair
+from ..services.segment import run_segment
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
 
@@ -288,6 +289,36 @@ async def bake(
         }
 
     return _stream_payload(run, "Bake")
+
+
+@router.post("/segment")
+async def segment(
+    meshFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> StreamingResponse:
+    """Smart Segmentation — analyse the mesh into a hierarchy of parts.
+
+    Returns arrays, not geometry: the merge history, its costs, and the map from
+    each original face onto the analysis proxy. The client replays that history
+    with a union-find to whatever part count its slider asks for, so the Parts
+    slider costs no round trip and there is nothing here to stream a mesh back
+    from. Builds its own envelope for the same reason `/meshes/bake` does.
+
+    The arrays are base64 raw typed arrays rather than JSON numbers — `mapping`
+    alone is one int32 per triangle, and a 200k-face mesh would otherwise ship as
+    a megabyte and a half of decimal text for the browser to parse element by
+    element.
+    """
+    opts = _parse_options(options, SegmentOptions)
+    data = await _read_upload(meshFile)
+    # process=False inside load_mesh is what makes the face order returned here
+    # match the caller's index buffer. Do not "clean up" the load.
+    mesh = load_mesh(data, meshFile.filename or "mesh.glb")
+
+    def run(emit):
+        return run_segment(mesh, opts, progress=emit)
+
+    return _stream_payload(run, "Smart Segmentation")
 
 
 @router.post("/inspect")

@@ -223,6 +223,44 @@ class InspectOptions(BaseModel):
                                       description="Check that the mesh sits on Y=0 with its pivot at the origin (props/characters).")
 
 
+class SegmentOptions(BaseModel):
+    """Options for Smart Segmentation (`/meshes/segment`).
+
+    The defaults are the ones to leave alone; they segment a typical character or
+    prop sensibly. Reach for `convex_eta` when boundaries cut across a bulge they
+    should have gone around, and for the two weights when parts are separated by
+    the wrong criterion — thickness (a limb vs. a torso) or creases (a panel line).
+
+    Nothing here sets the part count: the endpoint returns the whole merge
+    hierarchy and the client picks a level from it.
+    """
+
+    proxy_faces: int = Field(default=3000, ge=200, le=50000,
+                             description="Face budget of the analysis proxy. Higher = finer boundaries, "
+                                         "much slower clustering.")
+    sdf_rays: int = Field(default=20, ge=4, le=128,
+                          description="Rays per proxy face used to measure thickness.")
+    sdf_cone: float = Field(default=120.0, ge=10.0, le=180.0,
+                            description="Spread of the ray cone about the inward normal (deg).")
+    sdf_alpha: float = Field(default=4.0, ge=1.0, le=64.0,
+                             description="Log-normalisation strength. Higher spreads out the thin end.")
+    sdf_smooth: int = Field(default=2, ge=0, le=20,
+                            description="Bilateral smoothing passes over the thickness field (0 disables).")
+    sdf_sigma: float = Field(default=0.08, gt=0.0, le=1.0,
+                             description="How different a neighbour may be and still be smoothed with.")
+    convex_eta: float = Field(default=0.12, ge=0.0, le=1.0,
+                              description="Cost of cutting across a convex ridge relative to a concave crease. "
+                                          "Low keeps boundaries in the valleys; 1.0 ignores the distinction.")
+    w_thickness: float = Field(default=1.0, ge=0.0, le=10.0,
+                               description="Weight on the thickness difference between two regions.")
+    w_concavity: float = Field(default=1.0, ge=0.0, le=10.0,
+                               description="Weight on the crease angle along their shared boundary.")
+    precise: bool = Field(default=True,
+                          description="Cast the thickness rays against the full-resolution mesh rather than the "
+                                      "proxy. Slower without embreex installed, and the only way thin details "
+                                      "measure as thin.")
+
+
 class CollisionOptions(BaseModel):
     """Options for collision-hull generation (`/meshes/collision`).
 

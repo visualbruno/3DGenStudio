@@ -188,8 +188,33 @@ import { parseAnimationFile, buildImportedDocuments } from '../utils/animationIm
 import AnimationLibraryModal from '../components/meshEditor/AnimationLibraryModal'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
 import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
+import SegmentationToolsPanel from '../components/meshEditor/SegmentationToolsPanel'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
-import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_SIMPLIFY_OPTIONS, DEFAULT_AUTO_UV_OPTIONS } from '../utils/meshTools'
+import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, segmentMesh as runSegmentService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_SIMPLIFY_OPTIONS, DEFAULT_AUTO_UV_OPTIONS, DEFAULT_SEGMENT_OPTIONS } from '../utils/meshTools'
+import {
+  addSegmentMerge,
+  applyBrushFaces,
+  applySegmentFocus,
+  buildPartGeometries,
+  clearSegmentFocus,
+  clearSegmentPaint,
+  computeSegmentLabels,
+  countPaintedFaces,
+  countSegmentPendingSplits,
+  createSegmentDisplayGeometry,
+  createSegmentOverrides,
+  exportPartsToGlb,
+  facesOfPart,
+  openSegmentFocus,
+  paletteFor as segmentPaletteFor,
+  partFaceCounts,
+  queryBrushFaces,
+  recolorSegmentFaces,
+  resetSegmentMerges,
+  resetSegmentSplits,
+  undoBrushStroke,
+  writeSegmentColors
+} from '../utils/meshSegment'
 import { exportObject3D, measureUvHealth, uvsAreBroken } from '../utils/meshExport'
 import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig } from '../utils/meshRig'
 import BoneTransformGizmo from '../components/meshEditor/BoneTransformGizmo'
@@ -780,6 +805,45 @@ export default function MeshEditorPage() {
   // Set by a fix that edits the mesh, so the check re-runs once the new geometry
   // has actually landed in state rather than against the pre-fix closure.
   const pendingGameReadyRecheckRef = useRef(false)
+  // Smart Segmentation. `segmentation` is the hierarchy the service returned —
+  // analysed once — and `segmentParts` is which level of it is on screen. Moving
+  // the slider only replays the hierarchy locally, so it never touches the
+  // service and is deliberately not gated on `segmentRunning`.
+  const [segmentOptions, setSegmentOptions] = useState(DEFAULT_SEGMENT_OPTIONS)
+  const [segmentRunning, setSegmentRunning] = useState(false)
+  const [segmentProgress, setSegmentProgress] = useState(null)
+  const [segmentation, setSegmentation] = useState(null)
+  const [segmentParts, setSegmentParts] = useState(8)
+  const [segmentMinPartFaces, setSegmentMinPartFaces] = useState(4)
+  const [segmentExporting, setSegmentExporting] = useState(false)
+  // Hand corrections layered over the analysis (brush / merge / split). Held in
+  // state so the label memo re-runs, but the arrays inside are mutated in place —
+  // copying a per-face Int32Array on every brush dab would stall the stroke. A
+  // change therefore publishes a shallow clone rather than a new object.
+  const [segmentOverrides, setSegmentOverrides] = useState(null)
+  const [segmentTool, setSegmentTool] = useState('none')   // none | brush | merge | focus
+  const [segmentTargetFace, setSegmentTargetFace] = useState(-1)
+  const [segmentMergePicks, setSegmentMergePicks] = useState([])
+  const [segmentBrushSize, setSegmentBrushSize] = useState(0)
+  const [segmentBrushSizeRange, setSegmentBrushSizeRange] = useState({ min: 0.002, max: 1 })
+  const [segmentCursor, setSegmentCursor] = useState(null)  // { x, y, pixelRadius } or null
+  const [segmentCanUndo, setSegmentCanUndo] = useState(false)
+  const segmentOverridesRef = useRef(null)
+  const segmentStrokeRef = useRef(null)
+  const segmentUndoStackRef = useRef([])
+  // Scratch buffers reused by every dab: the candidate list the BVH fills, and
+  // the per-stroke "already recorded" flags behind the undo entry.
+  const segmentBrushFacesRef = useRef(null)
+  const segmentTouchedRef = useRef(null)
+  // The canvas pointer callbacks are declared thousands of lines ABOVE the
+  // segmentation section, so they cannot name any of it in a dependency array —
+  // that reads the binding before initialisation, the same trap documented on
+  // pushRigSnapshotRef. They go through these instead, which also spares those
+  // very large callbacks from being rebuilt every time a tool is armed.
+  const segmentToolRef = useRef('none')
+  const segmentationRef = useRef(null)
+  const segmentTargetFaceRef = useRef(-1)
+  const segmentActionsRef = useRef({})
   // Snapshot of the texturable-mesh state from just before a mesh tool ran, so
   // "Revert" can restore the original texture/UVs alongside the geometry undo.
   const preToolTexturableRef = useRef(null)
@@ -1652,6 +1716,11 @@ export default function MeshEditorPage() {
     // The weight brush shares this context, so it shares the sizing too.
     setWeightSizeRange({ min: r * 0.002, max: r * 0.6 });
     setWeightSize(prev => (prev > 0 && prev < r * 2 ? prev : r * 0.08));
+    // The segmentation brush moves whole faces rather than smoothing a field, so
+    // it starts wider: corrections are usually "this strip belongs to the arm",
+    // not a per-triangle touch-up.
+    setSegmentBrushSizeRange({ min: r * 0.002, max: r * 0.6 });
+    setSegmentBrushSize(prev => (prev > 0 && prev < r * 2 ? prev : r * 0.12));
 
     return () => {
       // Drop refs so the next geometry rebuilds adjacency cleanly.
@@ -3542,6 +3611,44 @@ export default function MeshEditorPage() {
     if (rigGizmoDragRef.current || animGizmoDragRef.current) {
       return
     }
+
+    // Smart Segmentation: whichever tool is armed owns the left button. Merge and
+    // Focus are single picks; the brush starts a stroke and captures the pointer,
+    // which is what stops OrbitControls from orbiting the view out from under it.
+    if (activeMenu === 'segmentation' && segmentToolRef.current !== 'none' && segmentationRef.current) {
+      const mesh = ensureSculptMesh()
+      const camera = cameraRef.current
+      const shell = canvasShellRef.current
+      if (!mesh || !camera || !shell) return
+      const rect = shell.getBoundingClientRect()
+      const hit = sculptRaycastMesh(mesh, camera, nextPoint.x, nextPoint.y, rect.width, rect.height)
+      if (!hit) return
+      event.preventDefault()
+
+      // Shift re-picks the target mid-session, and with no target yet the first
+      // click sets one rather than painting into nothing.
+      if (segmentToolRef.current !== 'brush' || event.shiftKey || segmentTargetFaceRef.current < 0) {
+        segmentActionsRef.current.pick?.(hit.faceIndex)
+        return
+      }
+
+      segmentActionsRef.current.beginStroke?.()
+      const stroke = segmentStrokeRef.current
+      if (!stroke) return
+      stroke.pointerId = event.pointerId
+      stroke.lastScreen = { x: nextPoint.x, y: nextPoint.y }
+      stroke.accumulated = 0
+      stroke.erase = !!(event.ctrlKey || event.metaKey)
+      segmentActionsRef.current.dab?.(hit, stroke.erase)
+      setSegmentCursor({
+        x: nextPoint.x,
+        y: nextPoint.y,
+        pixelRadius: segmentActionsRef.current.cursorRadius?.(hit.worldPoint, rect.height) ?? 24
+      })
+      shell.setPointerCapture?.(event.pointerId)
+      return
+    }
+
     // Weight painting owns the left button while it is on, so the bone-pick
     // branch below would never see it. Alt is the way back to picking a bone on
     // the mesh — the Skeleton list is the other.
@@ -3975,6 +4082,76 @@ export default function MeshEditorPage() {
       return
     }
 
+    if (activeMenu === 'segmentation' && segmentToolRef.current === 'brush') {
+      const mesh = ensureSculptMesh()
+      const camera = cameraRef.current
+      const shell = canvasShellRef.current
+      if (!mesh || !camera || !shell) return
+
+      const nextPoint = getPointerPosition(event)
+      if (!nextPoint) return
+      const rect = shell.getBoundingClientRect()
+
+      const hoverHit = sculptRaycastMesh(mesh, camera, nextPoint.x, nextPoint.y, rect.width, rect.height)
+      if (hoverHit) {
+        setSegmentCursor({
+          x: nextPoint.x,
+          y: nextPoint.y,
+          pixelRadius: segmentActionsRef.current.cursorRadius?.(hoverHit.worldPoint, rect.height) ?? 24
+        })
+      } else if (!segmentStrokeRef.current) {
+        setSegmentCursor(null)
+      }
+
+      const stroke = segmentStrokeRef.current
+      if (!stroke) return
+
+      // Walk the segment in fixed screen-space steps so a fast drag sweeps a
+      // continuous band instead of leaving gaps where the pointer events landed.
+      // Same accounting as the weight brush, including the reason `accumulated`
+      // is measured against THIS segment only — folding the previous leftover
+      // back in double-counts it, and the error compounds once per event until a
+      // stroke that never moved is stamping its way across the mesh.
+      const dx = nextPoint.x - stroke.lastScreen.x
+      const dy = nextPoint.y - stroke.lastScreen.y
+      const screenDist = Math.hypot(dx, dy)
+      if (screenDist <= 0.01) return
+
+      const pxPerWorldRadius = hoverHit
+        ? Math.max(1, segmentActionsRef.current.cursorRadius?.(hoverHit.worldPoint, rect.height) ?? 24)
+        : 24
+      const stepPixels = Math.max(1, 0.4 * pxPerWorldRadius)
+
+      const walked = stroke.accumulated
+      const steps = Math.floor((walked + screenDist) / stepPixels)
+      if (steps <= 0) {
+        stroke.accumulated = walked + screenDist
+        stroke.lastScreen.x = nextPoint.x
+        stroke.lastScreen.y = nextPoint.y
+        return
+      }
+
+      const ux = dx / screenDist
+      const uy = dy / screenDist
+      let cursorX = stroke.lastScreen.x
+      let cursorY = stroke.lastScreen.y
+      let traveled = 0
+      for (let step = 0; step < steps; step += 1) {
+        const advance = step === 0 ? stepPixels - walked : stepPixels
+        cursorX += ux * advance
+        cursorY += uy * advance
+        traveled += advance
+        const stepHit = sculptRaycastMesh(mesh, camera, cursorX, cursorY, rect.width, rect.height)
+        if (!stepHit) continue
+        segmentActionsRef.current.dab?.(stepHit, stroke.erase)
+      }
+
+      stroke.accumulated = Math.max(0, screenDist - traveled)
+      stroke.lastScreen.x = nextPoint.x
+      stroke.lastScreen.y = nextPoint.y
+      return
+    }
+
     if (activeMenu === 'autorig' && weightPainting) {
       const ctx = sculptContextRef.current
       const mesh = ensureSculptMesh()
@@ -4368,6 +4545,15 @@ export default function MeshEditorPage() {
   }, [activeMenu, applySculptStamp, applyWeightStamp, booleanPlaceMode, brushSize, computeSculptCursorPixelRadius, computeWeightCursorPixelRadius, ensureSculptMesh, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, recompositePaintTexture, scheduleProjectionMaskPaint, sculptSpacing, sculptSteadyStroke, sculptStrength, selectionMesh, stampBrushAtUv, texturableMesh, updateMaskOverlay, weightPainting])
 
   const handleCanvasPointerUp = useCallback((event) => {
+    if (activeMenu === 'segmentation' && segmentStrokeRef.current) {
+      if (event.button !== 0) return
+      canvasShellRef.current?.releasePointerCapture?.(segmentStrokeRef.current.pointerId)
+      // Commits the stroke to the undo stack and republishes the overrides, which
+      // is the point at which the label pipeline runs again for real.
+      segmentActionsRef.current.endStroke?.()
+      return
+    }
+
     if (activeMenu === 'autorig' && weightStrokeRef.current) {
       const stroke = weightStrokeRef.current
       if (event.button !== 0) return
@@ -4464,6 +4650,16 @@ export default function MeshEditorPage() {
   }, [activeMenu, applyProjectionMaskAsync, getPointerPosition, paintProjectionMaskDabNow, projectionLayers, projectionMaskEditLayerId, recompositePaintTexture, renderMaskPreview, selectAtPoint, selectedBone, selectWithinRectangle])
 
   const handleCanvasPointerCancel = useCallback(() => {
+    if (segmentStrokeRef.current) {
+      // The dabs already landed, so this is a finished edit either way — commit
+      // it rather than leave faces reassigned with nothing on the undo stack
+      // pointing at them.
+      canvasShellRef.current?.releasePointerCapture?.(segmentStrokeRef.current.pointerId)
+      segmentActionsRef.current.endStroke?.()
+      setSegmentCursor(null)
+      return
+    }
+
     if (weightStrokeRef.current) {
       // The dabs already landed, so this is a finished edit either way — commit
       // it rather than leave the rig changed with nothing on the undo stack
@@ -5372,11 +5568,6 @@ export default function MeshEditorPage() {
   useEffect(() => {
     if (weightPaintGeometry) refreshWeightHeatmap()
   }, [weightPaintGeometry, refreshWeightHeatmap, rigRevision])
-
-  // What the viewport is actually showing. Weight painting overrides the PBR /
-  // Albedo / Sculpt choice for as long as it is on — including the lights, since
-  // the standard 1.25 ambient flattens the ramp into a bright wash.
-  const viewportDisplayMode = weightPaintGeometry ? 'weights' : displayMode
 
   // Leaving Auto Rig, losing the rig, or an animation preview taking over the
   // viewport all mean there is nothing to paint on — drop the mode rather than
@@ -8197,6 +8388,465 @@ export default function MeshEditorPage() {
     }
   }, [geometry, gameReadyRunning, gameReadyOptions, getExportObject])
 
+  // ── Smart Segmentation ───────────────────────────────────────────────────
+  // Analyze runs once on the Python service and returns a whole hierarchy of
+  // parts. Everything below that — the Parts slider especially — replays that
+  // hierarchy locally, so it costs a union-find over ~3000 proxy regions and no
+  // round trip. That is why none of it is gated on `segmentRunning`.
+  const setSegmentOption = useCallback((key, value) => {
+    setSegmentOptions(prev => ({ ...prev, [key]: value }))
+  }, [])
+
+  const segmentLabels = useMemo(
+    () => (segmentation ? computeSegmentLabels(segmentation, segmentParts, segmentOverrides) : null),
+    [segmentation, segmentParts, segmentOverrides]
+  )
+
+  const segmentPalette = useMemo(
+    () => (segmentLabels ? segmentPaletteFor(segmentLabels.labels, segmentLabels.count) : null),
+    [segmentLabels]
+  )
+
+  const segmentPartSizes = useMemo(
+    () => (segmentLabels ? partFaceCounts(segmentLabels.labels, segmentLabels.count) : null),
+    [segmentLabels]
+  )
+
+  // Read by the display-geometry memo below, which must NOT depend on the labels
+  // themselves: it would then rebuild three full-mesh arrays on every step of the
+  // Parts slider, where only the colours actually changed.
+  const segmentLabelsRef = useRef(null)
+  const segmentPaletteRef = useRef(null)
+  const segmentDisplayGeometryRef = useRef(null)
+  segmentLabelsRef.current = segmentLabels
+  segmentPaletteRef.current = segmentPalette
+  segmentTargetFaceRef.current = segmentTargetFace
+  segmentToolRef.current = segmentTool
+  segmentationRef.current = segmentation
+
+  // ── Smart Segmentation: hand corrections ─────────────────────────────────
+  // Read by the pointer callbacks, which fire far more often than React renders
+  // and must always see the live arrays rather than a captured closure.
+  segmentOverridesRef.current = segmentOverrides
+
+  // Publish a change. The arrays were already mutated in place; this only hands
+  // React a new object identity so the label memo re-runs.
+  const bumpSegmentOverrides = useCallback(() => {
+    setSegmentOverrides(prev => (prev ? { ...prev } : prev))
+  }, [])
+
+  // One overrides record per analysis. A fresh Analyze throws the corrections
+  // away with it — they are keyed by face index into a hierarchy that no longer
+  // exists, and silently re-applying them to a different one is worse than
+  // losing them.
+  useEffect(() => {
+    if (!segmentation) {
+      setSegmentOverrides(null)
+      setSegmentTool('none')
+      setSegmentTargetFace(-1)
+      setSegmentMergePicks([])
+      segmentUndoStackRef.current = []
+      setSegmentCanUndo(false)
+      return
+    }
+    setSegmentOverrides(createSegmentOverrides(segmentation.faceCount))
+    setSegmentTargetFace(-1)
+    setSegmentMergePicks([])
+    segmentUndoStackRef.current = []
+    setSegmentCanUndo(false)
+    segmentBrushFacesRef.current = new Int32Array(segmentation.faceCount)
+    segmentTouchedRef.current = new Uint8Array(segmentation.faceCount)
+  }, [segmentation])
+
+  // Leaving the mode disarms whatever tool was live, so a stray click in another
+  // mode cannot paint or re-focus.
+  useEffect(() => {
+    if (activeMenu !== 'segmentation') {
+      setSegmentTool('none')
+      setSegmentCursor(null)
+    }
+  }, [activeMenu])
+
+  const segmentPendingSplits = useMemo(() => (
+    segmentation && segmentOverrides?.focusMask
+      ? countSegmentPendingSplits(segmentation, segmentParts, segmentOverrides)
+      : 0
+  ), [segmentation, segmentParts, segmentOverrides])
+
+  const segmentPaintedFaces = useMemo(
+    () => countPaintedFaces(segmentOverrides),
+    [segmentOverrides]
+  )
+
+  // The part being picked, drawn in the accent colour. Merge shows every part
+  // gathered so far; focus shows the region the Parts slider is cutting into;
+  // the brush shows where strokes are landing.
+  const segmentHighlight = useMemo(() => {
+    if (!segmentLabels || !segmentation) return null
+    if (segmentTool === 'merge') {
+      if (!segmentMergePicks.length) return null
+      const mask = new Uint8Array(segmentLabels.labels.length)
+      const picked = new Set(segmentMergePicks.map(face => segmentLabels.labels[face]))
+      for (let f = 0; f < mask.length; f += 1) if (picked.has(segmentLabels.labels[f])) mask[f] = 1
+      return { mask, dimOthers: true }
+    }
+    if (segmentOverrides?.focusMask) {
+      const mask = new Uint8Array(segmentLabels.labels.length)
+      for (let f = 0; f < mask.length; f += 1) mask[f] = segmentOverrides.focusMask[segmentation.mapping[f]]
+      return { mask, dimOthers: false }
+    }
+    if (segmentTool === 'brush' && segmentTargetFace >= 0) {
+      const mask = facesOfPart(segmentLabels.labels, segmentTargetFace)
+      return mask ? { mask, dimOthers: false } : null
+    }
+    return null
+  }, [segmentLabels, segmentation, segmentTool, segmentMergePicks, segmentTargetFace, segmentOverrides])
+
+  const segmentBrushCursorPixelRadius = useCallback((worldHitPoint, canvasHeight) => {
+    const camera = cameraRef.current
+    if (!camera || !worldHitPoint) return 24
+    const distance = camera.position.distanceTo(worldHitPoint)
+    const worldHeightAtDistance = viewWorldHeightAt(camera, distance)
+    if (worldHeightAtDistance <= 0) return 24
+    return Math.max(4, (segmentBrushSize / worldHeightAtDistance) * canvasHeight)
+  }, [segmentBrushSize])
+
+  // One brush dab. Writes the override, then repaints only the faces it moved —
+  // see recolorSegmentFaces for why a stroke never goes through the label
+  // pipeline. `segmentLabels.labels` is mutated in step with it so the two do
+  // not drift mid-stroke; the memo recomputes the same thing on pointer-up.
+  const applySegmentDab = useCallback((hit, erase) => {
+    const overrides = segmentOverridesRef.current
+    const stroke = segmentStrokeRef.current
+    const labels = segmentLabelsRef.current
+    const palette = segmentPaletteRef.current
+    const display = segmentDisplayGeometryRef.current
+    const camera = cameraRef.current
+    const faces = segmentBrushFacesRef.current
+    const target = segmentTargetFaceRef.current
+    if (!overrides || !stroke || !labels || !palette || !camera || !faces || !geometry) return
+
+    // The raycast mesh is identity-positioned (see ensureSculptMesh), so the
+    // world-space view direction is already the object-space one the geometric
+    // face normals inside queryBrushFaces are compared against.
+    const direction = hit.worldPoint.clone().sub(camera.position).normalize()
+    const found = queryBrushFaces(geometry, hit.point, segmentBrushSize, direction, faces)
+    if (!found) return
+
+    const before = stroke.indices.length
+    const changed = applyBrushFaces(overrides, faces, found, target, erase,
+      segmentTouchedRef.current, stroke)
+    if (!changed) return
+
+    const moved = stroke.indices.slice(before)
+    const targetLabel = labels.base[target]
+    for (const face of moved) labels.labels[face] = erase ? labels.base[face] : targetLabel
+    recolorSegmentFaces(display, moved, moved.length, labels.labels, palette)
+  }, [geometry, segmentBrushSize])
+
+  const beginSegmentStroke = useCallback(() => {
+    segmentTouchedRef.current?.fill(0)
+    segmentStrokeRef.current = { indices: [], previous: [], pointerId: -1 }
+  }, [])
+
+  const endSegmentStroke = useCallback(() => {
+    const stroke = segmentStrokeRef.current
+    segmentStrokeRef.current = null
+    if (!stroke?.indices.length) return
+    const stack = segmentUndoStackRef.current
+    stack.push(stroke)
+    while (stack.length > 20) stack.shift()
+    setSegmentCanUndo(true)
+    bumpSegmentOverrides()
+    setFeedback(`Reassigned ${stroke.indices.length} face${stroke.indices.length === 1 ? '' : 's'}.`)
+  }, [bumpSegmentOverrides])
+
+  const handleSegmentUndo = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    const stroke = segmentUndoStackRef.current.pop()
+    if (!overrides || !stroke) {
+      setSegmentCanUndo(false)
+      return
+    }
+    const restored = undoBrushStroke(overrides, stroke)
+    setSegmentCanUndo(segmentUndoStackRef.current.length > 0)
+    bumpSegmentOverrides()
+    setFeedback(`Undid a stroke of ${restored} face${restored === 1 ? '' : 's'}.`)
+  }, [bumpSegmentOverrides])
+
+  const handleSegmentClearPaint = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides) return
+    const cleared = clearSegmentPaint(overrides)
+    segmentUndoStackRef.current = []
+    setSegmentCanUndo(false)
+    bumpSegmentOverrides()
+    setFeedback(cleared ? `Cleared ${cleared} brushed faces.` : 'Nothing was brushed.')
+  }, [bumpSegmentOverrides])
+
+  const handleSegmentToolChange = useCallback((tool) => {
+    setSegmentTool(current => {
+      const next = current === tool ? 'none' : tool
+      if (next !== 'merge') setSegmentMergePicks([])
+      return next
+    })
+    setSegmentCursor(null)
+  }, [])
+
+  const handleSegmentApplyMerge = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides || !segmentation || segmentMergePicks.length < 2) return
+    const added = addSegmentMerge(segmentation, overrides, segmentMergePicks)
+    setSegmentMergePicks([])
+    bumpSegmentOverrides()
+    setFeedback(added
+      ? `Fused ${added + 1} parts into one.`
+      : 'Those faces are already in the same part.')
+  }, [segmentation, segmentMergePicks, bumpSegmentOverrides])
+
+  const handleSegmentResetMerges = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides) return
+    const removed = resetSegmentMerges(overrides)
+    setSegmentMergePicks([])
+    bumpSegmentOverrides()
+    setFeedback(removed ? 'Manual merges cleared.' : 'There were no manual merges.')
+  }, [bumpSegmentOverrides])
+
+  const handleSegmentApplyFocus = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides || !segmentation) return
+    const applied = applySegmentFocus(segmentation, segmentParts, overrides)
+    if (!applied) {
+      setError('Raise Parts first — there is nothing to apply.')
+      return
+    }
+    setError('')
+    bumpSegmentOverrides()
+    setFeedback(`Applied ${applied} cut${applied === 1 ? '' : 's'} — pick another part to split.`)
+  }, [segmentation, segmentParts, bumpSegmentOverrides])
+
+  const handleSegmentClearFocus = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides || !clearSegmentFocus(overrides)) return
+    // Back to the pinned level, so the proposed-but-discarded cuts do not linger
+    // on the slider as a part count the mesh no longer has.
+    if (overrides.anchorK) setSegmentParts(overrides.anchorK)
+    bumpSegmentOverrides()
+    setFeedback('Focus cleared.')
+  }, [bumpSegmentOverrides])
+
+  const handleSegmentResetSplits = useCallback(() => {
+    const overrides = segmentOverridesRef.current
+    if (!overrides) return
+    const removed = resetSegmentSplits(overrides)
+    bumpSegmentOverrides()
+    setFeedback(removed ? 'All per-part splits cleared.' : 'There were no applied splits.')
+  }, [bumpSegmentOverrides])
+
+  // Every segmentation pick goes through here: the merge gather, the focus open,
+  // and the brush's target. One raycast, one place to keep the rules.
+  const handleSegmentPick = useCallback((faceIndex) => {
+    const overrides = segmentOverridesRef.current
+    const labels = segmentLabelsRef.current
+    if (!overrides || !labels || !segmentation) return
+
+    if (segmentTool === 'merge') {
+      const label = labels.labels[faceIndex]
+      setSegmentMergePicks(current => (
+        current.some(face => labels.labels[face] === label)
+          ? current.filter(face => labels.labels[face] !== label)
+          : [...current, faceIndex]
+      ))
+      return
+    }
+
+    if (segmentTool === 'focus') {
+      const total = openSegmentFocus(segmentation, segmentParts, overrides, faceIndex)
+      if (total === null) {
+        setError('That part is too small to split further.')
+        return
+      }
+      setError('')
+      // Start the slider at the real part count, so each step up is one more cut
+      // inside the chosen region rather than a jump to somewhere unrelated.
+      setSegmentParts(total)
+      setSegmentTool('none')
+      bumpSegmentOverrides()
+      setFeedback('Splitting that part only — raise Parts to cut inside it.')
+      return
+    }
+
+    setSegmentTargetFace(faceIndex)
+    setFeedback('Target part set — drag to sweep faces into it, Ctrl+drag to release them.')
+  }, [segmentTool, segmentation, segmentParts, bumpSegmentOverrides])
+
+  // Published after every callback above exists. Assigned during render rather
+  // than in an effect so a pointer event in the same commit already sees the
+  // current versions.
+  segmentActionsRef.current = {
+    pick: handleSegmentPick,
+    dab: applySegmentDab,
+    beginStroke: beginSegmentStroke,
+    endStroke: endSegmentStroke,
+    cursorRadius: segmentBrushCursorPixelRadius,
+  }
+
+  // The part colours are drawn on a display-only geometry of their own — see
+  // createSegmentDisplayGeometry for why it is non-indexed, and why the colours
+  // never go on the editable geometry. Coloured HERE rather than in the effect
+  // below for the same reason weightPaintGeometry is: under StrictMode React
+  // renders twice and commits the second pass, so an effect that fills the
+  // colours in afterwards can be writing into the copy that was thrown away.
+  const segmentDisplayGeometry = useMemo(() => {
+    if (activeMenu !== 'segmentation' || !segmentation || !geometry) return null
+    const display = createSegmentDisplayGeometry(geometry)
+    if (display && segmentLabelsRef.current && segmentPaletteRef.current) {
+      writeSegmentColors(display, segmentLabelsRef.current.labels, segmentPaletteRef.current)
+    }
+    
+    return display
+  }, [activeMenu, segmentation, geometry])
+
+  segmentDisplayGeometryRef.current = segmentDisplayGeometry
+
+  // Recolour on every slider step. Touches the colour array and its upload flag,
+  // nothing else.
+  useEffect(() => {
+    if (segmentDisplayGeometry && segmentLabels && segmentPalette) {
+      writeSegmentColors(segmentDisplayGeometry, segmentLabels.labels, segmentPalette, {
+        highlight: segmentHighlight?.mask || null,
+        dimOthers: segmentHighlight?.dimOthers !== false,
+      })
+    }
+  }, [segmentDisplayGeometry, segmentLabels, segmentPalette, segmentHighlight])
+
+  // Dispose the PREVIOUS container when a new one replaces it rather than in a
+  // cleanup — StrictMode runs every effect cleanup once on mount, which would
+  // tear down the geometry still on screen. Unlike weightPaintGeometry this one
+  // owns all of its attributes, so a plain dispose is right.
+  const previousSegmentGeometryRef = useRef(null)
+  useEffect(() => {
+    const previous = previousSegmentGeometryRef.current
+    if (previous && previous !== segmentDisplayGeometry) previous.dispose()
+    previousSegmentGeometryRef.current = segmentDisplayGeometry
+  }, [segmentDisplayGeometry])
+
+  // Every array the service returned is indexed by face number, so an edit that
+  // changes the triangle count invalidates all of it. Drop the analysis rather
+  // than paint the mesh with labels that no longer describe it.
+  useEffect(() => {
+    if (!segmentation) return
+    if (geometryFaceCount(geometry) !== segmentation.faceCount) {
+      setSegmentation(null)
+      setSegmentProgress(null)
+    }
+  }, [geometry, segmentation])
+
+  const handleRunSegment = useCallback(async () => {
+    if (!geometry || segmentRunning) return
+    setSegmentRunning(true)
+    setSegmentProgress({ stage: 'start', frac: 0, message: 'Smart Segmentation starting…' })
+    setError('')
+    setFeedback('Analyzing the mesh…')
+    try {
+      await ensureDesktopService('meshtools')
+      // The EDITABLE geometry, deliberately not getExportObject(). Every array
+      // that comes back is indexed by triangle number, and that only lines up
+      // because this exports the index buffer as it stands and the service loads
+      // it with process=False. An export object may merge, split by material or
+      // reorder, and the labels would then land on the wrong triangles with no
+      // symptom beyond a segmentation that looks subtly scrambled.
+      const glbBuffer = await exportGeometryToGlb(geometry)
+      const meshBlob = new Blob([glbBuffer], { type: 'model/gltf-binary' })
+      const result = await runSegmentService(meshBlob, {
+        options: segmentOptions,
+        fileName: 'segment.glb',
+        onProgress: evt => setSegmentProgress(evt),
+      })
+
+      const localFaces = geometryFaceCount(geometry)
+      if (result.faceCount !== localFaces) {
+        throw new Error(
+          `The service segmented ${result.faceCount.toLocaleString()} faces but the editor has `
+          + `${localFaces.toLocaleString()}. The part labels would land on the wrong triangles, `
+          + 'so the result was discarded.'
+        )
+      }
+
+      setSegmentation(result)
+      if (result.suggestedParts) setSegmentParts(result.suggestedParts)
+      setFeedback(result.escapeRatio > 0.35
+        ? `Analyzed ${result.proxyFaceCount.toLocaleString()} proxy faces — the mesh is open, so thickness is unreliable.`
+        : `Analyzed ${result.proxyFaceCount.toLocaleString()} proxy faces. Drag Parts to choose the split.`)
+    } catch (err) {
+      console.error('Smart Segmentation failed:', err)
+      setError(err?.message || 'Smart Segmentation failed.')
+    } finally {
+      setSegmentRunning(false)
+      setSegmentProgress(null)
+    }
+  }, [geometry, segmentRunning, segmentOptions])
+
+  const handleAutoSegmentParts = useCallback(() => {
+    const suggested = segmentation?.suggestedParts
+    if (!suggested) return
+    setSegmentParts(suggested)
+    setFeedback(`Jumped to ${suggested} parts — the largest jump in merge cost.`)
+  }, [segmentation])
+
+  const handleClearSegmentation = useCallback(() => {
+    setSegmentation(null)
+    setSegmentProgress(null)
+    setFeedback('Segmentation cleared.')
+  }, [])
+
+  const handleExportSegmentParts = useCallback(async () => {
+    if (!geometry || !segmentLabels || !segmentPalette || segmentExporting) return
+    setSegmentExporting(true)
+    setError('')
+    try {
+      const baseName = (meshName || 'mesh').trim() || 'mesh'
+      const parts = buildPartGeometries(geometry, segmentLabels.labels, segmentLabels.count, {
+        minFaces: segmentMinPartFaces,
+      })
+      if (!parts.length) {
+        throw new Error('Every part is below the minimum face count — lower it, or use fewer parts.')
+      }
+      const blob = await exportPartsToGlb(parts, segmentPalette, baseName)
+      // The part geometries only existed to be written into the GLB.
+      parts.forEach(part => part.geometry.dispose())
+
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${baseName}-parts.glb`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setFeedback(`Exported ${parts.length} part${parts.length === 1 ? '' : 's'}.`)
+    } catch (err) {
+      console.error('Failed to export the segmented parts:', err)
+      setError(err?.message || 'Failed to export the segmented parts.')
+    } finally {
+      setSegmentExporting(false)
+    }
+  }, [geometry, segmentLabels, segmentPalette, segmentMinPartFaces, segmentExporting, meshName])
+
+  // What the viewport is actually showing. Segmentation and weight painting each
+  // override the PBR / Albedo / Sculpt choice for as long as they are on —
+  // including the lights, since the standard 1.25 ambient flattens both a weight
+  // ramp and a part palette into a bright wash.
+  //
+  // Declared HERE, below both display geometries, rather than up beside
+  // weightPaintGeometry where it used to live: `segmentDisplayGeometry` is
+  // defined in this section, so reading it from up there is a temporal dead zone
+  // and throws on every render.
+  const viewportDisplayMode = segmentDisplayGeometry
+    ? 'segments'
+    : weightPaintGeometry ? 'weights' : displayMode
+
   // Move the mesh's pivot to where an engine expects it. 'ground_pivot' drops the
   // mesh onto Y=0 centred on X/Z (a prop that snaps to the floor when placed);
   // 'centre_pivot' puts the bbox centre on the origin (so the asset rotates about
@@ -10158,6 +10808,15 @@ export default function MeshEditorPage() {
                   </button>
                   <button
                     type="button"
+                    className={`mesh-editor-mode-btn ${activeMenu === 'segmentation' ? 'mesh-editor-mode-btn--active' : ''}`}
+                    onClick={() => setActiveMenu('segmentation')}
+                    title="Split the mesh into parts by thickness and creases (Python service)"
+                  >
+                    <span className="material-symbols-outlined">shape_line</span>
+                    <span>Segmentation</span>
+                  </button>
+                  <button
+                    type="button"
                     className={`mesh-editor-mode-btn ${activeMenu === 'gameready' ? 'mesh-editor-mode-btn--active' : ''}`}
                     onClick={() => setActiveMenu('gameready')}
                     title="Check the mesh against engine-readiness budgets (read-only)"
@@ -10311,6 +10970,46 @@ export default function MeshEditorPage() {
                     hasUvs: !!geometry?.attributes?.uv?.count,
                     disabled: !geometry
                   }} />
+                ) : activeMenu === 'segmentation' ? (
+                  <SegmentationToolsPanel {...{
+                    options: segmentOptions, setOption: setSegmentOption,
+                    running: segmentRunning, progress: segmentProgress,
+                    analysis: segmentation,
+                    parts: segmentParts, onPartsChange: setSegmentParts,
+                    partCount: segmentLabels?.visibleCount || 0,
+                    partSizes: segmentPartSizes,
+                    minPartFaces: segmentMinPartFaces,
+                    onMinPartFacesChange: setSegmentMinPartFaces,
+                    onRun: handleRunSegment,
+                    onAuto: handleAutoSegmentParts,
+                    onExport: handleExportSegmentParts,
+                    exporting: segmentExporting,
+                    onClear: handleClearSegmentation,
+                    tool: segmentTool,
+                    onToolChange: handleSegmentToolChange,
+                    targetFace: segmentTargetFace,
+                    targetLabel: segmentTargetFace >= 0 ? segmentLabels?.labels?.[segmentTargetFace] : -1,
+                    palette: segmentPalette,
+                    brushSize: segmentBrushSize,
+                    brushSizeRange: segmentBrushSizeRange,
+                    onBrushSizeChange: setSegmentBrushSize,
+                    paintedFaces: segmentPaintedFaces,
+                    canUndo: segmentCanUndo,
+                    onUndo: handleSegmentUndo,
+                    onClearPaint: handleSegmentClearPaint,
+                    mergePicks: segmentMergePicks.length,
+                    onApplyMerge: handleSegmentApplyMerge,
+                    onResetMerges: handleSegmentResetMerges,
+                    mergeCount: segmentOverrides?.mergePairs?.length || 0,
+                    focused: !!segmentOverrides?.focusMask,
+                    pendingSplits: segmentPendingSplits,
+                    appliedSplits: segmentOverrides?.skipMerges?.size || 0,
+                    pinnedLevel: segmentOverrides?.anchorK || 0,
+                    onApplyFocus: handleSegmentApplyFocus,
+                    onClearFocus: handleSegmentClearFocus,
+                    onResetSplits: handleSegmentResetSplits,
+                    disabled: !geometry
+                  }} />
                 ) : activeMenu === 'gameready' ? (
                   <GameReadyPanel {...{
                     options: gameReadyOptions, setOption: setGameReadyOption,
@@ -10402,7 +11101,7 @@ export default function MeshEditorPage() {
                 onPointerMove={handleCanvasPointerMove}
                 onPointerUp={handleCanvasPointerUp}
                 onPointerCancel={handleCanvasPointerCancel}
-                onPointerLeave={() => { setPaintCursorPos(null); setSculptCursor(null); setWeightCursor(null); if (projectionMaskCursorRef.current) projectionMaskCursorRef.current.style.display = 'none'; }}
+                onPointerLeave={() => { setPaintCursorPos(null); setSculptCursor(null); setWeightCursor(null); setSegmentCursor(null); if (projectionMaskCursorRef.current) projectionMaskCursorRef.current.style.display = 'none'; }}
               >
                 <canvas
                   ref={projectionMaskCanvasRef}
@@ -10437,10 +11136,10 @@ export default function MeshEditorPage() {
                       }}
                     >
                       <ViewportCameras orthographic={orthographic} />
-                      <ambientLight intensity={viewportDisplayMode === 'sculpt' ? 0.42 : viewportDisplayMode === 'weights' ? 0.55 : 1.25} />
+                      <ambientLight intensity={viewportDisplayMode === 'sculpt' ? 0.42 : (viewportDisplayMode === 'weights' || viewportDisplayMode === 'segments') ? 0.55 : 1.25} />
                       <directionalLight
                         position={viewportDisplayMode === 'sculpt' ? [5, 7, 4] : [5, 7, 9]}
-                        intensity={viewportDisplayMode === 'sculpt' ? 2.2 : viewportDisplayMode === 'weights' ? 1.1 : 2}
+                        intensity={viewportDisplayMode === 'sculpt' ? 2.2 : (viewportDisplayMode === 'weights' || viewportDisplayMode === 'segments') ? 1.1 : 2}
                         castShadow={showShadows}
                         shadow-mapSize-width={2048}
                         shadow-mapSize-height={2048}
@@ -10496,7 +11195,7 @@ export default function MeshEditorPage() {
                         />
                       ) : (
                         <EditorMesh
-                          geometry={weightPaintGeometry || geometry}
+                          geometry={segmentDisplayGeometry || weightPaintGeometry || geometry}
                           selectedFaceIndices={activeMenu === 'modeling' ? selectedFaceIndices : []}
                           selectedVertexIndices={activeMenu === 'modeling' ? selectedVertexIndices : []}
                           showShadows={showShadows}
@@ -10611,6 +11310,17 @@ export default function MeshEditorPage() {
                     <span className="material-symbols-outlined mesh-editor-empty-state__icon">deployed_code_alert</span>
                     <span>Mesh could not be loaded.</span>
                   </div>
+                )}
+                {activeMenu === 'segmentation' && segmentTool === 'brush' && segmentCursor && (
+                  <div
+                    className="mesh-editor-paint-cursor mesh-editor-weight-cursor"
+                    style={{
+                      left: segmentCursor.x,
+                      top: segmentCursor.y,
+                      width: segmentCursor.pixelRadius * 2,
+                      height: segmentCursor.pixelRadius * 2
+                    }}
+                  />
                 )}
                 {activeMenu === 'autorig' && weightPainting && weightCursor && (
                   <div
