@@ -540,6 +540,48 @@ export function uprightRootRotation(clip, rootName) {
   return (maxTilt * 180) / Math.PI
 }
 
+// Put every skinned mesh under `root` into its BIND pose, and hand back the
+// function that restores exactly what was there before.
+//
+// A skeleton's CURRENT pose is not its rest pose, and nothing in a glTF says
+// which of the two a file's node transforms hold. Import an already-animated rig
+// — a capture result, say — and they are frame 0 of that animation: upstream's
+// own `Leapord_mesh.glb` carries a Hips node rotated 86.4 deg about Y, which is
+// bit-for-bit its animation's first keyframe, while the skin's bind pose is the
+// identity. So the bones sit yawed against the geometry.
+//
+// Exporting that as "the rig" hands everything downstream a rest pose that is
+// really a pose. It matters most to the MoCap bake, which reads the exported
+// rest pose into rest.bvh as the reference its whole solve is anchored to and
+// renders the conditioning view from — so a posed rest pose biases every
+// captured frame, silently and in a way no error message reports.
+export function withBindPose(root) {
+  const skeletons = new Set()
+  root.traverse(o => { if (o.isSkinnedMesh && o.skeleton) skeletons.add(o.skeleton) })
+  if (!skeletons.size) return () => {}
+
+  // Every bone is saved BEFORE any skeleton is posed: two skinned meshes can
+  // share one skeleton, and saving as we go would record the second one's bones
+  // already posed by the first and "restore" them to that.
+  const saved = []
+  for (const skeleton of skeletons) {
+    for (const bone of skeleton.bones) {
+      saved.push([bone, bone.position.clone(), bone.quaternion.clone(), bone.scale.clone()])
+    }
+  }
+  for (const skeleton of skeletons) skeleton.pose()
+  root.updateMatrixWorld(true)
+
+  return () => {
+    for (const [bone, position, quaternion, scale] of saved) {
+      bone.position.copy(position)
+      bone.quaternion.copy(quaternion)
+      bone.scale.copy(scale)
+    }
+    root.updateMatrixWorld(true)
+  }
+}
+
 // Bones of `bone`'s subtree that are mapped and have no mapped bone between them
 // and `bone` — i.e. where its chain continues. Descends through unmapped bones so
 // an intermediate helper/twist bone does not break a chain.

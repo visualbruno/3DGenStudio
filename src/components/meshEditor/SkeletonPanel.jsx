@@ -900,7 +900,12 @@ function MoCapTab({ animation, mocap }) {
         {ready ? (
           <div className="mesh-editor-panel__hint" style={{ display: 'flex', alignItems: 'center', gap: '0.4em' }}>
             <span className="material-symbols-outlined" style={{ fontSize: '1.1em', color: '#4caf50' }}>check_circle</span>
-            <span>Rig prepared &mdash; {m.preparedJoints} bones. Videos can drive it now.</span>
+            <span>
+              Rig prepared &mdash; {m.preparedJoints} bones
+              {m.preparedView === 'y90' ? ', conditioned on its side view' : ''}
+              {m.preparedView === 'y0' ? ', conditioned on its front view' : ''}. Videos can drive
+              it now.
+            </span>
           </div>
         ) : (
           <span className="mesh-editor-panel__hint">

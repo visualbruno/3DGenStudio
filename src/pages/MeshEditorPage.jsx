@@ -165,7 +165,7 @@ import MotionLibraryModal from '../components/meshEditor/MotionLibraryModal'
 import AnimationEditPanel from '../components/meshEditor/AnimationEditPanel'
 import AnimatedSkeletonOverlay from '../components/meshEditor/AnimatedSkeletonOverlay'
 import AnimationBoneGizmo from '../components/meshEditor/AnimationBoneGizmo'
-import { loadReferenceScene, loadReferenceRigScene, loadTargetScene, autoMapBones, retargetAnimationClip, makeClipInPlace, exportAnimatedGlb, findUpperArmTargets, getReference } from '../utils/animationLibrary'
+import { loadReferenceScene, loadReferenceRigScene, loadTargetScene, autoMapBones, retargetAnimationClip, makeClipInPlace, exportAnimatedGlb, findUpperArmTargets, getReference, withBindPose } from '../utils/animationLibrary'
 import { withHandPose } from '../utils/handPose'
 import { describeClip, applyFrameEdit, applyFrameOperation, applyFrameRotation, applyFramePosition,
   copyFramePose, pasteFramePose, ensurePositionTrack, ensureRotationTrack, clearFrameValue, clearBoneAnimation, smoothLoopSeam,
@@ -6983,6 +6983,10 @@ export default function MeshEditorPage() {
   const [mocapRigId, setMocapRigId] = useState(null)
   const [mocapPrepared, setMocapPrepared] = useState(false)
   const [mocapPreparedJoints, setMocapPreparedJoints] = useState(0)
+  // Which of the twelve yaws the bake conditioned on (see pipeline.reference_view).
+  // Surfaced because it is the one bake decision that changes the RESULT rather
+  // than the speed: a quadruped conditioned on its front view captures badly.
+  const [mocapPreparedView, setMocapPreparedView] = useState('')
   const [mocapPreparing, setMocapPreparing] = useState(false)
   const [mocapPrepareProgress, setMocapPrepareProgress] = useState(null)
   const [mocapRunning, setMocapRunning] = useState(false)
@@ -7021,12 +7025,13 @@ export default function MeshEditorPage() {
   const refreshMocapRigState = useCallback(async () => {
     if (!skeleton) return
     try {
-      const blob = await buildRiggedResultBlobRef.current?.()
+      const blob = await buildRiggedResultBlobRef.current?.({ bindPose: true })
       if (!blob) return
       const info = await inspectMocapRig(blob, mocapCurrentKey)
       setMocapRigId(info.rig_id || null)
       setMocapPrepared(!!info.prepared)
       setMocapPreparedJoints(info.info?.joints || 0)
+      setMocapPreparedView(info.info?.ref_view || '')
       setMocapPreparedKey(info.prepared ? mocapCurrentKey : '')
       setMocapServiceError(null)
     } catch (err) {
@@ -7042,7 +7047,7 @@ export default function MeshEditorPage() {
     setMocapServiceError(null)
     setMocapPrepareProgress(null)
     try {
-      const blob = await buildRiggedResultBlobRef.current?.()
+      const blob = await buildRiggedResultBlobRef.current?.({ bindPose: true })
       if (!blob) throw new Error('There is no rigged mesh to prepare.')
       const info = await prepareMocapRig({
         meshBlob: blob,
@@ -7058,6 +7063,7 @@ export default function MeshEditorPage() {
       setMocapRigId(info.rig_id)
       setMocapPrepared(true)
       setMocapPreparedJoints(info.joints || 0)
+      setMocapPreparedView(info.ref_view || '')
       setMocapPreparedKey(mocapCurrentKey)
       if (supersededId && supersededId !== info.rig_id) {
         forgetMocapRig(supersededId).catch(err =>
@@ -7288,6 +7294,7 @@ export default function MeshEditorPage() {
     rigId: mocapRigId,
     prepared: mocapPrepared,
     preparedJoints: mocapPreparedJoints,
+    preparedView: mocapPreparedView,
     canPrepare: !!skeleton,
     staleRig: mocapStale,
     preparing: mocapPreparing,
@@ -7317,7 +7324,7 @@ export default function MeshEditorPage() {
     serviceError: mocapServiceError,
     lastStats: mocapLastStats,
     onGenerate: handleMocapGenerate,
-  }), [refreshMocapRigState, mocapRigId, mocapPrepared, mocapPreparedJoints, skeleton, mocapStale,
+  }), [refreshMocapRigState, mocapRigId, mocapPrepared, mocapPreparedJoints, mocapPreparedView, skeleton, mocapStale,
     mocapPreparing, mocapPrepareProgress, handleMocapPrepare, mocapVideo,
     handleMocapVideoChange, mocapCapture,
     mocapRunning, mocapProgress, mocapError, mocapServiceError,
@@ -8031,14 +8038,25 @@ export default function MeshEditorPage() {
   // a stale copy of the skeleton, and saving it would quietly throw the
   // corrections away. The blob remains the fallback for the case where adopting
   // the result failed and there is no editable rig to export.
-  const buildRiggedResultBlob = useCallback(async () => {
+  // `bindPose` forces the skeleton to its rest pose for the export. Off by
+  // default because Save / Download should write the mesh as the user is looking
+  // at it; the MoCap bake asks for it on, because what it wants is the RIG, and
+  // the skeleton on screen may be showing an imported animation's first frame or
+  // a clip mid-preview (see withBindPose).
+  const buildRiggedResultBlob = useCallback(async ({ bindPose = false } = {}) => {
     // When the last result could not be adopted, the service blob *is* the rig:
     // `rigRef` is then either empty or still describes the mesh as it was before
     // that run, and exporting it would save the wrong skeleton.
     if (riggedBlobRef.current && !rigResultAdoptedRef.current) return riggedBlobRef.current
     if (geometryHasSkin(geometry) && rigRef.current) {
-      const files = await exportObject3D(getExportObject(), { format: 'glb', baseName: 'rigged' })
-      if (files?.[0]?.blob) return files[0].blob
+      const target = getExportObject()
+      const restore = bindPose ? withBindPose(target) : null
+      try {
+        const files = await exportObject3D(target, { format: 'glb', baseName: 'rigged' })
+        if (files?.[0]?.blob) return files[0].blob
+      } finally {
+        restore?.()
+      }
     }
     return riggedBlobRef.current
   }, [geometry, getExportObject])

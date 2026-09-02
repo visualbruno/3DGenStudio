@@ -136,17 +136,49 @@ export(os.path.join(OUTDIR, f"{RIG}.fbx"), False)
 bpy.context.view_layer.objects.active = arm
 bpy.ops.object.mode_set(mode="POSE")
 FRAMES = 120
-# Amplitudes are deliberately modest. Measured on the demo's own Coyote rig:
-# scaling this table 1x/2x/4x moves the captured output only 18.7 -> 19.2 -> 20.0
-# deg of per-bone motion. What matters is that a joint moves AT ALL (see the
-# static mask note below), not how far.
+# Amplitudes. The old note here said amplitude barely matters, and MEASURED
+# AGAINST THE OUTPUT that turns out to be right — so read the numbers before
+# spending time widening this table.
+#
+# What the reference sequence feeds is the per-species POSE MEMORY BANK: 32
+# poses sampled from it, which Pose2RotMemoryRestModel's four memory layers
+# attend over. The old table was an order of magnitude narrower than the
+# reference that captures this tiger video correctly (upstream's Leopard-Idle),
+# so widening it looked like the obvious lever. Measured on this tiger, at the
+# side reference view, it is worth about 4%:
+#
+#                              reference cloud        captured output
+#                           mean max-dev / max     mean max-dev / max
+#   upstream Leopard-Idle       11.7 / 59.6            24.2 / 104.9
+#   this table, before           6.6 /  9.5            13.7 /  57.9
+#   this table, now             ~13   / ~45            14.3 /  63.2
+#
+# It is kept because it is a small real gain and because a skewed cloud (distal
+# joints swinging far, proximal ones little, the way a real idle does) is closer
+# to what training saw than "every joint moves six degrees". It is NOT the reason
+# our captures still reach only ~60% of upstream's limb amplitude — that gap
+# survived this change, and the remaining suspects are the joint count (64 here
+# against upstream's 41, half of them anonymous toe chains Auto Rig emits) and
+# the rest pose the whole solve is anchored to.
+#
+# The table deliberately lands NEAR upstream's cloud statistics rather than past
+# them: overshooting a distribution the model was trained on is a risk on rigs
+# other than the one this was measured on. Frame 0 is still exactly the rest
+# pose, which is what `ref_idx = 0` reads.
+#
+# MOCAP_REF_AMP scales the whole table, for A/B without editing code.
+AMP_SCALE = float(os.environ.get("MOCAP_REF_AMP", "1.0"))
 WANT = [
-    (("spine", "chest", "torso", "body"), "X", 4.0, 1),
-    (("neck", "head"), "X", 3.0, 2),
-    (("upperarm", "arm", "shoulder", "wing"), "Z", 9.0, 1),
-    (("forearm", "elbow"), "Y", 7.0, 2),
-    (("upleg", "thigh", "hip", "leg"), "X", 6.0, 1),
-    (("tail",), "Y", 8.0, 1),
+    # matched in order — the narrower keys must come before the looser ones that
+    # would otherwise swallow them (finger before hand, toe before foot,
+    # forearm before arm, ankle/foot before leg).
+    (("finger", "thumb", "digit", "toe"), "X", 40.0, 3),
+    (("ankle", "foot", "hand", "wrist", "paw", "ball"), "X", 35.0, 3),
+    (("forearm", "elbow", "calf", "shin", "knee", "lower", "horselink"), "Y", 25.0, 2),
+    (("upperarm", "arm", "shoulder", "clavicle", "wing", "upleg", "thigh"), "Z", 18.0, 1),
+    (("tail",), "Y", 30.0, 2),
+    (("neck", "head", "jaw", "ear"), "X", 12.0, 2),
+    (("spine", "chest", "torso", "body", "pelvis"), "X", 8.0, 1),
 ]
 ical = ("X", "Y", "Z")
 
@@ -167,10 +199,36 @@ ical = ("X", "Y", "Z")
 # unmatched gets a default, and every bone additionally gets a small out-of-phase
 # wobble on its other two axes. Frame 0 is still exactly the rest pose (every
 # curve is a sine starting at 0), which is what `ref_idx = 0` reads.
-DEFAULT_AMP = 6.0
-WOBBLE_AMP = 3.0
+# Reached by every joint the table does not match — which on an Auto Rig
+# quadruped is HALF THE RIG, because the anonymous `extra_NN` chains match none
+# of the keys above (the semantic renaming happens later, in
+# pipeline.build_joint_name_map, and never reaches this table). So this value,
+# not the matched ones, is what sets the cloud's mean.
+DEFAULT_AMP = 12.0
+# Out-of-phase motion on a joint's other two axes, as a fraction of its primary
+# amplitude rather than a flat few degrees: it is what stops the cloud from being
+# a single one-dimensional arc per joint, so it has to scale with the joint.
+WOBBLE_FRACTION = 0.35
+
+# The ROOT is deliberately left at rest, to match upstream's own references:
+# Leopard-Idle holds its root at EXACTLY 0 deg for all 201 frames, where ours
+# swung it 6 deg ("hip" matched the leg keys, and Hips is a hip).
+#
+# Honest about what this bought: nothing measurable. Our captures deviate the
+# root 20 deg against upstream's 7.6, and holding the reference root still did
+# not move that number (20.09 -> 20.42 deg). It is kept only because agreeing
+# with the known-good references costs nothing and removes one difference from
+# the list when the root gap is chased properly.
+#
+# It does NOT lock the root out of the capture the way the static mask locks a
+# limb: upstream's output root still moves 7.6 deg from a 0 deg reference, because
+# global orientation is predicted separately from the per-joint rotations.
+roots = [pb for pb in arm.pose.bones if pb.parent is None]
+
 tracks = []
 for index, pb in enumerate(arm.pose.bones):
+    if pb in roots:
+        continue
     low = pb.name.lower()
     axis, amp, cyc = "X", DEFAULT_AMP, 1
     for keys, want_axis, want_amp, want_cyc in WANT:
@@ -180,8 +238,9 @@ for index, pb in enumerate(arm.pose.bones):
     side = -1.0 if ("right" in low or low.endswith("_r") or ".r" in low) else 1.0
     # A per-bone phase keeps the pose cloud varied rather than every joint moving
     # in lockstep, which is what the memory bank and the scale cache sample from.
-    tracks.append((pb, axis, amp * side, cyc, 0.37 * index))
-print(f"MOCAP_INFO animating {len(tracks)} of {len(arm.pose.bones)} bones")
+    tracks.append((pb, axis, amp * AMP_SCALE * side, cyc, 0.37 * index))
+print(f"MOCAP_INFO animating {len(tracks)} of {len(arm.pose.bones)} bones "
+      f"(root{'s' if len(roots) != 1 else ''} held at rest), amp x{AMP_SCALE}")
 
 for pb in arm.pose.bones:
     pb.rotation_mode = "XYZ"
@@ -194,7 +253,7 @@ for f in range(FRAMES):
             if a == axis:
                 angles.append(math.radians(amp) * math.sin(2 * math.pi * cyc * t))
             else:
-                angles.append(math.radians(WOBBLE_AMP)
+                angles.append(math.radians(abs(amp) * WOBBLE_FRACTION)
                               * math.sin(2 * math.pi * (cyc + 1) * t + phase)
                               * math.sin(math.pi * t))
         pb.rotation_euler = tuple(angles)
@@ -205,7 +264,19 @@ bpy.context.scene.frame_end = FRAMES - 1
 
 export(os.path.join(OUTDIR, f"{RIG}-Idle.fbx"), True)
 
+# Parents ride along with the names. The joint-name embedding is conditioning
+# (see build_joint_name_map), and naming an anonymous joint needs to know what it
+# hangs off — which only the hierarchy can say. Written from the same
+# `arm.data.bones` list as `bones`, so the two are guaranteed to share an order;
+# deriving parents later from rest.bvh would be guessing that the extractor kept it.
+_bone_list = list(arm.data.bones)
+_bone_index = {b.name: i for i, b in enumerate(_bone_list)}
 with open(os.path.join(OUTDIR, "_bones.json"), "w", encoding="utf-8") as fh:
-    json.dump({"rig": RIG, "bones": [b.name for b in arm.data.bones]}, fh, indent=1)
+    json.dump({
+        "rig": RIG,
+        "bones": [b.name for b in _bone_list],
+        "parents": [_bone_index.get(b.parent.name, -1) if b.parent else -1
+                    for b in _bone_list],
+    }, fh, indent=1)
 
 print("MOCAP_DONE")

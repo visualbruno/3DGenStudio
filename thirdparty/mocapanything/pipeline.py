@@ -178,7 +178,7 @@ def ensure_patches() -> list[str]:
 #   3: reference sequence moves EVERY bone (a bone that never moves is locked at
 #      inference, and the old keyword table left every foot/toe/paw static), and
 #      textures are written out so the reference render is not magenta
-BAKE_VERSION = 3
+BAKE_VERSION = 8
 
 # build_scale_cache.py's default output name, which the loader and
 # species_fps_memory both expect verbatim.
@@ -340,7 +340,10 @@ def _pick(names, keys, exclude=()):
     return None
 
 
-def compute_front(rest_bvh: Path) -> list[float]:
+# Every joint's world position in the rest pose, with its name list. A BVH stores
+# only offsets relative to the parent, so anything reasoning about the rig's
+# SHAPE has to accumulate them up the chain first.
+def _rest_positions(rest_bvh: Path):
     sys.path.insert(0, str(P.REPO_DIR))
     import numpy as np
     from utils import bvh as BVH  # type: ignore
@@ -356,7 +359,13 @@ def compute_front(rest_bvh: Path) -> list[float]:
             c = par[c]
         return p
 
-    pos = np.array([world(i) for i in range(len(names))])
+    return np.array([world(i) for i in range(len(names))]), names
+
+
+def compute_front(rest_bvh: Path) -> list[float]:
+    import numpy as np
+
+    pos, names = _rest_positions(rest_bvh)
 
     toe, foot = _pick(names, _TOE), _pick(names, _FOOT, exclude=_TOE)
     head, root = _pick(names, _HEAD), _pick(names, _ROOT)
@@ -375,6 +384,44 @@ def compute_front(rest_bvh: Path) -> list[float]:
     if n < 1e-6:
         return []
     return [float(x) for x in (vec / n)]
+
+
+# ---------------------------------------------------------- reference view --
+# Which of the twelve yaw variants the reference IMAGE is rendered from.
+#
+# This is conditioning, not presentation, and on an animal it is the difference
+# between a usable capture and a broken one. The demo app ships an entire second
+# species mode for it — "zoo (animal, side)", whose only content is
+# force_view="y90" plus a matching ref_images_y90/ set — and the Leapord that
+# captures a side-on tiger video correctly is conditioned on its y90 image.
+#
+# The reason is what survives preprocessing. preprocess/image_process.load_image
+# crops the render to the subject's bounding box and pads it square, so framing,
+# distance and centring are normalised away and cannot matter. The SILHOUETTE is
+# all that reaches DINOv2 — and a quadruped seen head-on is a narrow column that
+# says nothing about limb length, body length or gait, while its side view says
+# all three. A biped is the other way round: front shows both arms and both legs,
+# where y90 hides half of each behind the other.
+#
+# Decided from the aligned rest pose, which by construction faces +Z, so "deeper
+# than it is wide" is exactly "standing on four legs".
+_SIDE_VIEW_RATIO = 1.25
+
+
+def reference_view(rest_bvh: Path) -> tuple[str, str]:
+    """Return (view, why) for the yaw the reference image should be rendered from."""
+    override = os.environ.get("MOCAP_REF_VIEW", "").strip()
+    if override:
+        return override, f"forced by MOCAP_REF_VIEW={override}"
+
+    pos, _ = _rest_positions(rest_bvh)
+    width = float(pos[:, 0].max() - pos[:, 0].min())     # across the shoulders
+    depth = float(pos[:, 2].max() - pos[:, 2].min())     # along the facing
+    if depth > _SIDE_VIEW_RATIO * max(width, 1e-6):
+        return "y90", (f"{depth:.2f} deep front-to-back vs {width:.2f} wide — "
+                       "a four-legged silhouette, so the side view")
+    return "y0", (f"{width:.2f} wide vs {depth:.2f} front-to-back — "
+                  "an upright silhouette, so the front view")
 
 
 # ------------------------------------------------------- motion root anchor --
@@ -489,26 +536,281 @@ def _ordinal_words(digits: str) -> str:
     return digits.lstrip("0") or "Zero"
 
 
-def build_joint_name_map(rig: str, names: list[str]) -> dict:
+# Joints Auto Rig could not name come back as "extra_NN", and on a quadruped that
+# is most of the rig — the tiger this was measured on has 30 of 64. The ordinal
+# pass above turns them into "extra Sixteen", which is UNIQUE but empty, and an
+# empty name is a joint the model cannot place: the checkpoint runs with
+# use_joint_embed and a 768-d joint embedding, so the name IS the joint's
+# identity. Worse, on a quadruped the anonymous ones are the digits — exactly the
+# joints whose motion goes visibly wrong.
+#
+# The hierarchy already knows what they are. A two-joint chain hanging off an
+# ankle is a toe, whatever the rigger called it, so naming an anonymous joint
+# after the nearest ancestor that HAS a name recovers the semantics for free.
+# Only the rig's T5 text changes — the bone names themselves are untouched, so
+# the returned BVH still carries the user's own names and the mapping stays the
+# identity.
+# The checkpoint's joint-name embedding is not free-form text: it was trained on
+# ONE naming scheme, and anything else is out of distribution.
+#
+# Measured on upstream's own Leapord rig baked through this pipeline. Same 41
+# joints in the same order, identical `joints_distance` and `joint_relation` (max
+# abs diff 0.000000) and the identical static mask — the ONLY difference from the
+# curated entry was the names, and it cost more than half the capture:
+#
+#                   name for Bip01_R_Foot        captured R_Foot motion
+#   upstream        "quadruped leg right 04"          96 deg
+#   ours, before    "Right Foot"                      28 deg
+#
+# Per-joint T5 cosine between the two name sets was 0.488 mean / 0.264 min, with
+# all 41 joints below 0.9. The model could not tell which joint was which, so it
+# under-drove the feet and parked the motion it could not place in the tail.
+#
+# The scheme, read off all 73 curated species in the demo's zoo1030 dictionary:
+#
+#     <family> <part> [<side>] [<NN>]
+#
+#   family : quadruped | biped | flyer | insect | water
+#   part   : hips pelvis spine back tail neck head jaw mouth eye ear
+#            leg foot toe                      (the HIND limb; a biped's legs)
+#            shoulder arm forearm hand finger  (the FORE limb; a biped's arms)
+#            wing antenna claw
+#   side   : right | left
+#   NN     : 01, 02, ... zero-padded, counted down the chain away from the body
+#
+# A quadruped's hind chain collapses to "leg <side> NN" whatever the rigger
+# called the joints (thigh, calf, HorseLink, foot -> leg right 01..04), while the
+# fore chain keeps shoulder / arm / hand / finger. That asymmetry is the
+# convention, not an accident of one rig.
+#
+# MOCAP_JOINT_NAMES=ordinal restores the old free-form naming, for A/B.
+
+_SIDE_RE = {
+    "right": re.compile(r"(?:^|[_.\- ])(?:r|right)(?:[_.\- 0-9]|$)", re.I),
+    "left": re.compile(r"(?:^|[_.\- ])(?:l|left)(?:[_.\- 0-9]|$)", re.I),
+}
+
+# Ordered: the narrower key must win over the looser one it sits inside
+# (finger before hand, forearm before arm, toe before foot, foot before leg).
+_PART_RULES = [
+    (("finger", "thumb", "digit"), "finger"),
+    (("toe", "ball"), "toe"),
+    (("hand", "wrist", "palm", "paw"), "hand"),
+    (("foot", "ankle", "hock", "horselink"), "foot"),
+    (("forearm", "lowerarm", "elbow"), "forearm"),
+    (("upperarm", "humerus", "arm"), "arm"),
+    (("shoulder", "clavicle", "scapula"), "shoulder"),
+    (("thigh", "upleg", "femur"), "thigh"),
+    (("calf", "shin", "tibia", "knee"), "calf"),
+    (("wing",), "wing"),
+    (("antenna",), "antenna"),
+    (("claw",), "claw"),
+    (("tail",), "tail"),
+    (("neck",), "neck"),
+    (("head", "skull"), "head"),
+    (("jaw",), "jaw"),
+    (("mouth", "tongue", "muzzle", "snout"), "mouth"),
+    # Before "ear", which is a substring of "beard" — that mismatch named a
+    # leopard's whiskers "quadruped ear left".
+    (("beard", "whisker", "moustache"), "beard"),
+    (("ear",), "ear"),
+    (("eye", "brow"), "eye"),
+    # Before the torso words: "back" is a substring of Auto Rig's `Back_Leg_*`,
+    # and before "pelvis" for its `Back_Leg_Pelvis_*`, which is a hip joint of
+    # the hind limb rather than the body's pelvis. Both mislabelled a whole hind
+    # leg as spine, which cost the legs their motion twice over — once for the
+    # wrong name, once for stealing the spine's numbering.
+    (("leg",), "leg"),
+    (("spine", "chest", "torso", "abdomen", "back", "body"), "spine"),
+    (("pelvis",), "pelvis"),
+    (("hips", "hip", "root"), "hips"),
+]
+
+# Which parts are numbered NN down their chain; the rest stand alone.
+_NUMBERED = {"spine", "tail", "neck", "leg", "arm", "finger", "toe", "wing",
+             "antenna", "back", "claw"}
+# Parts that carry a side.
+_SIDED = {"leg", "foot", "toe", "arm", "forearm", "hand", "finger", "shoulder",
+          "thigh", "calf", "wing", "claw", "ear", "eye", "antenna", "beard"}
+# A limb joint's part depends on which end of the animal it is on. The hind chain
+# collapses onto "leg"; the fore chain keeps shoulder / arm / hand / finger.
+_HIND = {"thigh": "leg", "calf": "leg", "leg": "leg", "foot": "leg",
+         "shoulder": "leg", "forearm": "leg", "hand": "foot", "finger": "toe",
+         "toe": "toe"}
+_FORE = {"thigh": "arm", "calf": "arm", "leg": "arm", "foot": "hand",
+         "shoulder": "shoulder", "forearm": "arm", "hand": "hand",
+         "finger": "finger", "toe": "finger"}
+# Parts whose meaning is end-dependent, so they have to be resolved through
+# _HIND / _FORE rather than taken at face value.
+_LIMB_PARTS = set(_HIND) | set(_FORE)
+
+
+def _side_of(name: str) -> str | None:
+    for side, rx in _SIDE_RE.items():
+        if rx.search(name):
+            return side
+    return None
+
+
+def _part_of(name: str) -> str | None:
+    low = name.lower()
+    for keys, part in _PART_RULES:
+        if any(k in low for k in keys):
+            return part
+    return None
+
+
+def _family_of(names: list[str], positions: dict | None) -> str:
+    """quadruped / biped / flyer / insect, from the rig's vocabulary and shape."""
+    low = " ".join(names).lower()
+    if "wing" in low:
+        return "flyer"
+    if "antenna" in low or "mandible" in low:
+        return "insect"
+    if not positions:
+        return "quadruped"
+    xs = [p[0] for p in positions.values()]
+    zs = [p[2] for p in positions.values()]
+    width, depth = max(xs) - min(xs), max(zs) - min(zs)
+    # The same test as reference_view, for the same reason: after alignment the
+    # rig faces +Z, so "longer along its facing than it is wide" is four legs.
+    return "quadruped" if depth > _SIDE_VIEW_RATIO * max(width, 1e-6) else "biped"
+
+
+def build_joint_name_map(rig: str, names: list[str], parents: list[int] | None = None,
+                         positions: dict | None = None) -> dict:
     sys.path.insert(0, str(P.REPO_DIR))
     from preprocess.build_species_info import auto_clean  # type: ignore
 
-    out = {}
-    for n in names:
-        base = auto_clean(n)
-        m = re.search(r"(\d+)$", n)
-        out[n] = f"{base} {_ordinal_words(m.group(1))}".strip() if m else base
+    if os.environ.get("MOCAP_JOINT_NAMES", "curated") == "ordinal":
+        out = {}
+        for n in names:
+            base = auto_clean(n)
+            m = re.search(r"(\d+)$", n)
+            out[n] = f"{base} {_ordinal_words(m.group(1))}".strip() if m else base
+        return _dedupe(rig, names, out)
 
+    family = _family_of(names, positions)
+    par = parents if parents and len(parents) == len(names) else [-1] * len(names)
+    hips_z = positions.get(names[0], (0.0, 0.0, 0.0))[2] if positions and names else None
+
+    def is_fore(index: int) -> bool:
+        """Is this limb a FRONT leg? Judged on the limb's root, not the joint —
+        a paw is far from the hips either way, but the shoulder it hangs off is
+        not. Without positions everything reads hind, which is what a biped's
+        legs want and leaves its arms to the name keywords."""
+        chain, i = [], index
+        while 0 <= i < len(names) and len(chain) <= len(names):
+            chain.append(i)
+            p = par[i]
+            if p < 0 or _part_of(names[p]) not in _LIMB_PARTS:
+                break
+            i = p
+        root = names[chain[-1]].lower()
+        if "front" in root or "fore" in root:
+            return True
+        if "back" in root or "hind" in root or "rear" in root:
+            return False
+        if not positions or hips_z is None:
+            return False
+        return positions.get(names[chain[-1]], (0.0, 0.0, hips_z))[2] > hips_z
+
+    # Pass 1: resolve every joint to a part and a side.
+    parts: list[str | None] = []
+    sides: list[str | None] = []
+    for index, name in enumerate(names):
+        part = _part_of(name)
+        if part in _LIMB_PARTS:
+            part = (_FORE if is_fore(index) else _HIND).get(part, part)
+        side = _side_of(name) if part in _SIDED else None
+        # A rig that names neither side (Auto Rig's `extra_*`, some Truebones)
+        # still has two of everything — the sign of X says which, and after
+        # alignment +X is the character's own left.
+        if part in _SIDED and side is None and positions:
+            side = "left" if positions.get(name, (0.0, 0.0, 0.0))[0] > 0 else "right"
+        parts.append(part)
+        sides.append(side)
+
+    # Pass 2: number each (part, side) group in joint order, which is the order
+    # the chain runs away from the body.
+    counters: dict[tuple, int] = {}
+    out: dict[str, str] = {}
+    for index, name in enumerate(names):
+        part, side = parts[index], sides[index]
+        if part is None:
+            out[name] = auto_clean(name)
+            continue
+        bits = [family, part]
+        if side:
+            bits.append(side)
+        if part in _NUMBERED:
+            key = (part, side)
+            counters[key] = counters.get(key, 0) + 1
+            bits.append(f"{counters[key]:02d}")
+        out[name] = " ".join(bits)
+
+    # Anonymous joints ("extra_NN") match no part at all. Name them after the
+    # chain of the nearest named ancestor, which on a quadruped makes them the
+    # digits they nearly always are.
+    anon = [p is None for p in parts]
+    if any(anon) and parents and len(parents) == len(names):
+        chain_index = {}
+        for i in range(len(names)):
+            if not (anon[i] and 0 <= par[i] < len(names) and not anon[par[i]]):
+                continue
+            anchor = parts[par[i]]
+            digit = ("toe" if anchor in ("foot", "leg", "toe")
+                     else "finger" if anchor in ("hand", "arm", "finger") else "back")
+            key = (digit, sides[par[i]])
+            counters[key] = counters.get(key, 0) + 1
+            chain_index[i] = (digit, sides[par[i]], counters[key])
+
+        for i, name in enumerate(names):
+            if not anon[i]:
+                continue
+            run, c = [], i
+            while 0 <= c < len(names) and anon[c] and len(run) <= len(names):
+                run.append(c)
+                c = par[c]
+            if not 0 <= c < len(names):
+                continue                       # anonymous all the way to the root
+            found = chain_index.get(run[-1])
+            if not found:
+                continue
+            digit, side, k = found
+            bits = [family, digit]
+            if side:
+                bits.append(side)
+            bits.append(f"{k:02d}")
+            if len(run) > 1:                   # further down the same chain
+                bits.append(f"{len(run):02d}")
+            out[name] = " ".join(bits)
+
+    return _dedupe(rig, names, out)
+
+
+def _dedupe(rig: str, names: list[str], out: dict) -> dict:
     # Whatever the naming scheme, no two joints may end up with the same name.
     # Falling back to the joint's index is ugly to read but it is a name, which
     # is more than a duplicate is.
-    seen: dict[str, str] = {}
-    for index, n in enumerate(names):
-        label = out[n]
-        if label and label not in seen:
-            seen[label] = n
+    # Zero-padded and sequential per label rather than "Index 7": a collision
+    # should still read as a name from the same scheme, not fall out of it on the
+    # last step. Two `quadruped hand left` become that one and `... left 02`.
+    used: set[str] = set()
+    repeats: dict[str, int] = {}
+    for n in names:
+        label = out[n] or "other"
+        if label not in used:
+            used.add(label)
+            out[n] = label
             continue
-        out[n] = f"{label or 'Joint'} Index {index}".strip()
+        while True:
+            repeats[label] = repeats.get(label, 1) + 1
+            candidate = f"{label} {repeats[label]:02d}"
+            if candidate not in used:
+                break
+        used.add(candidate)
+        out[n] = candidate
     return {rig: out}
 
 
@@ -590,6 +892,13 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
         align_cmd += ["--ref_dir", str(root / "align_ref")]
     _run(align_cmd, cwd=P.REPO_DIR, env=env, label="align_character_face_zplus")
 
+    # 3b. which yaw the reference IMAGE comes from (see reference_view). Has to
+    #     wait for alignment: the test is "deeper than wide", which only means
+    #     anything once the rig is known to face +Z.
+    aligned_rest = zoo_root / "characters_face_zplus" / rig / "rest.bvh"
+    ref_view, ref_why = reference_view(aligned_rest)
+    report("view", 0.35, f"Reference view {ref_view}: {ref_why}.")
+
     # 4. yaw variants + per-BVH pose npz. Only y0 is ever read back, but the
     #    rotation stage is what writes zoo/bvh at all.
     report("pose", 0.4, "Building reference poses…")
@@ -603,9 +912,17 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
 
     # 5. skeleton topology + joint-name embeddings (with ordinals spelled out)
     report("species", 0.5, "Encoding the skeleton…")
-    bones = json.loads((data_root / rig / "_bones.json").read_text(encoding="utf-8"))["bones"]
+    bone_info = json.loads((data_root / rig / "_bones.json").read_text(encoding="utf-8"))
+    bones = bone_info["bones"]
+    # Rest positions, by NAME rather than by index: the naming pass needs them to
+    # tell a front leg from a back one and a left from a right, and joining on the
+    # name avoids assuming that rest.bvh kept `_bones.json`'s joint order.
+    rest_pos, rest_names = _rest_positions(aligned_rest)
+    positions = {nm: tuple(float(v) for v in rest_pos[i]) for i, nm in enumerate(rest_names)}
     name_map = root / "joint_name_map.json"
-    name_map.write_text(json.dumps(build_joint_name_map(rig, bones), indent=1), encoding="utf-8")
+    name_map.write_text(
+        json.dumps(build_joint_name_map(rig, bones, bone_info.get("parents"), positions), indent=1),
+        encoding="utf-8")
     _run([py, "preprocess/build_species_info.py", "--dataset_root", str(zoo_root),
           "--joint_name_map", str(name_map)], cwd=P.REPO_DIR, env=env, label="build_species_info")
     _run([py, "preprocess/build_scale_cache.py"], cwd=P.REPO_DIR, env=env, label="build_scale_cache")
@@ -641,11 +958,15 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
             first = str(exc).splitlines()[0][:140]
             report("memory", 0.58, f"No pose memory built ({first}) — using the reference frame.")
 
-    # 6. render one view + embed it. Only y0 is needed, so we render one of the
-    #    twelve. The stage's own mp4 encode uses `-pattern_type glob`, which
-    #    Windows ffmpeg builds do not implement — we do not need the mp4, so its
-    #    failure is tolerated and the PNGs are used directly.
-    report("render", 0.6, "Rendering the reference view…")
+    # 6. render the reference view + embed it. Inference reads ONE view, but y0
+    #    is rendered alongside a side pick as well: the two together cost a few
+    #    seconds of Blender against a 2-3 minute bake, and having both on disk is
+    #    what lets the view be reconsidered (or A/B'd via MOCAP_REF_VIEW) without
+    #    re-baking the rig. The stage's own mp4 encode uses `-pattern_type glob`,
+    #    which Windows ffmpeg builds do not implement — we do not need the mp4,
+    #    so its failure is tolerated and the PNGs are used directly.
+    render_views = [ref_view] + [v for v in ("y0",) if v != ref_view]
+    report("render", 0.6, f"Rendering the reference view ({', '.join(render_views)})…")
     try:
         _run([py, "preprocess/render_bvh_videos_fast.py", "--zoo-root", str(zoo_root),
               # --character-root defaults to characters_fix_facezplus — the mesh
@@ -665,7 +986,8 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
               # bake producing them. A small margin over 1 in case a stage ever
               # indexes a few frames in.
               "--max-frames", "8",
-              "--blender", blender_exe_for_subtools(), "--views", "y0"],
+              "--blender", blender_exe_for_subtools(),
+              "--views", ",".join(render_views)],
              cwd=P.REPO_DIR, env=env, label="render_bvh_videos_fast")
     except RuntimeError as exc:
         if "glob" not in str(exc) and "No image files" not in str(exc):
@@ -690,8 +1012,11 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
     # 7. resolve the reference sequence inference will actually read
     ref_seq = None
     train_root = zoo_root / "npz_train_image_only"
+    # The chosen view first; the rest are a fallback for a render that failed on
+    # only one of them, which is better than failing the whole bake.
+    view_order = render_views + [v for v in ("y0", "y90", "y30") if v not in render_views]
     for motion_dir in sorted(train_root.glob("*")):
-        for view in ("y0", "y90", "y30"):
+        for view in view_order:
             if (motion_dir / f"{view}.npz").exists() and \
                (zoo_root / "bvh_pose" / motion_dir.name / f"{view}.npz").exists():
                 ref_seq = f"{motion_dir.name}/{view}"
@@ -705,6 +1030,11 @@ def prepare(glb_bytes: bytes, report, rig_name: str = "rig", rig_key: str = "") 
         "rig_id": rig_id,
         "rig": rig,
         "ref_seq": ref_seq,
+        # Kept apart from ref_seq (which is "<motion>/<view>") so the panel and a
+        # later front/side toggle can read the decision without parsing it back out.
+        "ref_view": ref_seq.split("/")[-1],
+        "ref_views": render_views,
+        "ref_view_why": ref_why,
         "joints": len(bones),
         "bones": bones,
         "front": front,
