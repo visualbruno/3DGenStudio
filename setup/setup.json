@@ -692,7 +692,8 @@
 				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
-				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] }
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "260",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
@@ -707,7 +708,8 @@
 				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
 				{ "Node": "261",  "Input": "texture_size",  "Name": "Texture Size",   "Type": "Number" },
-				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] }
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "262",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
@@ -852,7 +854,8 @@
 				{ "Node": "4",  "Input": "target_face_num",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "10",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "14",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
-				{ "Node": "2",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] }
+				{ "Node": "2",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "16",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "9", "Name": "Save Mesh", "Type": "Mesh" }

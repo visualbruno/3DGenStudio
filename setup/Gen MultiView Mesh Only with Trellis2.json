@@ -77,7 +77,7 @@
     "inputs": {
       "reorient_vertices": "90 degrees",
       "mesh": [
-        "5",
+        "17",
         0
       ]
     },
@@ -296,6 +296,35 @@
     "class_type": "Trellis2DecodeLatents",
     "_meta": {
       "title": "Trellis2 - Decode Latents"
+    }
+  },
+  "16": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "17": {
+    "inputs": {
+      "switch": [
+        "16",
+        0
+      ],
+      "on_false": [
+        "4",
+        0
+      ],
+      "on_true": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
     }
   }
 }

@@ -312,7 +312,7 @@
       "inpainting": "telea",
       "reorient_vertices": "90 degrees",
       "mesh": [
-        "259",
+        "263",
         0
       ],
       "bvh": [
@@ -323,6 +323,35 @@
     "class_type": "Trellis2UnWrapAndRasterizer",
     "_meta": {
       "title": "Trellis2 - UV Unwrap and Rasterize"
+    }
+  },
+  "262": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "263": {
+    "inputs": {
+      "switch": [
+        "262",
+        0
+      ],
+      "on_false": [
+        "218",
+        0
+      ],
+      "on_true": [
+        "259",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
     }
   }
 }

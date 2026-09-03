@@ -59,7 +59,7 @@
     "inputs": {
       "reorient_vertices": "90 degrees",
       "mesh": [
-        "259",
+        "261",
         0
       ]
     },
@@ -272,6 +272,35 @@
     "class_type": "Trellis2FillHolesWithMeshlib",
     "_meta": {
       "title": "Trellis2 - Fill Holes with Meshlib"
+    }
+  },
+  "260": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "261": {
+    "inputs": {
+      "switch": [
+        "260",
+        0
+      ],
+      "on_false": [
+        "218",
+        0
+      ],
+      "on_true": [
+        "259",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
     }
   }
 }
