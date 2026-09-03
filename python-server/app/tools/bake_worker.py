@@ -317,7 +317,7 @@ def measure_coverage(low, outdir, written: dict, resolution: int) -> dict | None
     """
     try:
         import numpy as np
-        from PIL import Image, ImageDraw
+        from PIL import Image
     except Exception as exc:  # noqa: BLE001
         print(f"Coverage measurement unavailable ({exc}).", flush=True)
         return None
@@ -332,30 +332,10 @@ def measure_coverage(low, outdir, written: dict, resolution: int) -> dict | None
             return None
         baked = np.asarray(image.getchannel("A"), dtype=np.uint8) > 127
 
-        mesh = low.data
-        # Blender bakes into the ACTIVE RENDER uv set, which is not necessarily the
-        # one selected in the UI — measuring the other one would be measuring a
-        # layout the bake never wrote to.
-        uv_layer = next((layer for layer in mesh.uv_layers if layer.active_render), mesh.uv_layers.active)
-        if uv_layer is None:
-            return None
-        # Removed in newer Blender, where the cache is maintained automatically.
-        if hasattr(mesh, "calc_loop_triangles"):
-            mesh.calc_loop_triangles()
-
         height, width = baked.shape
-        layout = Image.new("1", (width, height), 0)
-        draw = ImageDraw.Draw(layout)
-        data = uv_layer.data
-        # Blender's V runs bottom-up and its PNG writer flips on save, so the saved
-        # image's top row is V=1 — hence (1 - v) here. Getting this backwards would
-        # measure the layout against a mirror image of itself and report nonsense.
-        for triangle in mesh.loop_triangles:
-            draw.polygon([
-                (data[loop].uv[0] * width, (1.0 - data[loop].uv[1]) * height)
-                for loop in triangle.loops
-            ], fill=1)
-        layout_mask = np.asarray(layout, dtype=bool)
+        layout_mask = rasterize_uv_layout(low, width, height)
+        if layout_mask is None:
+            return None
 
         layout_texels = int(layout_mask.sum())
         if not layout_texels:
@@ -369,6 +349,148 @@ def measure_coverage(low, outdir, written: dict, resolution: int) -> dict | None
         }
     except Exception as exc:  # noqa: BLE001
         print(f"Coverage measurement failed ({exc}).", flush=True)
+        return None
+
+
+def rasterize_uv_layout(low, width: int, height: int):
+    """Boolean (height, width) mask of the texels the low-poly's UVs cover.
+
+    None when it cannot be built. This is the authoritative "inside the layout"
+    test — the texels the shader can actually sample — used both to score bake
+    coverage and to decide which texels the gutter fill may overwrite.
+    """
+    try:
+        import numpy as np
+        from PIL import Image, ImageDraw
+    except Exception:  # noqa: BLE001
+        return None
+
+    mesh = low.data
+    # Blender bakes into the ACTIVE RENDER uv set, which is not necessarily the
+    # one selected in the UI — rasterising the other one would describe a layout
+    # the bake never wrote to.
+    uv_layer = next((layer for layer in mesh.uv_layers if layer.active_render), mesh.uv_layers.active)
+    if uv_layer is None:
+        return None
+    # Removed in newer Blender, where the cache is maintained automatically.
+    if hasattr(mesh, "calc_loop_triangles"):
+        mesh.calc_loop_triangles()
+
+    layout = Image.new("1", (width, height), 0)
+    draw = ImageDraw.Draw(layout)
+    data = uv_layer.data
+    # Blender's V runs bottom-up and its PNG writer flips on save, so the saved
+    # image's top row is V=1 — hence (1 - v) here. Getting this backwards would
+    # compare the layout against a mirror image of itself and report nonsense.
+    for triangle in mesh.loop_triangles:
+        draw.polygon([
+            (data[loop].uv[0] * width, (1.0 - data[loop].uv[1]) * height)
+            for loop in triangle.loops
+        ], fill=1)
+    return np.asarray(layout, dtype=bool)
+
+
+def _erode(mask, iterations: int = 1):
+    """Shrink a boolean mask by `iterations` texels (4-neighbour).
+
+    Unlike `scipy.ndimage.binary_erosion`'s default, the area outside the image
+    counts as SET, so texels on the image border are not eroded. That is what the
+    gutter fill wants: a border texel is clamp-sampled rather than blended with
+    anything outside, so it is a perfectly good colour source and dropping it
+    could empty the source mask for an island that only touches the edge.
+    """
+    out = mask
+    for _ in range(max(iterations, 0)):
+        m = out
+        out = m.copy()
+        out[1:, :] &= m[:-1, :]
+        out[:-1, :] &= m[1:, :]
+        out[:, 1:] &= m[:, :-1]
+        out[:, :-1] &= m[:, 1:]
+    return out
+
+
+def fill_gutters(low, outdir, written: dict):
+    """Flood every baked map's empty gutter with the nearest in-layout colour.
+
+    Returns {map_name: fraction_of_image_filled}, or None when it could not run
+    — which is never fatal, the maps are still the maps.
+
+    **Why the bake margin is not enough.** `bake.margin` dilates the islands by a
+    fixed number of texels, so it can only protect the mip levels whose footprint
+    is smaller than that. Every coarser level averages the gutter into the island
+    edge, and a gutter of pure black paints a dark line along each UV seam that
+    shows up *as the viewer zooms out* — because zooming out is exactly what
+    selects the coarser mips. Measured on the reported head bake (2048px; the
+    default margin of 8 yielded 2.8px median and 9px maximum of real dilation):
+    0-1% of island-edge texels darkened at mips 0-2, then 13% at mip 3, 44% at
+    mip 4, 60% at mip 5. Raising the margin only moves the level it starts at.
+
+    Filling the whole gutter makes every mip level safe at any resolution, since
+    there is no black left to average in. Texels inside the UV layout are never
+    written, so the bake this runs after is still the bake that was measured.
+
+    Must run AFTER pack_orm: that reads the bake's alpha and tests colour for
+    exactly zero to decide a channel is empty, and both of those stop meaning
+    what they mean once the gutter carries colour.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+        from scipy.ndimage import distance_transform_edt
+    except Exception as exc:  # noqa: BLE001
+        print(f"Gutter fill unavailable ({exc}); UV seams may darken at distance.", flush=True)
+        return None
+
+    first = next((written[name] for name in BAKE_ORDER if name in written), None)
+    if not first:
+        return None
+    try:
+        with Image.open(outdir / first) as probe:
+            width, height = probe.size
+        layout = rasterize_uv_layout(low, width, height)
+        if layout is None or not layout.any():
+            return None
+
+        # Seed the flood from strictly *inside* the layout: the outermost texel
+        # ring is only partially covered, so it is already blended toward the
+        # gutter and would seed the fill with the very darkness being removed.
+        source = _erode(layout.copy(), 1)
+        # An island only one or two texels wide erodes away completely, and then
+        # its gutter would be flooded with a *neighbouring* island's colour —
+        # reintroducing the wrong-colour bleed this is here to remove. Keep those
+        # islands whole instead: a slightly blended source beats a foreign one.
+        try:
+            from scipy.ndimage import label
+            islands, _ = label(layout)
+            survived = np.unique(islands[source])
+            source = source | (layout & ~np.isin(islands, survived))
+        except Exception:  # noqa: BLE001 — labelling is a refinement, not a need
+            pass
+        if not source.any():
+            source = layout
+
+        # Exact nearest-source lookup for every texel in one pass.
+        _, (iy, ix) = distance_transform_edt(~source, return_indices=True)
+        gutter = ~layout
+
+        filled = {}
+        for name, filename in list(written.items()):
+            path = outdir / filename
+            try:
+                with Image.open(path) as image:
+                    mode = image.mode
+                    arr = np.asarray(image).copy()
+            except Exception:  # noqa: BLE001 — skip anything unreadable
+                continue
+            if arr.ndim != 3 or arr.shape[:2] != (height, width):
+                continue
+            arr[gutter] = arr[iy[gutter], ix[gutter]]
+            Image.fromarray(arr, mode=mode).save(path)
+            filled[name] = round(float(gutter.mean()), 4)
+        return filled
+    except Exception as exc:  # noqa: BLE001 — never fail a good bake over this
+        print(f"Gutter fill failed ({exc}).", flush=True)
         return None
 
 
@@ -616,6 +738,10 @@ def main() -> None:
     if orm_name:
         written["orm"] = orm_name
 
+    # After packing, for the reasons in fill_gutters' docstring.
+    emit("dilate", 0.98, "Filling UV gutters…")
+    gutter_filled = fill_gutters(low, outdir, written)
+
     emit("done", 1.0, "Bake complete.")
     stats = {
         "maps": written,
@@ -639,6 +765,9 @@ def main() -> None:
         "orm_channels": orm_channels if orm_name else [],
         # Channels whose source was a constant, not a texture — the map is flat.
         "flat_channels": flat_channels,
+        # Fraction of each map that was gutter-filled so mip-mapping cannot bleed
+        # the empty atlas into the islands. None means the fill did not run.
+        "gutter_filled": gutter_filled,
     }
     print(f"{SENTINEL}{json.dumps({'type': 'result', 'ok': True, 'stats': stats})}", flush=True)
 
