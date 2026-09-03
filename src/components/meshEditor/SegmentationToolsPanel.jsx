@@ -30,6 +30,9 @@ export default function SegmentationToolsPanel({
   onAuto,
   onExport,
   exporting,
+  exportTextured,
+  onExportTexturedChange,
+  canExportTextured,
   onClear,
   tool,
   onToolChange,
@@ -391,6 +394,15 @@ export default function SegmentationToolsPanel({
             hint="Parts smaller than this are dropped — they are decimation noise, not parts."
             value={minPartFaces} onChange={onMinPartFacesChange} disabled={running}
           />
+          {canExportTextured && (
+            <ToggleField
+              label="Keep the mesh texture"
+              hint="The parts kept their UVs, so they can share the mesh's own texture — nothing is re-baked. Off exports each part in the colour it is drawn on screen instead."
+              value={exportTextured}
+              onChange={onExportTexturedChange}
+              disabled={running || exporting}
+            />
+          )}
           <button
             type="button"
             className="mesh-editor-btn mesh-editor-btn--primary"
@@ -409,6 +421,11 @@ export default function SegmentationToolsPanel({
           <span className="mesh-editor-panel__hint">
             The mesh in the editor is not modified — the parts are exported as a
             separate GLB with one object each.
+            {canExportTextured
+              ? exportTextured
+                ? ' All of them share the one texture, so the image is stored once.'
+                : ' Each part is a flat colour — the texture is left out.'
+              : ' The parts are flat colours: this mesh has no texture to share.'}
           </span>
           <button
             type="button"

@@ -218,7 +218,7 @@ import {
   undoBrushStroke,
   writeSegmentColors
 } from '../utils/meshSegment'
-import { exportObject3D, measureUvHealth, uvsAreBroken } from '../utils/meshExport'
+import { exportObject3D, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
 import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig } from '../utils/meshRig'
 import BoneTransformGizmo from '../components/meshEditor/BoneTransformGizmo'
 import {
@@ -285,6 +285,18 @@ const DEFAULT_REPAIR_OPTIONS = {
 // history: at 10, a heavy 300k-face mesh costs on the order of 100 MB if every
 // slot is filled with one.
 const MAX_BAKE_SOURCES = 10
+
+// World-space box of an editable geometry, for comparing a bake target against a
+// bake source. No matrix to apply: the editable geometry carries the mesh's full
+// world transform baked into its positions (see loadEditableGeometryFromObject),
+// which is also the space the exported GLB lands in — so this box and a source's
+// box are directly comparable, which is the whole point of keeping them.
+function geometryWorldBox(geometry) {
+  if (!geometry) return null
+  geometry.computeBoundingBox()
+  return geometry.boundingBox ? geometry.boundingBox.clone() : null
+}
+
 // Undo depth for the animation edit dock. Each entry holds two copies of one
 // track's values (~2 KB for a 4s rotation track), so 100 is a few hundred KB.
 const ANIM_EDIT_HISTORY_LIMIT = 100
@@ -832,6 +844,11 @@ export default function MeshEditorPage() {
   const [segmentParts, setSegmentParts] = useState(8)
   const [segmentMinPartFaces, setSegmentMinPartFaces] = useState(4)
   const [segmentExporting, setSegmentExporting] = useState(false)
+  // Which look the exported parts get: the mesh's own atlas, or the preview
+  // palette. Both are legitimate outputs — the palette is what makes the split
+  // readable in a viewer — so this is a choice rather than a fallback. Ignored
+  // when the mesh has no texture to share.
+  const [segmentExportTextured, setSegmentExportTextured] = useState(true)
   // Hand corrections layered over the analysis (brush / merge / split). Held in
   // state so the label memo re-runs, but the arrays inside are mutated in place —
   // copying a per-face Int32Array on every brush dab would stall the stroke. A
@@ -4965,7 +4982,9 @@ export default function MeshEditorPage() {
           console.warn('Could not capture a textured bake snapshot; keeping geometry only:', snapshotError)
         }
       }
-      rememberBakeSource(snapshotBlob, `Before ${label}`, geometryFaceCount(geometry))
+      // The bounds go with it so the bake can tell later whether the mesh has
+      // since moved out from under this source (see measureBakeOverlap).
+      rememberBakeSource(snapshotBlob, `Before ${label}`, geometryFaceCount(geometry), geometryWorldBox(geometry))
       const { blob, stats, previewUrl } = await service(meshBlob, {
         options,
         fileName: 'mesh.glb',
@@ -7704,12 +7723,20 @@ export default function MeshEditorPage() {
   // Returns the new entry's id so callers can select it. Snapshots taken behind
   // the user's back only auto-select when nothing is chosen yet; a file the user
   // picked deliberately becomes the selection.
-  const rememberBakeSource = useCallback((blob, label, faces) => {
+  //
+  // `bounds` is the world-space box the source occupies, when the caller knows it
+  // without parsing the blob back — which the automatic snapshots do, since they
+  // are exported from geometry we are holding. It is what lets the bake refuse a
+  // source the mesh has since been moved away from before spending a mesh upload
+  // and minutes of ray casting to discover it. Sources loaded from the library
+  // have no box (parsing a 20MB GLB to get one is not worth it); the service
+  // measures those itself, having both meshes in hand anyway.
+  const rememberBakeSource = useCallback((blob, label, faces, bounds = null) => {
     const id = `snap-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     // Timestamped because a longer list makes repeats likely — three runs of the
     // same tool would otherwise be three identically-labelled entries.
     const at = new Date().toLocaleTimeString()
-    setBakeSources(prev => [{ id, label, faces, blob, at }, ...prev].slice(0, MAX_BAKE_SOURCES))
+    setBakeSources(prev => [{ id, label, faces, blob, at, bounds }, ...prev].slice(0, MAX_BAKE_SOURCES))
     setBakeSourceId(current => current || id)
     return id
   }, [])
@@ -7771,6 +7798,19 @@ export default function MeshEditorPage() {
       setError(`The UV layout is unusable — the atlas is written ${uvHealth.atlasWrites.toFixed(0)}x over, so several surfaces share the same texels and a bake would reproduce that rather than fix it. Run Auto UV to rebuild the UVs, then bake.`)
       return
     }
+    // And having a source is not the same as having one that reaches this mesh. A
+    // bake is ray casting, so a source in a different space returns blank texels
+    // wherever the two stop overlapping — silently, and against a dark model
+    // invisibly. Checked here for the snapshots (whose box we kept, so the answer
+    // is free and instant) and again on the service for every source, which is
+    // where a library pick is caught. `alignedOverlap` is what is gated on, not
+    // `overlap`: a source that merely needs re-centring is one the service will
+    // re-centre, and refusing it would refuse the common case.
+    const fit = source.bounds ? measureBakeOverlap(geometryWorldBox(geometry), source.bounds) : null
+    if (bakeSourceIsMisaligned(fit)) {
+      setError(`"${source.label}" does not overlap this mesh — it covers only ${(fit.alignedOverlap * 100).toFixed(0)}% of the mesh's smallest axis, and ${fit.sameScale ? 'lining the two up does not bring them together' : 'the two are at different scales, so they cannot be lined up automatically'}. A bake casts rays from this mesh onto the source, so it could only come back blank. Pick the source this mesh was derived from.`)
+      return
+    }
     setBakeRunning(true)
     setBakedMaps(null)
     setError('')
@@ -7795,7 +7835,25 @@ export default function MeshEditorPage() {
         decoded[name] = { blob, url: URL.createObjectURL(blob) }
       }
       setBakedMaps({ maps: decoded, stats })
-      setFeedback(`Baked ${Object.keys(decoded).length} map${Object.keys(decoded).length === 1 ? '' : 's'} at ${stats?.resolution || bakeOptions.resolution}px.`)
+
+      // Coverage is the number that separates a good bake from a ruined one, and
+      // nothing used to report it: every bake came back "success" with a full set
+      // of PNGs whatever the rays actually found. Said out loud here as well as in
+      // the panel, because the panel can be scrolled past on the way to Apply.
+      const count = Object.keys(decoded).length
+      const baked = `Baked ${count} map${count === 1 ? '' : 's'} at ${stats?.resolution || bakeOptions.resolution}px`
+      const coverage = typeof stats?.coverage === 'number' ? stats.coverage : null
+      const realigned = stats?.alignment?.mode === 'applied'
+        ? ` The source was re-centred onto the mesh by ${stats.alignment.distance?.toFixed(3)}m first.`
+        : ''
+      if (coverage !== null && coverage < BAKE_COVERAGE_COMPLETE) {
+        // Not thrown away — a partial bake is still worth looking at, and the maps
+        // stay on screen. But it is an error rather than feedback, because
+        // applying it overwrites good texture with blank texels.
+        setError(`${baked}, but the rays only reached ${(coverage * 100).toFixed(0)}% of the UV layout — the rest came back blank and will be left untouched if you apply it.${realigned} Usually the source does not match this mesh, or the cage extrusion is too small to reach detail that sticks out.`)
+      } else {
+        setFeedback(`${baked}${coverage !== null ? `, covering ${(coverage * 100).toFixed(0)}% of the UV layout` : ''}.${realigned}`)
+      }
     } catch (err) {
       console.error('Bake failed:', err)
       setError(err?.message || 'The bake failed.')
@@ -7880,7 +7938,16 @@ export default function MeshEditorPage() {
           const grown = document.createElement('canvas')
           grown.width = image.width
           grown.height = image.height
-          grown.getContext('2d').drawImage(image, 0, 0)
+          const grownContext = grown.getContext('2d')
+          // Scale the texture that is already there up underneath the bake, rather
+          // than starting from a blank canvas. The bake now leaves the texels its
+          // rays missed TRANSPARENT (see below), so whatever is under them shows
+          // through — and on a blank canvas "under them" is nothing, which puts
+          // the black holes straight back. This also makes the two branches agree:
+          // the same-size path below has always composited onto what was there.
+          grownContext.imageSmoothingQuality = 'high'
+          grownContext.drawImage(canvas, 0, 0, grown.width, grown.height)
+          grownContext.drawImage(image, 0, 0)
           const { object } = buildTexturedMeshObject({
             root: target.root,
             textureKey: target.textureKey,
@@ -7905,6 +7972,16 @@ export default function MeshEditorPage() {
 
         // Same size as the canvas, or the rebuild above did not take: draw into the
         // canvas we already have.
+        //
+        // `source-over` is doing real work here, not just holding the default.
+        // The bake writes alpha 0 for every texel whose ray found no high-poly
+        // surface, so those texels composite as no-ops and the texture already on
+        // the canvas survives underneath them. Before the bake carried that mask,
+        // a miss was opaque black and this line painted it over good texture —
+        // which is what wiped everything above the waist on the mesh that started
+        // this: an offset source meant only the legs had anything to sample, and
+        // applying the bake replaced the rest with black rather than leaving it
+        // alone. Never composite this with 'copy' or by clearing first.
         if (target === texturableMesh) {
           const context = canvas.getContext('2d')
           context.save()
@@ -8859,7 +8936,20 @@ export default function MeshEditorPage() {
       if (!parts.length) {
         throw new Error('Every part is below the minimum face count — lower it, or use fewer parts.')
       }
-      const blob = await exportPartsToGlb(parts, segmentPalette, baseName)
+      // Same rule as getExportObject's textured branch, and for the same reason:
+      // the atlas is only meaningful if the geometry still carries the UVs that
+      // index it. `isBlank` is the white placeholder a UV-only mesh starts from —
+      // sharing that would cost the parts their palette colours and gain nothing.
+      const textured = segmentExportTextured && !!(
+        texturableMesh?.textureCanvas
+        && !texturableMesh.isBlank
+        && geometry?.attributes?.uv?.count
+      )
+      const blob = await exportPartsToGlb(parts, segmentPalette, baseName, textured ? {
+        textureCanvas: texturableMesh.textureCanvas,
+        textureConfig: texturableMesh.textureConfig,
+        extraMaps: appliedMapsRef.current,
+      } : undefined)
       // The part geometries only existed to be written into the GLB.
       parts.forEach(part => part.geometry.dispose())
 
@@ -8871,14 +8961,16 @@ export default function MeshEditorPage() {
       anchor.click()
       anchor.remove()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setFeedback(`Exported ${parts.length} part${parts.length === 1 ? '' : 's'}.`)
+      setFeedback(`Exported ${parts.length} part${parts.length === 1 ? '' : 's'}`
+        + (textured ? ' with the mesh texture.' : ' with the part colours.'))
     } catch (err) {
       console.error('Failed to export the segmented parts:', err)
       setError(err?.message || 'Failed to export the segmented parts.')
     } finally {
       setSegmentExporting(false)
     }
-  }, [geometry, segmentLabels, segmentPalette, segmentMinPartFaces, segmentExporting, meshName])
+  }, [geometry, segmentLabels, segmentPalette, segmentMinPartFaces, segmentExporting, meshName,
+    texturableMesh, segmentExportTextured])
 
   // What the viewport is actually showing. Segmentation and weight painting each
   // override the PBR / Albedo / Sculpt choice for as long as they are on —
@@ -10979,6 +11071,13 @@ export default function MeshEditorPage() {
                       onAuto: handleAutoSegmentParts,
                       onExport: handleExportSegmentParts,
                       exporting: segmentExporting,
+                      exportTextured: segmentExportTextured,
+                      onExportTexturedChange: setSegmentExportTextured,
+                      canExportTextured: !!(
+                        texturableMesh?.textureCanvas
+                        && !texturableMesh.isBlank
+                        && geometry?.attributes?.uv?.count
+                      ),
                       onClear: handleClearSegmentation,
                       tool: segmentTool,
                       onToolChange: handleSegmentToolChange,

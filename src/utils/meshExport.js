@@ -602,6 +602,82 @@ export function measureUvHealth(object, { grid = 256 } = {}) {
   }
 }
 
+// ── Bake alignment ──────────────────────────────────────────────────────────
+
+// Below this, the source cannot produce a usable bake and the run is refused.
+// Kept in step with BakeOptions.require_overlap on the service, which applies the
+// same figure to the same measure — this is the client's chance to answer in a
+// millisecond instead of after a mesh upload.
+export const BAKE_OVERLAP_BROKEN = 0.5
+// Coverage at or above this counts as a complete bake. Not 1.0: detail that
+// genuinely sticks out past the cage misses a few texels on real meshes, and
+// calling that a failure would cry wolf. Well clear of the 0.46 a source offset
+// by the model's half-height produced on the bake this was written for.
+export const BAKE_COVERAGE_COMPLETE = 0.95
+// Per-axis extent agreement (as a fraction of the target's diagonal) within which
+// two boxes count as the same object at the same scale. Sized for the extremities
+// simplification shaves off, which move the box without changing the object.
+const BAKE_SCALE_TOLERANCE = 0.05
+
+// Will this high-poly source actually reach the mesh we want to bake onto?
+//
+// A bake is ray casting: rays leave the low-poly surface and sample whatever they
+// hit on the high-poly. Nothing guarantees the two are in the same space —
+// snapshots share whichever space the mesh was in when they were taken, a source
+// picked from the library arrives in raw file space, and moving the pivot in
+// between (one click in the Game-Ready panel) separates them permanently. The
+// bake then returns blank texels wherever the two stop overlapping, which against
+// a dark model is invisible until it has been applied and saved.
+//
+// Reported as the WORST axis, not the volume ratio, because the volume ratio hides
+// exactly this: a source offset along one axis still overlaps perfectly on the
+// other two, so its volume ratio stays respectable while half the mesh has nothing
+// to sample. `aligned` is that same measure after virtually re-centring the source,
+// which is what the service will really do — so a source that only needs
+// re-centring reports poor `overlap` but perfect `alignedOverlap`, and must not be
+// refused. Degenerate axes (a flat plane) are skipped rather than counted as a
+// total miss.
+export function measureBakeOverlap(targetBox, sourceBox) {
+  if (!targetBox || !sourceBox || targetBox.isEmpty() || sourceBox.isEmpty()) return null
+
+  const targetSize = targetBox.getSize(new THREE.Vector3())
+  const sourceSize = sourceBox.getSize(new THREE.Vector3())
+  const diagonal = targetSize.length()
+  const axes = ['x', 'y', 'z']
+  const scale = Math.max(targetSize.x, targetSize.y, targetSize.z)
+
+  const worstAxis = (offset) => axes.reduce((worst, axis) => {
+    const extent = targetSize[axis]
+    if (extent <= scale * 1e-4) return worst
+    const span = Math.min(targetBox.max[axis], sourceBox.max[axis] + offset[axis])
+      - Math.max(targetBox.min[axis], sourceBox.min[axis] + offset[axis])
+    return Math.min(worst, Math.max(span, 0) / extent)
+  }, 1)
+
+  const shift = targetBox.getCenter(new THREE.Vector3()).sub(sourceBox.getCenter(new THREE.Vector3()))
+  const sameScale = axes.every(axis =>
+    Math.abs(targetSize[axis] - sourceSize[axis]) <= BAKE_SCALE_TOLERANCE * Math.max(diagonal, 1e-9))
+
+  return {
+    overlap: worstAxis({ x: 0, y: 0, z: 0 }),
+    // Only claimed when re-centring is something the service will agree to do:
+    // at a different scale it refuses to guess, so promising the alignment here
+    // would wave through a bake that comes back empty.
+    alignedOverlap: sameScale ? worstAxis(shift) : worstAxis({ x: 0, y: 0, z: 0 }),
+    offset: shift,
+    distance: shift.length(),
+    sameScale,
+    diagonal,
+  }
+}
+
+// Would a bake against this source be a waste of minutes? Separate from the
+// measure for the same reason uvsAreBroken is separate from measureUvHealth: one
+// place decides what "too far apart" means.
+export function bakeSourceIsMisaligned(fit) {
+  return !!fit && fit.alignedOverlap < BAKE_OVERLAP_BROKEN
+}
+
 // Load one baked PNG into a texture. Data maps stay in NoColorSpace (they encode
 // values, not colour) and only base colour is sRGB; flipY is false throughout to
 // match the glTF convention the loader's own textures already use, and channel 0

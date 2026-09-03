@@ -240,6 +240,15 @@ export const DEFAULT_BAKE_OPTIONS = {
   cage_extrusion: 0,
   max_ray_distance: 0,
   margin: 8,
+  // A bake is ray casting, so the source has to sit in the same space as the
+  // target. It often does not: the automatic snapshots share whatever space the
+  // mesh was in when they were taken, but a source picked from the library
+  // arrives in raw file space, and one click of "set pivot on the ground" is
+  // enough to separate them by the model's half-height from then on. On by
+  // default because a same-scale offset is never intentional.
+  align_source: true,
+  // Refuse rather than spend minutes of Cycles time returning blank maps. 0 off.
+  require_overlap: 0.5,
 }
 
 export const BAKE_MAP_LABELS = {

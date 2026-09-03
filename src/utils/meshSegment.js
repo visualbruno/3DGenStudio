@@ -18,6 +18,7 @@
 //                rather than label numbers.
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
+import { createCanvasTexture } from './meshTexturing'
 
 // ---------------------------------------------------------------------------
 // Replaying the hierarchy
@@ -888,42 +889,105 @@ export function buildPartGeometries(geometry, labels, count, { minFaces = 4 } = 
 
   return parts
 }
-
 // A GLB scene with one node per part, named `<base>_part_01`, `…_02`, …
 // A scene rather than one merged mesh, so the parts stay separable wherever the
 // file lands — which is the entire point of having segmented it.
-export function exportPartsToGlb(parts, palette, baseName = 'mesh') {
+//
+// Two looks, and the caller chooses by passing `textureCanvas` or not. Without
+// one, each part gets the preview palette colour it is drawn in — which is what
+// makes the split readable in any viewer. With one, every part instead shares
+// the mesh's own atlas: the part geometries kept their UVs (see
+// buildPartGeometries), so there is nothing to re-bake or re-project — the parts
+// index the very texels the editor is showing. One material instance across all
+// of them, so GLTFExporter embeds the image exactly once however many parts
+// there are.
+export function exportPartsToGlb(parts, palette, baseName = 'mesh', {
+  textureCanvas = null,
+  textureConfig = null,
+  extraMaps = null,
+} = {}) {
   return new Promise((resolve, reject) => {
     if (!parts?.length) {
       reject(new Error('There are no parts to export.'))
       return
     }
 
+    // Everything this function builds, torn down once the exporter has read it.
+    // Deliberately does NOT include the maps in `extraMaps`: those are the
+    // page's own textures, still bound to the mesh on screen.
+    const owned = []
     const group = new THREE.Group()
     group.name = `${baseName}_parts`
-    parts.forEach((part, order) => {
-      const p = part.label * 3
-      const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(palette[p], palette[p + 1], palette[p + 2]),
+
+    let sharedMaterial = null
+    if (textureCanvas) {
+      // Reuse the texturing pipeline's own factory rather than configuring a
+      // CanvasTexture here: it carries flipY and the colour space off the
+      // texture the mesh was loaded with, and getting either wrong shows up as
+      // an upside-down or washed-out albedo.
+      const texture = createCanvasTexture(textureCanvas, textureConfig)
+      texture.name = 'MeshEditorTexture'
+      owned.push(texture)
+      // White, not the palette colour: this becomes baseColorFactor and would
+      // multiply over every texel. The palette is a preview tint for reading the
+      // split on screen, not part of the surface.
+      sharedMaterial = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        map: texture,
         metalness: 0.05,
         roughness: 0.7,
       })
-      material.name = `${baseName}_part_${String(order + 1).padStart(2, '0')}_mat`
+      // Baked channels live on the display root's materials, so a material built
+      // from scratch here would otherwise drop them.
+      Object.entries(extraMaps || {}).forEach(([slot, map]) => {
+        if (map) sharedMaterial[slot] = map
+      })
+      // glTF sets these factors to 1 wherever the matching texture is present —
+      // a scalar left at its default would scale every baked value down.
+      if (sharedMaterial.roughnessMap) sharedMaterial.roughness = 1
+      if (sharedMaterial.metalnessMap) sharedMaterial.metalness = 1
+      sharedMaterial.name = `${baseName}_mat`
+      sharedMaterial.needsUpdate = true
+      owned.push(sharedMaterial)
+    }
+
+    parts.forEach((part, order) => {
+      const name = `${baseName}_part_${String(order + 1).padStart(2, '0')}`
+      // A part with no UVs cannot use the atlas — it would sample one texel for
+      // its whole surface. Cannot happen while the caller gates on the editable
+      // geometry's UVs, but falling back per part is cheaper than a black piece.
+      let material = part.geometry.attributes.uv ? sharedMaterial : null
+      if (!material) {
+        const p = part.label * 3
+        material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(palette[p], palette[p + 1], palette[p + 2]),
+          metalness: 0.05,
+          roughness: 0.7,
+        })
+        material.name = `${name}_mat`
+        owned.push(material)
+      }
       const mesh = new THREE.Mesh(part.geometry, material)
-      mesh.name = `${baseName}_part_${String(order + 1).padStart(2, '0')}`
+      mesh.name = name
       group.add(mesh)
     })
+
+    const release = () => owned.forEach(item => item.dispose?.())
 
     new GLTFExporter().parse(
       group,
       result => {
+        release()
         if (!(result instanceof ArrayBuffer)) {
           reject(new Error('Failed to export the parts as a binary GLB file.'))
           return
         }
         resolve(new Blob([result], { type: 'model/gltf-binary' }))
       },
-      error => reject(error instanceof Error ? error : new Error('Failed to export the parts as GLB.')),
+      error => {
+        release()
+        reject(error instanceof Error ? error : new Error('Failed to export the parts as GLB.'))
+      },
       { binary: true, onlyVisible: false }
     )
   })

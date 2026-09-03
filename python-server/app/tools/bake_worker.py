@@ -75,6 +75,24 @@ ORM_CHANNELS = ["ao", "roughness", "metallic"]
 # are padding rather than claims about the material.
 ORM_NEUTRAL = {"ao": 255, "roughness": 255, "metallic": 0}
 
+# ── Alignment ───────────────────────────────────────────────────────────────
+# A "selected to active" bake is PURELY SPATIAL: rays leave the low-poly surface
+# and whatever they hit on the high-poly is what gets written. So the two meshes
+# have to occupy the same world space, and nothing upstream guarantees that — the
+# editor's automatic snapshots share whichever space the mesh was in at the time,
+# but a source picked from the asset library arrives in raw file space. Move the
+# pivot in between (Game-Ready's "set pivot on the ground" is one click) and the
+# source is silently offset by the model's half-height from then on, with no
+# symptom until the bake comes back black wherever the two no longer overlap.
+#
+# Two meshes at the same SCALE whose bounding boxes are merely offset are the same
+# object with different pivots, and re-centring the source is unambiguously right.
+# Different scales mean we are looking at different objects (or a unit mismatch),
+# where a guess would be worse than the honest report — so that case is measured
+# and left alone.
+ALIGN_SCALE_TOLERANCE = 0.05  # per-axis extent agreement required to re-centre
+ALIGN_MIN_OFFSET_FRAC = 0.001  # offsets below this fraction of the diagonal are noise
+
 
 def emit(stage: str, frac: float, message: str = "") -> None:
     print(f"{SENTINEL}{json.dumps({'type': 'progress', 'stage': stage, 'frac': round(frac, 4), 'message': message})}", flush=True)
@@ -160,6 +178,200 @@ def rewire_to_emit(objects, input_name: str) -> tuple[bool, bool]:
     return rewired, driven_by_graph
 
 
+def world_bounds(objects) -> tuple[list, list]:
+    """Axis-aligned world-space bounds over a set of objects, as ([min], [max]).
+
+    Read off each object's `bound_box` through its world matrix rather than from
+    the vertices: the corners are eight points instead of hundreds of thousands,
+    and an axis-aligned box of the transformed corners is exactly what the overlap
+    measure below needs.
+    """
+    from mathutils import Vector
+
+    low = [float("inf")] * 3
+    high = [float("-inf")] * 3
+    for obj in objects:
+        for corner in obj.bound_box:
+            point = obj.matrix_world @ Vector(corner)
+            for axis in range(3):
+                low[axis] = min(low[axis], point[axis])
+                high[axis] = max(high[axis], point[axis])
+    return low, high
+
+
+def box_overlap(target: tuple, source: tuple) -> float:
+    """How much of `target`'s box the `source` box covers, as the WORST axis.
+
+    The worst axis rather than the volume ratio, because the volume ratio hides
+    exactly the failure this is here to catch: a source offset along one axis only
+    still has two axes overlapping perfectly, so its volume ratio stays
+    respectable while half the mesh has nothing to sample. Axes whose target
+    extent is degenerate (a flat plane) are skipped rather than counted as a
+    total miss.
+    """
+    t_min, t_max = target
+    s_min, s_max = source
+    scale = max(t_max[axis] - t_min[axis] for axis in range(3))
+    worst = 1.0
+    for axis in range(3):
+        extent = t_max[axis] - t_min[axis]
+        if extent <= scale * 1e-4:
+            continue
+        span = min(t_max[axis], s_max[axis]) - max(t_min[axis], s_min[axis])
+        worst = min(worst, max(span, 0.0) / extent)
+    return worst
+
+
+def align_source(low, high_objects) -> dict:
+    """Re-centre the high-poly onto the low-poly when the two are the same object.
+
+    Returns a report dict (always), having translated `high_objects` in place when
+    it decided to. Centre-to-centre is the estimator rather than min-to-min: the
+    low-poly is normally a simplification of the high-poly, and simplification
+    shaves the extremities at BOTH ends, so the centres stay put where either end
+    of the box drifts. The residual after re-centring is a few thousandths of the
+    model — well inside the cage extrusion, which is 2% of the diagonal.
+    """
+    from mathutils import Matrix, Vector
+
+    target = world_bounds([low])
+    source = world_bounds(high_objects)
+    t_min, t_max = target
+    s_min, s_max = source
+
+    t_extent = [t_max[i] - t_min[i] for i in range(3)]
+    s_extent = [s_max[i] - s_min[i] for i in range(3)]
+    diagonal = sum(e * e for e in t_extent) ** 0.5
+
+    offset = [((t_min[i] + t_max[i]) - (s_min[i] + s_max[i])) / 2 for i in range(3)]
+    distance = sum(o * o for o in offset) ** 0.5
+
+    report = {
+        "target_bounds": [t_min, t_max],
+        "source_bounds": [s_min, s_max],
+        "offset": offset,
+        "overlap_before": round(box_overlap(target, source), 4),
+    }
+
+    # A scale check has to tolerate the extremities simplification removes, which
+    # is what ALIGN_SCALE_TOLERANCE is sized for. Compared against the diagonal
+    # rather than each axis's own extent so a thin axis (a 2cm-deep relief on a 2m
+    # panel) is not judged by a hair's breadth.
+    scale_matches = all(
+        abs(t_extent[i] - s_extent[i]) <= ALIGN_SCALE_TOLERANCE * max(diagonal, 1e-9)
+        for i in range(3)
+    )
+    if not scale_matches:
+        report["mode"] = "skipped-scale"
+        report["overlap"] = report["overlap_before"]
+        return report
+
+    if distance <= ALIGN_MIN_OFFSET_FRAC * max(diagonal, 1e-9):
+        report["mode"] = "not-needed"
+        report["overlap"] = report["overlap_before"]
+        return report
+
+    shift = Matrix.Translation(Vector(offset))
+    for obj in high_objects:
+        # Through matrix_world so a mesh parented under an imported empty moves by
+        # the offset in WORLD space, which is the space the offset was measured in.
+        obj.matrix_world = shift @ obj.matrix_world
+    import bpy
+    bpy.context.view_layer.update()
+
+    report["mode"] = "applied"
+    report["distance"] = round(distance, 6)
+    report["overlap"] = round(box_overlap(target, world_bounds(high_objects)), 4)
+    return report
+
+
+def measure_coverage(low, outdir, written: dict, resolution: int) -> dict | None:
+    """What fraction of the UV layout actually received ray hits?
+
+    The one number that tells a good bake from a ruined one, and until now nothing
+    computed it: a bake whose rays all miss still exits 0 with a full set of PNGs,
+    every texel cleared to transparent black. Against a dark model that is
+    invisible — which is precisely how a bake covering an eighth of the mesh got
+    applied and saved.
+
+    Measured as (baked texels ∩ UV layout) / (UV layout), where "baked" is the
+    alpha channel the bake writes only for texels whose ray HIT and "UV layout" is
+    the low-poly's render UV set rasterised at the bake resolution.
+
+    Intersecting with the layout is not optional, and this is the trap: alpha is a
+    hit mask ONLY INSIDE the layout. Outside it, margin dilation leaves alpha set
+    across essentially the whole gutter (measured: 99.9% of it, 92% of that with no
+    colour behind it), so alpha on its own reads as near-total coverage no matter
+    how badly the bake went. Inside the layout it is clean — on the misaligned bake
+    this was written for, 52.7% of layout texels came back alpha 0 against 43.3%
+    carrying colour.
+
+    The threshold is deliberately stricter than the one pack_orm uses. Here a
+    partially-dilated edge texel should not count as a hit, because the number's
+    whole job is to under-claim rather than over-claim success; pack_orm asks the
+    opposite question ("is there definitely nothing here?") and so tests for
+    exactly zero, which keeps it from overwriting real colour at island edges.
+
+    Returns None when it cannot be measured — the maps are still perfectly good,
+    so this must never be the reason a bake fails.
+    """
+    try:
+        import numpy as np
+        from PIL import Image, ImageDraw
+    except Exception as exc:  # noqa: BLE001
+        print(f"Coverage measurement unavailable ({exc}).", flush=True)
+        return None
+
+    source = next((written[name] for name in BAKE_ORDER if name in written), None)
+    if not source:
+        return None
+
+    try:
+        image = Image.open(outdir / source)
+        if "A" not in image.getbands():
+            return None
+        baked = np.asarray(image.getchannel("A"), dtype=np.uint8) > 127
+
+        mesh = low.data
+        # Blender bakes into the ACTIVE RENDER uv set, which is not necessarily the
+        # one selected in the UI — measuring the other one would be measuring a
+        # layout the bake never wrote to.
+        uv_layer = next((layer for layer in mesh.uv_layers if layer.active_render), mesh.uv_layers.active)
+        if uv_layer is None:
+            return None
+        # Removed in newer Blender, where the cache is maintained automatically.
+        if hasattr(mesh, "calc_loop_triangles"):
+            mesh.calc_loop_triangles()
+
+        height, width = baked.shape
+        layout = Image.new("1", (width, height), 0)
+        draw = ImageDraw.Draw(layout)
+        data = uv_layer.data
+        # Blender's V runs bottom-up and its PNG writer flips on save, so the saved
+        # image's top row is V=1 — hence (1 - v) here. Getting this backwards would
+        # measure the layout against a mirror image of itself and report nonsense.
+        for triangle in mesh.loop_triangles:
+            draw.polygon([
+                (data[loop].uv[0] * width, (1.0 - data[loop].uv[1]) * height)
+                for loop in triangle.loops
+            ], fill=1)
+        layout_mask = np.asarray(layout, dtype=bool)
+
+        layout_texels = int(layout_mask.sum())
+        if not layout_texels:
+            return None
+        covered = int((layout_mask & baked).sum())
+        return {
+            "coverage": round(covered / layout_texels, 4),
+            "covered_texels": covered,
+            "layout_texels": layout_texels,
+            "layout_frac": round(layout_texels / float(width * height), 4),
+        }
+    except Exception as exc:  # noqa: BLE001
+        print(f"Coverage measurement failed ({exc}).", flush=True)
+        return None
+
+
 def pack_orm(written: dict, outdir, resolution: int) -> tuple[str | None, list]:
     """Compose the baked AO/roughness/metallic into one R/G/B texture.
 
@@ -180,10 +392,21 @@ def pack_orm(written: dict, outdir, resolution: int) -> tuple[str | None, list]:
     planes = []
     for name in ORM_CHANNELS:
         if name in written:
-            image = Image.open(outdir / written[name]).convert("L")
+            image = Image.open(outdir / written[name])
             if image.size != (resolution, resolution):
                 image = image.resize((resolution, resolution), Image.LANCZOS)
-            planes.append(np.asarray(image, dtype=np.uint8))
+            plane = np.asarray(image.convert("L"), dtype=np.uint8)
+            # Texels whose ray missed carry the transparent-black clear value, and
+            # 0 is a MEANINGFUL number in all three of these channels — fully
+            # occluded, mirror-smooth, and (for metallic) the only one where 0 is
+            # harmless. Substituting the neutral value keeps a partial bake from
+            # ringing the mesh in black shadow and glossy patches; the alpha
+            # channel is what says which texels those are. ORM itself stays RGB,
+            # as glTF wants, so the mask cannot travel with it.
+            if "A" in image.getbands():
+                miss = np.asarray(image.getchannel("A"), dtype=np.uint8) == 0
+                plane = np.where(miss, ORM_NEUTRAL[name], plane).astype(np.uint8)
+            planes.append(plane)
         else:
             planes.append(np.full((resolution, resolution), ORM_NEUTRAL[name], dtype=np.uint8))
 
@@ -231,6 +454,50 @@ def main() -> None:
     high_objects = import_glb(args.high)
     if not high_objects:
         fail(3, "The high-poly source file contains no mesh.")
+
+    # Put the two meshes in the same space before anything expensive runs. See the
+    # ALIGN_* constants: a bake is ray casting, so an offset source produces black
+    # wherever the boxes stop overlapping, and this is the only place that holds
+    # both meshes and can tell.
+    emit("align", 0.22, "Checking source alignment…")
+    if bool(options.get("align_source", True)):
+        alignment = align_source(low, high_objects)
+    else:
+        target, source = world_bounds([low]), world_bounds(high_objects)
+        # The bounds go in even here: they are what the refusal below quotes, and
+        # an error naming (0,0,0)..(0,0,0) tells the reader nothing.
+        alignment = {
+            "mode": "disabled",
+            "target_bounds": [target[0], target[1]],
+            "source_bounds": [source[0], source[1]],
+            "overlap": round(box_overlap(target, source), 4),
+        }
+    if alignment["mode"] == "applied":
+        offset = alignment["offset"]
+        emit("align", 0.23,
+             f"Source re-centred onto the target by ({offset[0]:.3f}, {offset[1]:.3f}, {offset[2]:.3f})m")
+
+    # Pre-flight rather than post-mortem: a bake with nothing to hit costs the same
+    # minutes of Cycles time as a good one and then hands back maps that look
+    # plausible. Overlap is the honest gate, not matching extents — a source with
+    # extra geometry (a plinth the low-poly dropped) has mismatched extents and
+    # bakes perfectly well, while a source that only reaches half the target cannot.
+    require_overlap = float(options.get("require_overlap", 0.5))
+    if require_overlap > 0 and alignment.get("overlap", 1.0) < require_overlap:
+        t_min, t_max = alignment.get("target_bounds", ([0, 0, 0], [0, 0, 0]))
+        s_min, s_max = alignment.get("source_bounds", ([0, 0, 0], [0, 0, 0]))
+        fmt = lambda v: "(" + ", ".join(f"{x:.3f}" for x in v) + ")"  # noqa: E731
+        reason = {
+            "skipped-scale": "their scales differ too much to re-centre automatically",
+            "disabled": "automatic alignment is switched off",
+        }.get(alignment["mode"], "re-centring them did not bring them together")
+        fail(3,
+             "The high-poly source does not overlap the mesh being baked to — "
+             f"only {alignment['overlap'] * 100:.0f}% of the target's smallest axis is covered, and {reason}. "
+             f"Target bounds {fmt(t_min)}..{fmt(t_max)}, source bounds {fmt(s_min)}..{fmt(s_max)}. "
+             "A bake casts rays from the target onto the source, so a source that does not enclose "
+             "the target can only return blank texels. Pick the source this mesh was actually derived "
+             "from, or move it into the same space as the target.")
 
     # A bake target needs a material with an image node to write into.
     material = bpy.data.materials.new(name="BakeTarget")
@@ -294,8 +561,18 @@ def main() -> None:
             if not principled_input_is_linked(high_objects, PROBE_INPUTS[map_name]):
                 flat_channels.append(map_name)
 
+        # alpha=True is what turns a miss into something detectable. Blender masks
+        # a texel whose ray found no high-poly surface out of the write entirely,
+        # so it keeps the clear value — and the clear value is transparent
+        # (0,0,0,0) only for an image with an alpha channel; without one it is
+        # OPAQUE black, indistinguishable from a surface that is genuinely black.
+        # That is what let a bake covering an eighth of this mesh pass for a good
+        # one. With alpha, the channel is a per-texel hit mask: measure_coverage
+        # counts it, pack_orm substitutes neutral values through it, and the client
+        # composites the base colour through it instead of painting misses black.
         image = bpy.data.images.new(f"bake_{map_name}", width=resolution, height=resolution,
-                                    alpha=False, float_buffer=False)
+                                    alpha=True, float_buffer=False)
+        image.alpha_mode = "STRAIGHT"
         image.colorspace_settings.name = colorspace
 
         node = material.node_tree.nodes.new("ShaderNodeTexImage")
@@ -330,6 +607,10 @@ def main() -> None:
         material.node_tree.nodes.remove(node)
         bpy.data.images.remove(image)
 
+    # Before ORM packing, which reads the alpha this measures and then discards it.
+    emit("measure", 0.94, "Measuring coverage…")
+    coverage = measure_coverage(low, outdir, written, resolution)
+
     emit("pack", 0.96, "Packing ORM…")
     orm_name, orm_channels = pack_orm(written, outdir, resolution)
     if orm_name:
@@ -342,6 +623,17 @@ def main() -> None:
         "low_faces": len(low.data.polygons),
         "high_faces": int(sum(len(o.data.polygons) for o in high_objects)),
         "samples": scene.cycles.samples,
+        "cage_extrusion": round(cage, 6),
+        # How much of the UV layout the rays actually reached, and what the source
+        # had to be moved by to get there. Reported unconditionally: a partial bake
+        # is not an error (protruding detail legitimately misses) but it must never
+        # again be indistinguishable from a complete one.
+        **(coverage or {}),
+        "alignment": alignment,
+        # Every mesh object past the first in the low-poly file is not baked to.
+        # Said out loud rather than dropped silently; the editor only ever uploads
+        # one merged mesh, so this is for imported targets.
+        "low_objects_ignored": len(low_objects) - 1,
         # Which of the ORM channels carry real baked data, so the client only binds
         # the material slots that were actually measured.
         "orm_channels": orm_channels if orm_name else [],

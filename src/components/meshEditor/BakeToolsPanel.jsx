@@ -6,9 +6,10 @@
 // before every tool run, so the detail is still available to sample from — those
 // snapshots are the source list below.
 // Presentational: option state + handlers come from MeshEditorPage.
-import { NumberField, RangeField, SelectField } from './MeshToolField'
+import { NumberField, RangeField, SelectField, ToggleField } from './MeshToolField'
 import MeshToolProgress from './MeshToolProgress'
 import { BAKE_MAP_LABELS } from '../../utils/meshTools'
+import { BAKE_COVERAGE_COMPLETE } from '../../utils/meshExport'
 
 // Request order for the checkboxes. 'orm' is never requested — the service packs
 // it from ao/roughness/metallic — but it does come back in the result.
@@ -34,6 +35,8 @@ export default function BakeToolsPanel({
   const o = options
   const fieldsDisabled = disabled || running
   const selectedMaps = Array.isArray(o.maps) ? o.maps : []
+  const coverageIsLow = typeof result?.stats?.coverage === 'number'
+    && result.stats.coverage < BAKE_COVERAGE_COMPLETE
 
   const toggleMap = (name, on) => {
     const next = on
@@ -116,10 +119,49 @@ export default function BakeToolsPanel({
               <span><strong>Resolution:</strong> {result.stats.resolution}px</span>
               <span><strong>Source:</strong> {result.stats.high_faces?.toLocaleString()} faces</span>
               <span><strong>Target:</strong> {result.stats.low_faces?.toLocaleString()} faces</span>
+              {/* The figure that says whether the bake worked. Shown even at 100%,
+                  because a number that only appears when it is bad is a number
+                  nobody learns to read. */}
+              {typeof result.stats.coverage === 'number' && (
+                <span style={coverageIsLow ? { color: '#e0603a' } : undefined}>
+                  <strong>Coverage:</strong> {(result.stats.coverage * 100).toFixed(coverageIsLow ? 0 : 1)}% of the UVs
+                </span>
+              )}
               {result.stats.orm_channels?.length > 0 && (
                 <span><strong>Packed:</strong> {result.stats.orm_channels.join(' / ')}</span>
               )}
             </div>
+          )}
+
+          {coverageIsLow && (
+            <span className="mesh-editor-panel__hint" style={{ color: '#e0603a' }}>
+              The rays only reached {(result.stats.coverage * 100).toFixed(0)}% of the UV layout — the
+              remaining {(100 - result.stats.coverage * 100).toFixed(0)}% came back blank. Applying this
+              leaves those texels as they are rather than blacking them out, but the mesh will still be
+              missing that detail. Either the source is not the mesh this one came from, or the cage
+              extrusion is too small to reach detail that sticks out.
+            </span>
+          )}
+
+          {result.stats?.alignment?.mode === 'applied' && (
+            <span className="mesh-editor-panel__hint">
+              The source sat {result.stats.alignment.distance?.toFixed(3)}m away from this mesh and was
+              re-centred onto it before baking — the two had different pivots.
+            </span>
+          )}
+
+          {result.stats?.alignment?.mode === 'skipped-scale' && (
+            <span className="mesh-editor-panel__hint" style={{ color: '#e0a030' }}>
+              The source is a different size from this mesh, so it was baked where it stands rather than
+              being lined up automatically — lining up meshes at different scales would be a guess.
+            </span>
+          )}
+
+          {result.stats?.low_objects_ignored > 0 && (
+            <span className="mesh-editor-panel__hint" style={{ color: '#e0a030' }}>
+              This mesh arrived as {result.stats.low_objects_ignored + 1} separate objects and only the
+              first was baked to. Baking writes to one UV layout, so the others were skipped.
+            </span>
           )}
 
           {result.stats?.flat_channels?.length > 0 && (
@@ -181,6 +223,16 @@ export default function BakeToolsPanel({
         <NumberField label="Margin (texels)" min={0} max={64} step={1} value={o.margin}
           onChange={v => setOption('margin', v)} disabled={fieldsDisabled}
           hint="Dilates the baked islands so filtering cannot sample the empty gutter and bleed seams" />
+      </div>
+
+      <div className="mesh-editor-panel__section">
+        <span className="mesh-editor-panel__section-title">Alignment</span>
+        <ToggleField label="Align source to mesh" value={o.align_source !== false}
+          onChange={v => setOption('align_source', v)} disabled={fieldsDisabled}
+          hint="A bake casts rays from this mesh onto the source, so the two must occupy the same space. Moving the pivot after picking a source separates them, and the bake then comes back blank where they no longer overlap. This re-centres a source that is the same size as the mesh; one at a different scale is never moved." />
+        <ToggleField label="Refuse a source that does not overlap" value={(o.require_overlap ?? 0.5) > 0}
+          onChange={v => setOption('require_overlap', v ? 0.5 : 0)} disabled={fieldsDisabled}
+          hint="Stops in seconds rather than spending minutes of ray casting to return blank maps. Turn off to bake a source that only covers part of the mesh on purpose." />
       </div>
 
       <div className="mesh-editor-panel__notes">

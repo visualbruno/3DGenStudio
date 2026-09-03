@@ -203,6 +203,18 @@ class BakeOptions(BaseModel):
     margin: int = Field(default=8, ge=0, le=64,
                         description="Texels of island dilation, so filtering cannot sample the empty gutter "
                                     "and bleed seams into the surface.")
+    align_source: bool = Field(default=True,
+                               description="Re-centre the source onto the target when the two are the same "
+                                           "object at the same scale but different pivots. A bake is ray "
+                                           "casting, so an offset source returns blank texels wherever the "
+                                           "two stop overlapping — and moving a pivot between picking the "
+                                           "source and baking is enough to cause it. Sources at a different "
+                                           "scale are never moved; that case is reported instead.")
+    require_overlap: float = Field(default=0.5, ge=0.0, le=1.0,
+                                   description="Refuse the bake when, after alignment, the source covers less "
+                                               "than this fraction of the target's smallest axis. Fails in "
+                                               "seconds instead of spending minutes of ray casting to return "
+                                               "blank maps. 0 disables the check.")
 
 
 class InspectOptions(BaseModel):
