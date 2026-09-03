@@ -27,6 +27,20 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.1.0',
+    date: '2026-09-03',
+    items: [
+			'MeshEditor: Added Segmentation mode',
+			'MeshEditor - AutoRig: Improved MoCap',
+			'MeshEditor - AutoRig: Can save and import custom animations',
+			'MeshEditor - AutoRig: Fixed Weight Painting mode',
+			'MeshEditor: Reorganized Tools Menu',
+			'ComfyUI: Can cancel a job',
+			'MeshEditor - AutoUV: Fixed Normals',
+			'MeshEditor - Bake: Fixed bugs'
+    ]
+  },
+  {
     version: 'v3.0.0',
     date: '2026-08-30',
     items: [

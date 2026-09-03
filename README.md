@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-09-03** | MeshEditor: Added Segmentation mode<br>MeshEditor - AutoRig: Improved MoCap<br>MeshEditor Auto-Rig: Can save and import custom animations<br>MeshEditor Auto-Rig: Fixed Weight Painting mode<br>MeshEditor: Reorganized Tools Menu<br>ComfyUI: Can cancel a job<br>MeshEditor AutoUV: Fixed Normals<br>MeshEditor Segmentation: Exported parts can keep the mesh texture<br>MeshEditor Bake: Fixed bugs |
 | **2026-08-30** | Multi-User: Can host the server on another machine<br>Desktop App: Check if the ports are already used<br>Graph/Kanban: Paste image directly in your project<br>MeshEditor - AutoRig: Many improvements |
 | **2026-08-27** | Animations: Integrated MoCapAnythingV2 (video-to-motion)<br>MeshEditor: Added viewport gizmo and Perspective/Orthographic view<br>Updated npm packages<br>Fixed startup speed in dev mode<br>Animations: Added Horse animations from mesh2motion<br>Kanban: "Auto Rig" preselects the current displayed mesh<br>MCP: Improved input parameters validation (useful for small local llm)<br>SetupWizard: Added Trellis2 and Pixal3D ComfyUI Native |
 | **2026-08-24** | Animations: Integrated Kimodo<br>MCP: Added support for Tags<br>ComfyUI: Updated dependencies and nodes<br>QwenVL: Added new models |
