@@ -301,7 +301,22 @@ function createMergedGeometryFromObject(object) {
     })
   }
 
+  // Same attribute-set requirement, for normals. Here the fix is to fill the
+  // gaps rather than drop the channel: a part that ships normals has authored
+  // smooth shading worth keeping, and dropping it to match a part that does not
+  // would re-derive every normal per index — creasing seam-split UV boundaries.
+  if (geometries.length > 1 && geometries.some(geometry => !geometry.attributes.normal)) {
+    geometries.forEach(geometry => {
+      if (!geometry.attributes.normal) {
+        geometry.computeVertexNormals()
+      }
+    })
+  }
+
   const mergedGeometry = geometries.length === 1 ? geometries[0] : mergeGeometries(geometries, false)
+  if (!mergedGeometry) {
+    throw new Error('Could not combine the mesh parts into one editable geometry')
+  }
   const weldedGeometry = mergeVertices(mergedGeometry, 1e-5)
 
   if (!weldedGeometry.attributes.normal) {
@@ -313,8 +328,8 @@ function createMergedGeometryFromObject(object) {
 
 export function loadEditableGeometryFromObject(object) {
   const geometry = createMergedGeometryFromObject(object)
-  const { positions, indices, uvs, skinIndices, skinWeights } = compactMeshData(geometryToMeshData(geometry))
-  return createIndexedGeometry(positions, indices, uvs, skinIndices, skinWeights)
+  const { positions, indices, uvs, skinIndices, skinWeights, normals } = compactMeshData(geometryToMeshData(geometry))
+  return createIndexedGeometry(positions, indices, uvs, skinIndices, skinWeights, normals)
 }
 
 // Parse an in-memory GLB (ArrayBuffer) into its scene graph. Callers that need
@@ -387,12 +402,20 @@ async function loadGeometryFromUrl(url) {
   throw new Error('Unsupported mesh format')
 }
 
-function createIndexedGeometry(positions = [], indices = [], uvs = null, skinIndices = null, skinWeights = null) {
+// `normals` is only supplied when the caller has authored normals worth keeping
+// (a loaded asset's own NORMAL accessor). Editing operations leave it null and
+// get the recomputed normals from finalizeGeometry, which is what they want —
+// stale normals on moved vertices shade wrong.
+function createIndexedGeometry(positions = [], indices = [], uvs = null, skinIndices = null, skinWeights = null, normals = null) {
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
 
   if (Array.isArray(uvs) && uvs.length === (positions.length / 3) * 2) {
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  }
+
+  if (Array.isArray(normals) && normals.length === positions.length) {
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3))
   }
 
   const vertexCount = positions.length / 3
@@ -406,7 +429,11 @@ function createIndexedGeometry(positions = [], indices = [], uvs = null, skinInd
   }
 
   geometry.setIndex(indices)
-  geometry.computeVertexNormals()
+  // No computeVertexNormals() here: finalizeGeometry fills them in only when the
+  // attribute is absent. Recomputing unconditionally used to discard an asset's
+  // authored normals and re-derive them per *index* — which creases every
+  // seam-split UV chart boundary, because each copy of a seam vertex only sees
+  // its own chart's faces. See the normals note in autouv/mesh.py.
   return finalizeGeometry(geometry)
 }
 
@@ -676,7 +703,7 @@ function getBridgeAndFillCandidate(geometry, selectedVertexIndices = []) {
 
 function geometryToMeshData(geometry) {
   if (!geometry?.attributes?.position) {
-    return { positions: [], indices: [], uvs: null, skinIndices: null, skinWeights: null }
+    return { positions: [], indices: [], uvs: null, skinIndices: null, skinWeights: null, normals: null }
   }
 
   const positions = Array.from(geometry.attributes.position.array)
@@ -686,6 +713,13 @@ function geometryToMeshData(geometry) {
   const uvAttribute = geometry.attributes.uv
   const uvs = uvAttribute?.array?.length === (positions.length / 3) * 2
     ? Array.from(uvAttribute.array)
+    : null
+  // Read alongside the positions so a caller that only reindexes vertices (the
+  // load path) can keep the asset's own normals instead of re-deriving them.
+  // Callers that move or retopologise vertices simply drop this channel.
+  const normalAttribute = geometry.attributes.normal
+  const normals = normalAttribute?.array?.length === positions.length
+    ? Array.from(normalAttribute.array)
     : null
 
   // Skin data rides through the pipeline as plain per-vertex data so that any
@@ -698,13 +732,14 @@ function geometryToMeshData(geometry) {
   const skinIndices = hasSkin ? Array.from(skinIndexAttribute.array) : null
   const skinWeights = hasSkin ? Array.from(skinWeightAttribute.array) : null
 
-  return { positions, indices, uvs, skinIndices, skinWeights }
+  return { positions, indices, uvs, skinIndices, skinWeights, normals }
 }
 
-function compactMeshData({ positions = [], indices = [], uvs = null, skinIndices = null, skinWeights = null }) {
+function compactMeshData({ positions = [], indices = [], uvs = null, skinIndices = null, skinWeights = null, normals = null }) {
   const usedVertices = [...new Set(indices)]
   const nextPositions = []
   const nextUvs = Array.isArray(uvs) ? [] : null
+  const nextNormals = Array.isArray(normals) && normals.length === positions.length ? [] : null
   const hasSkin = Array.isArray(skinIndices) && Array.isArray(skinWeights)
   const nextSkinIndices = hasSkin ? [] : null
   const nextSkinWeights = hasSkin ? [] : null
@@ -722,6 +757,14 @@ function compactMeshData({ positions = [], indices = [], uvs = null, skinIndices
       nextUvs.push(
         uvs[vertexIndex * 2],
         uvs[vertexIndex * 2 + 1]
+      )
+    }
+
+    if (nextNormals) {
+      nextNormals.push(
+        normals[vertexIndex * 3],
+        normals[vertexIndex * 3 + 1],
+        normals[vertexIndex * 3 + 2]
       )
     }
 
@@ -756,6 +799,7 @@ function compactMeshData({ positions = [], indices = [], uvs = null, skinIndices
     uvs: nextUvs,
     skinIndices: nextSkinIndices,
     skinWeights: nextSkinWeights,
+    normals: nextNormals,
   }
 }
 

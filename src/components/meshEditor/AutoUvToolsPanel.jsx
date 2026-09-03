@@ -117,6 +117,17 @@ export default function AutoUvToolsPanel({
           hint="As a fraction of median edge length" />
       </div>
 
+      <div className="mesh-editor-panel__section">
+        <span className="mesh-editor-panel__section-title">Shading</span>
+        <ToggleField label="Preserve normals" value={o.preserve_normals}
+          onChange={v => setOption('preserve_normals', v)} disabled={fieldsDisabled}
+          hint="Carry the mesh's own vertex normals through the unwrap, so shading is unchanged" />
+        <RangeField label="Smoothing angle" suffix="°" min={0} max={180} step={1}
+          value={o.normal_smooth_deg} onChange={v => setOption('normal_smooth_deg', v)}
+          disabled={fieldsDisabled || o.preserve_normals}
+          hint="Used when normals are rebuilt: edges sharper than this stay hard (180 = fully smooth)" />
+      </div>
+
       <div className="mesh-editor-panel__notes">
         <span className="mesh-editor-panel__hint">Auto UV runs on the Python mesh-tools service (Settings → Mesh Tools).</span>
         <span className="mesh-editor-panel__hint">The result replaces the mesh; use Keep or Revert to decide.</span>

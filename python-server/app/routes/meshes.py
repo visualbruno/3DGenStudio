@@ -29,7 +29,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from ..config import MAX_UPLOAD_BYTES
-from ..meshio import export_mesh, load_mesh, load_scene, mesh_stats, scene_to_mesh
+from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_scene,
+                      mesh_stats, scene_to_mesh)
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
                        ConvertOptions, InspectOptions, RepairOptions, SegmentOptions)
 from ..services.auto_retopo import run_auto_retopo
@@ -160,8 +161,14 @@ async def auto_uv(
 ) -> StreamingResponse:
     opts = _parse_options(options, AutoUvOptions)
     data = await _read_upload(meshFile)
-    mesh = load_mesh(data, meshFile.filename or "mesh.glb")
-    return _stream_tool(lambda emit: run_auto_uv(mesh, opts, progress=emit), format, "Auto UV")
+    name = meshFile.filename or "mesh.glb"
+    mesh = load_mesh(data, name)
+    # Auto UV preserves the shape, so it must preserve the shading: hand it the
+    # normals the file actually carried (load_mesh drops them — see meshio).
+    normals = load_mesh_vertex_normals(data, name)
+    return _stream_tool(
+        lambda emit: run_auto_uv(mesh, opts, progress=emit, source_normals=normals),
+        format, "Auto UV")
 
 
 @router.post("/auto-retopo")

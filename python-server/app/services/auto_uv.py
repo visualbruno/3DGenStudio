@@ -56,7 +56,8 @@ _UV_STAGE_LABELS = {
 }
 
 
-def run_auto_uv(mesh: trimesh.Trimesh, options: AutoUvOptions, progress=None) -> tuple[trimesh.Trimesh, dict, bytes | None]:
+def run_auto_uv(mesh: trimesh.Trimesh, options: AutoUvOptions, progress=None,
+                source_normals=None) -> tuple[trimesh.Trimesh, dict, bytes | None]:
     src = autouv.Mesh(np.asarray(mesh.vertices), np.asarray(mesh.faces))
 
     unwrap_progress = None
@@ -82,6 +83,9 @@ def run_auto_uv(mesh: trimesh.Trimesh, options: AutoUvOptions, progress=None) ->
         arap_iters=options.arap_iters,
         weld=options.weld,
         weld_tol_frac=options.weld_tol_frac,
+        normal_smooth_deg=options.normal_smooth_deg,
+        source_normals=source_normals,
+        preserve_normals=options.preserve_normals,
         progress=unwrap_progress,
         verbose=False,
     )
@@ -90,7 +94,23 @@ def run_auto_uv(mesh: trimesh.Trimesh, options: AutoUvOptions, progress=None) ->
         progress("render", 0.97, "Rendering UV preview")
 
     # Build a GLB-ready mesh with the new vertex UV channel (seam-split geometry).
-    out = trimesh.Trimesh(vertices=result.vertices, faces=result.faces, process=False)
+    #
+    # The normals matter as much as the UVs here. Unwrapping duplicates every
+    # vertex on a chart boundary, and trimesh only writes a glTF NORMAL accessor
+    # when vertex_normals is already populated -- so omitting them ships geometry
+    # with POSITION/TEXCOORD_0 only, and every consumer (our viewer, the mesh
+    # editor, Unreal) recomputes normals per *index*. Each copy of a seam vertex
+    # then averages just its own chart's faces, which reads as a hard shading
+    # crease tracing every chart boundary. It scales with curvature x triangle
+    # size, so it is invisible on dense input and obvious on simplified meshes.
+    # result.normals carries the input mesh's own normals through the split, so
+    # the unwrap leaves shading exactly as it found it.
+    out = trimesh.Trimesh(
+        vertices=result.vertices,
+        faces=result.faces,
+        vertex_normals=result.normals,
+        process=False,
+    )
     out.visual = trimesh.visual.TextureVisuals(
         uv=np.asarray(result.uv),
         material=trimesh.visual.material.PBRMaterial(name="autouv"),

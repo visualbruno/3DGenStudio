@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 from pathlib import Path
 
+import numpy as np
 import trimesh
 
 from .schemas import MeshStats
@@ -39,6 +40,45 @@ def load_mesh(data: bytes, filename: str) -> trimesh.Trimesh:
         raise ValueError("The uploaded file did not resolve to a triangle mesh.")
 
     return loaded
+
+
+def load_mesh_vertex_normals(data: bytes, filename: str):
+    """The vertex normals the FILE carried, aligned to `load_mesh`'s vertex order.
+
+    None when the file shipped no normals (or any geometry in a multi-mesh file
+    lacks them, since a partial channel cannot be aligned).
+
+    Why this is separate from `load_mesh`: trimesh only keeps file normals in its
+    cache, and `trimesh.util.concatenate` drops the cache -- so `load_mesh`
+    silently loses them even for a single-geometry file. Setting them back onto
+    the concatenated mesh is not an option either: a populated `vertex_normals`
+    cache is exactly what makes trimesh emit a glTF NORMAL accessor on export, so
+    every tool that *changes* topology (repair, retopo) would start shipping
+    stale normals. Auto UV asks for them explicitly instead, because it is the
+    one tool that preserves the shape and so must preserve the shading.
+    """
+    ext = Path(filename or "mesh.glb").suffix.lower() or ".glb"
+    if ext not in SUPPORTED_INPUT_EXTS:
+        return None
+    try:
+        loaded = trimesh.load(io.BytesIO(data), file_type=ext.lstrip("."), process=False)
+    except Exception:  # noqa: BLE001 — load_mesh already reports real load errors
+        return None
+
+    geoms = (list(loaded.geometry.values()) if isinstance(loaded, trimesh.Scene)
+             else [loaded])
+    parts = []
+    for geom in geoms:
+        if not isinstance(geom, trimesh.Trimesh):
+            return None
+        # Read the cache directly: touching `.vertex_normals` would *compute*
+        # them, which is the opposite of what we are asking.
+        cached = geom._cache.cache.get("vertex_normals")
+        if cached is None or len(cached) != len(geom.vertices):
+            return None
+        parts.append(np.asarray(cached, dtype=np.float64))
+
+    return np.concatenate(parts, axis=0) if parts else None
 
 
 def load_scene(data: bytes, filename: str) -> trimesh.Scene:

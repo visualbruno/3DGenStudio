@@ -45,6 +45,12 @@ def _add_unwrap_args(p: argparse.ArgumentParser) -> None:
                    help="weld tolerance as a fraction of the median edge "
                         "length; vertices closer than this are merged "
                         "(default 0.1)")
+    p.add_argument("--normal-smooth-deg", type=float, default=180.0,
+                   dest="normal_smooth_deg",
+                   help="smoothing angle used when normals have to be rebuilt "
+                        "(the CLI always rebuilds, since it loads geometry only): "
+                        "edges sharper than this stay hard (default 180 = fully "
+                        "smooth, 0 = fully faceted)")
     p.add_argument("--arap-iters", type=int, default=4, dest="arap_iters",
                    help="as-rigid-as-possible flattening iterations per chart; "
                         "0 disables ARAP (LSCM/planar only). Higher = lower "
@@ -90,13 +96,14 @@ def _cmd_unwrap(args: argparse.Namespace) -> int:
         padding_texels=args.padding_texels,
         weld=args.weld,
         weld_tol_frac=args.weld_tol_frac,
+        normal_smooth_deg=args.normal_smooth_deg,
         arap_iters=args.arap_iters,
         progress=None if args.quiet else _progress,
         verbose=not args.quiet,
     )
 
     if args.output:
-        save_glb(args.output, result.vertices, result.faces, result.uv)
+        save_glb(args.output, result.vertices, result.faces, result.uv, result.normals)
         if not args.quiet:
             print(f"wrote {args.output}", file=sys.stderr)
     if args.preview:

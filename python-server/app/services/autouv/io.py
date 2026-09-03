@@ -20,9 +20,17 @@ def load(path: str) -> Mesh:
     return Mesh(np.asarray(m.vertices), np.asarray(m.faces))
 
 
-def save_glb(path, vertices, faces, uv):
-    """Write a GLB with a vertex UV channel and a checker material."""
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+def save_glb(path, vertices, faces, uv, normals=None):
+    """Write a GLB with a vertex UV channel and a checker material.
+
+    Pass `normals` (the unwrap result's pre-split smooth normals) whenever you
+    have them: trimesh only emits a glTF NORMAL accessor when vertex_normals is
+    populated, and without one the reader recomputes normals per index, creasing
+    every seam-split chart boundary. See autouv.mesh.Mesh.corner_groups.
+    """
+    mesh = trimesh.Trimesh(
+        vertices=vertices, faces=faces, vertex_normals=normals, process=False
+    )
     mesh.visual = trimesh.visual.TextureVisuals(
         uv=np.asarray(uv),
         material=trimesh.visual.material.PBRMaterial(name="autouv"),

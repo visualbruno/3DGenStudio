@@ -34,7 +34,8 @@ def main(path: str) -> None:
         f"atlas fill {s['fill_ratio'] * 100:.0f}%"
     )
 
-    autouv.save_glb("unwrapped.glb", result.vertices, result.faces, result.uv)
+    autouv.save_glb("unwrapped.glb", result.vertices, result.faces, result.uv,
+                    result.normals)
     autouv.render_uv(result, "uv_layout.png")
     print("wrote unwrapped.glb and uv_layout.png")
 

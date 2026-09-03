@@ -56,6 +56,16 @@ def proximity_weld(
     Returns ``(new_vertices, new_faces, info)`` where ``info`` carries the vertex
     and face counts before/after so the caller can report what was repaired.
     Degenerate faces (two welded corners coincide) are removed.
+
+    ``info`` also carries the two maps needed to pull *per-vertex input data*
+    (vertex normals, above all) through the weld:
+
+    * ``label``      -- (V,) input vertex id -> welded vertex id
+    * ``face_index`` -- (F',) welded face id -> input face id
+
+    With those, the input vertex behind any welded face corner is
+    ``faces[info["face_index"]][:, k]``, which is what lets the unwrapper carry
+    authored normals through unchanged instead of re-deriving them.
     """
     vertices = np.asarray(vertices, dtype=np.float64)
     faces = np.asarray(faces, dtype=np.int64)
@@ -66,6 +76,8 @@ def proximity_weld(
         "verts_after": n,
         "faces_after": len(faces),
         "tol": 0.0,
+        "label": np.arange(n),
+        "face_index": np.arange(len(faces)),
     }
 
     tol = tol_abs if tol_abs is not None else tol_frac * median_edge_length(vertices, faces)
@@ -99,4 +111,6 @@ def proximity_weld(
 
     info["verts_after"] = int(n_groups)
     info["faces_after"] = int(len(new_f))
+    info["label"] = label
+    info["face_index"] = np.nonzero(nondegen)[0]
     return new_v, new_f, info

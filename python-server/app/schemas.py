@@ -54,6 +54,15 @@ class AutoUvOptions(BaseModel):
     weld_tol_frac: float = Field(default=0.1, ge=0.0, le=1.0,
                                  description="Weld tolerance as a fraction of median edge length.")
 
+    # --- shading ---
+    preserve_normals: bool = Field(default=True,
+                                   description="Carry the input mesh's own vertex normals through the unwrap, so "
+                                               "shading is unchanged. Turn off to rebuild them from the geometry.")
+    normal_smooth_deg: float = Field(default=180.0, ge=0.0, le=180.0,
+                                     description="Smoothing angle used only when normals are rebuilt (no input "
+                                                 "normals, or preserve off): edges sharper than this stay hard. "
+                                                 "180 = fully smooth, 0 = fully faceted.")
+
 
 class AutoRetopoOptions(BaseModel):
     """Every field of autoretopo.RetopoConfig."""
