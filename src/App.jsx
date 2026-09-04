@@ -13,6 +13,7 @@ import AssetsPage from './pages/AssetsPage'
 import MeshEditorPage from './pages/MeshEditorPage'
 import ImageEditorPage from './pages/ImageEditorPage'
 import BoardPage from './pages/BoardPage'
+import AssemblyPage from './pages/AssemblyPage'
 import WikiPage from './pages/WikiPage'
 
 function AppRoutes() {
@@ -25,6 +26,7 @@ function AppRoutes() {
       <Route path="/mesh-editor" element={<MeshEditorPage />} />
       <Route path="/image-editor" element={<ImageEditorPage />} />
       <Route path="/board" element={<BoardPage />} />
+      <Route path="/assembly" element={<AssemblyPage />} />
       <Route path="/wiki" element={<WikiPage />} />
       <Route path="/wiki/:pageId" element={<WikiPage />} />
       <Route path="/library" element={<Navigate to="/assets" replace />} />

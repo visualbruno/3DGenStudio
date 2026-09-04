@@ -1700,6 +1700,30 @@ const SQLITE_SCHEMA = `
       createdAt INTEGER NOT NULL
     );
 
+    -- Mesh Assembly documents: a base body plus the pieces (armour, boots,
+    -- helm) being fitted onto it, with each piece's placement and fit settings.
+    --
+    -- NOT project-scoped, deliberately -- same reasoning as Motions and
+    -- CustomAnimations above. An assembly describes a CHARACTER, not a
+    -- project's content, and its pieces routinely come from different projects:
+    -- a body generated in one project wearing armour generated in another is
+    -- the normal case, which a projectId column would forbid outright.
+    --
+    -- stateJson is the whole document: the piece list with each piece's asset
+    -- id, world placement (TRS), display flags, fit settings and landmark
+    -- pairs. Fitted GEOMETRY is never stored here -- a fit result is megabytes,
+    -- and it only becomes durable when the user explicitly saves it as a new
+    -- Asset version (which is what the document's fittedVersionAssetId then
+    -- records).
+    CREATE TABLE IF NOT EXISTS MeshAssemblies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      stateJson TEXT,
+      thumbnailPath TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+
     -- Free-form labels an asset can be filtered by in the library. Many tags per
     -- asset, many assets per tag, and no separate tag registry: the vocabulary is
     -- whatever rows exist here, so a tag disappears once nothing carries it.
@@ -3736,6 +3760,108 @@ export async function deleteCustomAnimation(animationId) {
   if (row.filePath) {
     try { await fs.unlink(customAnimationFilePath(row.filePath)); } catch { /* already gone */ }
   }
+  return { status: 'deleted' };
+}
+
+// ---------------------------------------------------------------------------
+// Mesh Assembly documents
+// ---------------------------------------------------------------------------
+// Global, like Motions and CustomAnimations: an assembly is a character (a body
+// plus the armour being fitted to it), and its pieces routinely come from
+// different projects. See the MeshAssemblies table for the full reasoning.
+//
+// The document shape is owned by the client (src/utils/assemblyHelpers.js);
+// storage only round-trips it as JSON, exactly as BatchConfigs does.
+
+function mapMeshAssemblyRow(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    state: parseJson(row.stateJson, null),
+    thumbnailPath: row.thumbnailPath || null,
+    createdAt: Number(row.createdAt) || 0,
+    updatedAt: Number(row.updatedAt) || 0,
+  };
+}
+
+// Listed whole -- there is no parent to scope by, and the catalogue is small.
+// Most-recently-touched first, which is the useful order without a `position`
+// column to hand-sort with.
+export async function listMeshAssemblies() {
+  const db = await getDb();
+  const rows = await all(
+    db,
+    'SELECT id, name, thumbnailPath, createdAt, updatedAt FROM MeshAssemblies ORDER BY updatedAt DESC, id DESC'
+  );
+  // stateJson is deliberately not selected: the list drives a switcher, and a
+  // document with 10 pieces and 25 landmark pairs is far too much to ship for
+  // every row when only the open one is ever read.
+  return rows.map(row => mapMeshAssemblyRow({ ...row, stateJson: null }));
+}
+
+export async function getMeshAssemblyById(assemblyId) {
+  const db = await getDb();
+  const row = await get(db, 'SELECT * FROM MeshAssemblies WHERE id = ?', [Number(assemblyId)]);
+  return row ? mapMeshAssemblyRow(row) : null;
+}
+
+export async function createMeshAssembly({ name = 'Assembly', state = null } = {}) {
+  const db = await getDb();
+  const now = Date.now();
+  const result = await run(
+    db,
+    'INSERT INTO MeshAssemblies (name, stateJson, thumbnailPath, createdAt, updatedAt) VALUES (?, ?, NULL, ?, ?)',
+    [String(name || '').trim() || 'Assembly', state ? JSON.stringify(state) : null, now, now]
+  );
+  return await getMeshAssemblyById(result.lastID);
+}
+
+// Partial update: only the fields actually present are written, so saving the
+// document never clobbers the name and renaming never clobbers the document.
+// `state` is compared by presence, not truthiness -- null is a legal document
+// (a brand-new assembly) and must be storable.
+export async function updateMeshAssembly(assemblyId, { name, state, thumbnailPath } = {}) {
+  const db = await getDb();
+  const id = Number(assemblyId);
+  const existing = await get(db, 'SELECT id FROM MeshAssemblies WHERE id = ?', [id]);
+  if (!existing) return null;
+
+  const sets = [];
+  const values = [];
+  if (name !== undefined) {
+    const trimmed = String(name || '').trim();
+    if (trimmed) {
+      sets.push('name = ?');
+      values.push(trimmed);
+    }
+  }
+  if (state !== undefined) {
+    sets.push('stateJson = ?');
+    values.push(state === null ? null : JSON.stringify(state));
+  }
+  if (thumbnailPath !== undefined) {
+    sets.push('thumbnailPath = ?');
+    values.push(thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null);
+  }
+
+  if (!sets.length) return await getMeshAssemblyById(id);
+
+  sets.push('updatedAt = ?');
+  values.push(Date.now(), id);
+
+  await run(db, `UPDATE MeshAssemblies SET ${sets.join(', ')} WHERE id = ?`, values);
+  return await getMeshAssemblyById(id);
+}
+
+// The document only ever references assets by id, so deleting an assembly never
+// touches a mesh -- nothing to clean up on disk.
+export async function deleteMeshAssembly(assemblyId) {
+  const db = await getDb();
+  const id = Number(assemblyId);
+  const row = await get(db, 'SELECT id FROM MeshAssemblies WHERE id = ?', [id]);
+  if (!row) return { status: 'not-found' };
+  await run(db, 'DELETE FROM MeshAssemblies WHERE id = ?', [id]);
   return { status: 'deleted' };
 }
 

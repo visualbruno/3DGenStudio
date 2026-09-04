@@ -111,6 +111,8 @@ const REMOTE_DATA_PREFIXES = [
   '/api/boards',
   '/api/wiki',
   '/api/tasks',
+  '/api/mesh-assemblies',         // global assembly documents; hyphenated so it is NOT
+                                  // caught by the '/api/meshes' local-only prefix above
   '/api/motions/library',         // the shared clip catalogue (not /generate)
   '/api/animations/library',      // hand-edited clips, shared like the motions
   '/api/library/comfy-workflows', // workflow DEFINITIONS are shared; execution is local

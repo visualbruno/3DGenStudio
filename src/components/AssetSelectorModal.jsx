@@ -19,11 +19,15 @@ const ASSETS_PER_PAGE = 20;
 // Meshes show 3 per row, so 21 (7 full rows) paginates more cleanly than 20.
 const MESHES_PER_PAGE = 21;
 
-export default function AssetSelectorModal({ assetType, onSelect, onClose, showEdits = false }) {
+// `multiple` turns the grid into a multi-select and makes onSelect receive an
+// ARRAY. It is opt-in for a reason: six call sites rely on onSelect(oneAsset),
+// so the single-select path below stays byte-identical.
+export default function AssetSelectorModal({ assetType, onSelect, onClose, showEdits = false, multiple = false, title }) {
   const { getLibraryAssets, projects } = useProjects();
   const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedAssetKey, setSelectedAssetKey] = useState(null);
+  const [selectedAssetKeys, setSelectedAssetKeys] = useState(() => new Set());
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [projectFilter, setProjectFilter] = useState('all');
@@ -177,10 +181,28 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   }, [currentPage, totalPages]);
 
   const handleSelectAsset = (assetKey) => {
-    setSelectedAssetKey(assetKey);
+    if (!multiple) {
+      setSelectedAssetKey(assetKey);
+      return;
+    }
+    // Click toggles, so the same mesh can be picked twice in a row for a
+    // mirrored pair without reopening the modal.
+    setSelectedAssetKeys(previous => {
+      const next = new Set(previous);
+      if (next.has(assetKey)) next.delete(assetKey); else next.add(assetKey);
+      return next;
+    });
   };
 
 	const handleConfirm = () => {
+    if (multiple) {
+      // Ordered by the grid, not by click order — the list the caller appends
+      // to should read the same way the user saw it.
+      const chosen = assets.filter(a => selectedAssetKeys.has(a.selectorKey));
+      if (chosen.length) onSelect(chosen);
+      onClose();
+      return;
+    }
     if (selectedAssetKey) {
       const selectedAsset = assets.find(a => a.selectorKey === selectedAssetKey);
 			onSelect(selectedAsset);
@@ -203,7 +225,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
       <div className="asset-selector-modal" role="dialog" aria-modal="true" aria-labelledby="asset-selector-title">
         <div className="asset-selector-header">
           <h2 id="asset-selector-title" className="asset-selector-title font-headline">
-            Select {titleLabel}
+            {title || `Select ${titleLabel}`}
           </h2>
           <button type="button" className="asset-selector-close" onClick={handleClose}>
             <span className="material-symbols-outlined">close</span>
@@ -278,7 +300,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             <>
 							<div className={`asset-selector-grid asset-selector-grid--${validType}`}>
 								{paginatedAssets.map(asset => {
-                  const isSelected = selectedAssetKey === asset.selectorKey;
+                  const isSelected = multiple ? selectedAssetKeys.has(asset.selectorKey) : selectedAssetKey === asset.selectorKey;
                   const previewUrl = asset.thumbnailUrl || asset.url || getAssetPreviewUrl(asset.thumbnail || asset.filename);
 									const dimensions = formatDimensions(asset.width, asset.height);
 									const extension = asset.extension || (asset.filename?.split('.').pop() || '').toUpperCase();
@@ -373,9 +395,9 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
             type="button"
             className="asset-selector-btn asset-selector-btn--primary"
             onClick={handleConfirm}
-            disabled={!selectedAssetKey || loading}
+            disabled={loading || (multiple ? selectedAssetKeys.size === 0 : !selectedAssetKey)}
           >
-            Select
+            {multiple && selectedAssetKeys.size > 0 ? `Add ${selectedAssetKeys.size}` : 'Select'}
           </button>
         </div>
       </div>

@@ -98,6 +98,7 @@ export const TABLES_WITH_ID = Object.freeze(new Set([
   "cards",
   "columns",
   "customanimations",
+  "meshassemblies",
   "motions",
   "nodetypes",
   "projects",

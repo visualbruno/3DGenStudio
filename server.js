@@ -64,6 +64,11 @@ import {
   createCustomAnimation,
   renameCustomAnimation,
   deleteCustomAnimation,
+  listMeshAssemblies,
+  getMeshAssemblyById,
+  createMeshAssembly,
+  updateMeshAssembly,
+  deleteMeshAssembly,
   listProjectBoards,
   getProjectBatchConfig,
   setCardAssetLink,
@@ -8048,6 +8053,74 @@ app.delete('/api/animations/library/:id', async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error('Deleting a custom animation failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Mesh Assembly documents
+// ---------------------------------------------------------------------------
+// Global, not project-scoped: an assembly holds a base body plus the pieces
+// being fitted to it, and those pieces routinely come from different projects.
+// So there is no ?projectId filter here — the list is the whole catalogue.
+
+app.get('/api/mesh-assemblies', async (_req, res) => {
+  try {
+    res.json({ assemblies: await listMeshAssemblies() });
+  } catch (error) {
+    console.error('Listing mesh assemblies failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/mesh-assemblies', async (req, res) => {
+  try {
+    const assembly = await createMeshAssembly({ name: req.body?.name, state: req.body?.state ?? null });
+    res.status(201).json({ assembly });
+  } catch (error) {
+    console.error('Creating a mesh assembly failed:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// The full document, including stateJson — which the list route deliberately
+// omits, so this is the only way to read a piece list.
+app.get('/api/mesh-assemblies/:id', async (req, res) => {
+  try {
+    const assembly = await getMeshAssemblyById(req.params.id);
+    if (!assembly) return res.status(404).json({ error: 'Assembly not found' });
+    res.json({ assembly });
+  } catch (error) {
+    console.error('Reading a mesh assembly failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Partial update. Only the keys actually present in the body are written, so
+// the autosave (state) and a rename (name) can never clobber each other.
+app.put('/api/mesh-assemblies/:id', async (req, res) => {
+  try {
+    const patch = {};
+    if ('name' in (req.body || {})) patch.name = req.body.name;
+    if ('state' in (req.body || {})) patch.state = req.body.state;
+    if ('thumbnailPath' in (req.body || {})) patch.thumbnailPath = req.body.thumbnailPath;
+
+    const assembly = await updateMeshAssembly(req.params.id, patch);
+    if (!assembly) return res.status(404).json({ error: 'Assembly not found' });
+    res.json({ assembly });
+  } catch (error) {
+    console.error('Saving a mesh assembly failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/mesh-assemblies/:id', async (req, res) => {
+  try {
+    const result = await deleteMeshAssembly(req.params.id);
+    if (result.status === 'not-found') return res.status(404).json({ error: 'Assembly not found' });
+    res.json(result);
+  } catch (error) {
+    console.error('Deleting a mesh assembly failed:', error);
     res.status(500).json({ error: error.message });
   }
 });
