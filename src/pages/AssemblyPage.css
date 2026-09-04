@@ -83,13 +83,20 @@
 .assembly-page__workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 300px 1fr 280px;
   min-height: 0;
 }
 
 .assembly-page__rail {
   background: var(--surface);
   border-right: 1px solid var(--outline-variant);
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.assembly-page__panel {
+  background: var(--surface);
+  border-left: 1px solid var(--outline-variant);
   overflow-y: auto;
   min-height: 0;
 }
@@ -551,14 +558,213 @@
   color: var(--error, #ef5350);
 }
 
+/* ---- Transform panel ---------------------------------------------------- */
+
+.assembly-tp {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.assembly-tp--empty {
+  padding: 24px 16px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-tp__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assembly-tp__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.assembly-tp__section {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--outline-variant);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.assembly-tp__row {
+  display: grid;
+  grid-template-columns: 52px repeat(3, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.assembly-tp__label {
+  color: var(--on-surface-variant);
+}
+
+.assembly-tp__field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assembly-tp__axis {
+  width: 9px;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-tp__field input,
+.assembly-tp__region select {
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assembly-tp__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.assembly-tp__region {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.assembly-tp__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.assembly-tp__actions button {
+  flex: 1;
+  min-width: 84px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.assembly-tp__actions button:hover:not(:disabled) {
+  background: var(--surface-container-high);
+}
+
+.assembly-tp__actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.assembly-tp__note {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+  opacity: 0.8;
+}
+
+.assembly-tp__stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.assembly-tp__stats dt {
+  color: var(--on-surface-variant);
+}
+
+.assembly-tp__stats dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.assembly-tp__warn {
+  color: var(--error, #ef5350);
+  font-weight: 600;
+}
+
+/* ---- Toolbar: snap fields + space toggle -------------------------------- */
+
+.assembly-vp-toolbar__snap {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-vp-toolbar__snap input {
+  width: 46px;
+  height: 22px;
+  padding: 0 3px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assembly-vp-toolbar__btn--text {
+  width: auto;
+  min-width: 40px;
+  padding: 0 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.assembly-vp-toolbar__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+@media (max-width: 1200px) {
+  .assembly-page__workspace {
+    grid-template-columns: 260px 1fr 250px;
+  }
+}
+
 @media (max-width: 900px) {
   .assembly-page__workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(200px, 40%) 1fr;
+    grid-template-rows: minmax(160px, 28%) 1fr minmax(160px, 28%);
   }
 
   .assembly-page__rail {
     border-right: none;
     border-bottom: 1px solid var(--outline-variant);
+  }
+
+  .assembly-page__panel {
+    border-left: none;
+    border-top: 1px solid var(--outline-variant);
   }
 }

@@ -235,3 +235,206 @@ export function disposeAssemblyEntry(entry) {
   entry.meshes = []
   entry.root = null
 }
+
+// ---------------------------------------------------------------------------
+// Alignment
+// ---------------------------------------------------------------------------
+
+/**
+ * Regions of the base body a piece can be fitted to.
+ *
+ * These are FIXED FRACTIONAL BANDS of the base's bounding box, not anatomy
+ * detection — head is the top 13% of its height, and so on. That is a
+ * deliberate trade: it is one small pure function, it is explainable to the user
+ * ("the top eighth of the body"), and its answer is a STARTING POINT they then
+ * nudge with the gizmo. It is not a claim about where the head actually is.
+ *
+ * It does assume the base is Y-up and roughly A- or T-posed, which is what this
+ * app's generators produce. A curled-up or Z-up body gives nonsense, and the
+ * honest answer there is to pick `whole` and align by hand.
+ */
+export const FIT_REGIONS = ['whole', 'head', 'torso', 'hands', 'feet']
+
+export const FIT_REGION_LABELS = {
+  whole: 'Whole body',
+  head: 'Head',
+  torso: 'Torso',
+  hands: 'Hands',
+  feet: 'Feet',
+}
+
+// [yMin, yMax] as fractions of the base's height, measured from its bottom.
+const REGION_BANDS = {
+  whole: [0, 1],
+  head: [0.87, 1],
+  torso: [0.3, 0.7],
+  hands: [0.4, 0.65],
+  feet: [0, 0.1],
+}
+
+// Fraction of the base's WIDTH kept on one side, for regions that are a
+// left/right pair rather than a single volume.
+const HAND_SIDE_FRACTION = 0.18
+
+/**
+ * The box for one region of `baseBox`.
+ *
+ * `referencePoint` disambiguates the paired regions: a gauntlet fits to the hand
+ * on its OWN side, decided by which side of the body it currently sits on.
+ * Without it, "hands" would be two disjoint volumes with no way to choose.
+ */
+export function baseRegionBox(baseBox, region, { referencePoint = null } = {}) {
+  if (!baseBox || baseBox.isEmpty()) return new THREE.Box3().makeEmpty()
+  if (region === 'whole' || !REGION_BANDS[region]) return baseBox.clone()
+
+  const box = baseBox.clone()
+  const size = baseBox.getSize(new THREE.Vector3())
+  const [low, high] = REGION_BANDS[region]
+
+  box.min.y = baseBox.min.y + size.y * low
+  box.max.y = baseBox.min.y + size.y * high
+
+  if (region === 'hands') {
+    const slab = size.x * HAND_SIDE_FRACTION
+    const centre = baseBox.getCenter(new THREE.Vector3())
+    // Defaults to +X so the result is deterministic with no reference given.
+    const rightSide = !referencePoint || referencePoint.x >= centre.x
+    if (rightSide) box.min.x = baseBox.max.x - slab
+    else box.max.x = baseBox.min.x + slab
+  }
+
+  return box
+}
+
+/**
+ * Scale and translate `piece` so it occupies `regionBox` — the one click that
+ * addresses the actual complaint, that an AI-generated garment is nowhere near
+ * the body's size.
+ *
+ * Returns a `{ position, scale }` patch, or null when it cannot be computed.
+ *
+ * `axes: 'uniform'` keeps the piece's proportions (right for anything whose
+ * shape carries meaning); `'xyz'` stretches per axis to fill the region, which
+ * distorts and is only occasionally wanted.
+ *
+ * The order here is not interchangeable: scale is resolved FIRST, the box is
+ * re-measured, and only then is the translation computed. Scaling happens about
+ * the piece's own origin and therefore MOVES its box, so solving for the
+ * position against the pre-scale box would leave the piece offset by however far
+ * the scale shifted it.
+ */
+export function fitPieceToRegion(piece, entry, regionBox, { axes = 'uniform' } = {}) {
+  if (!entry?.localBox || entry.localBox.isEmpty()) return null
+  if (!regionBox || regionBox.isEmpty()) return null
+
+  const current = pieceWorldBox(entry, piece)
+  if (current.isEmpty()) return null
+
+  const currentSize = current.getSize(new THREE.Vector3())
+  const regionSize = regionBox.getSize(new THREE.Vector3())
+  let scale = [...piece.scale]
+
+  if (axes === 'xyz') {
+    scale = scale.map((value, index) => {
+      const from = currentSize.getComponent(index)
+      const to = regionSize.getComponent(index)
+      return from > 1e-9 ? value * (to / from) : value
+    })
+  } else {
+    const from = currentSize.length()
+    const to = regionSize.length()
+    if (from > 1e-9) {
+      const factor = to / from
+      scale = scale.map(value => value * factor)
+    }
+  }
+
+  // Re-measure with the new scale before solving for the translation.
+  const scaled = pieceWorldBox(entry, { ...piece, scale })
+  if (scaled.isEmpty()) return null
+
+  const delta = regionBox.getCenter(new THREE.Vector3()).sub(scaled.getCenter(new THREE.Vector3()))
+  return {
+    position: [
+      piece.position[0] + delta.x,
+      piece.position[1] + delta.y,
+      piece.position[2] + delta.z,
+    ],
+    scale,
+  }
+}
+
+/** Translate `piece` so its box centre lands on `regionBox`'s, size untouched. */
+export function movePieceToRegion(piece, entry, regionBox) {
+  if (!regionBox || regionBox.isEmpty()) return null
+  const current = pieceWorldBox(entry, piece)
+  if (current.isEmpty()) return null
+  const delta = regionBox.getCenter(new THREE.Vector3()).sub(current.getCenter(new THREE.Vector3()))
+  return {
+    position: [
+      piece.position[0] + delta.x,
+      piece.position[1] + delta.y,
+      piece.position[2] + delta.z,
+    ],
+  }
+}
+
+/**
+ * Drop `piece` straight down until it rests on the base — or on the ground
+ * plane when it misses — with `offset` of clearance.
+ *
+ * A downward ray from the box centre, not a nearest-surface query: "drop" has to
+ * be predictable, and gravity is the mental model. Snapping to the nearest
+ * surface would pull the piece sideways, which reads as the tool moving
+ * something the user did not ask it to move.
+ *
+ * Needs the base's BVH, so callers must ensurePieceBvh(baseEntry) first.
+ */
+export function dropPieceToSurface(piece, entry, baseEntry, basePiece, { offset = 0 } = {}) {
+  const current = pieceWorldBox(entry, piece)
+  if (current.isEmpty()) return null
+
+  const centre = current.getCenter(new THREE.Vector3())
+  const raycaster = new THREE.Raycaster(
+    new THREE.Vector3(centre.x, current.max.y + 1e-3, centre.z),
+    new THREE.Vector3(0, -1, 0),
+  )
+  raycaster.firstHitOnly = true
+
+  let landingY = 0   // the grid, when there is nothing below
+  if (baseEntry?.root && basePiece) {
+    baseEntry.root.matrix.copy(composePieceMatrix(basePiece))
+    baseEntry.root.matrixAutoUpdate = false
+    baseEntry.root.updateMatrixWorld(true)
+    const hits = raycaster.intersectObject(baseEntry.root, true)
+    // Discard hits at or above the piece's own top: those are the base's far
+    // side seen from inside it, and landing on one would launch the piece up.
+    const below = hits.find(hit => hit.point.y < current.max.y - 1e-6)
+    if (below) landingY = below.point.y
+  }
+
+  const targetMinY = landingY + offset
+  return {
+    position: [
+      piece.position[0],
+      piece.position[1] + (targetMinY - current.min.y),
+      piece.position[2],
+    ],
+  }
+}
+
+/**
+ * Reflect `piece` across the base's centre plane in X, for building a left/right
+ * pair: `mirrorX` flips its geometry and its position mirrors about the body.
+ *
+ * Rotation about Y and Z is negated because those turn INTO the reflected axis.
+ * Rotation about X is unaffected by a reflection in X, so it is left alone.
+ */
+export function mirrorPieceAcrossBase(piece, baseBox) {
+  const centreX = baseBox && !baseBox.isEmpty() ? baseBox.getCenter(new THREE.Vector3()).x : 0
+  return {
+    mirrorX: !piece.mirrorX,
+    position: [2 * centreX - piece.position[0], piece.position[1], piece.position[2]],
+    rotation: [piece.rotation[0], -piece.rotation[1], -piece.rotation[2]],
+  }
+}

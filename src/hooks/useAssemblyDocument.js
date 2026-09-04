@@ -281,6 +281,34 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     })
   }, [applyChange])
 
+  // Clone a piece, optionally reflected across the base. `patch` carries the
+  // mirror transform (computed by the caller, which has the base's bounds).
+  //
+  // The clone gets a fresh id and drops everything that described the ORIGINAL's
+  // relationship to the base: landmark pairs were picked for that placement, and
+  // a fit result and its saved version belong to the piece that produced them.
+  // Carrying either over would silently attribute one piece's work to another.
+  const duplicatePiece = useCallback((pieceId, patch = {}) => {
+    applyChange(draft => {
+      const index = draft.pieces.findIndex(p => p.id === pieceId)
+      if (index === -1) return null
+      const source = draft.pieces[index]
+      const clone = {
+        ...structuredClone(source),
+        id: `${source.id}-copy-${Date.now().toString(36)}`,
+        name: `${source.name} copy`,
+        role: 'piece',
+        landmarks: [],
+        fit: { status: 'idle', message: '', stats: {}, fittedAt: null },
+        fittedVersionAssetId: null,
+        ...patch,
+      }
+      draft.pieces.splice(index + 1, 0, clone)
+      draft.settings.selectedPieceId = clone.id
+      return draft
+    })
+  }, [applyChange])
+
   const setBase = useCallback(pieceId => {
     applyChange(draft => {
       if (!draft.pieces.some(p => p.id === pieceId)) return null
@@ -377,6 +405,7 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
 
     patchPiece,
     addPieces,
+    duplicatePiece,
     removePiece,
     setBase,
     reorderPieces,
@@ -393,7 +422,7 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     flushSave,
   }), [
     assemblies, meta, doc, loading, loadError, saveStatus, historyDepth,
-    patchPiece, addPieces, removePiece, setBase, reorderPieces, patchSettings,
+    patchPiece, addPieces, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
     setMaterialClass, undo, redo, createNewAssembly, renameCurrentAssembly,
     deleteCurrentAssembly, selectAssembly, refreshAssemblies, flushSave,
   ])

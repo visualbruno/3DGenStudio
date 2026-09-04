@@ -16,6 +16,7 @@
 // which is 12,190 lines because everything went inline.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import * as THREE from 'three'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
@@ -24,9 +25,11 @@ import AssemblySwitcher from '../components/assembly/AssemblySwitcher'
 import AssemblyPieceList from '../components/assembly/AssemblyPieceList'
 import AssemblyViewport from '../components/assembly/AssemblyViewport'
 import AssemblyViewportToolbar from '../components/assembly/AssemblyViewportToolbar'
+import AssemblyTransformPanel from '../components/assembly/AssemblyTransformPanel'
 import useAssemblyDocument from '../hooks/useAssemblyDocument'
 import useAssemblyScene from '../hooks/useAssemblyScene'
 import useAssemblyPicking from '../hooks/useAssemblyPicking'
+import useAssemblyAlignment from '../hooks/useAssemblyAlignment'
 import { getBasePiece, getVisiblePieces } from '../utils/assemblyHelpers'
 import { boundsProxyGeometry, boxDiagonal, pieceWorldBox } from '../utils/assemblyGeometry'
 import { fitCameraToSphere, meshFittingSphere } from '../utils/cameraFraming'
@@ -58,17 +61,21 @@ export default function AssemblyPage() {
   const {
     assemblies, meta, doc, ready, loading, loadError, saveStatus,
     canUndo, canRedo, undo, redo,
-    addPieces, patchPiece, removePiece, setBase, reorderPieces, patchSettings,
+    addPieces, patchPiece, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
     createNewAssembly, renameCurrentAssembly, deleteCurrentAssembly, selectAssembly,
   } = useAssemblyDocument({ assemblyId, onAssemblyIdChange: setAssemblyId })
 
   const {
     entries, loadErrors, loadedPieceIds, getEntry, getVisibleBounds,
   } = useAssemblyScene(doc)
-  const { handleSelectPointerDown } = useAssemblyPicking({ shellRef, cameraRef, entries, doc })
+  const {
+    handleSelectPointerDown, gizmoDraggingRef,
+  } = useAssemblyPicking({ shellRef, cameraRef, entries, doc })
 
   const base = getBasePiece(doc)
   const visiblePieces = getVisiblePieces(doc)
+  const selectedPiece = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId) || null
+  const selectedEntry = selectedPiece ? getEntry(selectedPiece.id) : null
 
   // Which pieces are LOADED — not merely present in the document. The camera
   // re-frames when a mesh finishes loading (its bounds are new information), but
@@ -93,6 +100,14 @@ export default function AssemblyPage() {
     [getVisibleBounds, doc],
   )
 
+  // Numeric-field increment scaled to the assembly, so a 0.02-unit piece and a
+  // 200-unit body both get a usable step. A fixed step would be unusable on one
+  // or the other, and AI meshes span both extremes.
+  const positionStep = useMemo(() => {
+    const diagonal = boxDiagonal(bounds)
+    return diagonal > 0 ? Math.max(diagonal / 200, 1e-5) : 0.01
+  }, [bounds])
+
   // Selected piece size relative to the base — the number that makes "this
   // armour is 2% of the body" obvious instead of something to discover by
   // zooming around.
@@ -107,21 +122,35 @@ export default function AssemblyPage() {
     return boxDiagonal(pieceWorldBox(selectedEntry, selected)) / baseDiagonal
   }, [doc, base, getEntry])
 
-  // Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) over the document. Ignored while a text
-  // field has focus so renaming an assembly keeps native undo.
+  // Keyboard: Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) for history, and bare G / R / S
+  // for the gizmo mode, which is what anyone arriving from Blender will try.
+  // All of it is ignored while a text field has focus, so typing a name or a
+  // numeric value keeps native editing and does not switch tools mid-word.
   useEffect(() => {
     const onKeyDown = event => {
-      if (!(event.ctrlKey || event.metaKey)) return
       const tag = event.target?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || event.target?.isContentEditable) return
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || event.target?.isContentEditable) return
 
       const key = event.key.toLowerCase()
-      if (key === 'z' && !event.shiftKey) { event.preventDefault(); undo() }
-      else if ((key === 'z' && event.shiftKey) || key === 'y') { event.preventDefault(); redo() }
+
+      if (event.ctrlKey || event.metaKey) {
+        if (key === 'z' && !event.shiftKey) { event.preventDefault(); undo() }
+        else if ((key === 'z' && event.shiftKey) || key === 'y') { event.preventDefault(); redo() }
+        return
+      }
+      if (event.altKey || event.shiftKey) return
+
+      const mode = key === 'g' ? 'translate' : key === 'r' ? 'rotate' : key === 's' ? 'scale' : null
+      if (mode) {
+        event.preventDefault()
+        patchSettings({ gizmoMode: mode })
+      } else if (key === 'escape' && doc.settings.isolatedPieceId) {
+        patchSettings({ isolatedPieceId: null })
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo])
+  }, [undo, redo, patchSettings, doc.settings.isolatedPieceId])
 
   const handleAddMeshes = useCallback(picked => {
     addPieces(picked)
@@ -131,6 +160,16 @@ export default function AssemblyPage() {
   const handlePointerDown = useCallback(event => {
     handleSelectPointerDown(event, pieceId => patchSettings({ selectedPieceId: pieceId }))
   }, [handleSelectPointerDown, patchSettings])
+
+  const {
+    commit: commitToSelected,
+    fitToRegion, moveToRegion, dropToSurface, mirror, duplicate, reset,
+    copyTransform, pasteTransform, clipboardFilled,
+    onGizmoDragStart, onGizmoDrag, onGizmoDragEnd,
+  } = useAssemblyAlignment({
+    base, selectedPiece, selectedEntry, getEntry, patchPiece, duplicatePiece, gizmoDraggingRef,
+  })
+
 
   // "Frame everything" is the FIT, not the load framing.
   //
@@ -236,11 +275,16 @@ export default function AssemblyPage() {
                 onContextLost={() => setContextRevision(revision => revision + 1)}
                 onCameraReady={camera => { cameraRef.current = camera }}
                 onControlsReady={controls => { controlsRef.current = controls }}
+                selectedPiece={selectedEntry ? selectedPiece : null}
+                onGizmoDragStart={onGizmoDragStart}
+                onGizmoDrag={onGizmoDrag}
+                onGizmoDragEnd={onGizmoDragEnd}
               />
               <AssemblyViewportToolbar
                 settings={doc.settings}
                 onPatchSettings={patchSettings}
                 onFrameAll={handleFrameAll}
+                hasSelection={!!selectedPiece}
                 pieceCount={visiblePieces.length}
                 vertexCount={visibleVertexCount}
                 scaleRatio={scaleRatio}
@@ -270,6 +314,32 @@ export default function AssemblyPage() {
             </div>
           )}
         </main>
+
+        <aside className="assembly-page__panel">
+          <AssemblyTransformPanel
+            piece={selectedPiece}
+            isBase={!!selectedPiece && selectedPiece.id === doc.basePieceId}
+            stats={selectedEntry
+              ? { vertexCount: selectedEntry.vertexCount, faceCount: selectedEntry.faceCount, hasSkin: selectedEntry.hasSkin }
+              : null}
+            scaleRatio={scaleRatio}
+            worldSize={selectedEntry && selectedPiece
+              ? pieceWorldBox(selectedEntry, selectedPiece).getSize(new THREE.Vector3()).toArray()
+              : null}
+            positionStep={positionStep}
+            hasBase={!!base}
+            onCommit={commitToSelected}
+            onFitToRegion={fitToRegion}
+            onMoveToRegion={moveToRegion}
+            onDropToSurface={dropToSurface}
+            onMirror={mirror}
+            onDuplicate={duplicate}
+            onReset={reset}
+            onCopyTransform={copyTransform}
+            onPasteTransform={pasteTransform}
+            canPaste={clipboardFilled}
+          />
+        </aside>
       </div>
 
       <Footer variant="kanban" />

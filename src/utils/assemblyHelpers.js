@@ -82,6 +82,7 @@ export function createEmptyAssembly() {
     settings: {
       gizmoMode: 'translate',
       gizmoSpace: 'world',
+      snapEnabled: false,
       snapTranslate: 0,
       snapRotateDeg: 0,
       snapScale: 0,

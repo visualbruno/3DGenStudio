@@ -15,6 +15,7 @@ import CameraRig from '../meshEditor/CameraRig'
 import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import AssemblyPieceMesh from './AssemblyPieceMesh'
+import AssemblyGizmo from './AssemblyGizmo'
 import { boundsProxyGeometry } from '../../utils/assemblyGeometry'
 import { getVisiblePieces } from '../../utils/assemblyHelpers'
 
@@ -39,6 +40,10 @@ export default function AssemblyViewport({
   onContextLost,
   onCameraReady,
   onControlsReady,
+  selectedPiece,
+  onGizmoDragStart,
+  onGizmoDrag,
+  onGizmoDragEnd,
   showShadows = false,
 }) {
   const visiblePieces = getVisiblePieces(doc)
@@ -122,6 +127,22 @@ export default function AssemblyViewport({
           sectionColor="#AC89FF"
           sectionThickness={1.5}
           sectionSize={10}
+        />
+      )}
+
+      {/* Mounted last of the scene content so it draws over the meshes, and
+          only when a piece is actually selected. */}
+      {selectedPiece && (
+        <AssemblyGizmo
+          piece={selectedPiece}
+          mode={doc.settings.gizmoMode}
+          space={doc.settings.gizmoSpace}
+          snapTranslate={doc.settings.snapEnabled ? doc.settings.snapTranslate : 0}
+          snapRotateDeg={doc.settings.snapEnabled ? doc.settings.snapRotateDeg : 0}
+          snapScale={doc.settings.snapEnabled ? doc.settings.snapScale : 0}
+          onDragStart={onGizmoDragStart}
+          onDrag={onGizmoDrag}
+          onDragEnd={onGizmoDragEnd}
         />
       )}
 
