@@ -16,6 +16,7 @@ import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import AssemblyPieceMesh from './AssemblyPieceMesh'
 import AssemblyGizmo from './AssemblyGizmo'
+import LandmarkMarkers from './LandmarkMarkers'
 import { boundsProxyGeometry, composePieceMatrix } from '../../utils/assemblyGeometry'
 import { getVisiblePieces } from '../../utils/assemblyHelpers'
 
@@ -54,6 +55,10 @@ export default function AssemblyViewport({
   previews,
   showFitted,
   bounds,            // THREE.Box3 over the visible, loaded pieces
+  landmarkBase,      // the base piece, for drawing the body-side markers
+  landmarkPiece,     // the piece whose pairs are being placed, or null
+  landmarkPending,   // a body point waiting for its partner
+  hoveredPairId,
   frameKey,          // bumped when the piece SET changes, so the camera re-frames
   contextRevision,
   onContextLost,
@@ -73,6 +78,12 @@ export default function AssemblyViewport({
   // Rebuilt only when the bounds actually change, and disposed when replaced —
   // it is a real GPU buffer, small but not free, and this can churn.
   const proxyGeometry = useMemo(() => boundsProxyGeometry(bounds), [boundsKey]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Marker size is derived from the scene, so a 0.02-unit gauntlet and a
+  // 200-unit body both get dots you can actually see and click near.
+  const boundsDiagonal = bounds && !bounds.isEmpty()
+    ? bounds.getSize(new THREE.Vector3()).length()
+    : 1
   const proxyRef = useRef(proxyGeometry)
   useEffect(() => {
     const previous = proxyRef.current
@@ -162,9 +173,24 @@ export default function AssemblyViewport({
         />
       )}
 
-      {/* Mounted last of the scene content so it draws over the meshes, and
-          only when a piece is actually selected. */}
-      {selectedPiece && (
+      {/* Independent of the gizmo: the pairs stay visible while the piece is
+          selected, whether or not placing is armed. Drawn with depthTest off so
+          a pair on the far side of the body still reads. */}
+      <LandmarkMarkers
+        base={landmarkBase}
+        piece={landmarkPiece}
+        pendingBase={landmarkPending}
+        hoveredPairId={hoveredPairId}
+        diagonal={boundsDiagonal}
+      />
+
+      {/* Unmounted while the brush is active. The gizmo's handles sit in front
+          of the mesh and swallow the pointer before the brush ever sees it, so
+          a stroke that begins on one silently becomes a move, rotate or scale —
+          and the piece is deformed relative to a placement that just changed
+          under it. Hidden rather than merely ignored: a visible control that
+          does nothing is worse than no control. */}
+      {selectedPiece && !doc.settings.sculptMode && (
         <AssemblyGizmo
           piece={selectedPiece}
           mode={doc.settings.gizmoMode}

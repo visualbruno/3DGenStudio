@@ -19,6 +19,7 @@
 // saving a version is still the separate, explicit step.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  buildLandmarkPayload,
   buildFitPayloadGeometry,
   buildFitPreview,
   buildFitRanges,
@@ -36,7 +37,8 @@ import {
   putWorkingGeometry,
 } from '../utils/assemblyWorking'
 import { buildAssetUrl } from '../utils/meshTexturing'
-import { composePieceMatrix } from '../utils/assemblyGeometry'
+import { applyMatrixToPiece, composePieceMatrix } from '../utils/assemblyGeometry'
+import { canWarpPiece } from '../utils/assemblyHelpers'
 import * as THREE from 'three'
 
 // Long enough that a burst of brush strokes writes once, short enough that
@@ -285,18 +287,75 @@ export default function useAssemblyFitRun({
 
       const controller = new AbortController()
       abortRef.current = controller
+      let seatingStats = null
 
       try {
-        const payload = buildFitPayloadGeometry(entry, piece)
+        // ---- seating, as its own call ---------------------------------
+        //
+        // Split from the deform stages deliberately. Rigid seating produces a
+        // TRANSFORM, and folding it into the piece's placement keeps the piece
+        // un-deformed and the move visible in the numeric panel — where letting
+        // it come back as moved vertices would turn "the armour was seated"
+        // into "the armour is a modified mesh", and hide the change from every
+        // tool that reads the placement.
+        //
+        // The second call then has to re-export the piece, because the payload
+        // must be in the space the piece now occupies.
+        let seated = piece
+        if (piece.fitStages?.rigid) {
+          const seatFile = await payloadToGlb(buildFitPayloadGeometry(entry, piece), 'piece')
+          const result = await fitPiece({
+            pieceFile: seatFile,
+            baseFile,
+            options: { stages: ['rigid'], ...piece.fitOptions },
+            signal: controller.signal,
+            onProgress: event => setProgress({
+              frac: (event.frac ?? 0) * 0.4, message: event.message || '',
+            }),
+          })
+          if (unmountedRef.current) break
+          if (result.transform) {
+            const trs = applyMatrixToPiece(piece, result.transform)
+            seated = { ...piece, ...trs }
+            patchPiece(piece.id, trs)
+          }
+          seatingStats = result.stats?.rigid || result.stats?.stages?.rigid || null
+        }
+
+        const stages = activeStages(seated)
+        if (!stages.length) {
+          // Seating only: there is no deformation, so there is no preview to
+          // make. The piece simply moved, which the document already records.
+          patchPiece(piece.id, {
+            fit: {
+              status: 'ready',
+              message: describeSeating(seatingStats),
+              stats: { seating: seatingStats },
+              fittedAt: Date.now(),
+            },
+          }, { history: false })
+          continue
+        }
+
+        const payload = buildFitPayloadGeometry(entry, seated)
         const pieceFile = await payloadToGlb(payload, 'piece')
 
         const { positions, stats } = await fitPiece({
           pieceFile,
           baseFile,
-          options: { stages: activeStages(piece), ...piece.fitOptions },
+          options: {
+            stages,
+            ...seated.fitOptions,
+            // Built from SEATED, matching the geometry just uploaded: a rigid
+            // seat moves the piece, and landmarks taken from the pre-seat
+            // placement would point at where it used to be.
+            ...(stages.includes('warp')
+              ? { landmarks: buildLandmarkPayload(seated, base) }
+              : {}),
+          },
           signal: controller.signal,
           onProgress: event => setProgress({
-            frac: event.frac ?? 0,
+            frac: (piece.fitStages?.rigid ? 0.4 : 0) + (event.frac ?? 0) * (piece.fitStages?.rigid ? 0.6 : 1),
             message: event.message || '',
           }),
         })
@@ -318,7 +377,7 @@ export default function useAssemblyFitRun({
           // space, so moving the piece would slide the placement out from under
           // geometry that has it baked in, and the visible mesh would sit still
           // while the invisible original moved.
-          placementAtFit: composePieceMatrix(piece, new THREE.Matrix4()),
+          placementAtFit: composePieceMatrix(seated, new THREE.Matrix4()),
         })
         publish()
         setShowFitted(previous => new Set(previous).add(piece.id))
@@ -330,7 +389,7 @@ export default function useAssemblyFitRun({
           fit: {
             status: 'ready',
             message: describeResult(stats),
-            stats: summarizeStats(stats),
+            stats: { ...summarizeStats(stats), seating: seatingStats },
             fittedAt: Date.now(),
           },
         }, { history: false })
@@ -492,12 +551,42 @@ export default function useAssemblyFitRun({
   }
 }
 
-// Which stages the piece's material class turns on, in pipeline order.
+// The DEFORM stages the piece's material class turns on, in pipeline order.
+// `rigid` is deliberately absent: it runs as its own call so its result can
+// become a placement rather than moved vertices — see run().
+// Pipeline order, not checkbox order: the warp corrects proportions before the
+// conform pulls the result onto the surface, and pushing out comes last.
+//
+// The warp is dropped when the piece has too few pairs rather than failing the
+// run — the panel already says how many are needed, and refusing to fit at all
+// because an optional stage is under-supplied would be the wrong trade.
 function activeStages(piece) {
   const stages = []
+  if (piece.fitStages?.warp && canWarpPiece(piece)) stages.push('warp')
   if (piece.fitStages?.shrinkwrap) stages.push('shrinkwrap')
   if (piece.fitStages?.penetration) stages.push('penetration')
   return stages
+}
+
+// The one-line verdict for a seating-only run.
+function describeSeating(stats) {
+  if (!stats) return 'Seated'
+  if (stats.kept_identity) {
+    return stats.clipping_vertices
+      ? 'Nothing a rigid move could improve — try Push out of the body'
+      : 'Already clear of the body — nothing moved'
+  }
+  const parts = []
+  if (Math.abs((stats.scale ?? 1) - 1) > 0.005) parts.push(`resized ${stats.scale.toFixed(2)}x`)
+  if ((stats.rotation_deg ?? 0) > 0.5) parts.push(`rotated ${stats.rotation_deg.toFixed(0)}°`)
+  if (!parts.length) parts.push('nudged into place')
+  if (stats.clipping_vertices) parts.push(`${stats.clipping_vertices} clipping vertices`)
+  const seated = `Seated — ${parts.join(', ')}`
+  // Worth saying out loud: the stage refines, it does not rescue a mis-sized
+  // piece, and the clamp is the moment the user needs to hear that.
+  return stats.scale_clamped
+    ? `${seated} (size change was capped — use Fit to region for a big rescale)`
+    : seated
 }
 
 // Only the numbers worth persisting. The full stats dict includes per-stage

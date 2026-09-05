@@ -2,6 +2,7 @@
 
     python -m app.services.assemblyfit body.glb armor.glb -o fitted.glb
     python -m app.services.assemblyfit body.glb armor.glb --stages penetration
+    python -m app.services.assemblyfit body.glb armor.glb --stages rigid,penetration
     python -m app.services.assemblyfit --synthetic sphere_shell --report
 
 Note it is `-m app.services.assemblyfit`, not `-m assemblyfit`: the package
@@ -75,7 +76,12 @@ def build_parser():
                         choices=['sphere_shell', 'sphere_inside', 'half_penetrating', 'far_away'],
                         help='use a built-in self-verifying case instead of files')
     parser.add_argument('--stages', default='shrinkwrap,penetration',
-                        help='comma-separated: shrinkwrap, penetration')
+                        # 'rigid' seats the piece without deforming it (rigid.py);
+                        # 'warp' bends it onto landmark pairs (warp.py).
+                        help='comma-separated: rigid, warp, shrinkwrap, penetration')
+    parser.add_argument('--landmarks', metavar='JSON',
+                        help='landmark pairs for the warp stage: a JSON list of '
+                             '{"piece": [x,y,z], "body": [x,y,z]} in world space')
     parser.add_argument('--offset', type=float, default=0.004,
                         help='clearance to leave between piece and body')
     parser.add_argument('--iters', type=int, default=8, help='iterations per stage')
@@ -88,6 +94,14 @@ def build_parser():
     parser.add_argument('--body-faces', type=int, default=60000,
                         help='decimate the proximity target to this many faces (0 = off)')
     parser.add_argument('--device', default='auto', choices=['auto', 'cpu'])
+    parser.add_argument('--warp-smoothing', type=float, default=0.0,
+                        help='0 passes the spline exactly through every landmark')
+    parser.add_argument('--warp-max-amplification', type=float, default=2.0,
+                        help='cap on warp displacement, x the furthest a pair asked for')
+    parser.add_argument('--warp-max-move-ratio', type=float, default=0.15,
+                        help="cap on warp displacement, x the PIECE's own diagonal")
+    parser.add_argument('--warp-clamp-abort-frac', type=float, default=0.25,
+                        help='refuse the warp once this share of the piece is clamped')
     parser.add_argument('--stats', metavar='JSON', help='write the stats dict here')
     parser.add_argument('--verify', action='store_true',
                         help='run the self-verifying property checks (see verify.py)')
@@ -104,6 +118,23 @@ def _load(path):
     if not isinstance(loaded, trimesh.Trimesh):
         raise SystemExit(f'{path} did not resolve to a triangle mesh')
     return loaded
+
+
+def _load_landmarks(path):
+    """Landmark pairs from a JSON file, for driving the warp headlessly.
+
+    Same shape the HTTP route takes, so a case reproduced from the browser can
+    be replayed here without translation.
+    """
+    if not path:
+        return ()
+    with open(path, 'r', encoding='utf-8') as handle:
+        raw = json.load(handle)
+    pairs = []
+    for entry in raw:
+        pairs.append({'piece': [float(v) for v in entry['piece']],
+                      'body': [float(v) for v in entry['body']]})
+    return tuple(pairs)
 
 
 def main(argv=None):
@@ -126,6 +157,11 @@ def main(argv=None):
 
     config = FitConfig(
         stages=tuple(s.strip() for s in args.stages.split(',') if s.strip()),
+        landmarks=_load_landmarks(args.landmarks),
+        warp_smoothing=args.warp_smoothing,
+        warp_max_amplification=args.warp_max_amplification,
+        warp_max_move_ratio=args.warp_max_move_ratio,
+        warp_clamp_abort_frac=args.warp_clamp_abort_frac,
         offset=args.offset,
         iterations=args.iters,
         smooth_rounds=args.smooth,
@@ -166,7 +202,18 @@ def main(argv=None):
         print(f"proximity target faces : {stats['target_faces']} (of {stats['body_faces']})")
         print(f"penetrating vertices   : {stats['penetrating_before']} -> {stats['penetrating_after']}")
         print(f"max depth              : {stats['max_depth_before']:.5f} -> {stats['max_depth_after']:.5f}")
-        print(f"flipped faces          : {stats['flipped_faces']} of {stats['stages'][config.stages[-1]]['face_count']}")
+        # A rigid-only run has no deform stage and therefore no face_count, so
+        # this must not index blindly into the last stage's stats.
+        deform = [name for name in config.stages if name != 'rigid']
+        face_count = stats['stages'][deform[-1]].get('face_count', '?') if deform else '?'
+        print(f"flipped faces          : {stats['flipped_faces']} of {face_count}")
+        seating = stats['stages'].get('rigid')
+        if seating:
+            print(f"seating                : scale {seating['scale']:.3f}, "
+                  f"rotation {seating['rotation_deg']:.1f} deg, "
+                  f"{seating['pairs_kept']}/{seating['pairs_total']} pairs"
+                  f"{', kept the original placement' if seating['kept_identity'] else ''}"
+                  f"{', size change capped' if seating.get('scale_clamped') else ''}")
         print(f"max vertex move        : {stats['max_move']:.5f}")
         for stage, seconds in stats['timings'].items():
             print(f"  {stage:<20} {seconds:.2f}s")

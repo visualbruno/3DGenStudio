@@ -28,6 +28,7 @@ import AssemblyViewportToolbar from '../components/assembly/AssemblyViewportTool
 import AssemblyTransformPanel from '../components/assembly/AssemblyTransformPanel'
 import AssemblyFitPanel from '../components/assembly/AssemblyFitPanel'
 import AssemblySaveDialog from '../components/assembly/AssemblySaveDialog'
+import AssemblyLandmarkPanel from '../components/assembly/AssemblyLandmarkPanel'
 import useAssemblyDocument from '../hooks/useAssemblyDocument'
 import useAssemblyScene from '../hooks/useAssemblyScene'
 import useAssemblyPicking from '../hooks/useAssemblyPicking'
@@ -35,6 +36,7 @@ import useAssemblyAlignment from '../hooks/useAssemblyAlignment'
 import useAssemblyFitRun from '../hooks/useAssemblyFitRun'
 import useAssemblySculpt from '../hooks/useAssemblySculpt'
 import useAssemblySave from '../hooks/useAssemblySave'
+import useAssemblyLandmarks from '../hooks/useAssemblyLandmarks'
 import { useProjects } from '../context/ProjectContext'
 import { getBasePiece, getGarmentPieces, getVisiblePieces } from '../utils/assemblyHelpers'
 import { pieceHasEdit } from '../utils/assemblyExport'
@@ -58,6 +60,12 @@ export default function AssemblyPage() {
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [contextRevision, setContextRevision] = useState(0)
 
+  // Set by the transform gizmo while a drag is in progress: a drag that ends
+  // over a different piece must not re-select it. Owned here rather than by the
+  // picking hook because picking is declared after the fit run (it needs the
+  // previews), while the fit run needs this flag — the ref breaks the cycle.
+  const gizmoDraggingRef = useRef(false)
+
   const shellRef = useRef(null)
   const cameraRef = useRef(null)
   const controlsRef = useRef(null)
@@ -77,10 +85,6 @@ export default function AssemblyPage() {
   const {
     entries, loadErrors, loadedPieceIds, getEntry, getVisibleBounds,
   } = useAssemblyScene(doc)
-  const {
-    handleSelectPointerDown, gizmoDraggingRef,
-  } = useAssemblyPicking({ shellRef, cameraRef, entries, doc })
-
   // Declared before the fit run so it can be told when a preview's buffers are
   // about to go away — a sculpt undo entry pointing at a disposed geometry
   // would write into freed memory.
@@ -94,10 +98,30 @@ export default function AssemblyPage() {
   })
   const fitEnsurePreview = fit.ensurePreview
 
+  // After the fit run, deliberately: picking has to raycast whatever is DRAWN,
+  // and that is the preview whenever one is showing.
+  const { pickAt, handleSelectPointerDown } = useAssemblyPicking({
+    shellRef, cameraRef, entries, doc, gizmoDraggingRef,
+    previews: fit.previews, showFitted: fit.showFitted,
+  })
+
   // Everything durable happens here — see useAssemblySave's header. It needs
   // ProjectContext only as a caller of three existing writes; no new context
   // members were added for the assembly workspace.
   const { projects, saveMeshEdit, uploadAssetThumbnail, linkAssetToProject } = useProjects()
+  // Distinct materials across everything the merge would include. Counted by
+  // identity: two pieces sharing one material instance really are one material.
+  const mergedMaterialCount = (() => {
+    const seen = new Set()
+    for (const piece of getVisiblePieces(doc)) {
+      const source = fit.previews.get(piece.id) || getEntry(piece.id)
+      for (const mesh of source?.meshes || []) {
+        if (mesh.material) seen.add(mesh.material)
+      }
+    }
+    return seen.size
+  })()
+
   const assemblySave = useAssemblySave({
     doc,
     meta,
@@ -116,6 +140,10 @@ export default function AssemblyPage() {
   const visiblePieces = getVisiblePieces(doc)
   const selectedPiece = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId) || null
   const selectedEntry = selectedPiece ? getEntry(selectedPiece.id) : null
+
+  const landmarks = useAssemblyLandmarks({
+    doc, base, selectedPiece, pickAt, patchPiece,
+  })
 
   // Sculpt mode needs no prior selection: you sculpt whatever you click, and
   // the click also selects it so the panels follow. Requiring a selection first
@@ -198,16 +226,21 @@ export default function AssemblyPage() {
   // Selected piece size relative to the base — the number that makes "this
   // armour is 2% of the body" obvious instead of something to discover by
   // zooming around.
+  // The base is re-derived here rather than closed over. `base` is handed to
+  // the landmark hook, and the compiler cannot prove a hook does not mutate what
+  // it is given — so depending on it here makes this memo unpreservable and
+  // costs the whole component its optimisation.
   const scaleRatio = useMemo(() => {
     const selected = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId)
-    if (!selected || !base || selected.id === base.id) return null
+    const basePiece = getBasePiece(doc)
+    if (!selected || !basePiece || selected.id === basePiece.id) return null
     const selectedEntry = getEntry(selected.id)
-    const baseEntry = getEntry(base.id)
+    const baseEntry = getEntry(basePiece.id)
     if (!selectedEntry || !baseEntry) return null
-    const baseDiagonal = boxDiagonal(pieceWorldBox(baseEntry, base))
+    const baseDiagonal = boxDiagonal(pieceWorldBox(baseEntry, basePiece))
     if (!(baseDiagonal > 0)) return null
     return boxDiagonal(pieceWorldBox(selectedEntry, selected)) / baseDiagonal
-  }, [doc, base, getEntry])
+  }, [doc, getEntry])
 
   // Keyboard: Ctrl+Z / Ctrl+Shift+Z (and Ctrl+Y) for history, and bare G / R / S
   // for the gizmo mode, which is what anyone arriving from Blender will try.
@@ -227,22 +260,29 @@ export default function AssemblyPage() {
       }
       if (event.altKey || event.shiftKey) return
 
+      // G / R / S are ignored while the brush is on, for the same reason the
+      // gizmo is unmounted: switching mode would put a transform control back
+      // under the cursor mid-stroke.
       const mode = key === 'g' ? 'translate' : key === 'r' ? 'rotate' : key === 's' ? 'scale' : null
-      if (mode) {
+      if (mode && !doc.settings.sculptMode) {
         event.preventDefault()
         patchSettings({ gizmoMode: mode })
+      } else if (key === 'escape' && doc.settings.sculptMode) {
+        // Esc leaves the brush — the way out that does not need the toolbar.
+        event.preventDefault()
+        patchSettings({ sculptMode: false })
       } else if (key === 'escape' && doc.settings.isolatedPieceId) {
         patchSettings({ isolatedPieceId: null })
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [undo, redo, patchSettings, doc.settings.isolatedPieceId])
+  }, [undo, redo, patchSettings, doc.settings.isolatedPieceId, doc.settings.sculptMode])
 
   const handleAddMeshes = useCallback(picked => {
     addPieces(picked)
     setShowMeshPicker(false)
-  }, [addPieces])
+  }, [addPieces, setShowMeshPicker])
 
   // While sculpting, the pointer belongs to the brush: a drag must not also
   // re-select whatever it passes over. Orbit is unaffected — it lives on the
@@ -259,10 +299,14 @@ export default function AssemblyPage() {
     // that starts on the canvas and releases over the toolbar must still end.
     if (!(event.target instanceof HTMLCanvasElement)) return
 
+    // Landmark placing owns the pointer while it is armed, before sculpting and
+    // before selection — a click that drops a point must not also re-select.
+    if (landmarks.handlePointerDown(event)) return
+
     if (sculpt.onPointerDown(event)) return
     if (sculptEnabled) return
     handleSelectPointerDown(event, pieceId => patchSettings({ selectedPieceId: pieceId }))
-  }, [sculpt, sculptEnabled, handleSelectPointerDown, patchSettings])
+  }, [landmarks, sculpt, sculptEnabled, handleSelectPointerDown, patchSettings])
 
   const {
     commit: commitToSelected,
@@ -409,6 +453,10 @@ export default function AssemblyPage() {
                 onCameraReady={camera => { cameraRef.current = camera }}
                 onControlsReady={controls => { controlsRef.current = controls }}
                 selectedPiece={selectedEntry ? selectedPiece : null}
+                landmarkBase={base}
+                landmarkPiece={landmarks.targetPieceId ? selectedPiece : null}
+                landmarkPending={landmarks.pendingBase}
+                hoveredPairId={landmarks.hoveredPairId}
                 onGizmoDragStart={onGizmoDragStart}
                 onGizmoDrag={onGizmoDrag}
                 onGizmoDragEnd={onGizmoDragEnd}
@@ -496,6 +544,18 @@ export default function AssemblyPage() {
             canPaste={clipboardFilled}
           />
 
+          <AssemblyLandmarkPanel
+            piece={selectedPiece && selectedPiece.id !== doc.basePieceId ? selectedPiece : null}
+            baseName={base?.name}
+            mode={landmarks.mode}
+            active={landmarks.active}
+            onStart={landmarks.start}
+            onStop={landmarks.stop}
+            onRemove={pairId => landmarks.removePair(selectedPiece.id, pairId)}
+            onClear={() => landmarks.clearPairs(selectedPiece.id)}
+            onHover={landmarks.setHoveredPairId}
+          />
+
           <AssemblyFitPanel
             piece={selectedPiece}
             isBase={!!selectedPiece && selectedPiece.id === doc.basePieceId}
@@ -528,6 +588,7 @@ export default function AssemblyPage() {
             piece,
             hasEdit: piece.assetId !== null && pieceHasEdit(fit.previews.get(piece.id)),
           }))}
+          mergedMaterialCount={mergedMaterialCount}
           assemblyName={meta?.name}
           projects={projects}
           busy={assemblySave.busy}

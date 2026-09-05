@@ -41,11 +41,24 @@ export const DEFAULT_FIT_OPTIONS = {
 }
 
 export const FIT_STAGE_LABELS = {
+  rigid: 'Seat on the body',
+  warp: 'Match the landmarks',
   shrinkwrap: 'Reshape to the body',
   penetration: 'Push out of the body',
 }
 
 export const FIT_STAGE_HINTS = {
+  warp: 'Bends the piece so each landmark pair meets — the only stage that can '
+    + 'correct PROPORTIONS, like a sleeve cut for a longer arm. Needs at least four '
+    + 'pairs, SPREAD in all three directions: pairs in a line down the piece leave '
+    + 'the warp unconstrained sideways, and it refuses rather than mangling it. '
+    + 'Everything far from a landmark fades back to where you put it.',
+  rigid: 'Moves, turns and resizes the piece as one solid object until it stops '
+    + 'clipping into the body. Never deforms it, so plate keeps its edges — and '
+    + 'because the result is a placement, it shows up in the transform fields and '
+    + 'undoes like any move. A piece that is already clear is left exactly where you '
+    + 'put it, including the gap you left inside it. It will not shrink a piece that '
+    + 'is merely too big — use Fit to region for that.',
   shrinkwrap: 'Reshapes the whole piece toward the body. Experimental: on a thick '
     + 'piece it currently flattens it and can invert faces.',
   penetration: 'Only moves what is inside the body. Fixes clipping, keeps the shape, '
@@ -86,6 +99,33 @@ const _matrix = new THREE.Matrix4()
  * disagreed, a restore would paste one mesh's vertices onto another — visible
  * as a piece exploding on load, and only for multi-submesh assets.
  */
+/**
+ * Landmark pairs in the SHARED WORLD SPACE both meshes are uploaded in.
+ *
+ * Stored per-mesh-local so that moving either mesh never invalidates a pair;
+ * converted here, deliberately in the same module that bakes the placement into
+ * the uploaded GLB. If these two ever disagreed about which space they are in,
+ * the warp would pull the piece toward a point that is nowhere near where the
+ * user clicked — and it would look like a bad spline rather than a bad space.
+ *
+ * `piece` must be the placement the PAYLOAD was built from. After a rigid seat
+ * that is the seated piece, not the one the user last saw.
+ */
+export function buildLandmarkPayload(piece, base) {
+  if (!piece || !base) return []
+  const pieceMatrix = composePieceMatrix(piece, new THREE.Matrix4())
+  const baseMatrix = composePieceMatrix(base, new THREE.Matrix4())
+  const point = (landmark, matrix) =>
+    new THREE.Vector3(...landmark.point).applyMatrix4(matrix).toArray()
+
+  return (piece.landmarks || [])
+    .filter(pair => pair.base && pair.piece)
+    .map(pair => ({
+      piece: point(pair.piece, pieceMatrix),
+      body: point(pair.base, baseMatrix),
+    }))
+}
+
 export function buildFitRanges(entry) {
   const ranges = []
   let vertexTotal = 0
@@ -244,7 +284,10 @@ export async function fitPiece({ pieceFile, baseFile, options, onProgress, signa
   if (positions.length !== done.count * 3) {
     throw new Error(`The fit returned ${positions.length / 3} vertices, expected ${done.count}.`)
   }
-  return { positions, stats: done.stats || {} }
+  // `transform` is the rigid stage's similarity matrix, or null. Positions are
+  // always authoritative; this exists so a rigid-ONLY run can be folded into
+  // the piece's placement rather than becoming a mesh edit.
+  return { positions, transform: done.transform || null, stats: done.stats || {} }
 }
 
 /**

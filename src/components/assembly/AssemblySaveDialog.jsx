@@ -8,6 +8,7 @@ import { useState } from 'react'
 
 export default function AssemblySaveDialog({
   editedPieces,        // [{ piece, hasEdit }]
+  mergedMaterialCount, // distinct materials the merged mesh would carry
   assemblyName,
   projects,
   busy,
@@ -114,11 +115,23 @@ export default function AssemblySaveDialog({
                 </select>
               </label>
               <p className="assembly-save__note">
-                One mesh with each piece as its own node, in world space — ready for
-                Auto Rig or export. Each piece uses its fitted result if it has one,
-                even while the viewport is toggled to Original; use Revert on a piece
-                to drop a fit you don&apos;t want.
+                One mesh with each piece as its own node, in world space. Each piece
+                uses its fitted result if it has one, even while the viewport is
+                toggled to Original; use Revert on a piece to drop a fit you
+                don&apos;t want.
               </p>
+              {mergedMaterialCount > 1 && (
+                /* Worth interrupting for: the mesh saves correctly and the loss
+                   happens later, in a different workspace, so there is nothing
+                   at that point to connect it back to. */
+                <p className="assembly-save__warn">
+                  This mesh keeps {mergedMaterialCount} separate materials. Opening it
+                  in the Mesh Editor — including for Auto Rig — merges every piece into
+                  one, and only the first material survives, so it comes back with one
+                  texture. Export it or use it as-is; don&apos;t round-trip it through
+                  the editor.
+                </p>
+              )}
             </div>
           )}
 

@@ -16,6 +16,63 @@ class FitConfig:
     # shrinkwrap does the shaping, penetration cleans up what it left behind.
     stages: tuple = ('shrinkwrap', 'penetration')
 
+    # ---- rigid auto-snap ----------------------------------------------------
+    # Seats the piece with a similarity transform instead of moving vertices, so
+    # a hard-surface piece keeps its edges. See rigid.py.
+    #
+    # Uniform scale only, never per-axis: a non-uniform scale is what turns a
+    # cuirass into a squashed cuirass, and it is exactly the "correction" a
+    # least-squares fit reaches for when the body's proportions differ from the
+    # armour's. A piece that genuinely needs stretching needs the warp stage.
+    rigid_allow_scale: bool = True
+
+    # How far the seating may change the size. TIGHT on purpose: this stage
+    # resolves clipping, it does not rescue a grossly mis-sized piece. A piece
+    # that clips everywhere does grow; one that merely floats is left alone.
+    # `Fit to region` matches EXTENTS and is where gross sizing belongs.
+    rigid_scale_limit: float = 1.5
+
+    # How much the vertices that are ALREADY fine weigh in the solve, as a
+    # multiple of the clipping vertices' total. They keep the transform sane
+    # without silencing the correction; equal per-vertex weights would let them
+    # outvote it about 76 to 1 and the answer would always be "do nothing".
+    rigid_anchor_pull: float = 1.0
+
+    # What a unit of average movement costs against a unit of average
+    # penetration depth, when deciding whether a seating was worth it.
+    #
+    # Must stay well under the share of the piece that is clipping. Freeing a
+    # vertex buried by depth d costs at least d of travel, and a translation
+    # moves EVERY vertex that far while only the buried fraction gains -- so at
+    # 1.0 the exchange is a wash by construction and the stage never acts.
+    rigid_move_penalty: float = 0.15
+
+    rigid_iterations: int = 12
+
+    # Share of the worst correspondences dropped before each solve, as a guard
+    # against a flank whose nearest body point is across a gap.
+    #
+    # Low, because trimming costs accuracy and the measurements said so: on a
+    # 1.5x-oversized piece needing 0.667x, 10% trim recovers 0.665 and 30%
+    # recovers only 0.695. Trimming keeps the correspondences that already
+    # match, which are exactly the ones arguing the piece should not move.
+    rigid_trim: float = 0.1
+
+    # Keep the user's placement when the solve does not actually improve the
+    # seating. A symmetric shell can walk into a worse local minimum than the
+    # one it started in.
+    rigid_try_identity: bool = True
+
+    # Seat each connected shell separately. OFF by default and deliberately so:
+    # AI armour arrives as dozens of shells, and letting each find its own home
+    # scatters the piece. Useful when a plate set's parts really are
+    # individually mis-placed.
+    rigid_per_shell: bool = False
+
+    # A shell below this many faces is absorbed into its nearest neighbour
+    # rather than seated on its own. Rivets have no opinion about anatomy.
+    rigid_shell_min_faces: int = 50
+
     # Clearance between the garment and the body, in world units. Not zero: a
     # garment sitting exactly ON the surface z-fights with it, and any later
     # animation pushes it through immediately.
@@ -78,6 +135,31 @@ class FitConfig:
     # outer vertex independently cannot produce a coherent surface when the
     # shell it is measured from is already broken.
     rebuild_shell: bool = False
+
+    # ---- landmark warp ------------------------------------------------------
+    # Pairs of points, each {'piece': [x,y,z], 'body': [x,y,z]}, in the SAME
+    # world space as both meshes. The client transforms the piece-side points
+    # through the placement it baked in, so the payload and the geometry can
+    # never disagree about which space they are in.
+    landmarks: tuple = ()
+
+    # 0 interpolates the landmarks exactly. Raise it when the pairs disagree
+    # slightly with each other and the exact solution ripples between them.
+    warp_smoothing: float = 0.0
+
+    # How much further a vertex may travel than the furthest any pair asked for.
+    # The guard that catches an ill-conditioned landmark set -- its symptom is
+    # exactly a large response to a small request. See warp.py.
+    warp_max_amplification: float = 2.0
+
+    # Second cap, as a fraction of the PIECE's own diagonal. Deliberately not
+    # the body's: 0.25 x a body diagonal was 0.45 on a boot 0.53 across, so the
+    # cap could not fire before the piece was destroyed.
+    warp_max_move_ratio: float = 0.15
+
+    # Refuse outright once this share of the piece is only being held in shape
+    # by the caps. Same circuit-breaker shape as flip_abort_frac.
+    warp_clamp_abort_frac: float = 0.25
 
     lock_vertical: bool = True
     preserve_centroid: bool = True

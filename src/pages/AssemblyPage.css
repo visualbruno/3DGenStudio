@@ -1159,6 +1159,16 @@
   margin-left: 0;
 }
 
+.assembly-save__warn {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #f0a030) 14%, transparent);
+  color: var(--on-surface);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .assembly-save__error,
 .assembly-save__error-text {
   font-size: 12px;
@@ -1220,4 +1230,138 @@
   background: var(--primary) !important;
   color: var(--on-primary) !important;
   font-weight: 600;
+}
+
+/* ---- Landmarks ----------------------------------------------------------- */
+
+.assembly-landmarks__intro,
+.assembly-landmarks__note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
+.assembly-landmarks__start,
+.assembly-landmarks__stop,
+.assembly-landmarks__clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assembly-landmarks__start:hover,
+.assembly-landmarks__clear:hover {
+  background: var(--surface-container-highest, var(--surface-container-high));
+}
+
+.assembly-landmarks__stop {
+  border-color: transparent;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+
+.assembly-landmarks__hint {
+  opacity: 0.7;
+}
+
+/* The prompt is the state machine made visible: which side is expected next.
+   Colour-matched to the markers so the panel and the viewport agree. */
+.assembly-landmarks__prompt {
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.assembly-landmarks__prompt--base {
+  background: color-mix(in srgb, #4fc3f7 18%, transparent);
+  color: var(--on-surface);
+}
+
+.assembly-landmarks__prompt--piece {
+  background: color-mix(in srgb, #ffb74d 18%, transparent);
+  color: var(--on-surface);
+}
+
+.assembly-landmarks__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assembly-landmarks__list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.assembly-landmarks__list li:hover {
+  background: var(--surface-container-high);
+}
+
+.assembly-landmarks__row--partial {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.assembly-landmarks__index {
+  min-width: 22px;
+  color: var(--on-surface-variant);
+  font-variant-numeric: tabular-nums;
+}
+
+.assembly-landmarks__label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assembly-landmarks__list button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.assembly-landmarks__list button:hover {
+  background: var(--surface-container-highest, var(--surface-container-high));
+  color: var(--error, #ef5350);
+}
+
+.assembly-landmarks__gate {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #f0a030) 14%, transparent);
+  font-size: 11px;
+}
+
+.assembly-landmarks__gate--ok {
+  background: color-mix(in srgb, #66bb6a 16%, transparent);
+}
+
+.assembly-fit__tag--warn {
+  background: color-mix(in srgb, var(--warning, #f0a030) 22%, transparent);
 }

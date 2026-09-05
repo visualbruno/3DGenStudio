@@ -328,6 +328,19 @@ class MeshStats(BaseModel):
     face_count: int
     has_uv: bool
 
+class FitLandmarkPair(BaseModel):
+    """One "this goes here" pair, in the shared world space both meshes arrive in.
+
+    The client transforms the piece-side point through the same placement matrix
+    it bakes into the piece GLB, so the payload cannot disagree with the
+    geometry about which space it is in.
+    """
+    piece: list[float] = Field(..., min_length=3, max_length=3,
+                               description="The point on the PIECE, world space.")
+    body: list[float] = Field(..., min_length=3, max_length=3,
+                              description="Where it should end up on the BASE, world space.")
+
+
 class FitOptions(BaseModel):
     """Assembly fit: adapt a garment/armour piece to a base body.
 
@@ -335,12 +348,93 @@ class FitOptions(BaseModel):
     with DEFAULT_FIT_OPTIONS in src/utils/assemblyFit.js and the MCP zod block.
     """
 
-    stages: list[Literal["shrinkwrap", "penetration"]] = Field(
+    stages: list[Literal["rigid", "warp", "shrinkwrap", "penetration"]] = Field(
         default=["shrinkwrap", "penetration"],
-        description="Stages to run, in order. 'shrinkwrap' conforms the whole piece to the "
-                    "body's shape; 'penetration' only pushes out what is inside it. Rigid "
-                    "pieces (plate armour) should use penetration alone -- conforming the "
-                    "whole shell rounds its edges and bows its flats.",
+        description="Stages to run, in order. 'rigid' seats the piece with a similarity "
+                    "transform and never deforms it; 'warp' bends it so each landmark pair "
+                    "meets, which is the only stage that can correct PROPORTIONS; 'shrinkwrap' "
+                    "conforms the whole piece to the body's shape; 'penetration' only pushes out "
+                    "what is inside it. Rigid pieces (plate armour) should use rigid + "
+                    "penetration -- conforming the whole shell rounds its edges and bows its "
+                    "flats.",
+    )
+    rigid_allow_scale: bool = Field(
+        default=True,
+        description="Let the rigid seating resize the piece. Uniform only -- a per-axis scale "
+                    "is what turns a cuirass into a squashed cuirass.",
+    )
+    rigid_scale_limit: float = Field(
+        default=1.5, ge=1.0, le=100.0,
+        description="How far rigid seating may change the size, as a factor. Tight on purpose: "
+                    "the stage resolves CLIPPING rather than rescuing a mis-sized piece. A piece "
+                    "that clips everywhere is grown; one that merely floats clear of the body is "
+                    "left where it was. Use Fit to region for gross scaling -- it matches extents.",
+    )
+    rigid_anchor_pull: float = Field(
+        default=1.0, ge=0.0, le=100.0,
+        description="How much the vertices that are already clear of the body weigh in the "
+                    "seating solve, as a multiple of the clipping ones' total. They stop the "
+                    "solve inventing a scale change; at equal per-vertex weight they would "
+                    "outvote the correction entirely.",
+    )
+    rigid_move_penalty: float = Field(
+        default=0.15, ge=0.0, le=10.0,
+        description="What a unit of average movement costs against a unit of average penetration "
+                    "depth when deciding whether a seating was worth keeping. Must stay well "
+                    "below the share of the piece that is clipping -- at 1.0 the exchange is a "
+                    "wash by construction and the stage never moves anything.",
+    )
+    rigid_iterations: int = Field(
+        default=12, ge=1, le=200,
+        description="ICP iteration budget for the rigid seating.",
+    )
+    rigid_trim: float = Field(
+        default=0.1, ge=0.0, le=0.9,
+        description="Share of the worst correspondences dropped before each rigid solve. Low: "
+                    "trimming keeps the pairs that already match, which are the ones arguing "
+                    "the piece should not move, and costs measurable accuracy.",
+    )
+    rigid_try_identity: bool = Field(
+        default=True,
+        description="Keep the user's placement when the seating does not improve on it.",
+    )
+    rigid_per_shell: bool = Field(
+        default=False,
+        description="Seat each connected shell separately. Off by default: AI armour arrives "
+                    "as dozens of shells and letting each find its own home scatters the piece.",
+    )
+    landmarks: list[FitLandmarkPair] = Field(
+        default_factory=list,
+        description="Landmark pairs driving the 'warp' stage. At least 4, and not all on one "
+                    "plane -- fewer than that cannot determine a 3D deformation and the stage "
+                    "reports an error rather than doing nothing.",
+    )
+    warp_smoothing: float = Field(
+        default=0.0, ge=0.0, le=100.0,
+        description="0 passes the spline exactly through every landmark. Raise it when pairs "
+                    "disagree slightly and the exact solution ripples between them.",
+    )
+    warp_max_amplification: float = Field(
+        default=2.0, ge=0.0, le=100.0,
+        description="Cap on how much further a vertex may travel than the furthest any landmark "
+                    "pair asked for. The guard that catches an ill-conditioned landmark set, "
+                    "whose symptom is exactly a huge response to a small request.",
+    )
+    warp_max_move_ratio: float = Field(
+        default=0.15, ge=0.0, le=2.0,
+        description="Second cap on warp displacement, as a fraction of the PIECE's own diagonal "
+                    "(not the base's -- a cap sized to the body is larger than a boot).",
+    )
+    warp_clamp_abort_frac: float = Field(
+        default=0.25, ge=0.0, le=1.0,
+        description="Refuse the warp when more than this share of the piece had to be held back "
+                    "by the caps. At that point the deformation is the safety net's, not the "
+                    "user's, and returning it silently hands back a mangled piece.",
+    )
+    rigid_shell_min_faces: int = Field(
+        default=50, ge=1, le=100000,
+        description="A shell smaller than this is absorbed into its nearest neighbour rather "
+                    "than seated on its own. Rivets have no opinion about anatomy.",
     )
     offset: float = Field(
         default=0.004, ge=0.0, le=1.0,

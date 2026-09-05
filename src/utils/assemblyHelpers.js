@@ -67,12 +67,18 @@ export const MATERIAL_CLASS_LABELS = {
 }
 
 export const MATERIAL_CLASS_PRESETS = {
+  // Plate: SEAT it, then clear whatever is still inside. Never conform — a
+  // smoothed displacement field is a low-frequency deformation and a flat plate
+  // has no low-frequency detail to spare, so conforming rounds its edges and
+  // bows its flats. The rigid stage moves the piece without touching a single
+  // vertex relative to its neighbours, which is the only way plate survives.
   rigid: {
-    stages: { shrinkwrap: false, penetration: true },
+    stages: { rigid: true, shrinkwrap: false, penetration: true },
     options: { offset: 0.006, smooth_rounds: 1, step_clamp: 0.35 },
   },
+  // Cloth: seating helps here too, but the shape comes from conforming.
   soft: {
-    stages: { shrinkwrap: false, penetration: true },
+    stages: { rigid: true, shrinkwrap: false, penetration: true },
     options: { offset: 0.002, smooth_rounds: 3, step_clamp: 0.6 },
   },
 }

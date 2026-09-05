@@ -39,6 +39,38 @@ export function composePieceMatrix(piece, target = new THREE.Matrix4()) {
 }
 
 /**
+ * Fold a world-space matrix into a piece's own TRS.
+ *
+ * What makes a rigid seating a PLACEMENT rather than an edit. The stage returns
+ * a similarity transform, and applying it here means the piece stays
+ * un-deformed, the numeric panel shows where it actually is, and undo works
+ * through the document like any other move — where baking it into vertices
+ * would turn "the armour was seated" into "the armour is now a modified mesh".
+ *
+ * `mirrorX` is divided out before decomposing and put back afterwards. It has
+ * to be: Matrix4.decompose normalises a negative determinant onto ONE axis of
+ * its choosing, so decomposing a mirrored placement directly moves the mirror
+ * to whichever axis it picks and silently reflects the piece differently.
+ */
+export function applyMatrixToPiece(piece, elements) {
+  const world = new THREE.Matrix4().fromArray(elements)
+  const next = world.multiply(composePieceMatrix(piece, new THREE.Matrix4()))
+  if (piece.mirrorX) next.multiply(_mirror)      // _mirror is its own inverse
+
+  const position = new THREE.Vector3()
+  const quaternion = new THREE.Quaternion()
+  const scale = new THREE.Vector3()
+  next.decompose(position, quaternion, scale)
+
+  const euler = new THREE.Euler().setFromQuaternion(quaternion, 'XYZ')
+  return {
+    position: position.toArray(),
+    rotation: [euler.x, euler.y, euler.z],
+    scale: scale.toArray(),
+  }
+}
+
+/**
  * True when the piece's matrix flips handedness, which happens with `mirrorX` or
  * an odd number of negative scale axes.
  *

@@ -60,8 +60,14 @@ export default function AssemblyViewportToolbar({
             key={id}
             type="button"
             className={`assembly-vp-toolbar__btn ${settings.gizmoMode === id ? 'assembly-vp-toolbar__btn--on' : ''}`}
-            title={hasSelection ? label : `${label} — select a piece first`}
-            disabled={!hasSelection}
+            title={
+              settings.sculptMode ? `${label} — not while Elastic Grab is on`
+                : hasSelection ? label
+                  : `${label} — select a piece first`
+            }
+            // Disabled with the brush, matching the hidden gizmo: the mode can
+            // still be chosen the moment sculpting is switched off.
+            disabled={!hasSelection || settings.sculptMode}
             onClick={() => onPatchSettings({ gizmoMode: id })}
           >
             <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>{icon}</span>

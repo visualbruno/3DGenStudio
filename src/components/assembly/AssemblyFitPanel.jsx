@@ -4,12 +4,14 @@
 // Presentational — every action leaves through a callback.
 import { MATERIAL_CLASS_LABELS, MATERIAL_CLASSES } from '../../utils/assemblyHelpers'
 import { FIT_STAGE_HINTS, FIT_STAGE_LABELS } from '../../utils/assemblyFit'
+import { MIN_WARP_LANDMARKS, completeLandmarks } from '../../utils/assemblyHelpers'
 
 const MATERIAL_CLASS_HINTS = {
-  rigid: 'Plate armour, pauldrons, helms. Pushes the piece out of the body with a '
-    + 'generous clearance, without reshaping it.',
-  soft: 'Cloth, chainmail, anything close-fitting. Pushes the piece out with a tight '
-    + 'clearance and more smoothing, so it sits snug.',
+  rigid: 'Plate armour, pauldrons, helms. Moves the piece out of the body as one solid '
+    + 'object, then pushes out whatever still clips, with a generous clearance and no '
+    + 'reshaping.',
+  soft: 'Cloth, chainmail, anything close-fitting. Same, with a tight clearance and more '
+    + 'smoothing so it sits snug.',
   custom: 'Your own stage and value choices.',
 }
 
@@ -91,7 +93,11 @@ export default function AssemblyFitPanel({
     fitOptions: { ...options, [key]: value },
   })
 
-  const noStages = !stages.shrinkwrap && !stages.penetration
+  const noStages = !stages.rigid && !stages.warp && !stages.shrinkwrap && !stages.penetration
+  // The warp needs pairs before it can do anything, so the checkbox says so
+  // rather than letting the user enable a stage that will be dropped.
+  const pairs = completeLandmarks(piece).length
+  const warpReady = pairs >= MIN_WARP_LANDMARKS
 
   return (
     <div className="assembly-fit">
@@ -112,7 +118,10 @@ export default function AssemblyFitPanel({
       </div>
       <p className="assembly-fit__hint">{MATERIAL_CLASS_HINTS[piece.materialClass]}</p>
 
-      {['penetration', 'shrinkwrap'].map(stage => (
+      {/* Pipeline order: seat the piece, then reshape it, then clean up what
+          is still inside. Listing them in the order they run makes the chain
+          legible; the two-call split behind it is an implementation detail. */}
+      {['rigid', 'warp', 'shrinkwrap', 'penetration'].map(stage => (
         <label key={stage} className="assembly-fit__stage" title={FIT_STAGE_HINTS[stage]}>
           <input
             type="checkbox"
@@ -121,10 +130,23 @@ export default function AssemblyFitPanel({
           />
           {FIT_STAGE_LABELS[stage]}
           {STAGE_WARNINGS[stage] && <span className="assembly-fit__tag">experimental</span>}
+          {stage === 'warp' && (
+            <span className={`assembly-fit__tag ${warpReady ? '' : 'assembly-fit__tag--warn'}`}>
+              {pairs}/{MIN_WARP_LANDMARKS} pairs
+            </span>
+          )}
         </label>
       ))}
       {stages.shrinkwrap && (
         <p className="assembly-fit__warn">{STAGE_WARNINGS.shrinkwrap}</p>
+      )}
+      {stages.warp && !warpReady && (
+        /* Enabled but under-supplied. The stage is DROPPED rather than failing
+           the run, so without this the fit would quietly do less than asked. */
+        <p className="assembly-fit__warn">
+          Not enough landmark pairs yet — place {MIN_WARP_LANDMARKS - pairs} more in the
+          Landmarks panel, or this stage is skipped.
+        </p>
       )}
 
       <div className="assembly-fit__knobs">

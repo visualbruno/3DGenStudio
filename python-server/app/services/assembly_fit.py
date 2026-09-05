@@ -17,6 +17,7 @@ from .assemblyfit import FitConfig, fit_assembly
 # monotonic 0..1. The pipeline already emits within these; this only labels.
 _STAGE_LABELS = {
     'prep': 'Preparing meshes',
+    'rigid': 'Seating the piece',
     'shrinkwrap': 'Conforming to the body',
     'penetration': 'Resolving interpenetration',
     'finalize': 'Finalizing',
@@ -56,6 +57,21 @@ def run_fit(piece_mesh, body_mesh, options: FitOptions, progress=None):
         rebuild_shell=options.rebuild_shell,
         lock_vertical=options.lock_vertical,
         preserve_centroid=options.preserve_centroid,
+        rigid_allow_scale=options.rigid_allow_scale,
+        rigid_scale_limit=options.rigid_scale_limit,
+        rigid_iterations=options.rigid_iterations,
+        rigid_trim=options.rigid_trim,
+        rigid_anchor_pull=options.rigid_anchor_pull,
+        landmarks=tuple({'piece': pair.piece, 'body': pair.body}
+                        for pair in options.landmarks),
+        warp_smoothing=options.warp_smoothing,
+        warp_max_amplification=options.warp_max_amplification,
+        warp_max_move_ratio=options.warp_max_move_ratio,
+        warp_clamp_abort_frac=options.warp_clamp_abort_frac,
+        rigid_move_penalty=options.rigid_move_penalty,
+        rigid_try_identity=options.rigid_try_identity,
+        rigid_per_shell=options.rigid_per_shell,
+        rigid_shell_min_faces=options.rigid_shell_min_faces,
         max_distance_ratio=options.max_distance_ratio or None,
         body_face_budget=options.body_face_budget,
         device=options.device,
@@ -83,5 +99,10 @@ def run_fit(piece_mesh, body_mesh, options: FitOptions, progress=None):
         'format': 'positions',
         'positions_b64': base64.b64encode(packed.tobytes()).decode('ascii'),
         'count': int(expected),
+        # The rigid stage's similarity transform, row-major, or null. Positions
+        # are always authoritative — this is here so a rigid-ONLY run can be
+        # folded into the piece's own placement instead of becoming a mesh edit,
+        # which keeps it visible and editable in the transform panel.
+        'transform': stats.get('transform'),
         'stats': stats,
     }

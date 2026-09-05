@@ -5,18 +5,22 @@
 // canvas, so its clicks reach the shell too), and choosing the frontmost hit
 // across several independently-placed roots needs explicit control over the
 // iteration rather than relying on R3F's event ordering.
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 import * as THREE from 'three'
 import { isPointerOverViewGizmo } from '../utils/viewGizmoLayout'
-import { ensurePieceBvh } from '../utils/assemblyGeometry'
+import { composePieceMatrix, ensurePieceBvh } from '../utils/assemblyGeometry'
 
 const _raycaster = new THREE.Raycaster()
 const _ndc = new THREE.Vector2()
 
-export default function useAssemblyPicking({ shellRef, cameraRef, entries, doc }) {
-  // Set by the transform gizmo while a drag is in progress (Phase 2). A drag that
-  // ends over a different piece must not re-select it.
-  const gizmoDraggingRef = useRef(false)
+export default function useAssemblyPicking({
+  shellRef, cameraRef, entries, doc, gizmoDraggingRef,
+  // What is actually DRAWN for each piece. A piece showing a fit preview is not
+  // its loaded mesh any more, and picking the loaded one instead put landmarks
+  // wherever the ray happened to cross the ORIGINAL surface — visibly away from
+  // the click, by exactly the distance the fit had moved that spot.
+  previews, showFitted,
+}) {
 
   /**
    * What is under the pointer, or null.
@@ -55,7 +59,11 @@ export default function useAssemblyPicking({ shellRef, cameraRef, entries, doc }
       // click would otherwise select something the user cannot see.
       if (isolated && piece.id !== isolated && piece.id !== doc.basePieceId) continue
 
-      const entry = entries.get(piece.id)
+      // Whatever the viewport is drawing for this piece — the same choice
+      // AssemblyViewport makes. Picking must agree with what the user can see,
+      // or every click lands somewhere they did not point at.
+      const entry = (showFitted?.has(piece.id) ? previews?.get(piece.id) : null)
+        || entries.get(piece.id)
       if (!entry?.root) continue
 
       // Built here rather than at load: see ensurePieceBvh. The cost lands once
@@ -72,13 +80,18 @@ export default function useAssemblyPicking({ shellRef, cameraRef, entries, doc }
 
     if (!best) return null
 
-    const { piece, entry, hit } = best
-    // The hit point in the PIECE ROOT's space as well as the world's. Landmarks
-    // are stored per-mesh and pre-placement, so that a piece being moved or
-    // rescaled later never invalidates a pair.
+    const { piece, hit } = best
+    // The hit point with the piece's PLACEMENT divided out, so moving or
+    // rescaling the piece later never invalidates a landmark.
+    //
+    // Divided out explicitly rather than via entry.root.worldToLocal(): the
+    // consumers (LandmarkMarkers, buildLandmarkPayload) put the point back by
+    // applying composePieceMatrix and nothing else, so this has to be its exact
+    // inverse. worldToLocal also removes whatever transform the loaded root
+    // carries, and for a preview the root is not the placed one at all — either
+    // difference lands the marker away from the click.
     const localPoint = hit.point.clone()
-    entry.root.updateMatrixWorld(true)
-    entry.root.worldToLocal(localPoint)
+      .applyMatrix4(composePieceMatrix(piece, new THREE.Matrix4()).invert())
 
     return {
       pieceId: piece.id,
@@ -89,7 +102,7 @@ export default function useAssemblyPicking({ shellRef, cameraRef, entries, doc }
       object: hit.object,
       distance: hit.distance,
     }
-  }, [shellRef, cameraRef, entries, doc])
+  }, [shellRef, cameraRef, entries, doc, previews, showFitted])
 
   /** Select-mode pointerdown: pick, or clear the selection on a miss. */
   const handleSelectPointerDown = useCallback((event, onSelect) => {
@@ -97,7 +110,7 @@ export default function useAssemblyPicking({ shellRef, cameraRef, entries, doc }
     if (event.button !== 0) return
     const hit = pickAt(event.clientX, event.clientY)
     onSelect(hit ? hit.pieceId : null)
-  }, [pickAt])
+  }, [pickAt, gizmoDraggingRef])
 
-  return { pickAt, handleSelectPointerDown, gizmoDraggingRef }
+  return { pickAt, handleSelectPointerDown }
 }
