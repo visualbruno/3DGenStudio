@@ -9,6 +9,9 @@ import { useState } from 'react'
 export default function AssemblySaveDialog({
   editedPieces,        // [{ piece, hasEdit }]
   mergedMaterialCount, // distinct materials the merged mesh would carry
+  baseRig,             // { boneCount, boneNames } when the base is rigged
+  baseClipCount,       // animation clips the base carries
+  baseName,
   assemblyName,
   projects,
   busy,
@@ -23,6 +26,7 @@ export default function AssemblySaveDialog({
   const [mergedName, setMergedName] = useState(`${assemblyName || 'Assembly'} (assembled)`)
   const [includeBase, setIncludeBase] = useState(true)
   const [projectId, setProjectId] = useState('')
+  const [transferWeights, setTransferWeights] = useState(!!baseRig)
   const [names, setNames] = useState(() =>
     Object.fromEntries(editedPieces.map(({ piece }) => [piece.id, piece.name])))
 
@@ -101,6 +105,34 @@ export default function AssemblySaveDialog({
                        onChange={event => setIncludeBase(event.target.checked)} />
                 Include the base body
               </label>
+
+              {/* The step that makes the merged character animate as one thing.
+                  Disabled rather than hidden when the base is unrigged, so the
+                  reason is visible instead of the option simply missing. */}
+              <label className="assembly-save__check"
+                     title={baseRig ? '' : 'The base mesh is not rigged'}>
+                <input
+                  type="checkbox"
+                  checked={transferWeights && !!baseRig}
+                  disabled={busy || !baseRig}
+                  onChange={event => setTransferWeights(event.target.checked)}
+                />
+                Transfer skin weights from the base
+                {baseRig
+                  ? <span className="assembly-save__muted"> ({baseRig.boneCount} bones)</span>
+                  : <span className="assembly-save__muted"> — the base is not rigged</span>}
+              </label>
+
+              {transferWeights && baseRig && (
+                <p className="assembly-save__note">
+                  Every piece is bound to one copy of {baseName || 'the base'}&apos;s skeleton,
+                  so the whole character animates together
+                  {baseClipCount > 0 && <>, and its {baseClipCount} animation
+                    {baseClipCount === 1 ? '' : 's'} come along</>}. This also avoids
+                  sending the merged mesh back through the Mesh Editor to rig it, which
+                  is what flattens its materials.
+                </p>
+              )}
               <label>
                 Add to project
                 <select value={projectId} disabled={busy}
@@ -166,6 +198,7 @@ export default function AssemblySaveDialog({
               mergedName,
               includeBase,
               projectId: projectId || null,
+              transferWeights: transferWeights && !!baseRig,
               names,
             })}
           >

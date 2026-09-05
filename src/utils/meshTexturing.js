@@ -577,7 +577,14 @@ export async function loadMeshRootFromUrl(url) {
   const extension = getExtensionFromUrl(url)
 
   if (extension === '.glb' || extension === '.gltf') {
-    const root = (await loadWithLoader(new GLTFLoader(), url))?.scene || null
+    const gltf = await loadWithLoader(new GLTFLoader(), url)
+    const root = gltf?.scene || null
+    // Carried on the root rather than returned separately: Object3D already has
+    // an `animations` field for exactly this, FBXLoader already populates it,
+    // and every caller of this function keeps working unchanged. Without it the
+    // clips are dropped at load and a rigged, animated base exports with its
+    // skeleton but no motion.
+    if (root && gltf?.animations?.length) root.animations = gltf.animations
     return root
   }
 

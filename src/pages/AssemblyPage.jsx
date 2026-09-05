@@ -40,6 +40,7 @@ import useAssemblyLandmarks from '../hooks/useAssemblyLandmarks'
 import { useProjects } from '../context/ProjectContext'
 import { getBasePiece, getGarmentPieces, getVisiblePieces } from '../utils/assemblyHelpers'
 import { pieceHasEdit } from '../utils/assemblyExport'
+import { extractRigFromObject } from '../utils/meshRig'
 import { boundsProxyGeometry, boxDiagonal, pieceWorldBox } from '../utils/assemblyGeometry'
 import { fitCameraToSphere, meshFittingSphere } from '../utils/cameraFraming'
 import './AssemblyPage.css'
@@ -105,10 +106,38 @@ export default function AssemblyPage() {
     previews: fit.previews, showFitted: fit.showFitted,
   })
 
+  // Plain derivations from the document, hoisted above everything that reads
+  // them. They are pure functions of `doc` and `getEntry` with no hook of their
+  // own, so their only constraint is being declared before their consumers —
+  // and `base` in particular is read by the rig extraction and the save hook.
+  const base = getBasePiece(doc)
+  const garments = getGarmentPieces(doc)
+  const visiblePieces = getVisiblePieces(doc)
+  const selectedPiece = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId) || null
+  const selectedEntry = selectedPiece ? getEntry(selectedPiece.id) : null
+
   // Everything durable happens here — see useAssemblySave's header. It needs
   // ProjectContext only as a caller of three existing writes; no new context
   // members were added for the assembly workspace.
-  const { projects, saveMeshEdit, uploadAssetThumbnail, linkAssetToProject } = useProjects()
+  const { projects, saveMeshEdit, uploadAssetThumbnail, linkAssetToProject, getAssetRecord } = useProjects()
+
+  // The base's skeleton, if it has one — read when the Save dialog opens, not
+  // during render.
+  //
+  // extractRigFromObject clones the whole bone hierarchy, and the page
+  // re-renders on every gizmo drag and brush move, so doing it inline would
+  // repeat that work hundreds of times for something only the Save dialog and
+  // the save itself ever look at. Memoising it instead costs the component its
+  // React Compiler optimisation: the entry it would depend on is handed to
+  // other hooks, and the compiler cannot prove none of them mutates it.
+  const [baseRig, setBaseRig] = useState(null)
+  const [baseClipCount, setBaseClipCount] = useState(0)
+  const openSaveDialog = useCallback(() => {
+    const entry = base ? getEntry(base.id) : null
+    setBaseRig(entry?.root ? extractRigFromObject(entry.root) : null)
+    setBaseClipCount(entry?.animations?.length || 0)
+    setShowSaveDialog(true)
+  }, [base, getEntry, setBaseRig, setBaseClipCount, setShowSaveDialog])
   // Distinct materials across everything the merge would include. Counted by
   // identity: two pieces sharing one material instance really are one material.
   const mergedMaterialCount = (() => {
@@ -133,13 +162,9 @@ export default function AssemblyPage() {
     saveMeshEdit,
     uploadAssetThumbnail,
     linkAssetToProject,
+    getAssetRecord,
+    baseRig,
   })
-
-  const base = getBasePiece(doc)
-  const garments = getGarmentPieces(doc)
-  const visiblePieces = getVisiblePieces(doc)
-  const selectedPiece = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId) || null
-  const selectedEntry = selectedPiece ? getEntry(selectedPiece.id) : null
 
   const landmarks = useAssemblyLandmarks({
     doc, base, selectedPiece, pickAt, patchPiece,
@@ -380,7 +405,7 @@ export default function AssemblyPage() {
         <button
           type="button"
           className="assembly-page__save-btn"
-          onClick={() => setShowSaveDialog(true)}
+          onClick={openSaveDialog}
           disabled={!ready || !doc.pieces.length}
           title="Save fitted pieces and the assembled mesh as assets"
         >
@@ -589,6 +614,9 @@ export default function AssemblyPage() {
             hasEdit: piece.assetId !== null && pieceHasEdit(fit.previews.get(piece.id)),
           }))}
           mergedMaterialCount={mergedMaterialCount}
+          baseRig={baseRig}
+          baseClipCount={baseClipCount}
+          baseName={base?.name}
           assemblyName={meta?.name}
           projects={projects}
           busy={assemblySave.busy}

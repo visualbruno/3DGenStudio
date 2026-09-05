@@ -69,6 +69,7 @@ export default function useAssemblyFitRun({
   const restoredRef = useRef(new Set())          // pieces already attempted this assembly
   const storedRef = useRef(new Set())            // pieces the server has a file for
   const listedRef = useRef(false)                // has the listing been fetched?
+  const inFlightRef = useRef(new Set())          // restores currently awaiting bytes
   // Mirrors of the current props, so the debounced writers and the unmount
   // flush read what is true NOW rather than whatever was captured when the
   // timer was set. Assigned in an effect: writing a ref during render is what
@@ -105,6 +106,7 @@ export default function useAssemblyFitRun({
     listedRef.current = false
     storedRef.current = new Set()
     restoredRef.current = new Set()
+    inFlightRef.current = new Set()
   }, [assemblyId])
 
   const publish = useCallback(() => {
@@ -195,21 +197,27 @@ export default function useAssemblyFitRun({
 
   const dropPreview = useCallback(pieceId => {
     const preview = previewsRef.current.get(pieceId)
-    if (!preview) return
-    // Tell anything holding references (sculpt undo) before the buffers go.
-    onPreviewReplaced?.(preview)
-    disposeFitPreview(preview)
-    previewsRef.current.delete(pieceId)
+    if (preview) {
+      // Tell anything holding references (sculpt undo) before the buffers go.
+      onPreviewReplaced?.(preview)
+      disposeFitPreview(preview)
+      previewsRef.current.delete(pieceId)
+    }
 
     // The stored copy goes with it, and any write still queued is cancelled —
     // otherwise a debounced stroke would land a moment later and resurrect the
     // fit the user just reverted.
+    //
+    // Cleaned up UNCONDITIONALLY, even with no preview in memory and even if
+    // the piece is not in the listing yet. Removing a piece before its stored
+    // fit had a chance to restore is exactly the case that used to return early
+    // here and strand the file until the whole assembly was deleted. A DELETE
+    // for a file that is not there is a 404 the client already ignores.
     clearTimeout(persistTimersRef.current.get(pieceId))
     persistTimersRef.current.delete(pieceId)
     restoredRef.current.add(pieceId)
-    if (storedRef.current.delete(pieceId) && assemblyIdRef.current) {
-      deleteWorkingGeometry(assemblyIdRef.current, pieceId)
-    }
+    storedRef.current.delete(pieceId)
+    if (assemblyIdRef.current) deleteWorkingGeometry(assemblyIdRef.current, pieceId)
 
     publish()
     setShowFitted(previous => {
@@ -437,9 +445,28 @@ export default function useAssemblyFitRun({
   // materials and topology come from the asset. Anything that no longer lines
   // up is discarded rather than pasted on (see decodeWorkingGeometry) — a
   // re-pointed asset is exactly the case that produces a mismatch.
+  //
+  // ---- `cancelled` means SUPERSEDED, not "stop" ------------------------------
+  //
+  // This effect depends on `doc` and `entries`, and both change constantly: on
+  // every autosave, every patch, and every piece that finishes loading. So an
+  // in-flight restore is cancelled many times during a normal page load.
+  //
+  // An earlier version marked a piece as attempted BEFORE awaiting its file and
+  // then bailed out on `cancelled` — so a superseded run left the piece flagged
+  // as done with nothing restored, and no later run would retry it. The fit
+  // simply vanished, most often on whichever piece was edited last, and saving
+  // made it near-certain because the save patches the document and cancels
+  // whatever was in flight.
+  //
+  // So there is no `cancelled` flag at all. Unmount is the only stop condition;
+  // `restoredRef` and `inFlightRef` make overlapping runs harmless, so a
+  // superseded run simply finishes what it started. Aborting on supersession
+  // also had a quieter failure: the run that fetched the LISTING would abandon
+  // it while every later run short-circuited on the still-empty set, leaving
+  // the listing loaded and never used.
   useEffect(() => {
     if (!assemblyId) return undefined
-    let cancelled = false
 
     ;(async () => {
       let stored = storedRef.current
@@ -452,20 +479,28 @@ export default function useAssemblyFitRun({
           return
         }
       }
-      if (cancelled || !stored.size) return
+      if (unmountedRef.current || !stored.size) return
 
       for (const piece of doc.pieces) {
-        if (cancelled) break
+        if (unmountedRef.current) break
         if (!stored.has(piece.id)) continue
         if (restoredRef.current.has(piece.id)) continue
         if (previewsRef.current.has(piece.id)) continue
         const entry = entries.get(piece.id)
         if (!entry?.meshes?.length) continue          // not loaded yet; a later pass gets it
 
-        restoredRef.current.add(piece.id)
+        if (inFlightRef.current.has(piece.id)) continue
+        inFlightRef.current.add(piece.id)
         try {
           const buffer = await fetchWorkingGeometry(assemblyId, piece.id)
-          if (cancelled || !buffer) continue
+          if (unmountedRef.current) return
+          if (!buffer) {
+            // The listing said there was a file and there is not. Nothing to
+            // retry, so record it as settled.
+            restoredRef.current.add(piece.id)
+            storedRef.current.delete(piece.id)
+            continue
+          }
           const { ranges, vertexCount } = buildFitRanges(entry)
           const decoded = decodeWorkingGeometry(buffer, {
             sourceUrl: buildAssetUrl(piece),
@@ -474,12 +509,19 @@ export default function useAssemblyFitRun({
           if (!decoded) {
             // Stale against the asset it claims to belong to. Removing it stops
             // the same rejected file being fetched on every future open.
+            restoredRef.current.add(piece.id)
             storedRef.current.delete(piece.id)
             deleteWorkingGeometry(assemblyId, piece.id)
             continue
           }
-          if (cancelled || previewsRef.current.has(piece.id)) continue
+          // Another run got there first — settled either way.
+          if (previewsRef.current.has(piece.id)) {
+            restoredRef.current.add(piece.id)
+            continue
+          }
 
+          // Marked only now, with the preview actually in hand.
+          restoredRef.current.add(piece.id)
           previewsRef.current.set(piece.id, {
             ...buildFitPreview({ ranges }, decoded.positions),
             pieceId: piece.id,
@@ -501,12 +543,16 @@ export default function useAssemblyFitRun({
           // positions are its world positions — from the moment it appears.
           rebasePreview(piece.id)
         } catch (err) {
+          // Deliberately NOT marked as restored: a failed fetch is worth
+          // another go on the next pass.
           console.warn(`Could not restore the stored fit for ${piece.name}`, err)
+        } finally {
+          inFlightRef.current.delete(piece.id)
         }
       }
     })()
 
-    return () => { cancelled = true }
+    return undefined
   }, [assemblyId, doc, entries, publish, rebasePreview])
 
   /**

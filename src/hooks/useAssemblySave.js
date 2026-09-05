@@ -18,6 +18,7 @@ import { useCallback, useState } from 'react'
 import { API_BASE, assetUrl } from '../config'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import { exportMergedAssemblyGlb, exportPieceGlb, pieceHasEdit } from '../utils/assemblyExport'
+import { buildBaseSkinSampler } from '../utils/assemblyWeights'
 import { getBasePiece, getVisiblePieces } from '../utils/assemblyHelpers'
 
 export default function useAssemblySave({
@@ -31,6 +32,8 @@ export default function useAssemblySave({
   saveMeshEdit,
   uploadAssetThumbnail,
   linkAssetToProject,
+  getAssetRecord,
+  baseRig,
   onSaved,
 }) {
   const [busy, setBusy] = useState(false)
@@ -141,19 +144,66 @@ export default function useAssemblySave({
           throw new Error('Nothing visible to merge.')
         }
 
-        const file = await exportMergedAssemblyGlb(entries, options.mergedName)
+        // Skin weights are sampled HERE, not when the fit ran: they describe
+        // the final vertex positions, and "final" is only true once the user
+        // has stopped fitting and sculpting. Working geometry stores positions
+        // only, so weights computed earlier would be dropped on reload anyway.
+        let sampler = null
+        if (options.transferWeights && baseRig) {
+          setProgress('Reading the base rig…')
+          sampler = buildBaseSkinSampler(getEntry(base?.id), base)
+        }
+
+        setProgress('Building the assembled mesh…')
+        let merge
+        try {
+          merge = await exportMergedAssemblyGlb(entries, options.mergedName, {
+            rig: options.transferWeights ? baseRig : null,
+            sampler,
+            animations: options.transferWeights ? (getEntry(base?.id)?.animations || []) : [],
+          })
+        } finally {
+          sampler?.dispose()
+        }
+        const file = merge.file
+        if (merge.warnings?.length) {
+          // Surfaced, never swallowed: an asset that quietly came out unrigged
+          // is discovered two workspaces later with nothing to explain it.
+          failed.push(`skin weights not applied — ${merge.warnings.join('; ')}`)
+        }
         setProgress('Saving the assembled mesh…')
 
         const form = new FormData()
         form.append('file', file)
         form.append('type', 'mesh')
         form.append('name', options.mergedName)
+        // The base's bone mappings ride along so Auto Rig's retargeting still
+        // works on the merged character — the mesh-editor save route threads
+        // them for exactly this reason.
+        let boneMappings = null
+        if (merge.skinned && base?.assetId && getAssetRecord) {
+          try {
+            const record = await getAssetRecord({ assetId: base.assetId, type: 'mesh' })
+            const raw = record?.metadata
+            const parsed = typeof raw === 'string' ? JSON.parse(raw || '{}') : (raw || {})
+            if (parsed?.boneMappings && typeof parsed.boneMappings === 'object') {
+              boneMappings = parsed.boneMappings
+            }
+          } catch (error) {
+            console.warn('Could not carry the base bone mappings over', error)
+          }
+        }
+
         form.append('metadata', JSON.stringify({
           source: 'MESH ASSEMBLY',
           assemblyId: meta?.id ?? null,
           assemblyName: meta?.name ?? null,
           baseAssetId: base?.assetId ?? null,
           pieceAssetIds: entries.map(e => e.piece.assetId).filter(Boolean),
+          rigged: !!merge.skinned,
+          bones: merge.bones ?? null,
+          animations: merge.clips ?? 0,
+          ...(boneMappings ? { boneMappings } : {}),
           savedAt: Date.now(),
         }))
 
@@ -207,7 +257,7 @@ export default function useAssemblySave({
       setProgress('')
     }
   }, [doc, meta, getEntry, previews, patchPiece, setMerged, dropPreview, saveMeshEdit,
-      linkAssetToProject, refreshThumbnail, onSaved])
+      linkAssetToProject, refreshThumbnail, onSaved, baseRig, getAssetRecord])
 
   return { save, busy, progress, error, result, clear: () => { setResult(null); setError('') } }
 }

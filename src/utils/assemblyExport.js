@@ -12,7 +12,10 @@
 //     assembled character: every piece where the user put it, ready for Auto
 //     Rig or export.
 import * as THREE from 'three'
+import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { composePieceMatrix } from './assemblyGeometry'
+import { transferSkinFromBase, validateSkin } from './assemblyWeights'
+import { rebindClipForExport } from './animationLibrary'
 
 /**
  * The geometry to save for one piece: its preview when it has been fitted or
@@ -129,10 +132,12 @@ function buildGroup(entries, { toLocalOf = null } = {}) {
   return group
 }
 
-async function exportGroup(group, baseName) {
+async function exportGroup(group, baseName, animations = []) {
   const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js')
   const buffer = await new Promise((resolve, reject) => {
-    new GLTFExporter().parse(group, resolve, reject, { binary: true, onlyVisible: false })
+    new GLTFExporter().parse(group, resolve, reject, {
+      binary: true, onlyVisible: false, animations,
+    })
   })
   // Dispose only what this module created. The materials belong to the live
   // scene and disposing them would blank the viewport.
@@ -159,8 +164,135 @@ export async function exportPieceGlb({ piece, entry, preview }) {
  * material, unlike exportPartsToGlb's segmentation case where one material is
  * shared — these pieces have distinct textures.
  */
-export async function exportMergedAssemblyGlb(entries, name) {
+export async function exportMergedAssemblyGlb(entries, name, {
+  rig = null, sampler = null, animations = [],
+} = {}) {
   const group = buildGroup(entries)
   group.name = `${sanitize(name)}_assembly`
-  return exportGroup(group, `${name}-assembly`)
+
+  if (rig?.rigScene && sampler) {
+    const skinned = buildSkinnedAssembly(group, rig, sampler, name)
+    if (skinned.scene) {
+      // The base's own clips, carried onto the merged character. They target
+      // bones by NAME, and skeletonClone preserves names, so they bind to the
+      // shared skeleton without remapping — every piece then animates with the
+      // body instead of the asset arriving rigged but motionless.
+      //
+      // Clips only ride along on the SKINNED path: with no skeleton in the file
+      // there is nothing for their tracks to address.
+      const clips = (animations || []).map(rebindClipForExport)
+      const file = await exportGroup(skinned.scene, `${name}-assembly`, clips)
+      return {
+        file, skinned: true, warnings: skinned.warnings,
+        bones: skinned.bones, clips: clips.length,
+      }
+    }
+    // Fall through to the static export, carrying the reason with it. A
+    // silently-unrigged asset is the failure people notice three steps later.
+    stripSkin(group)
+    return { file: await exportGroup(group, `${name}-assembly`),
+             skinned: false, warnings: skinned.warnings }
+  }
+
+  stripSkin(group)
+  return { file: await exportGroup(group, `${name}-assembly`), skinned: false, warnings: [] }
+}
+
+/**
+ * Drop skin attributes from a STATIC export.
+ *
+ * The base's geometry still carries the skinIndex/skinWeight it was loaded
+ * with. Without a `skin` to go with them they are dead weight in the file —
+ * ignored by every loader, and misleading to anyone inspecting it to work out
+ * why the asset does not animate.
+ */
+function stripSkin(group) {
+  for (const child of group.children) {
+    child.geometry?.deleteAttribute?.('skinIndex')
+    child.geometry?.deleteAttribute?.('skinWeight')
+  }
+}
+
+/**
+ * Re-home every piece under ONE skeleton cloned from the base.
+ *
+ * The subtle part of the whole feature. buildRiggedObject clones the rig on
+ * every call, so calling it per piece yields N skeletons in the file — Auto Rig
+ * and Animations then see several rigs and none of them drives the whole
+ * character. The clone therefore happens exactly once here, and every piece is
+ * bound to that same Skeleton instance.
+ *
+ * The bind matrix is identity because the geometry is already in world/rest
+ * space, which is the invariant meshRig.js documents at length: at rest the
+ * bone matrices reduce to identity, so feeding baked positions back with
+ * bindMatrix = I reproduces the same pose. Keeping the original bind matrix
+ * would apply it twice and fold the piece inside the body.
+ *
+ * NOTE ON THE EXPORTED FILE: GLTFExporter writes one `skin` object per
+ * SkinnedMesh, so a two-piece assembly shows `skins: 2` even though both were
+ * bound to the same Skeleton instance. That is not several skeletons and does
+ * not need fixing — the skins carry IDENTICAL joint lists pointing at the same
+ * bone NODES (measured: 2 skins, 28 joints each, 28 distinct nodes between
+ * them), so one animation drives every piece. Counting `skins` and concluding
+ * the share failed is the mistake waiting to be made here; count distinct
+ * joint nodes instead.
+ */
+function buildSkinnedAssembly(group, rig, sampler, name) {
+  const warnings = []
+  let scene
+  try {
+    scene = skeletonClone(rig.rigScene)
+  } catch (error) {
+    return { scene: null, warnings: [`the base's rig could not be cloned (${error.message})`] }
+  }
+
+  let skeleton = null
+  const templates = []
+  scene.traverse(child => {
+    if (child.isSkinnedMesh && child.skeleton) {
+      if (!skeleton) skeleton = child.skeleton
+      templates.push(child)
+    }
+  })
+  if (!skeleton?.bones?.length) {
+    return { scene: null, warnings: ['the base has no usable skeleton'] }
+  }
+
+  // The rig scene carries the BASE's own skinned mesh. It is a template for the
+  // skeleton, not content: the base is already in `group` as a plain mesh if
+  // the user asked to include it, and leaving both would export the body twice.
+  for (const template of templates) template.removeFromParent()
+
+  const boneCount = skeleton.bones.length
+  const pieces = [...group.children]
+  for (const mesh of pieces) {
+    const positions = mesh.geometry.getAttribute('position').array
+    transferSkinFromBase(sampler, mesh.geometry, positions)
+
+    const problem = validateSkin(mesh.geometry, boneCount)
+    if (problem) {
+      // One bad piece invalidates the whole skinned export: a partial rig loads
+      // fine and then animates into knots, which is far harder to diagnose than
+      // an asset that is simply not rigged.
+      warnings.push(`${mesh.name} ${problem}`)
+      return { scene: null, warnings }
+    }
+  }
+
+  for (const mesh of pieces) {
+    const skinnedMesh = new THREE.SkinnedMesh(mesh.geometry, mesh.material)
+    skinnedMesh.name = mesh.name
+    skinnedMesh.frustumCulled = false
+    skinnedMesh.position.set(0, 0, 0)
+    skinnedMesh.quaternion.identity()
+    skinnedMesh.scale.set(1, 1, 1)
+    skinnedMesh.updateMatrix()
+    scene.add(skinnedMesh)
+    skinnedMesh.bind(skeleton, new THREE.Matrix4())
+  }
+  group.clear()          // the geometries now belong to the skinned meshes
+
+  scene.name = `${sanitize(name)}_assembly`
+  scene.updateMatrixWorld(true)
+  return { scene, warnings, bones: boneCount }
 }

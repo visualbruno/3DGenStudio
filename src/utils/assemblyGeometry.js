@@ -135,7 +135,11 @@ export async function loadAssemblyPieceRoot(url) {
 
   const localBox = new THREE.Box3().setFromObject(root)
 
-  return { root, meshes, localBox, vertexCount, faceCount: Math.round(faceCount), hasSkin }
+  return {
+    root, meshes, localBox, vertexCount, faceCount: Math.round(faceCount), hasSkin,
+    // Only ever read from the BASE, and only by the merged export.
+    animations: root.animations || [],
+  }
 }
 
 // ---------------------------------------------------------------------------
