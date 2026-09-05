@@ -243,6 +243,7 @@ CREATE TABLE IF NOT EXISTS MeshAssemblies (
       name TEXT NOT NULL,
       stateJson TEXT,
       thumbnailPath TEXT,
+      geometryDir TEXT,
       createdAt BIGINT NOT NULL,
       updatedAt BIGINT NOT NULL
 );
@@ -254,6 +255,8 @@ CREATE TABLE IF NOT EXISTS Assets_Tags (
       PRIMARY KEY(assetId, tag),
       FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
+
+ALTER TABLE MeshAssemblies ADD COLUMN IF NOT EXISTS geometryDir TEXT;
 
 ALTER TABLE Assets ADD COLUMN IF NOT EXISTS thumbnail TEXT;
 

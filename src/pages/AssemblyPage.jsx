@@ -27,13 +27,17 @@ import AssemblyViewport from '../components/assembly/AssemblyViewport'
 import AssemblyViewportToolbar from '../components/assembly/AssemblyViewportToolbar'
 import AssemblyTransformPanel from '../components/assembly/AssemblyTransformPanel'
 import AssemblyFitPanel from '../components/assembly/AssemblyFitPanel'
+import AssemblySaveDialog from '../components/assembly/AssemblySaveDialog'
 import useAssemblyDocument from '../hooks/useAssemblyDocument'
 import useAssemblyScene from '../hooks/useAssemblyScene'
 import useAssemblyPicking from '../hooks/useAssemblyPicking'
 import useAssemblyAlignment from '../hooks/useAssemblyAlignment'
 import useAssemblyFitRun from '../hooks/useAssemblyFitRun'
 import useAssemblySculpt from '../hooks/useAssemblySculpt'
+import useAssemblySave from '../hooks/useAssemblySave'
+import { useProjects } from '../context/ProjectContext'
 import { getBasePiece, getGarmentPieces, getVisiblePieces } from '../utils/assemblyHelpers'
+import { pieceHasEdit } from '../utils/assemblyExport'
 import { boundsProxyGeometry, boxDiagonal, pieceWorldBox } from '../utils/assemblyGeometry'
 import { fitCameraToSphere, meshFittingSphere } from '../utils/cameraFraming'
 import './AssemblyPage.css'
@@ -51,6 +55,7 @@ export default function AssemblyPage() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [showMeshPicker, setShowMeshPicker] = useState(false)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [contextRevision, setContextRevision] = useState(0)
 
   const shellRef = useRef(null)
@@ -64,7 +69,7 @@ export default function AssemblyPage() {
   const {
     assemblies, meta, doc, ready, loading, loadError, saveStatus,
     canUndo, canRedo, undo, redo,
-    addPieces, patchPiece, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
+    addPieces, patchPiece, setMerged, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
     setMaterialClass,
     createNewAssembly, renameCurrentAssembly, deleteCurrentAssembly, selectAssembly,
   } = useAssemblyDocument({ assemblyId, onAssemblyIdChange: setAssemblyId })
@@ -84,9 +89,26 @@ export default function AssemblyPage() {
     sculptHistoryRef.current?.(preview)
   }, [])
   const fit = useAssemblyFitRun({
-    doc, getEntry, patchPiece, onPreviewReplaced: notifyPreviewReplaced,
+    assemblyId, doc, entries, getEntry, patchPiece, onPreviewReplaced: notifyPreviewReplaced,
   })
   const fitEnsurePreview = fit.ensurePreview
+
+  // Everything durable happens here — see useAssemblySave's header. It needs
+  // ProjectContext only as a caller of three existing writes; no new context
+  // members were added for the assembly workspace.
+  const { projects, saveMeshEdit, uploadAssetThumbnail, linkAssetToProject } = useProjects()
+  const assemblySave = useAssemblySave({
+    doc,
+    meta,
+    getEntry,
+    previews: fit.previews,
+    patchPiece,
+    setMerged,
+    dropPreview: fit.dropPreview,
+    saveMeshEdit,
+    uploadAssetThumbnail,
+    linkAssetToProject,
+  })
 
   const base = getBasePiece(doc)
   const garments = getGarmentPieces(doc)
@@ -129,6 +151,7 @@ export default function AssemblyPage() {
     shellRef,
     cameraRef,
     resolveTarget: resolveSculptTarget,
+    onEdited: fit.persistPiece,
     enabled: sculptEnabled,
     radiusPixels: doc.settings.sculptRadius ?? 80,
     strength: doc.settings.sculptStrength ?? 1,
@@ -293,6 +316,20 @@ export default function AssemblyPage() {
         <span className={`assembly-page__save assembly-page__save--${saveStatus}`}>
           {SAVE_LABELS[saveStatus]}
         </span>
+
+        {/* The document autosaves; this button is about ASSETS, which never
+            change without being asked. Two different meanings of "save", so the
+            wording has to carry the difference. */}
+        <button
+          type="button"
+          className="assembly-page__save-btn"
+          onClick={() => setShowSaveDialog(true)}
+          disabled={!ready || !doc.pieces.length}
+          title="Save fitted pieces and the assembled mesh as assets"
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>save</span>
+          Save as assets
+        </button>
       </div>
 
       {loadError && <div className="assembly-page__error">{loadError}</div>}
@@ -315,7 +352,13 @@ export default function AssemblyPage() {
               onSelect={id => patchSettings({ selectedPieceId: id })}
               onSetBase={setBase}
               onPatchPiece={patchPiece}
-              onRemovePiece={removePiece}
+              onRemovePiece={id => {
+                // Drop the preview first: that is what removes the piece's
+                // stored geometry. Removing the piece alone would leave the
+                // file behind until the whole assembly is deleted.
+                fit.dropPreview(id)
+                removePiece(id)
+              }}
               onReorder={reorderPieces}
               onIsolate={id => patchSettings({ isolatedPieceId: id })}
             />
@@ -465,6 +508,23 @@ export default function AssemblyPage() {
       <Footer variant="kanban" />
 
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+
+      {showSaveDialog && (
+        <AssemblySaveDialog
+          editedPieces={doc.pieces.map(piece => ({
+            piece,
+            hasEdit: piece.assetId !== null && pieceHasEdit(fit.previews.get(piece.id)),
+          }))}
+          assemblyName={meta?.name}
+          projects={projects}
+          busy={assemblySave.busy}
+          progress={assemblySave.progress}
+          error={assemblySave.error}
+          result={assemblySave.result}
+          onSave={assemblySave.save}
+          onClose={() => { assemblySave.clear(); setShowSaveDialog(false) }}
+        />
+      )}
 
       {showMeshPicker && (
         <AssetSelectorModal

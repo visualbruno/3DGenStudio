@@ -331,6 +331,17 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     })
   }, [applyChange])
 
+  // What the Save dialog produced. Not history: recording where an asset went
+  // is bookkeeping, and undoing it would only make the document lie about what
+  // exists on disk.
+  const setMerged = useCallback(merged => {
+    applyChange(draft => {
+      draft.merged = { ...draft.merged, ...merged }
+      return draft
+    }, { history: false })
+    flushSave()
+  }, [applyChange, flushSave])
+
   const patchSettings = useCallback((patch, options) => {
     applyChange(draft => {
       Object.assign(draft.settings, typeof patch === 'function' ? patch(draft.settings) : patch)
@@ -404,6 +415,7 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     canRedo: historyDepth.redo > 0,
 
     patchPiece,
+    setMerged,
     addPieces,
     duplicatePiece,
     removePiece,
@@ -422,7 +434,7 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     flushSave,
   }), [
     assemblies, meta, doc, loading, loadError, saveStatus, historyDepth,
-    patchPiece, addPieces, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
+    patchPiece, setMerged, addPieces, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
     setMaterialClass, undo, redo, createNewAssembly, renameCurrentAssembly,
     deleteCurrentAssembly, selectAssembly, refreshAssemblies, flushSave,
   ])

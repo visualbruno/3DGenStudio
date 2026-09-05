@@ -73,6 +73,31 @@ const _matrix = new THREE.Matrix4()
  * attribute is Int16. Reading it directly would send integer garbage, and only
  * for some assets, which reads as randomness.
  */
+/**
+ * Which of a piece's meshes go into a payload, and where each one's vertices
+ * land in the flat run — WITHOUT building the payload.
+ *
+ * Restoring a stored fit needs exactly this and nothing else: the positions
+ * come from the file, so cloning every geometry and re-transforming it just to
+ * learn the offsets would be pure waste on a 200k-vertex piece.
+ *
+ * It is a separate function rather than a second copy of the loop because the
+ * two must agree about which meshes are skipped and in what order. If they ever
+ * disagreed, a restore would paste one mesh's vertices onto another — visible
+ * as a piece exploding on load, and only for multi-submesh assets.
+ */
+export function buildFitRanges(entry) {
+  const ranges = []
+  let vertexTotal = 0
+  for (const mesh of entry.meshes) {
+    const position = mesh.geometry?.getAttribute('position')
+    if (!position) continue
+    ranges.push({ mesh, start: vertexTotal, count: position.count })
+    vertexTotal += position.count
+  }
+  return { ranges, vertexCount: vertexTotal }
+}
+
 export function buildFitPayloadGeometry(entry, piece) {
   const placement = piece ? composePieceMatrix(piece, _matrix.clone()) : new THREE.Matrix4()
 
@@ -82,6 +107,7 @@ export function buildFitPayloadGeometry(entry, piece) {
 
   for (const mesh of entry.meshes) {
     const source = mesh.geometry
+    // Same skip rule as buildFitRanges — keep the two in step.
     if (!source?.getAttribute('position')) continue
 
     const geometry = source.clone()

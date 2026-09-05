@@ -46,6 +46,7 @@ export const CANONICAL_KEYS = Object.freeze({
   "editwidth": "editWidth",
   "filepath": "filePath",
   "framecount": "frameCount",
+  "geometrydir": "geometryDir",
   "graphviewport": "graphViewport",
   "inplace": "inPlace",
   "inputid": "inputId",

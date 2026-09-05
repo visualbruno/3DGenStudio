@@ -1711,15 +1711,27 @@ const SQLITE_SCHEMA = `
     --
     -- stateJson is the whole document: the piece list with each piece's asset
     -- id, world placement (TRS), display flags, fit settings and landmark
-    -- pairs. Fitted GEOMETRY is never stored here -- a fit result is megabytes,
-    -- and it only becomes durable when the user explicitly saves it as a new
-    -- Asset version (which is what the document's fittedVersionAssetId then
-    -- records).
+    -- pairs. Fitted GEOMETRY is never stored in it -- a fit result is
+    -- megabytes, and stateJson is round-tripped through JSON on every autosave.
+    --
+    -- It goes on disk instead, under geometryDir: one file per piece, holding
+    -- just that piece's vertex POSITIONS (see src/utils/assemblyWorking.js).
+    -- Positions alone because the fit's own wire contract already guarantees it
+    -- never changes vertex count or order, so the UVs, materials and topology
+    -- can keep coming from the source asset -- which makes the working file
+    -- about a tenth the size of a GLB and removes any way for it to degrade the
+    -- textures. This is scratch state that makes leaving the page non-
+    -- destructive; a fit only becomes a durable ASSET when the user saves it as
+    -- a new version (which is what the document's fittedVersionAssetId records).
+    --
+    -- geometryDir is a PATH, not the bytes: blobs in a row would be copied by
+    -- every backup, migration and SELECT * in the app.
     CREATE TABLE IF NOT EXISTS MeshAssemblies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       stateJson TEXT,
       thumbnailPath TEXT,
+      geometryDir TEXT,
       createdAt INTEGER NOT NULL,
       updatedAt INTEGER NOT NULL
     );
@@ -1839,6 +1851,7 @@ export async function initializeStorage() {
     await run(db, `ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   };
 
+  await addColumnIfMissing('MeshAssemblies', 'geometryDir', 'TEXT');
   await addColumnIfMissing('Assets', 'thumbnail', 'TEXT');
   await addColumnIfMissing('Assets', 'width', 'INTEGER NOT NULL DEFAULT 0');
   await addColumnIfMissing('Assets', 'height', 'INTEGER NOT NULL DEFAULT 0');
@@ -3780,6 +3793,7 @@ function mapMeshAssemblyRow(row) {
     name: row.name,
     state: parseJson(row.stateJson, null),
     thumbnailPath: row.thumbnailPath || null,
+    geometryDir: row.geometryDir || null,
     createdAt: Number(row.createdAt) || 0,
     updatedAt: Number(row.updatedAt) || 0,
   };
@@ -3792,7 +3806,7 @@ export async function listMeshAssemblies() {
   const db = await getDb();
   const rows = await all(
     db,
-    'SELECT id, name, thumbnailPath, createdAt, updatedAt FROM MeshAssemblies ORDER BY updatedAt DESC, id DESC'
+    'SELECT id, name, thumbnailPath, geometryDir, createdAt, updatedAt FROM MeshAssemblies ORDER BY updatedAt DESC, id DESC'
   );
   // stateJson is deliberately not selected: the list drives a switcher, and a
   // document with 10 pieces and 25 landmark pairs is far too much to ship for
@@ -3821,7 +3835,7 @@ export async function createMeshAssembly({ name = 'Assembly', state = null } = {
 // document never clobbers the name and renaming never clobbers the document.
 // `state` is compared by presence, not truthiness -- null is a legal document
 // (a brand-new assembly) and must be storable.
-export async function updateMeshAssembly(assemblyId, { name, state, thumbnailPath } = {}) {
+export async function updateMeshAssembly(assemblyId, { name, state, thumbnailPath, geometryDir } = {}) {
   const db = await getDb();
   const id = Number(assemblyId);
   const existing = await get(db, 'SELECT id FROM MeshAssemblies WHERE id = ?', [id]);
@@ -3844,6 +3858,12 @@ export async function updateMeshAssembly(assemblyId, { name, state, thumbnailPat
     sets.push('thumbnailPath = ?');
     values.push(thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null);
   }
+  // Stored as given: it is a directory this server created and owns, not a path
+  // that arrived from a client (the geometry routes derive it from the id).
+  if (geometryDir !== undefined) {
+    sets.push('geometryDir = ?');
+    values.push(geometryDir ? String(geometryDir) : null);
+  }
 
   if (!sets.length) return await getMeshAssemblyById(id);
 
@@ -3859,10 +3879,13 @@ export async function updateMeshAssembly(assemblyId, { name, state, thumbnailPat
 export async function deleteMeshAssembly(assemblyId) {
   const db = await getDb();
   const id = Number(assemblyId);
-  const row = await get(db, 'SELECT id FROM MeshAssemblies WHERE id = ?', [id]);
+  // geometryDir comes back so the caller can remove the working files: nothing
+  // else references them, so dropping the row without this leaks the whole
+  // directory -- and those are the biggest files the feature writes.
+  const row = await get(db, 'SELECT id, geometryDir FROM MeshAssemblies WHERE id = ?', [id]);
   if (!row) return { status: 'not-found' };
   await run(db, 'DELETE FROM MeshAssemblies WHERE id = ?', [id]);
-  return { status: 'deleted' };
+  return { status: 'deleted', geometryDir: row.geometryDir || null };
 }
 
 export async function setCardProcessingState(projectId, externalCardId, {

@@ -993,3 +993,231 @@
   font-size: 12px;
   cursor: pointer;
 }
+
+/* ---- Save as assets ------------------------------------------------------ */
+
+.assembly-page__save-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.assembly-page__save-btn:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.assembly-page__save-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* A full-screen modal, so the WebGL canvas behind it is idle — blur here does
+   not cost a per-frame readback the way it would over a live viewport. */
+.assembly-save__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.assembly-save {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  border: 1px solid var(--outline-variant);
+  border-radius: 12px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.assembly-save__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.assembly-save__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.assembly-save__header button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.assembly-save__header button:hover:not(:disabled) {
+  background: var(--surface-container-high);
+}
+
+.assembly-save__body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.assembly-save__check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.assembly-save__check input[type='checkbox'] {
+  accent-color: var(--primary);
+}
+
+.assembly-save__muted {
+  color: var(--on-surface-variant);
+  opacity: 0.75;
+}
+
+.assembly-save__pieces {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0 0 0 24px;
+  list-style: none;
+}
+
+.assembly-save__pieces input,
+.assembly-save__merged input[type='text'],
+.assembly-save__merged label > input,
+.assembly-save__merged select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+.assembly-save__merged {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 0 0 24px;
+}
+
+.assembly-save__merged > label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+/* The checkbox row inside the merged block is a row, not a stacked field. */
+.assembly-save__merged > label.assembly-save__check {
+  flex-direction: row;
+  align-items: center;
+  color: var(--on-surface);
+  font-size: 13px;
+}
+
+.assembly-save__merged > label.assembly-save__check input {
+  width: auto;
+}
+
+.assembly-save__note {
+  margin: 0 0 0 24px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
+.assembly-save__merged .assembly-save__note {
+  margin-left: 0;
+}
+
+.assembly-save__error,
+.assembly-save__error-text {
+  font-size: 12px;
+  color: var(--error, #ef5350);
+}
+
+.assembly-save__error {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--error, #ef5350) 12%, transparent);
+}
+
+.assembly-save__progress {
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-save__result {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-container-high);
+  font-size: 12px;
+}
+
+.assembly-save__result p {
+  margin: 0 0 4px;
+}
+
+.assembly-save__result p:last-child {
+  margin-bottom: 0;
+}
+
+.assembly-save__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.assembly-save__actions button {
+  height: 32px;
+  padding: 0 16px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container-high);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.assembly-save__actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.assembly-save__primary {
+  border-color: transparent !important;
+  background: var(--primary) !important;
+  color: var(--on-primary) !important;
+  font-weight: 600;
+}

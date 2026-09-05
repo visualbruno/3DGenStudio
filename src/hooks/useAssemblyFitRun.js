@@ -8,19 +8,43 @@
 //
 // The fit NEVER mutates the loaded piece. A result becomes a preview held here,
 // and the viewport decides which of the two to draw — which is what makes
-// revert free: drop the preview. Nothing is written to an asset until the user
-// explicitly saves (Phase 4).
+// revert free: drop the preview. Nothing is written to an ASSET until the user
+// explicitly saves.
+//
+// A preview is not lost on navigation, though. It is mirrored to disk as
+// working geometry (src/utils/assemblyWorking.js) and restored when the
+// assembly is reopened — the alternative was silently throwing away a fit and a
+// sculpting session because the user clicked Assets. That mirror is scratch
+// state belonging to the assembly, not an Asset: Revert still deletes it, and
+// saving a version is still the separate, explicit step.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   buildFitPayloadGeometry,
   buildFitPreview,
+  buildFitRanges,
   createPreviewFromPiece,
   disposeFitPreview,
   fitPiece,
   payloadToGlb,
 } from '../utils/assemblyFit'
+import {
+  decodeWorkingGeometry,
+  deleteWorkingGeometry,
+  encodeWorkingGeometry,
+  fetchWorkingGeometry,
+  listWorkingGeometry,
+  putWorkingGeometry,
+} from '../utils/assemblyWorking'
+import { buildAssetUrl } from '../utils/meshTexturing'
 
-export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreviewReplaced }) {
+// Long enough that a burst of brush strokes writes once, short enough that
+// clicking away straight after a stroke still catches it. The unmount flush
+// below is what makes the exact number uncritical.
+const PERSIST_DELAY = 900
+
+export default function useAssemblyFitRun({
+  assemblyId, doc, entries, getEntry, patchPiece, onPreviewReplaced,
+}) {
   const previewsRef = useRef(new Map())        // pieceId -> preview entry
   const [previews, setPreviews] = useState(new Map())
   const [showFitted, setShowFitted] = useState(new Set())
@@ -32,20 +56,90 @@ export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreview
   const abortRef = useRef(null)
   const unmountedRef = useRef(false)
 
+  // Persistence bookkeeping. Refs throughout: none of it renders, and the
+  // debounce has to survive the re-renders a stroke causes.
+  const persistTimersRef = useRef(new Map())     // pieceId -> timeout
+  const flushPersistRef = useRef(null)           // set in an effect, read on unmount
+  const restoredRef = useRef(new Set())          // pieces already attempted this assembly
+  const storedRef = useRef(new Set())            // pieces the server has a file for
+  const listedRef = useRef(false)                // has the listing been fetched?
+  // Mirrors of the current props, so the debounced writers and the unmount
+  // flush read what is true NOW rather than whatever was captured when the
+  // timer was set. Assigned in an effect: writing a ref during render is what
+  // makes a Strict-Mode double render commit twice.
+  const docRef = useRef(doc)
+  const assemblyIdRef = useRef(assemblyId)
+  useEffect(() => { docRef.current = doc }, [doc])
+  useEffect(() => { assemblyIdRef.current = assemblyId }, [assemblyId])
+
   useEffect(() => {
     unmountedRef.current = false
     const store = previewsRef
+    const timers = persistTimersRef
     return () => {
       unmountedRef.current = true
       abortRef.current?.abort()
+      // Anything still debounced is written NOW, before the geometry it reads
+      // is disposed two lines down. This is the case the whole feature exists
+      // for: the user sculpts and immediately navigates away.
+      for (const [pieceId, timer] of timers.current) {
+        clearTimeout(timer)
+        flushPersistRef.current?.(pieceId)
+      }
+      timers.current.clear()
       for (const preview of store.current.values()) disposeFitPreview(preview)
       store.current.clear()
     }
   }, [])
 
+  // A different assembly has a different set of files and a different set of
+  // pieces, so every per-assembly conclusion has to be dropped. Without this,
+  // opening a second assembly would decide it had already tried each piece.
+  useEffect(() => {
+    listedRef.current = false
+    storedRef.current = new Set()
+    restoredRef.current = new Set()
+  }, [assemblyId])
+
   const publish = useCallback(() => {
     setPreviews(new Map(previewsRef.current))
   }, [])
+
+  /** Mirror one piece's current preview to disk. Never throws at the caller. */
+  const persistNow = useCallback(async pieceId => {
+    const id = assemblyIdRef.current
+    const preview = previewsRef.current.get(pieceId)
+    const piece = docRef.current?.pieces?.find(p => p.id === pieceId)
+    if (!id || !preview?.meshes?.length || !piece) return
+    try {
+      const buffer = encodeWorkingGeometry({
+        sourceUrl: buildAssetUrl(piece),
+        meshes: preview.meshes,
+      })
+      if (!buffer) return
+      await putWorkingGeometry(id, pieceId, buffer)
+      storedRef.current.add(pieceId)
+    } catch (err) {
+      // A failed mirror costs the user nothing right now — the preview is still
+      // on screen. Shouting about it mid-stroke would be worse than the loss it
+      // warns of, so it is logged and the next stroke tries again.
+      console.warn('Could not store the fitted geometry for this piece', err)
+    }
+  }, [])
+
+  // Held in a ref because the unmount cleanup is declared above persistNow and
+  // must not close over a stale one. Assigned in an effect, never during render.
+  useEffect(() => { flushPersistRef.current = persistNow }, [persistNow])
+
+  /** Debounced: a brush stroke fires this on every mouse-up. */
+  const persistPiece = useCallback(pieceId => {
+    const timers = persistTimersRef.current
+    clearTimeout(timers.get(pieceId))
+    timers.set(pieceId, setTimeout(() => {
+      timers.delete(pieceId)
+      persistNow(pieceId)
+    }, PERSIST_DELAY))
+  }, [persistNow])
 
   const dropPreview = useCallback(pieceId => {
     const preview = previewsRef.current.get(pieceId)
@@ -54,6 +148,17 @@ export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreview
     onPreviewReplaced?.(preview)
     disposeFitPreview(preview)
     previewsRef.current.delete(pieceId)
+
+    // The stored copy goes with it, and any write still queued is cancelled —
+    // otherwise a debounced stroke would land a moment later and resurrect the
+    // fit the user just reverted.
+    clearTimeout(persistTimersRef.current.get(pieceId))
+    persistTimersRef.current.delete(pieceId)
+    restoredRef.current.add(pieceId)
+    if (storedRef.current.delete(pieceId) && assemblyIdRef.current) {
+      deleteWorkingGeometry(assemblyIdRef.current, pieceId)
+    }
+
     publish()
     setShowFitted(previous => {
       if (!previous.has(pieceId)) return previous
@@ -158,6 +263,9 @@ export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreview
         previewsRef.current.set(piece.id, { ...buildFitPreview(payload, positions), pieceId: piece.id })
         publish()
         setShowFitted(previous => new Set(previous).add(piece.id))
+        // Straight away, not debounced: a fit is minutes of work and the user
+        // may well click away the moment they see the result.
+        persistNow(piece.id)
 
         patchPiece(piece.id, {
           fit: {
@@ -188,7 +296,72 @@ export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreview
       setRunning(null)
       setProgress({ frac: 0, message: '' })
     }
-  }, [doc, getEntry, patchPiece, publish, onPreviewReplaced])
+  }, [doc, getEntry, patchPiece, publish, onPreviewReplaced, persistNow])
+
+  // ---- Restoring a stored fit ----------------------------------------------
+  //
+  // Runs as pieces finish loading, because rebuilding a preview needs the
+  // source asset's geometry: the file holds positions only, and the UVs,
+  // materials and topology come from the asset. Anything that no longer lines
+  // up is discarded rather than pasted on (see decodeWorkingGeometry) — a
+  // re-pointed asset is exactly the case that produces a mismatch.
+  useEffect(() => {
+    if (!assemblyId) return undefined
+    let cancelled = false
+
+    ;(async () => {
+      let stored = storedRef.current
+      if (!listedRef.current) {
+        listedRef.current = true
+        try {
+          stored = new Set(await listWorkingGeometry(assemblyId))
+          storedRef.current = stored
+        } catch {
+          return
+        }
+      }
+      if (cancelled || !stored.size) return
+
+      for (const piece of doc.pieces) {
+        if (cancelled) break
+        if (!stored.has(piece.id)) continue
+        if (restoredRef.current.has(piece.id)) continue
+        if (previewsRef.current.has(piece.id)) continue
+        const entry = entries.get(piece.id)
+        if (!entry?.meshes?.length) continue          // not loaded yet; a later pass gets it
+
+        restoredRef.current.add(piece.id)
+        try {
+          const buffer = await fetchWorkingGeometry(assemblyId, piece.id)
+          if (cancelled || !buffer) continue
+          const { ranges, vertexCount } = buildFitRanges(entry)
+          const decoded = decodeWorkingGeometry(buffer, {
+            sourceUrl: buildAssetUrl(piece),
+            vertexCount,
+          })
+          if (!decoded) {
+            // Stale against the asset it claims to belong to. Removing it stops
+            // the same rejected file being fetched on every future open.
+            storedRef.current.delete(piece.id)
+            deleteWorkingGeometry(assemblyId, piece.id)
+            continue
+          }
+          if (cancelled || previewsRef.current.has(piece.id)) continue
+
+          previewsRef.current.set(piece.id, {
+            ...buildFitPreview({ ranges }, decoded.positions),
+            pieceId: piece.id,
+          })
+          publish()
+          setShowFitted(previous => new Set(previous).add(piece.id))
+        } catch (err) {
+          console.warn(`Could not restore the stored fit for ${piece.name}`, err)
+        }
+      }
+    })()
+
+    return () => { cancelled = true }
+  }, [assemblyId, doc, entries, publish])
 
   /**
    * The piece's editable preview, created from its current placement if it has
@@ -216,6 +389,9 @@ export default function useAssemblyFitRun({ doc, getEntry, patchPiece, onPreview
     progress,
     error,
     clearError: useCallback(() => setError(''), []),
+    // Called by the sculpt brush on mouse-up: the stroke writes into the
+    // preview's geometry directly, so this hook cannot see it any other way.
+    persistPiece,
     run,
     cancel,
     revert,

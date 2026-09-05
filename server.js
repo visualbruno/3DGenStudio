@@ -7078,6 +7078,40 @@ app.put('/api/assets/:assetId/paint-document', paintDocumentUpload.any(), async 
   }
 });
 
+// An asset that belongs to NO project.
+//
+// /api/assets/upload cannot express this: it requires a projectId and
+// createProjectAsset links the row to it. A merged Mesh Assembly has no natural
+// owner — an assembly is global precisely because its pieces come from
+// different projects — so it lands in the library, visible on the Assets page
+// under "unassigned", and the user can attach it afterwards with
+// POST /api/assets/link if they want.
+app.post('/api/assets/library-upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file provided' });
+
+    const assetType = req.body.type || inferAssetTypeFromFilename(req.file.originalname);
+    await commitStagedUpload(req.file, assetType);
+    const inputMetadata = req.body.metadata ? JSON.parse(req.body.metadata) : {};
+
+    const newAsset = await createLibraryAsset({
+      ownerId: viewerId(req),
+      type: assetType,
+      name: req.body.name || req.file.originalname,
+      filePath: toStoredAssetPath(assetType, req.file.filename),
+      metadata: inputMetadata,
+      createdAt: Date.now()
+    });
+
+    res.status(201).json(newAsset);
+  } catch (err) {
+    console.error('Library upload failed:', err);
+    // Nothing references these bytes, so do not leave them on disk.
+    if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
+    res.status(500).json({ error: err.message || 'Library upload failed' });
+  }
+});
+
 app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No file provided' });
@@ -7458,13 +7492,36 @@ app.post('/api/meshes/editor/save', meshEditorSaveUpload.single('meshFile'), asy
       : (sourceExtension === '.glb'
           ? toStoredAssetPath('mesh', sourceAsset.filePath)
           : toStoredAssetPath('mesh', createMeshEditorFilePath(nextName)));
+    // `source` and `metadataExtra` let another workspace claim its own output.
+    // Without them every Assembly save is indistinguishable from a hand edit,
+    // which destroys the provenance the moment there are twenty of them. Both
+    // are optional, so the mesh editor's own saves are unchanged.
     const metadata = {
       ...JSON.parse(sourceAsset.metadata || '{}'),
-      source: 'MESH EDITOR',
+      source: typeof req.body?.source === 'string' && req.body.source.trim()
+        ? req.body.source.trim().slice(0, 60)
+        : 'MESH EDITOR',
       editedAt: Date.now(),
       savedFromAssetId: sourceAsset.id,
       saveMode
     };
+
+    // Parsed defensively and size-capped, the same treatment parseBoneMappings
+    // gives its input: this arrives from a browser and lands in the database.
+    if (typeof req.body?.metadataExtra === 'string' && req.body.metadataExtra.length <= 4000) {
+      try {
+        const extra = JSON.parse(req.body.metadataExtra);
+        if (extra && typeof extra === 'object' && !Array.isArray(extra)) {
+          // The server's own provenance fields win. A caller sending
+          // savedFromAssetId here would make the record lie about where the
+          // bytes came from, which is the one thing this block exists to fix.
+          for (const key of ['editedAt', 'savedFromAssetId', 'saveMode', 'source']) delete extra[key];
+          Object.assign(metadata, extra);
+        }
+      } catch {
+        // A malformed extra block is not a reason to lose the mesh.
+      }
+    }
 
     // Bone mappings ride along with the mesh so the next session can retarget
     // animations onto it without redoing the mapping by hand. Absent means "the
@@ -8118,9 +8175,139 @@ app.delete('/api/mesh-assemblies/:id', async (req, res) => {
   try {
     const result = await deleteMeshAssembly(req.params.id);
     if (result.status === 'not-found') return res.status(404).json({ error: 'Assembly not found' });
+    // The row is gone, so nothing references the working files any more. They
+    // are the largest thing the feature writes, so leaving them behind quietly
+    // grows the data directory forever.
+    if (result.geometryDir) {
+      await fs.rm(path.resolve(DATA_DIR, '..', result.geometryDir), { recursive: true, force: true })
+        .catch(err => console.warn('Could not remove the assembly working directory:', err.message));
+    }
     res.json(result);
   } catch (error) {
     console.error('Deleting a mesh assembly failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ---- Working geometry ------------------------------------------------------
+//
+// An in-progress fit, on disk, so leaving the page is not destructive. One file
+// per piece holding only that piece's vertex positions -- the format and the
+// reasoning behind it are in src/utils/assemblyWorking.js.
+//
+// These sit under /api/mesh-assemblies so a shared server holds them alongside
+// the document they belong to, through the same REMOTE_DATA_PREFIXES entry. The
+// gateway streams bodies without buffering, so the binary payload needs nothing
+// special from it.
+//
+// Deliberately NOT an Asset. An Asset is something the user chose to keep and
+// can find in the library; this is scratch state that a Revert throws away.
+const ASSEMBLY_GEOMETRY_ROOT = path.join(DATA_DIR, 'assemblies');
+
+// A piece id is generated client-side, so it is treated as untrusted input on
+// its way to becoming a filename.
+function assemblyGeometryPaths(assemblyId, pieceId) {
+  const id = Number(assemblyId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const safePiece = String(pieceId || '').replace(/[^\w-]/g, '');
+  if (!safePiece || safePiece.length > 64) return null;
+  const dir = path.join(ASSEMBLY_GEOMETRY_ROOT, String(id));
+  return {
+    dir,
+    file: path.join(dir, `${safePiece}.bin`),
+    // Relative, so the row survives the data directory moving -- which it does,
+    // between a dev checkout and an installed desktop app.
+    storedDir: path.relative(path.resolve(DATA_DIR, '..'), dir).split(path.sep).join('/')
+  };
+}
+
+// Which pieces have stored geometry. One request instead of probing each piece,
+// and -- more importantly -- the DIRECTORY is the authority on what exists.
+//
+// The document could carry a per-piece flag instead, but then two things that
+// must agree are written at different moments by different code paths: a write
+// that lands while the page is unmounting would leave a file no reload ever
+// looks for. Asking the filesystem cannot drift.
+app.get('/api/mesh-assemblies/:id/geometry', async (req, res) => {
+  try {
+    const target = assemblyGeometryPaths(req.params.id, 'x');
+    if (!target) return res.status(400).json({ error: 'Invalid assembly id' });
+    const names = await fs.readdir(target.dir).catch(() => []);
+    res.json({
+      pieces: names
+        .filter(name => name.endsWith('.bin'))
+        .map(name => name.slice(0, -4))
+    });
+  } catch (error) {
+    console.error('Listing assembly working geometry failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put(
+  '/api/mesh-assemblies/:id/geometry/:pieceId',
+  express.raw({ type: 'application/octet-stream', limit: '256mb' }),
+  async (req, res) => {
+    try {
+      const target = assemblyGeometryPaths(req.params.id, req.params.pieceId);
+      if (!target) return res.status(400).json({ error: 'Invalid assembly or piece id' });
+      if (!Buffer.isBuffer(req.body) || !req.body.length) {
+        return res.status(400).json({ error: 'A binary body is required' });
+      }
+
+      const assembly = await getMeshAssemblyById(req.params.id);
+      if (!assembly) return res.status(404).json({ error: 'Assembly not found' });
+
+      await fs.mkdir(target.dir, { recursive: true });
+      // Written to a temp name and renamed, so a crash or a second writer can
+      // never leave a half-file that would decode as garbage positions.
+      const temp = `${target.file}.${process.pid}.tmp`;
+      await fs.writeFile(temp, req.body);
+      await fs.rename(temp, target.file);
+
+      // Recorded once, on the first write. This is what lets a delete clean up
+      // without having to parse stateJson.
+      if (assembly.geometryDir !== target.storedDir) {
+        await updateMeshAssembly(req.params.id, { geometryDir: target.storedDir });
+      }
+
+      res.json({ ok: true, bytes: req.body.length, geometryDir: target.storedDir });
+    } catch (error) {
+      console.error('Storing assembly working geometry failed:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.get('/api/mesh-assemblies/:id/geometry/:pieceId', async (req, res) => {
+  try {
+    const target = assemblyGeometryPaths(req.params.id, req.params.pieceId);
+    if (!target) return res.status(400).json({ error: 'Invalid assembly or piece id' });
+
+    const bytes = await fs.readFile(target.file).catch(() => null);
+    // 404 is the ordinary answer for a piece that was never fitted, so the
+    // client asks without needing to know in advance.
+    if (!bytes) return res.status(404).json({ error: 'No stored geometry for this piece' });
+
+    res.setHeader('Content-Type', 'application/octet-stream');
+    // Rewritten in place on every save, so a cached copy would be the previous
+    // stroke. Correctness beats the round trip here; these are local reads.
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(bytes);
+  } catch (error) {
+    console.error('Reading assembly working geometry failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/mesh-assemblies/:id/geometry/:pieceId', async (req, res) => {
+  try {
+    const target = assemblyGeometryPaths(req.params.id, req.params.pieceId);
+    if (!target) return res.status(400).json({ error: 'Invalid assembly or piece id' });
+    await fs.rm(target.file, { force: true });
+    res.status(204).end();
+  } catch (error) {
+    console.error('Removing assembly working geometry failed:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -44,6 +44,10 @@ export default function useAssemblySculpt({
   enabled,
   radiusPixels,
   strength,
+  // onEdited(pieceId) — fired whenever a stroke or an undo has changed a
+  // piece's geometry, so the owner can mirror it to disk. The brush writes
+  // into the preview's buffers directly, so there is no other way to notice.
+  onEdited,
 }) {
   const strokeRef = useRef(null)     // { meshes, snapshot, centre, entry }
   const undoRef = useRef([])         // [{ entry, snapshot }]
@@ -141,8 +145,9 @@ export default function useAssemblySculpt({
     undoRef.current.push({ entry: stroke.entry, snapshot: stroke.snapshot })
     if (undoRef.current.length > UNDO_LIMIT) undoRef.current.shift()
     setUndoDepth(undoRef.current.length)
+    if (stroke.entry?.pieceId) onEdited?.(stroke.entry.pieceId)
     return true
-  }, [])
+  }, [onEdited])
 
   const undo = useCallback(() => {
     const last = undoRef.current.pop()
@@ -150,7 +155,10 @@ export default function useAssemblySculpt({
     if (!last?.entry?.meshes?.length) return
     restoreGeometryPositions(last.entry.meshes, last.snapshot)
     finishStroke(last.entry.meshes)
-  }, [])
+    // An undo is an edit too: without this the stored copy keeps the stroke
+    // that was just taken back, and reopening would bring it right back.
+    if (last.entry?.pieceId) onEdited?.(last.entry.pieceId)
+  }, [onEdited])
 
   // Strokes reference geometries owned by a preview. Once that preview is gone
   // (discarded, re-fitted, piece removed) the entries are stale and restoring

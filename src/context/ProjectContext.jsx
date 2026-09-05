@@ -859,6 +859,13 @@ export function ProjectProvider({ children }) {
       formData.append('boneMappings', JSON.stringify(payload.boneMappings))
     }
 
+    // Provenance, for workspaces other than the mesh editor. Optional, so the
+    // editor's own saves are byte-for-byte unchanged.
+    if (payload?.source) formData.append('source', payload.source)
+    if (payload?.metadataExtra) {
+      formData.append('metadataExtra', JSON.stringify(payload.metadataExtra))
+    }
+
     if (payload?.meshFile) {
       formData.append('meshFile', payload.meshFile)
     }
