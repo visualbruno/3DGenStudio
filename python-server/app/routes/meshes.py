@@ -32,11 +32,12 @@ from ..config import MAX_UPLOAD_BYTES
 from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_scene,
                       mesh_stats, scene_to_mesh)
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
-                       ConvertOptions, FitOptions, InspectOptions, RepairOptions,
-                       SegmentOptions)
+                       ConvertOptions, FitOptions, HiddenFaceOptions, InspectOptions,
+                       RepairOptions, SegmentOptions)
 from ..services.assembly_fit import run_fit
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
+from ..services.hidden_faces import run_hidden_faces
 from ..services.bake import run_bake
 from ..services.collision import run_collision
 from ..services.convert_fbx import run_convert_fbx
@@ -334,6 +335,39 @@ async def fit(
         return run_fit(piece, body, opts, progress=emit)
 
     return _stream_payload(run, "Fit")
+
+
+@router.post("/hidden-faces")
+async def hidden_faces(
+    meshFile: UploadFile = File(...),
+    sourceFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> StreamingResponse:
+    """Find the faces of a base body that the armour completely hides.
+
+    Two uploads, following /fit: `meshFile` is the BODY (the thing being
+    modified) and `sourceFile` is every occluding piece, concatenated.
+
+    Both must already be in ONE SHARED WORLD SPACE, as everywhere else in the
+    assembly pipeline.
+
+    Returns a per-face MASK, not a mesh: the terminal `done` event carries
+    `mask_b64`, one byte per face in the uploaded face order. Deleting faces
+    changes the vertex count, and the base is usually rigged -- trimesh cannot
+    carry skinning through a load, so the client applies the mask to its own
+    geometry and keeps every attribute. See services/hidden_faces.
+    """
+    opts = _parse_options(options, HiddenFaceOptions)
+    body_bytes = await _read_upload(meshFile)
+    occluder_bytes = await _read_upload(sourceFile)
+
+    body = load_mesh(body_bytes, meshFile.filename or "body.glb")
+    occluders = load_mesh(occluder_bytes, sourceFile.filename or "occluders.glb")
+
+    def run(emit):
+        return run_hidden_faces(body, occluders, opts, progress=emit)
+
+    return _stream_payload(run, "Hidden faces")
 
 
 @router.post("/segment")

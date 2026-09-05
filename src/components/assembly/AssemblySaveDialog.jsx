@@ -27,6 +27,7 @@ export default function AssemblySaveDialog({
   const [includeBase, setIncludeBase] = useState(true)
   const [projectId, setProjectId] = useState('')
   const [transferWeights, setTransferWeights] = useState(!!baseRig)
+  const [removeHiddenFaces, setRemoveHiddenFaces] = useState(false)
   const [names, setNames] = useState(() =>
     Object.fromEntries(editedPieces.map(({ piece }) => [piece.id, piece.name])))
 
@@ -123,6 +124,38 @@ export default function AssemblySaveDialog({
                   : <span className="assembly-save__muted"> — the base is not rigged</span>}
               </label>
 
+              {/* Off by default, deliberately: it is the only option here that
+                  DELETES something, and the case it gets wrong is invisible
+                  until the character is posed. */}
+              <label className="assembly-save__check">
+                <input
+                  type="checkbox"
+                  checked={removeHiddenFaces && includeBase}
+                  disabled={busy || !includeBase}
+                  onChange={event => setRemoveHiddenFaces(event.target.checked)}
+                />
+                Delete body faces the armour hides
+                {!includeBase && (
+                  <span className="assembly-save__muted"> — needs the base body</span>
+                )}
+              </label>
+
+              {removeHiddenFaces && includeBase && (
+                <p className={baseClipCount > 0
+                  ? 'assembly-save__warn' : 'assembly-save__note'}
+                >
+                  A face is deleted only when every direction from it is blocked by a
+                  piece, with a one-ring margin kept at the edges.
+                  {baseClipCount > 0
+                    ? ' Your base is animated, and this is judged at the rest pose only'
+                      + ' — armour slides against skin as a character moves, so a face'
+                      + ' hidden standing still can open into a hole mid-animation.'
+                      + ' Check the result in the Animations tab.'
+                    : ' Only what the pieces cover is considered, never what the body'
+                      + ' hides from itself, so armpits and similar are left alone.'}
+                </p>
+              )}
+
               {transferWeights && baseRig && (
                 <p className="assembly-save__note">
                   Every piece is bound to one copy of {baseName || 'the base'}&apos;s skeleton,
@@ -175,6 +208,14 @@ export default function AssemblySaveDialog({
                 <p>{result.versions.length} piece version{result.versions.length === 1 ? '' : 's'} saved.</p>
               )}
               {result.merged && <p>Saved “{result.merged.name}”.</p>}
+              {result.hidden?.hidden > 0 && (
+                <p>
+                  Removed {result.hidden.hidden.toLocaleString()} hidden body faces
+                  {result.hidden.faces_total
+                    ? ` of ${result.hidden.faces_total.toLocaleString()} (${result.hidden.percent}%)`
+                    : ''}.
+                </p>
+              )}
               {result.failed.length > 0 && (
                 <p className="assembly-save__error-text">
                   Failed: {result.failed.join(', ')}
@@ -199,6 +240,7 @@ export default function AssemblySaveDialog({
               includeBase,
               projectId: projectId || null,
               transferWeights: transferWeights && !!baseRig,
+              removeHiddenFaces: removeHiddenFaces && includeBase,
               names,
             })}
           >

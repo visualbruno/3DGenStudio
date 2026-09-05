@@ -19,6 +19,7 @@ import { API_BASE, assetUrl } from '../config'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
 import { exportMergedAssemblyGlb, exportPieceGlb, pieceHasEdit } from '../utils/assemblyExport'
 import { buildBaseSkinSampler } from '../utils/assemblyWeights'
+import { findHiddenBaseFaces } from '../utils/assemblyHiddenFaces'
 import { getBasePiece, getVisiblePieces } from '../utils/assemblyHelpers'
 
 export default function useAssemblySave({
@@ -68,6 +69,7 @@ export default function useAssemblySave({
     const versions = []
     const failed = []
     const repoint = []
+    let hiddenStats = null
     let merged = null
 
     try {
@@ -154,6 +156,36 @@ export default function useAssemblySave({
           sampler = buildBaseSkinSampler(getEntry(base?.id), base)
         }
 
+        // Hidden-face removal runs BEFORE the merge, so the atlas of work
+        // below never handles faces that are about to be dropped.
+        let faceMasks = null
+        if (options.removeHiddenFaces && base) {
+          // The same {piece, entry, preview} triples the exporter gets, so both
+          // resolve preview-vs-loaded identically and the mask keys match.
+          const baseTriple = entries.find(item => item.piece.id === base.id)
+          const occluders = entries.filter(item => item.piece.id !== base.id)
+          if (baseTriple && occluders.length) {
+            try {
+              const found = await findHiddenBaseFaces({
+                base: baseTriple,
+                occluders,
+                onProgress: event => setProgress(
+                  `Finding hidden faces — ${event.message || ''}`.trim()),
+              })
+              if (found) {
+                faceMasks = found.masks
+                hiddenStats = found.stats
+              }
+            } catch (error) {
+              // The merge is still worth doing without it, and a save that
+              // fails outright because an optimisation failed is the wrong
+              // trade — but it must be said, not swallowed.
+              console.warn('Hidden-face removal failed', error)
+              failed.push(`hidden faces not removed — ${error.message}`)
+            }
+          }
+        }
+
         setProgress('Building the assembled mesh…')
         let merge
         try {
@@ -161,6 +193,7 @@ export default function useAssemblySave({
             rig: options.transferWeights ? baseRig : null,
             sampler,
             animations: options.transferWeights ? (getEntry(base?.id)?.animations || []) : [],
+            faceMasks,
           })
         } finally {
           sampler?.dispose()
@@ -203,6 +236,7 @@ export default function useAssemblySave({
           rigged: !!merge.skinned,
           bones: merge.bones ?? null,
           animations: merge.clips ?? 0,
+          ...(hiddenStats ? { hiddenFacesRemoved: hiddenStats.hidden ?? 0 } : {}),
           ...(boneMappings ? { boneMappings } : {}),
           savedAt: Date.now(),
         }))
@@ -229,11 +263,11 @@ export default function useAssemblySave({
         onSaved?.({ merged: payload })
       }
 
-      setResult({ versions, merged, failed })
+      setResult({ versions, merged, failed, hidden: hiddenStats })
     } catch (saveError) {
       console.error('Assembly save failed', saveError)
       setError(saveError.message || 'Save failed')
-      setResult({ versions, merged, failed })
+      setResult({ versions, merged, failed, hidden: hiddenStats })
     } finally {
       // Point each saved piece at the version it produced, so the fit survives
       // leaving the page. Previews are session-only by design — the document

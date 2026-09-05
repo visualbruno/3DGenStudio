@@ -328,6 +328,33 @@ class MeshStats(BaseModel):
     face_count: int
     has_uv: bool
 
+class HiddenFaceOptions(BaseModel):
+    """Options for /meshes/hidden-faces."""
+
+    rays: int = Field(
+        default=16, ge=4, le=128,
+        description="Visibility samples per face, over its outward hemisphere. A face is "
+                    "hidden only when EVERY ray is blocked by the occluders, so more rays "
+                    "means a stricter test and fewer deletions.",
+    )
+    max_distance_ratio: float = Field(
+        default=0.08, ge=0.0, le=1.0,
+        description="How far outside the occluders' bounding box a body face may sit and "
+                    "still be considered, as a fraction of the body's diagonal. Only a "
+                    "cheap pre-filter -- the ray test decides.",
+    )
+    erode_rings: int = Field(
+        default=1, ge=0, le=8,
+        description="Rings of hidden faces next to visible ones to KEEP, as a safety "
+                    "margin. 0 deletes right up to the edge of the covered area, which is "
+                    "where a hole shows first once the character is posed.",
+    )
+    device: Literal["auto", "cpu"] = Field(
+        default="auto",
+        description="'auto' uses the GPU BVH when a CUDA runtime is present.",
+    )
+
+
 class FitLandmarkPair(BaseModel):
     """One "this goes here" pair, in the shared world space both meshes arrive in.
 

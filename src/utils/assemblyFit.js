@@ -182,7 +182,10 @@ export function buildFitPayloadGeometry(entry, piece) {
       // Non-indexed geometry is an implicit 0,1,2,... triangle list.
       : Array.from({ length: count }, (_, i) => i)
 
-    chunks.push({ mesh, geometry, position, triangleIndices, start: vertexTotal, count })
+    chunks.push({
+      mesh, geometry, position, triangleIndices, start: vertexTotal, count,
+      faceStart: indexTotal / 3, faceCount: triangleIndices.length / 3,
+    })
     vertexTotal += count
     indexTotal += triangleIndices.length
   }
@@ -224,6 +227,13 @@ export function buildFitPayloadGeometry(entry, piece) {
     positions,
     indices,
     ranges: chunks.map(chunk => ({ mesh: chunk.mesh, start: chunk.start, count: chunk.count })),
+    // Where each submesh's TRIANGLES land in the flat index run. The vertex
+    // ranges above cannot answer that, and a per-face result (the hidden-face
+    // mask) has to be split back onto the submeshes it came from.
+    faceRanges: chunks.map(chunk => ({
+      mesh: chunk.mesh, start: chunk.faceStart, count: chunk.faceCount,
+    })),
+    faceCount: indexTotal / 3,
     vertexCount: vertexTotal,
   }
 }

@@ -16,6 +16,7 @@ import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.j
 import { composePieceMatrix } from './assemblyGeometry'
 import { transferSkinFromBase, validateSkin } from './assemblyWeights'
 import { rebindClipForExport } from './animationLibrary'
+import { removeMaskedFaces } from './assemblyHiddenFaces'
 
 /**
  * The geometry to save for one piece: its preview when it has been fitted or
@@ -80,7 +81,7 @@ function flipWinding(geometry) {
  * Every geometry is CLONED. Materials are shared with the live scene and must
  * never be disposed by the caller — the same discipline exportPartsToGlb uses.
  */
-function buildGroup(entries, { toLocalOf = null } = {}) {
+function buildGroup(entries, { toLocalOf = null, faceMasks = null } = {}) {
   const group = new THREE.Group()
   const inverse = toLocalOf ? new THREE.Matrix4().copy(toLocalOf).invert() : null
 
@@ -90,7 +91,16 @@ function buildGroup(entries, { toLocalOf = null } = {}) {
     const placement = composePieceMatrix(piece, new THREE.Matrix4())
 
     for (const mesh of source.meshes) {
-      const geometry = mesh.geometry.clone()
+      let geometry = mesh.geometry.clone()
+
+      // Occluded faces go before anything else touches the geometry, so the
+      // transform and winding work below runs on what is actually being kept.
+      const mask = faceMasks?.get(mesh)
+      if (mask) {
+        const trimmed = removeMaskedFaces(geometry, mask)
+        if (trimmed !== geometry) geometry.dispose()
+        geometry = trimmed
+      }
 
       if (edited) {
         // Preview positions are world-space already.
@@ -165,9 +175,9 @@ export async function exportPieceGlb({ piece, entry, preview }) {
  * shared — these pieces have distinct textures.
  */
 export async function exportMergedAssemblyGlb(entries, name, {
-  rig = null, sampler = null, animations = [],
+  rig = null, sampler = null, animations = [], faceMasks = null,
 } = {}) {
-  const group = buildGroup(entries)
+  const group = buildGroup(entries, { faceMasks })
   group.name = `${sanitize(name)}_assembly`
 
   if (rig?.rigScene && sampler) {

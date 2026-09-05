@@ -7894,6 +7894,26 @@ app.post('/api/meshes/bake',
 // order, so the client applies just the coordinates onto its own geometry and
 // keeps its UVs, materials and skinning. Local-only, like every /api/meshes
 // route — the Python service is not a shared-server concern.
+// Which faces of a base body the armour completely hides, as a per-face mask.
+// Two files like /fit: meshFile is the BODY, sourceFile is every occluder
+// concatenated. The mask comes back rather than a mesh because deleting faces
+// changes the vertex count and the base is usually rigged -- see the Python
+// route for the full reasoning.
+app.post('/api/meshes/hidden-faces',
+  meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, { name: 'sourceFile', maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      await proxyMeshTool('/meshes/hidden-faces', req, res, {
+        fields: ['meshFile', 'sourceFile'],
+        failureLabel: 'Hidden faces',
+      });
+    } catch (err) {
+      console.error('Hidden-face proxy failed:', err);
+      if (!res.headersSent) res.status(500).json({ error: err.message || 'Hidden-face search failed' });
+      return undefined;
+    }
+  });
+
 app.post('/api/meshes/fit',
   meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, { name: 'sourceFile', maxCount: 1 }]),
   async (req, res) => {
