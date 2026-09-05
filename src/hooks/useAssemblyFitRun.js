@@ -36,14 +36,18 @@ import {
   putWorkingGeometry,
 } from '../utils/assemblyWorking'
 import { buildAssetUrl } from '../utils/meshTexturing'
+import { composePieceMatrix } from '../utils/assemblyGeometry'
+import * as THREE from 'three'
 
 // Long enough that a burst of brush strokes writes once, short enough that
 // clicking away straight after a stroke still catches it. The unmount flush
 // below is what makes the exact number uncritical.
 const PERSIST_DELAY = 900
 
+const IDENTITY_ELEMENTS = new THREE.Matrix4().elements.slice()
+
 export default function useAssemblyFitRun({
-  assemblyId, doc, entries, getEntry, patchPiece, onPreviewReplaced,
+  assemblyId, doc, entries, getEntry, patchPiece, onPreviewReplaced, gizmoDraggingRef,
 }) {
   const previewsRef = useRef(new Map())        // pieceId -> preview entry
   const [previews, setPreviews] = useState(new Map())
@@ -115,6 +119,7 @@ export default function useAssemblyFitRun({
       const buffer = encodeWorkingGeometry({
         sourceUrl: buildAssetUrl(piece),
         meshes: preview.meshes,
+        placement: preview.placementAtFit,
       })
       if (!buffer) return
       await putWorkingGeometry(id, pieceId, buffer)
@@ -140,6 +145,51 @@ export default function useAssemblyFitRun({
       persistNow(pieceId)
     }, PERSIST_DELAY))
   }, [persistNow])
+
+  /**
+   * Fold a placement change into the preview's vertices.
+   *
+   * Between a move and this call the preview is DRAWN through a delta matrix,
+   * which is right for the eye but leaves its positions in the space they were
+   * fitted in. Everything else in the feature — the brush, the exporter, the
+   * working file — assumes a preview's positions ARE its world positions, so
+   * the delta is baked away as soon as the move is committed rather than
+   * teaching each of them about a second space.
+   *
+   * Called once per completed move, never per frame: this walks every vertex.
+   */
+  const rebasePreview = useCallback(pieceId => {
+    const preview = previewsRef.current.get(pieceId)
+    const piece = docRef.current?.pieces?.find(p => p.id === pieceId)
+    if (!preview?.placementAtFit || !piece || !preview.meshes?.length) return
+
+    const current = composePieceMatrix(piece, new THREE.Matrix4())
+    const delta = current.clone().multiply(preview.placementAtFit.clone().invert())
+    // elements are column-major; an unchanged placement is the common case and
+    // must not cost a vertex pass.
+    if (delta.elements.every((value, i) => Math.abs(value - IDENTITY_ELEMENTS[i]) < 1e-9)) return
+
+    for (const mesh of preview.meshes) {
+      const geometry = mesh.geometry
+      if (!geometry) continue
+      // applyMatrix4 transforms the normal attribute through the proper normal
+      // matrix, so normals must NOT be recomputed here — doing so would smooth
+      // a mesh the file deliberately shipped flat-shaded.
+      geometry.applyMatrix4(delta)
+      // The tree indexes the OLD positions; a stale one silently mis-picks.
+      geometry.disposeBoundsTree?.()
+      geometry.computeBoundingBox()
+      geometry.computeBoundingSphere()
+    }
+    preview.bvhBuilt = false
+    preview.localBox = new THREE.Box3().setFromObject(preview.root)
+    preview.placementAtFit = current
+
+    publish()
+    // The stored copy has to move too, or reopening would put the piece back
+    // where it was fitted.
+    persistPiece(pieceId)
+  }, [publish, persistPiece])
 
   const dropPreview = useCallback(pieceId => {
     const preview = previewsRef.current.get(pieceId)
@@ -260,7 +310,16 @@ export default function useAssemblyFitRun({
           disposeFitPreview(existing)
         }
 
-        previewsRef.current.set(piece.id, { ...buildFitPreview(payload, positions), pieceId: piece.id })
+        previewsRef.current.set(piece.id, {
+          ...buildFitPreview(payload, positions),
+          pieceId: piece.id,
+          // The placement these WORLD positions were computed at. Without it a
+          // fitted piece stops following the gizmo: the preview draws in world
+          // space, so moving the piece would slide the placement out from under
+          // geometry that has it baked in, and the visible mesh would sit still
+          // while the invisible original moved.
+          placementAtFit: composePieceMatrix(piece, new THREE.Matrix4()),
+        })
         publish()
         setShowFitted(previous => new Set(previous).add(piece.id))
         // Straight away, not debounced: a fit is minutes of work and the user
@@ -297,6 +356,20 @@ export default function useAssemblyFitRun({
       setProgress({ frac: 0, message: '' })
     }
   }, [doc, getEntry, patchPiece, publish, onPreviewReplaced, persistNow])
+
+  // Every OTHER way a placement changes — the numeric fields, mirror, fit to
+  // region, drop to surface, reset, paste transform. Each of those is a single
+  // committed edit, so re-basing straight from the document is safe.
+  //
+  // A gizmo drag is excluded because it patches the document on every frame,
+  // and re-basing per frame would walk every vertex per frame. That path calls
+  // rebasePreview itself once the drag ends.
+  useEffect(() => {
+    if (gizmoDraggingRef?.current) return
+    for (const piece of doc.pieces) {
+      if (previewsRef.current.has(piece.id)) rebasePreview(piece.id)
+    }
+  }, [doc, gizmoDraggingRef, rebasePreview])
 
   // ---- Restoring a stored fit ----------------------------------------------
   //
@@ -351,9 +424,23 @@ export default function useAssemblyFitRun({
           previewsRef.current.set(piece.id, {
             ...buildFitPreview({ ranges }, decoded.positions),
             pieceId: piece.id,
+            // The frame the stored vertices belong to. Falling back to the
+            // piece's CURRENT placement (delta = identity) is what keeps files
+            // written before this field readable — those were always saved with
+            // the piece where it was fitted.
+            placementAtFit: decoded.header.placement
+              ? new THREE.Matrix4().fromArray(decoded.header.placement)
+              : composePieceMatrix(piece, new THREE.Matrix4()),
           })
           publish()
           setShowFitted(previous => new Set(previous).add(piece.id))
+
+          // A piece can have been MOVED after it was fitted, in this session or
+          // a previous one, so the restored vertices may be a placement behind.
+          // Folding that in now rather than waiting for the next document
+          // change keeps the exporter's assumption true — that a preview's
+          // positions are its world positions — from the moment it appears.
+          rebasePreview(piece.id)
         } catch (err) {
           console.warn(`Could not restore the stored fit for ${piece.name}`, err)
         }
@@ -361,7 +448,7 @@ export default function useAssemblyFitRun({
     })()
 
     return () => { cancelled = true }
-  }, [assemblyId, doc, entries, publish])
+  }, [assemblyId, doc, entries, publish, rebasePreview])
 
   /**
    * The piece's editable preview, created from its current placement if it has
@@ -374,7 +461,11 @@ export default function useAssemblyFitRun({
     const piece = doc.pieces.find(p => p.id === pieceId)
     const entry = getEntry(pieceId)
     if (!piece || !entry) return null
-    const preview = { ...createPreviewFromPiece(entry, piece), pieceId }
+    const preview = {
+      ...createPreviewFromPiece(entry, piece),
+      pieceId,
+      placementAtFit: composePieceMatrix(piece, new THREE.Matrix4()),
+    }
     previewsRef.current.set(pieceId, preview)
     publish()
     setShowFitted(previous => new Set(previous).add(pieceId))
@@ -396,6 +487,7 @@ export default function useAssemblyFitRun({
     cancel,
     revert,
     dropPreview,
+    rebasePreview,
     toggleFitted,
   }
 }

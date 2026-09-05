@@ -89,7 +89,8 @@ export default function AssemblyPage() {
     sculptHistoryRef.current?.(preview)
   }, [])
   const fit = useAssemblyFitRun({
-    assemblyId, doc, entries, getEntry, patchPiece, onPreviewReplaced: notifyPreviewReplaced,
+    assemblyId, doc, entries, getEntry, patchPiece, gizmoDraggingRef,
+    onPreviewReplaced: notifyPreviewReplaced,
   })
   const fitEnsurePreview = fit.ensurePreview
 
@@ -259,6 +260,7 @@ export default function AssemblyPage() {
     onGizmoDragStart, onGizmoDrag, onGizmoDragEnd,
   } = useAssemblyAlignment({
     base, selectedPiece, selectedEntry, getEntry, patchPiece, duplicatePiece, gizmoDraggingRef,
+    onPlacementCommitted: fit.rebasePreview,
   })
 
 

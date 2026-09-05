@@ -16,10 +16,25 @@ import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import AssemblyPieceMesh from './AssemblyPieceMesh'
 import AssemblyGizmo from './AssemblyGizmo'
-import { boundsProxyGeometry } from '../../utils/assemblyGeometry'
+import { boundsProxyGeometry, composePieceMatrix } from '../../utils/assemblyGeometry'
 import { getVisiblePieces } from '../../utils/assemblyHelpers'
 
 const IDENTITY = new THREE.Matrix4()
+
+/**
+ * Where to draw a fitted preview: how far its piece has moved SINCE the fit.
+ *
+ * The preview's vertices are world positions from the moment it was produced,
+ * so the placement is already inside them — drawing it under the placement
+ * again would apply it twice. Identity is right only while the piece has not
+ * moved, which is exactly the assumption that used to strand a fitted piece
+ * behind its own gizmo.
+ */
+function previewMatrix(piece, preview) {
+  if (!preview.placementAtFit) return IDENTITY   // pre-existing preview: as before
+  return composePieceMatrix(piece, new THREE.Matrix4())
+    .multiply(preview.placementAtFit.clone().invert())
+}
 
 // Publishes the viewport's OrbitControls to the page.
 //
@@ -117,9 +132,16 @@ export default function AssemblyViewport({
               entry={entry}
               // A fitted result comes back ALREADY in world space (the piece's
               // placement was baked into the payload sent up), so the preview
-              // draws with an identity matrix while the original draws with its
-              // placement. The easiest thing in the feature to get backwards.
-              matrix={preview ? IDENTITY : undefined}
+              // draws through the CHANGE in placement since it was fitted,
+              // while the original draws with the placement itself. The easiest
+              // thing in the feature to get backwards.
+              //
+              // Usually that delta is identity. It is not while the piece is
+              // being dragged — the drag patches the document every frame, and
+              // without this the visible fitted mesh would sit still while the
+              // hidden original moved out from under the gizmo. The delta is
+              // baked into the vertices once the move is committed.
+              matrix={preview ? previewMatrix(piece, preview) : undefined}
               isSelected={piece.id === doc.settings.selectedPieceId}
               showShadows={showShadows}
             />

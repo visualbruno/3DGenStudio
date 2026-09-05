@@ -57,7 +57,7 @@ const LITTLE_ENDIAN = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1
  * buildFitPayloadGeometry produced, which is what makes the flat position run
  * reconstructible.
  */
-export function encodeWorkingGeometry({ sourceUrl, meshes }) {
+export function encodeWorkingGeometry({ sourceUrl, meshes, placement }) {
   const counts = []
   let total = 0
   for (const mesh of meshes) {
@@ -75,6 +75,12 @@ export function encodeWorkingGeometry({ sourceUrl, meshes }) {
     sourceUrl: sourceUrl || '',
     vertexCount: total,
     meshes: counts,
+    // The placement these WORLD positions were computed at, column-major. A
+    // piece can be moved after being fitted, and on the next open the stored
+    // vertices still sit where the fit left them — so the frame they belong to
+    // has to travel with them, or a restored piece jumps back to wherever it
+    // was when it was fitted.
+    placement: placement ? Array.from(placement.elements) : null,
     littleEndian: LITTLE_ENDIAN,
     savedAt: Date.now(),
   })

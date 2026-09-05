@@ -26,6 +26,10 @@ export default function useAssemblyAlignment({
   patchPiece,
   duplicatePiece,
   gizmoDraggingRef,
+  // onPlacementCommitted(pieceId) — a move has finished. A fitted preview holds
+  // world positions from the moment it was fitted, so it has to be re-based
+  // when the piece it belongs to moves.
+  onPlacementCommitted,
 }) {
   // Clipboard for Copy/Paste transform. A ref, not state: nothing renders from
   // it except the paste button's enabled-ness, which `clipboardFilled` tracks.
@@ -112,11 +116,14 @@ export default function useAssemblyAlignment({
 
   const onGizmoDragEnd = useCallback(trs => {
     if (selectedPiece) patchPiece(selectedPiece.id, trs)
+    // A fitted preview is drawn through the change in placement while the drag
+    // runs; this folds that change into its vertices now the move is final.
+    if (selectedPiece) onPlacementCommitted?.(selectedPiece.id)
     // Cleared on the next tick, not now: the pointerup that ends the drag is
     // still on its way to the shell's handler, and clearing synchronously would
     // let the release re-pick whatever happens to be under the cursor.
     setTimeout(() => { gizmoDraggingRef.current = false }, 0)
-  }, [patchPiece, selectedPiece, gizmoDraggingRef])
+  }, [patchPiece, selectedPiece, gizmoDraggingRef, onPlacementCommitted])
 
   return {
     baseBox,
