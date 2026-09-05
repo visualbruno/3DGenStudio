@@ -327,3 +327,117 @@ class MeshStats(BaseModel):
     vertex_count: int
     face_count: int
     has_uv: bool
+
+class FitOptions(BaseModel):
+    """Assembly fit: adapt a garment/armour piece to a base body.
+
+    Mirrors app/services/assemblyfit/config.py -- keep the two in step, along
+    with DEFAULT_FIT_OPTIONS in src/utils/assemblyFit.js and the MCP zod block.
+    """
+
+    stages: list[Literal["shrinkwrap", "penetration"]] = Field(
+        default=["shrinkwrap", "penetration"],
+        description="Stages to run, in order. 'shrinkwrap' conforms the whole piece to the "
+                    "body's shape; 'penetration' only pushes out what is inside it. Rigid "
+                    "pieces (plate armour) should use penetration alone -- conforming the "
+                    "whole shell rounds its edges and bows its flats.",
+    )
+    offset: float = Field(
+        default=0.004, ge=0.0, le=1.0,
+        description="Clearance to leave between the piece and the body, in world units. "
+                    "Not zero: a garment sitting exactly on the surface z-fights with it.",
+    )
+    iterations: int = Field(
+        default=20, ge=1, le=200,
+        description="Iteration BUDGET per stage. The loop exits early once it stops moving "
+                    "anything meaningfully, so a generous value is nearly free.",
+    )
+    tolerance: float = Field(
+        default=0.02, ge=0.0, le=1.0,
+        description="Convergence threshold, as a fraction of the piece's mean edge length.",
+    )
+    vote_rounds: int = Field(
+        default=2, ge=0, le=10,
+        description="Rounds of sign voting on the inside/outside test. Load-bearing when the "
+                    "body is not watertight, which is the norm for AI-generated meshes.",
+    )
+    smooth_rounds: int = Field(
+        default=2, ge=0, le=20,
+        description="Laplacian rounds applied to the displacement FIELD each iteration. "
+                    "Removes crease-to-crease zigzag; too much stalls narrow penetrations.",
+    )
+    smooth_alpha: float = Field(
+        default=0.45, ge=0.0, le=1.0,
+        description="How hard the displacement field is pulled toward its neighbourhood mean.",
+    )
+    step_clamp: float = Field(
+        default=0.5, ge=0.0, le=10.0,
+        description="How far a vertex may outrun its neighbours per iteration, in local edge "
+                    "lengths. The spike guard. It does not cap uniform motion.",
+    )
+    field_centres: int = Field(
+        default=400, ge=0, le=5000,
+        description="Sample points for the smooth conform field. THIS is what preserves a "
+                    "garment's thickness: a spline fitted over sparse centres moves a shell's "
+                    "inner and outer surfaces together, where a per-vertex projection collapses "
+                    "them onto each other. Fewer centres = broader, gentler conform. 0 disables "
+                    "smoothing, which flattens the piece onto the body.",
+    )
+    field_smoothing: float = Field(
+        default=1.0, ge=0.0, le=100.0,
+        description="Regularisation on that spline. Higher follows the body more loosely.",
+    )
+    strength: float = Field(
+        default=1.0, ge=0.0, le=1.0,
+        description="How far the reshape goes, 0..1. A partial conform often looks better: "
+                    "the piece takes the body's shape without being pulled tight into its "
+                    "concavities, where triangles start to invert.",
+    )
+    flip_abort_frac: float = Field(
+        default=0.01, ge=0.0, le=1.0,
+        description="Stop and keep the last good state once this fraction of faces has "
+                    "turned inside out. Nothing recovers an inverted triangle, so stopping "
+                    "beats reporting the damage. 0 disables the guard.",
+    )
+    min_thickness: float = Field(
+        default=0.0, ge=0.0, le=1.0,
+        description="Stop the reshape before the piece's own inner and outer surfaces get "
+                    "closer than this. Where they touch, the lining flickers through the "
+                    "outside — it looks like a texture bug but it is geometry. World units; "
+                    "0 disables the guard.",
+    )
+    rebuild_shell: bool = Field(
+        default=False,
+        description="Rebuild the piece's outer surface from its conformed inner surface at "
+                    "the thickness measured beforehand. This is what keeps a garment's wall: "
+                    "no smooth deformation can contract a surface and preserve thickness. Off by "
+                    "default: on a mesh that already self-intersects it makes the lining show "
+                    "through more, not less.",
+    )
+    lock_vertical: bool = Field(
+        default=True,
+        description="Keep a conformed piece at the height it was placed. The body's normal "
+                    "points upward across the shoulders and collarbones, so without this a "
+                    "breastplate slides up the torso and onto the neck.",
+    )
+    preserve_centroid: bool = Field(
+        default=True,
+        description="Remove any net translation from the conform, so the piece cannot drift "
+                    "bodily off the placement the user chose. Local shape change is untouched.",
+    )
+    max_distance_ratio: float = Field(
+        default=0.25, ge=0.0, le=10.0,
+        description="Leave vertices further than this x the body's bounding-box diagonal "
+                    "untouched, so a cape hem or helmet plume is not sucked onto the torso. "
+                    "0 disables the limit.",
+    )
+    body_face_budget: int = Field(
+        default=60000, ge=0, le=2000000,
+        description="Decimate the body to at most this many faces before using it as the "
+                    "proximity target. Large speedup, negligible accuracy cost. 0 disables.",
+    )
+    device: Literal["auto", "cpu"] = Field(
+        default="auto",
+        description="'auto' uses the NVIDIA Warp GPU closest-point query when available "
+                    "(roughly 1000x faster than the CPU path) and falls back to trimesh.",
+    )

@@ -26,11 +26,14 @@ import AssemblyPieceList from '../components/assembly/AssemblyPieceList'
 import AssemblyViewport from '../components/assembly/AssemblyViewport'
 import AssemblyViewportToolbar from '../components/assembly/AssemblyViewportToolbar'
 import AssemblyTransformPanel from '../components/assembly/AssemblyTransformPanel'
+import AssemblyFitPanel from '../components/assembly/AssemblyFitPanel'
 import useAssemblyDocument from '../hooks/useAssemblyDocument'
 import useAssemblyScene from '../hooks/useAssemblyScene'
 import useAssemblyPicking from '../hooks/useAssemblyPicking'
 import useAssemblyAlignment from '../hooks/useAssemblyAlignment'
-import { getBasePiece, getVisiblePieces } from '../utils/assemblyHelpers'
+import useAssemblyFitRun from '../hooks/useAssemblyFitRun'
+import useAssemblySculpt from '../hooks/useAssemblySculpt'
+import { getBasePiece, getGarmentPieces, getVisiblePieces } from '../utils/assemblyHelpers'
 import { boundsProxyGeometry, boxDiagonal, pieceWorldBox } from '../utils/assemblyGeometry'
 import { fitCameraToSphere, meshFittingSphere } from '../utils/cameraFraming'
 import './AssemblyPage.css'
@@ -62,6 +65,7 @@ export default function AssemblyPage() {
     assemblies, meta, doc, ready, loading, loadError, saveStatus,
     canUndo, canRedo, undo, redo,
     addPieces, patchPiece, duplicatePiece, removePiece, setBase, reorderPieces, patchSettings,
+    setMaterialClass,
     createNewAssembly, renameCurrentAssembly, deleteCurrentAssembly, selectAssembly,
   } = useAssemblyDocument({ assemblyId, onAssemblyIdChange: setAssemblyId })
 
@@ -72,10 +76,69 @@ export default function AssemblyPage() {
     handleSelectPointerDown, gizmoDraggingRef,
   } = useAssemblyPicking({ shellRef, cameraRef, entries, doc })
 
+  // Declared before the fit run so it can be told when a preview's buffers are
+  // about to go away — a sculpt undo entry pointing at a disposed geometry
+  // would write into freed memory.
+  const sculptHistoryRef = useRef(null)
+  const notifyPreviewReplaced = useCallback(preview => {
+    sculptHistoryRef.current?.(preview)
+  }, [])
+  const fit = useAssemblyFitRun({
+    doc, getEntry, patchPiece, onPreviewReplaced: notifyPreviewReplaced,
+  })
+  const fitEnsurePreview = fit.ensurePreview
+
   const base = getBasePiece(doc)
+  const garments = getGarmentPieces(doc)
   const visiblePieces = getVisiblePieces(doc)
   const selectedPiece = doc.pieces.find(piece => piece.id === doc.settings.selectedPieceId) || null
   const selectedEntry = selectedPiece ? getEntry(selectedPiece.id) : null
+
+  // Sculpt mode needs no prior selection: you sculpt whatever you click, and
+  // the click also selects it so the panels follow. Requiring a selection first
+  // meant the brush button sat disabled with nothing explaining why.
+  const sculptEnabled = !!doc.settings.sculptMode
+
+  // What is under the brush. Raycasts the piece as it is DRAWN — the preview
+  // when one is showing, the loaded mesh otherwise — then hands back that
+  // piece's preview to edit, creating one if this is its first stroke.
+  const resolveSculptTarget = raycaster => {
+    let best = null
+    for (const piece of getVisiblePieces(doc)) {
+      if (piece.locked) continue
+      const drawn = fit.showFitted.has(piece.id)
+        ? fit.previews.get(piece.id)
+        : getEntry(piece.id)
+      if (!drawn?.root) continue
+      const hits = raycaster.intersectObject(drawn.root, true)
+      if (hits.length && (!best || hits[0].distance < best.distance)) {
+        best = { piece, distance: hits[0].distance, point: hits[0].point }
+      }
+    }
+    if (!best) return null
+
+    const entry = fitEnsurePreview(best.piece.id)
+    if (!entry) return null
+    if (doc.settings.selectedPieceId !== best.piece.id) {
+      patchSettings({ selectedPieceId: best.piece.id })
+    }
+    return { entry, point: best.point }
+  }
+
+  const sculpt = useAssemblySculpt({
+    shellRef,
+    cameraRef,
+    resolveTarget: resolveSculptTarget,
+    enabled: sculptEnabled,
+    radiusPixels: doc.settings.sculptRadius ?? 80,
+    strength: doc.settings.sculptStrength ?? 1,
+  })
+
+  // Assigned in an effect, not during render: a render can be discarded or
+  // replayed, and the fit run reads this ref from async callbacks.
+  useEffect(() => {
+    sculptHistoryRef.current = sculpt.forgetHistoryFor
+  }, [sculpt.forgetHistoryFor])
 
   // Which pieces are LOADED — not merely present in the document. The camera
   // re-frames when a mesh finishes loading (its bounds are new information), but
@@ -157,9 +220,14 @@ export default function AssemblyPage() {
     setShowMeshPicker(false)
   }, [addPieces])
 
+  // While sculpting, the pointer belongs to the brush: a drag must not also
+  // re-select whatever it passes over. Orbit is unaffected — it lives on the
+  // middle and right buttons (CameraRig leaves LEFT unbound).
   const handlePointerDown = useCallback(event => {
+    if (sculpt.onPointerDown(event)) return
+    if (sculptEnabled) return
     handleSelectPointerDown(event, pieceId => patchSettings({ selectedPieceId: pieceId }))
-  }, [handleSelectPointerDown, patchSettings])
+  }, [sculpt, sculptEnabled, handleSelectPointerDown, patchSettings])
 
   const {
     commit: commitToSelected,
@@ -263,12 +331,21 @@ export default function AssemblyPage() {
           )}
         </aside>
 
-        <main className="assembly-page__viewport" ref={shellRef} onPointerDown={handlePointerDown}>
+        <main
+          className={`assembly-page__viewport ${sculptEnabled ? 'assembly-page__viewport--sculpt' : ''}`}
+          ref={shellRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={sculpt.onPointerMove}
+          onPointerUp={sculpt.onPointerUp}
+          onPointerLeave={() => { sculpt.onPointerUp(); sculpt.onPointerLeave() }}
+        >
           {ready && doc.pieces.length > 0 ? (
             <>
               <AssemblyViewport
                 doc={doc}
                 entries={entries}
+                previews={fit.previews}
+                showFitted={fit.showFitted}
                 bounds={bounds}
                 frameKey={loadedKey}
                 contextRevision={contextRevision}
@@ -285,10 +362,33 @@ export default function AssemblyPage() {
                 onPatchSettings={patchSettings}
                 onFrameAll={handleFrameAll}
                 hasSelection={!!selectedPiece}
+                sculptEnabled={sculptEnabled}
+                canSculptUndo={sculpt.canUndo}
+                onSculptUndo={sculpt.undo}
                 pieceCount={visiblePieces.length}
                 vertexCount={visibleVertexCount}
                 scaleRatio={scaleRatio}
               />
+              {sculptEnabled && sculpt.cursor && (
+                <div
+                  className="assembly-page__brush"
+                  style={{
+                    left: sculpt.cursor.x,
+                    top: sculpt.cursor.y,
+                    width: sculpt.cursor.radius * 2,
+                    height: sculpt.cursor.radius * 2,
+                  }}
+                />
+              )}
+              {sculptEnabled && (
+                <button
+                  type="button"
+                  className="assembly-page__sculpt-banner"
+                  onClick={() => patchSettings({ sculptMode: false })}
+                >
+                  Elastic Grab — drag the surface to reshape it · click to exit
+                </button>
+              )}
               {doc.settings.isolatedPieceId && (
                 <button
                   type="button"
@@ -338,6 +438,26 @@ export default function AssemblyPage() {
             onCopyTransform={copyTransform}
             onPasteTransform={pasteTransform}
             canPaste={clipboardFilled}
+          />
+
+          <AssemblyFitPanel
+            piece={selectedPiece}
+            isBase={!!selectedPiece && selectedPiece.id === doc.basePieceId}
+            hasBase={!!base}
+            hasPreview={!!selectedPiece && fit.previews.has(selectedPiece.id)}
+            showingFitted={!!selectedPiece && fit.showFitted.has(selectedPiece.id)}
+            running={fit.running}
+            progress={fit.progress}
+            error={fit.error}
+            garmentCount={garments.length}
+            onClearError={fit.clearError}
+            onSetMaterialClass={setMaterialClass}
+            onPatchPiece={patchPiece}
+            onRun={fit.run}
+            onRunAll={() => fit.run(garments.map(piece => piece.id))}
+            onCancel={fit.cancel}
+            onRevert={fit.revert}
+            onToggleFitted={fit.toggleFitted}
           />
         </aside>
       </div>

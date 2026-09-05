@@ -247,7 +247,7 @@ function toFloat32Attribute(attribute) {
 // coordinates back into the int array while the normalized flag stays set,
 // collapsing the whole mesh to a speck (it then loads without error but is
 // invisible in the editor). Convert everything we read to plain Float32 first.
-function dequantizeGeometryAttributes(geometry) {
+export function dequantizeGeometryAttributes(geometry) {
   // skinIndex/skinWeight are included so a rigged GLB's interleaved or quantized
   // skin data is de-interleaved like everything else; createIndexedGeometry puts
   // skinIndex back into an integer array before export, which is what glTF

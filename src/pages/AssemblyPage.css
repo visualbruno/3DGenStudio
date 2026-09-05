@@ -768,3 +768,228 @@
     border-top: 1px solid var(--outline-variant);
   }
 }
+
+/* ---- Fit panel ---------------------------------------------------------- */
+
+.assembly-fit {
+  display: grid;
+  gap: 6px;
+  padding: 0 12px 14px;
+  font-size: 12px;
+}
+
+.assembly-fit--empty {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-fit__section {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--outline-variant);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--on-surface-variant);
+}
+
+.assembly-fit__classes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+
+.assembly-fit__class {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface-variant);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.assembly-fit__class--on {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 20%, transparent);
+  color: var(--on-surface);
+}
+
+.assembly-fit__stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.assembly-fit__knobs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.assembly-fit__knob {
+  display: grid;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-fit__knob input {
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.assembly-fit__actions {
+  display: flex;
+  gap: 4px;
+}
+
+.assembly-fit__actions button,
+.assembly-fit__run {
+  flex: 1;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.assembly-fit__run {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 22%, transparent);
+  font-weight: 600;
+}
+
+.assembly-fit__actions button:hover:not(:disabled),
+.assembly-fit__run:hover:not(:disabled) {
+  background: var(--surface-container-high);
+}
+
+.assembly-fit__actions button:disabled,
+.assembly-fit__run:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.assembly-fit__progress {
+  display: grid;
+  gap: 3px;
+}
+
+.assembly-fit__bar {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-container-high);
+}
+
+.assembly-fit__bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.15s linear;
+}
+
+.assembly-fit__progress-text {
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}
+
+.assembly-fit__hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+  opacity: 0.8;
+}
+
+.assembly-fit__result {
+  margin: 0;
+  font-size: 11px;
+}
+
+.assembly-fit__warn {
+  margin: 0;
+  font-size: 10px;
+  color: var(--error, #ef5350);
+}
+
+.assembly-fit__error {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--error, #ef5350) 15%, transparent);
+  color: var(--error, #ef5350);
+  font-size: 10px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.assembly-fit__tag {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--error, #ef5350) 22%, transparent);
+  color: var(--error, #ef5350);
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* ---- Sculpt brush -------------------------------------------------------- */
+
+.assembly-page__viewport--sculpt {
+  /* The brush ring IS the cursor; the arrow would sit in the middle of it. */
+  cursor: none;
+}
+
+.assembly-page__brush {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  border: 1.5px solid rgba(143, 245, 255, 0.9);
+  border-radius: 50%;
+  /* Must never eat the pointer events the brush itself depends on. */
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45) inset;
+}
+
+.assembly-page__brush::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px 0 0 -1.5px;
+  border-radius: 50%;
+  background: rgba(143, 245, 255, 0.9);
+}
+
+.assembly-page__sculpt-banner {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 6px 12px;
+  border: 1px solid var(--primary);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--primary);
+  font-size: 12px;
+  cursor: pointer;
+}

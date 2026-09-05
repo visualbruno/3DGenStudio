@@ -90,6 +90,17 @@ def _lap_smooth(D, idx, ptr, deg, rounds, alpha=0.7):
     return D
 
 
+# Public aliases. The graph and query helpers above are not specific to
+# retopology -- assembly fitting needs the same closest-point backend selection,
+# CSR adjacency, displacement-field smoothing and per-vertex edge length. Shared
+# by alias rather than copied so there is one implementation to fix.
+make_surface_query = _make_surface_query
+vertex_adjacency = _vertex_adjacency
+csr = _csr
+vertex_edge_length = _vertex_edge_length
+lap_smooth = _lap_smooth
+
+
 def project_to_surface(V, F, target_mesh, iters=8, clamp=1.5, relax_strength=0.4,
                        field_smooth_rounds=3, final_snap_clamp=0.4, device="auto"):
     """Project (V,F) onto target_mesh.

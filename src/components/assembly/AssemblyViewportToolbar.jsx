@@ -14,6 +14,9 @@ export default function AssemblyViewportToolbar({
   onPatchSettings,
   onFrameAll,
   hasSelection,
+  sculptEnabled,
+  canSculptUndo,
+  onSculptUndo,
   pieceCount,
   vertexCount,
   scaleRatio,
@@ -84,6 +87,34 @@ export default function AssemblyViewportToolbar({
             {snapField('snapTranslate', 'mv', 0.01, 'Move increment, in world units (0 = off)')}
             {snapField('snapRotateDeg', 'rot', 1, 'Rotate increment, in degrees (0 = off)')}
             {snapField('snapScale', 'scl', 0.01, 'Scale increment (0 = off)')}
+          </>
+        )}
+      </div>
+
+      {/* Manual Elastic Grab — for the small local defects the automatic fit
+          leaves behind, which are seconds of work by hand. */}
+      <div className="assembly-vp-toolbar__group">
+        <button
+          type="button"
+          className={`assembly-vp-toolbar__btn ${settings.sculptMode ? 'assembly-vp-toolbar__btn--on' : ''}`}
+          title="Elastic Grab — drag the surface to reshape it by hand"
+          onClick={() => onPatchSettings({ sculptMode: !settings.sculptMode })}
+        >
+          <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>pan_tool</span>
+        </button>
+        {sculptEnabled && (
+          <>
+            {snapField('sculptRadius', 'size', 5, 'Brush size, in screen pixels')}
+            {snapField('sculptStrength', 'str', 0.1, 'How strongly the drag pulls the surface (0-1)')}
+            <button
+              type="button"
+              className="assembly-vp-toolbar__btn"
+              title="Undo the last brush stroke"
+              disabled={!canSculptUndo}
+              onClick={onSculptUndo}
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: '17px' }}>undo</span>
+            </button>
           </>
         )}
       </div>

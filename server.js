@@ -7607,21 +7607,39 @@ const meshToolsUpload = multer({
   limits: { fileSize: 512 * 1024 * 1024 },
 });
 
-async function proxyMeshTool(operationPath, req, res, { baseUrlBuilder = buildMeshToolsBaseUrl, serviceLabel = 'Mesh Tools' } = {}) {
-  const meshFile = req.file;
-  if (!meshFile?.buffer?.length) {
-    return res.status(400).json({ error: 'meshFile is required' });
+// `fields` names the multipart file fields to forward, in order. Single-file
+// tools (the majority) leave it at its default and are handed req.file by
+// multer.single(); the two-mesh tools — /bake and /fit — pass both names and
+// are handed req.files by multer.fields(). Generalised rather than copied: the
+// SSE error handling in pipeToolSse is load-bearing, and /bake used to carry
+// its own duplicate of it.
+async function proxyMeshTool(operationPath, req, res, {
+  baseUrlBuilder = buildMeshToolsBaseUrl,
+  serviceLabel = 'Mesh Tools',
+  fields = ['meshFile'],
+  failureLabel = 'Mesh tool',
+} = {}) {
+  const uploads = [];
+  for (const field of fields) {
+    // multer.single() puts its result on req.file; multer.fields() on req.files.
+    const upload = field === 'meshFile' && req.file ? req.file : req.files?.[field]?.[0];
+    if (!upload?.buffer?.length) {
+      return res.status(400).json({ error: `${field} is required` });
+    }
+    uploads.push([field, upload]);
   }
 
   const settings = await getSettings();
   const baseUrl = baseUrlBuilder(settings);
 
   const form = new FormData();
-  form.append(
-    'meshFile',
-    new Blob([meshFile.buffer], { type: meshFile.mimetype || 'model/gltf-binary' }),
-    meshFile.originalname || 'mesh.glb',
-  );
+  for (const [field, upload] of uploads) {
+    form.append(
+      field,
+      new Blob([upload.buffer], { type: upload.mimetype || 'model/gltf-binary' }),
+      upload.originalname || `${field}.glb`,
+    );
+  }
   if (typeof req.body?.options === 'string' && req.body.options.length) {
     form.append('options', req.body.options);
   }
@@ -7644,7 +7662,7 @@ async function proxyMeshTool(operationPath, req, res, { baseUrlBuilder = buildMe
     // Pre-stream failures (bad options, mesh load) come back as JSON.
     const detail = await upstream.text().catch(() => '');
     return res.status(upstream.status).json({
-      error: `Mesh tool failed (${upstream.status})`,
+      error: `${failureLabel} failed (${upstream.status})`,
       detail: detail.slice(0, 2000),
     });
   }
@@ -7759,7 +7777,7 @@ async function proxyMeshToolJson(operationPath, req, res, { baseUrlBuilder = bui
   const text = await upstream.text().catch(() => '');
   if (!upstream.ok) {
     return res.status(upstream.status).json({
-      error: `Mesh tool failed (${upstream.status})`,
+      error: `${failureLabel} failed (${upstream.status})`,
       detail: text.slice(0, 2000),
     });
   }
@@ -7790,64 +7808,46 @@ app.post('/api/meshes/inspect', meshToolsUpload.single('meshFile'), async (req, 
   }
 });
 
-// High-to-low texture bake. The only mesh-tools route that takes TWO meshes —
-// the low-poly bake target and the high-poly it samples detail from — so it
-// forwards both instead of going through proxyMeshTool's single-file contract.
+// High-to-low texture bake. Takes TWO meshes — the low-poly bake target and the
+// high-poly it samples detail from — so it names both multipart fields.
 app.post('/api/meshes/bake',
   meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, { name: 'sourceFile', maxCount: 1 }]),
   async (req, res) => {
     try {
-      const low = req.files?.meshFile?.[0];
-      const high = req.files?.sourceFile?.[0];
-      if (!low?.buffer?.length || !high?.buffer?.length) {
-        return res.status(400).json({ error: 'Both meshFile (low-poly) and sourceFile (high-poly) are required.' });
-      }
-
-      const settings = await getSettings();
-      const baseUrl = buildMeshToolsBaseUrl(settings);
-
-      const form = new FormData();
-      form.append('meshFile', new Blob([low.buffer], { type: 'model/gltf-binary' }), low.originalname || 'low.glb');
-      form.append('sourceFile', new Blob([high.buffer], { type: 'model/gltf-binary' }), high.originalname || 'high.glb');
-      if (typeof req.body?.options === 'string' && req.body.options.length) {
-        form.append('options', req.body.options);
-      }
-
-      let upstream;
-      try {
-        upstream = await fetch(`${baseUrl}/meshes/bake`, { method: 'POST', body: form });
-      } catch (err) {
-        console.error('Bake proxy could not reach the Python service:', err);
-        return res.status(502).json({ error: `Could not reach the Mesh Tools (Python) service at ${baseUrl}. Is it running?` });
-      }
-
-      if (!upstream.ok) {
-        const detail = await upstream.text().catch(() => '');
-        return res.status(upstream.status).json({ error: `Bake failed (${upstream.status})`, detail: detail.slice(0, 2000) });
-      }
-
-      res.status(200);
-      res.setHeader('Content-Type', upstream.headers.get('content-type') || 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('X-Accel-Buffering', 'no');
-      if (typeof res.flushHeaders === 'function') res.flushHeaders();
-
-      if (!upstream.body) { res.end(); return undefined; }
-
-      const source = Readable.fromWeb(upstream.body);
-      source.on('error', err => {
-        console.error('Bake proxy upstream stream error:', err);
-        if (!res.writableEnded) {
-          try { res.write(`data: ${JSON.stringify({ type: 'error', detail: 'The mesh service connection was lost.' })}\n\n`); } catch { /* gone */ }
-          res.end();
-        }
+      await proxyMeshTool('/meshes/bake', req, res, {
+        fields: ['meshFile', 'sourceFile'],
+        failureLabel: 'Bake',
       });
-      res.on('close', () => { if (!source.destroyed) source.destroy(); });
-      return source.pipe(res);
     } catch (err) {
       console.error('Bake proxy failed:', err);
       if (!res.headersSent) res.status(500).json({ error: err.message || 'Bake failed' });
+      return undefined;
+    }
+  });
+
+// Assembly fit: adapt a garment/armour piece so it follows a base body's
+// silhouette. Two meshes, like /bake — `meshFile` is the PIECE being modified
+// and `sourceFile` is the base body.
+//
+// Both arrive already baked into one shared world space by the client, because
+// a closest-point query between meshes in different spaces is meaningless.
+//
+// The response is the usual SSE stream, but its terminal `done` event carries
+// `positions_b64` rather than `mesh_b64`: the fit never changes vertex count or
+// order, so the client applies just the coordinates onto its own geometry and
+// keeps its UVs, materials and skinning. Local-only, like every /api/meshes
+// route — the Python service is not a shared-server concern.
+app.post('/api/meshes/fit',
+  meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, { name: 'sourceFile', maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      await proxyMeshTool('/meshes/fit', req, res, {
+        fields: ['meshFile', 'sourceFile'],
+        failureLabel: 'Fit',
+      });
+    } catch (err) {
+      console.error('Fit proxy failed:', err);
+      if (!res.headersSent) res.status(500).json({ error: err.message || 'Fit failed' });
       return undefined;
     }
   });

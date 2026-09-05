@@ -32,7 +32,9 @@ from ..config import MAX_UPLOAD_BYTES
 from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_scene,
                       mesh_stats, scene_to_mesh)
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
-                       ConvertOptions, InspectOptions, RepairOptions, SegmentOptions)
+                       ConvertOptions, FitOptions, InspectOptions, RepairOptions,
+                       SegmentOptions)
+from ..services.assembly_fit import run_fit
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
 from ..services.bake import run_bake
@@ -296,6 +298,42 @@ async def bake(
         }
 
     return _stream_payload(run, "Bake")
+
+
+@router.post("/fit")
+async def fit(
+    meshFile: UploadFile = File(...),
+    sourceFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> StreamingResponse:
+    """Adapt a garment/armour piece so it follows a base body's silhouette.
+
+    Two uploads, like /bake: `meshFile` is the PIECE being modified (matching
+    every other route's meaning of meshFile) and `sourceFile` is the base body
+    it is fitted to.
+
+    Both meshes must already be in ONE SHARED WORLD SPACE -- the client bakes
+    each piece's placement into the GLB it uploads. A proximity query between
+    meshes in different spaces is meaningless, and nothing here re-implements
+    the client's TRS or mirroring.
+
+    Returns POSITIONS, not geometry: the terminal `done` event carries
+    `positions_b64` (a float32 xyz array in the input's vertex order) instead of
+    the usual `mesh_b64`. The fit never changes vertex count or order, so the
+    client applies just the coordinates onto its own geometry and keeps its UVs,
+    materials and skinning. See services/assembly_fit.run_fit.
+    """
+    opts = _parse_options(options, FitOptions)
+    piece_bytes = await _read_upload(meshFile)
+    body_bytes = await _read_upload(sourceFile)
+
+    piece = load_mesh(piece_bytes, meshFile.filename or "piece.glb")
+    body = load_mesh(body_bytes, sourceFile.filename or "body.glb")
+
+    def run(emit):
+        return run_fit(piece, body, opts, progress=emit)
+
+    return _stream_payload(run, "Fit")
 
 
 @router.post("/segment")

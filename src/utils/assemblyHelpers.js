@@ -42,11 +42,22 @@ function nextPieceId() {
 // the piece to 'custom', so the document is always the single source of truth
 // and the panel never holds hidden state.
 //
-// Why plate and cloth cannot share one chain: a smoothed displacement field is
-// by definition a low-frequency deformation, and a flat armour plate has no
-// low-frequency detail to spare — warping it rounds its edges and bows its
-// flats ("melted plate"). Rigid pieces therefore get rigid transforms plus a
-// penetration pass only, and never the warp or shrinkwrap stages.
+// Both classes currently run the PENETRATION push only, differing in how much
+// clearance they leave. That is not the original design — conforming was meant
+// to reshape soft pieces — and the reason is measured, not theoretical:
+//
+// On a real 6.5k-vertex armour, conforming loses 75% of the piece's thickness
+// (distance-spread 0.084 -> 0.020), flattens one axis (0.335 -> 0.207), inverts
+// 7.6% of its faces, and leaves MORE clipping than it started with (162 -> 1227
+// penetrating vertices). A garment is a shell with two surfaces, and every
+// cheap way of moving one without the other has failed so far: per-vertex
+// projection collapses it, graph smoothing stretches it, and a spline field
+// (which fixes the synthetic case) still squashes a piece much wider than the
+// body it wraps.
+//
+// So conform stays available as an explicit, warned opt-in rather than a
+// default that quietly ruins the piece. See python-server/app/services/
+// assemblyfit/conform.py and check_thickness_is_preserved in verify.py.
 export const MATERIAL_CLASSES = ['rigid', 'soft', 'custom']
 
 export const MATERIAL_CLASS_LABELS = {
@@ -57,12 +68,12 @@ export const MATERIAL_CLASS_LABELS = {
 
 export const MATERIAL_CLASS_PRESETS = {
   rigid: {
-    stages: { rigid: true, warp: false, shrinkwrap: false, penetration: true },
-    options: { offset: 0.004, iterations: 6, smoothing: 0.3, splitShells: true },
+    stages: { shrinkwrap: false, penetration: true },
+    options: { offset: 0.006, smooth_rounds: 1, step_clamp: 0.35 },
   },
   soft: {
-    stages: { rigid: true, warp: true, shrinkwrap: true, penetration: true },
-    options: { offset: 0.002, iterations: 10, smoothing: 0.6, splitShells: false },
+    stages: { shrinkwrap: false, penetration: true },
+    options: { offset: 0.002, smooth_rounds: 3, step_clamp: 0.6 },
   },
 }
 
@@ -88,6 +99,10 @@ export function createEmptyAssembly() {
       snapScale: 0,
       showGrid: true,
       orthographic: false,
+      // Manual Elastic Grab, for tidying what the fit leaves behind.
+      sculptMode: false,
+      sculptRadius: 80,      // screen pixels, like Blender's brush size
+      sculptStrength: 1,
       isolatedPieceId: null,
       selectedPieceId: null,
       showFittedGlobal: true,

@@ -19,6 +19,8 @@ import AssemblyGizmo from './AssemblyGizmo'
 import { boundsProxyGeometry } from '../../utils/assemblyGeometry'
 import { getVisiblePieces } from '../../utils/assemblyHelpers'
 
+const IDENTITY = new THREE.Matrix4()
+
 // Publishes the viewport's OrbitControls to the page.
 //
 // CameraRig's OrbitControls is `makeDefault`, so R3F puts it on `state.controls`
@@ -34,6 +36,8 @@ function ControlsBridge({ onReady }) {
 export default function AssemblyViewport({
   doc,
   entries,
+  previews,
+  showFitted,
   bounds,            // THREE.Box3 over the visible, loaded pieces
   frameKey,          // bumped when the piece SET changes, so the camera re-frames
   contextRevision,
@@ -103,13 +107,19 @@ export default function AssemblyViewport({
 
       <group>
         {visiblePieces.map(piece => {
-          const entry = entries.get(piece.id)
+          const preview = showFitted?.has(piece.id) ? previews?.get(piece.id) : null
+          const entry = preview || entries.get(piece.id)
           if (!entry) return null
           return (
             <AssemblyPieceMesh
               key={piece.id}
               piece={piece}
               entry={entry}
+              // A fitted result comes back ALREADY in world space (the piece's
+              // placement was baked into the payload sent up), so the preview
+              // draws with an identity matrix while the original draws with its
+              // placement. The easiest thing in the feature to get backwards.
+              matrix={preview ? IDENTITY : undefined}
               isSelected={piece.id === doc.settings.selectedPieceId}
               showShadows={showShadows}
             />
