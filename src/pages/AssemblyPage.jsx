@@ -248,6 +248,17 @@ export default function AssemblyPage() {
   // re-select whatever it passes over. Orbit is unaffected — it lives on the
   // middle and right buttons (CameraRig leaves LEFT unbound).
   const handlePointerDown = useCallback(event => {
+    // Only the 3D view picks. The toolbar and every other overlay live INSIDE
+    // this shell, so their clicks bubble here too — and a click on a button is
+    // a raycast that hits nothing, which used to read as "clicked empty space"
+    // and clear the selection. Pressing Rotate or Scale therefore deselected
+    // the very piece it was about to act on.
+    //
+    // Testing for the canvas rather than excluding the toolbar by class covers
+    // every overlay added later for free. Only pointerDOWN is guarded: a stroke
+    // that starts on the canvas and releases over the toolbar must still end.
+    if (!(event.target instanceof HTMLCanvasElement)) return
+
     if (sculpt.onPointerDown(event)) return
     if (sculptEnabled) return
     handleSelectPointerDown(event, pieceId => patchSettings({ selectedPieceId: pieceId }))
