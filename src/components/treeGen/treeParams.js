@@ -88,7 +88,8 @@ export const TREE_PARAMS = [
   { path: 'foliage.enabled', group: 'Foliage', label: 'Foliage', type: 'boolean', basic: true },
   { path: 'foliage.max_cards', group: 'Foliage', label: 'Leaf budget',
     type: 'number', min: 0, max: 40000, step: 100, basic: true,
-    hint: 'A hard cap on emitted cards. Placements above it are thinned evenly, never truncated on one side.' },
+    hint: 'A hard CAP, not a target — it can only remove cards, never add them. When Stats says the count is '
+      + 'limited by "placements", raising this does nothing: lower Leaf spacing or raise Max host radius instead.' },
   { path: 'foliage.size_ratio', group: 'Foliage', label: 'Leaf size',
     type: 'number', min: 0.002, max: 0.25, step: 0.001, basic: true,
     hint: 'Card width as a fraction of tree height.' },
@@ -118,8 +119,10 @@ export const TREE_PARAMS = [
     type: 'number', min: 0, max: 16, step: 1,
     hint: 'Only branches this deep and beyond carry leaves.' },
   { path: 'foliage.max_radius_ratio', group: 'Foliage', label: 'Max host radius',
-    type: 'number', min: 0, max: 0.05, step: 0.0005,
-    hint: 'Only branches thinner than this carry leaves, so leaves never sprout from the trunk.' },
+    type: 'number', min: 0, max: 2, step: 0.02,
+    hint: 'Only branches thinner than this fraction of the TRUNK radius carry leaves, so leaves never sprout from '
+      + 'the trunk itself. Relative to the trunk rather than the tree height, so thickening the trunk no longer '
+      + 'starves the canopy. Raise it when the leaf count is limited by placements.' },
   { path: 'foliage.spherical_normals', group: 'Foliage', label: 'Spherical normals',
     type: 'number', min: 0, max: 1, step: 0.05,
     hint: 'Blends leaf normals toward the crown-outward direction. The single biggest visual win — flat card normals read as dead cardboard.' },

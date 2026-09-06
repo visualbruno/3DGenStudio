@@ -623,3 +623,10 @@
   background: var(--surface);
   border-top: 1px solid var(--outline-variant);
 }
+
+/* Which constraint capped the leaf count — see foliage.limited_by. */
+.treegen__stat-note {
+  font-family: inherit;
+  font-size: 10px;
+  color: var(--on-surface-variant);
+}

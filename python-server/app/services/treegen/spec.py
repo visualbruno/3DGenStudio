@@ -19,7 +19,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SPEC_VERSION = 1
+SPEC_VERSION = 2
 
 CrownShape = Literal[
     "ellipsoid",      # generic deciduous
@@ -165,8 +165,12 @@ class FoliageSpec(BaseModel):
     cluster_cards: int = Field(default=4, ge=2, le=8, description="Cards per cluster in 'clusters' mode.")
     cluster_spread: float = Field(default=0.45, ge=0.0, le=2.0, description="Fan spread inside a cluster.")
     min_order: int = Field(default=2, ge=0, le=16, description="Only branches at/above this order carry leaves.")
-    max_radius_ratio: float = Field(default=0.006, ge=0.0, le=0.2,
-                                    description="Only branches thinner than this ratio of height carry leaves.")
+    max_radius_ratio: float = Field(default=0.30, ge=0.0, le=4.0,
+                                    description="Only branches thinner than this fraction of the TRUNK radius carry "
+                                                "leaves, so leaves never sprout from the trunk itself. Measured "
+                                                "against the trunk rather than the tree's height because branch "
+                                                "radii all scale with the trunk: a height-relative threshold silently "
+                                                "gets stricter as the trunk thickens, until almost nothing qualifies.")
     spacing_ratio: float = Field(default=0.035, ge=0.002, le=0.5,
                                  description="Distance between placements along a branch / tree height.")
     size_ratio: float = Field(default=0.030, ge=0.001, le=0.5, description="Card width / tree height.")
@@ -269,8 +273,19 @@ def migrate(data: dict) -> dict:
         raise ValueError(
             f"This tree spec was written by a newer build (spec v{version}, this one reads v{SPEC_VERSION})."
         )
-    # No breaking revisions yet; the hook exists so the first one is a two-line
-    # change here instead of a hunt through every caller.
+    if version < 2:
+        # v1 measured foliage.max_radius_ratio against the tree's HEIGHT; v2
+        # measures it against the trunk radius. Both describe the same absolute
+        # threshold, so the conversion is exact:
+        #     threshold = old * height = new * (trunk_radius_ratio * height)
+        #  => new = old / trunk_radius_ratio
+        foliage = data.get("foliage")
+        branching = data.get("branching") or {}
+        if isinstance(foliage, dict) and "max_radius_ratio" in foliage:
+            trunk = float(branching.get("trunk_radius_ratio") or 0.020)
+            if trunk > 0:
+                foliage["max_radius_ratio"] = min(float(foliage["max_radius_ratio"]) / trunk, 4.0)
+
     data["version"] = SPEC_VERSION
     return data
 

@@ -49,7 +49,11 @@ def _collect_placements(spec: TreeSpec, skeleton: TreeSkeleton):
     phyllotaxis zero angle), host chain index, and stiffness at the host node.
     """
     spacing = max(spec.foliage.spacing_ratio * spec.height, 1e-4)
-    max_radius = spec.foliage.max_radius_ratio * spec.height
+    # Relative to the AUTHORED trunk radius, not the height and not radii[0]:
+    # radii[0] carries the root flare, which would make the threshold wander
+    # with a cosmetic setting that has nothing to do with where leaves grow.
+    trunk_radius = max(spec.branching.trunk_radius_ratio * spec.height, 1e-9)
+    max_radius = spec.foliage.max_radius_ratio * trunk_radius
     min_order = int(spec.foliage.min_order)
     golden = np.radians(float(spec.foliage.phyllotaxis_deg))
     max_arclength = float(skeleton.arclength.max()) if len(skeleton.arclength) else 1.0
@@ -143,6 +147,7 @@ def build_foliage(spec: TreeSpec, skeleton: TreeSkeleton, crown_centre: np.ndarr
     cards_each = int(spec.foliage.cluster_cards) if spec.foliage.mode == "clusters" else 1
     budget = int(spec.foliage.max_cards)
     placements = len(position)
+    eligible = placements
 
     # Enforce the budget by thinning PLACEMENTS, not by truncating the list --
     # truncation would strip the foliage off whichever branches happened to be
@@ -271,5 +276,11 @@ def build_foliage(spec: TreeSpec, skeleton: TreeSkeleton, crown_centre: np.ndarr
         "mode": spec.foliage.mode,
         "budget": budget,
         "budget_hit": bool(placements * cards_each >= budget),
+        # Which constraint actually bound. Without this the leaf budget looks
+        # broken whenever it is not the binding one: raising it changes nothing
+        # and there is no way to tell that spacing or the radius filter is what
+        # is holding the count down.
+        "limited_by": "budget" if placements * cards_each >= budget else "placements",
+        "eligible_placements": int(eligible),
     }
     return vertices, faces, normals, uvs, wind, stats

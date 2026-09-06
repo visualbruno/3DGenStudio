@@ -782,7 +782,17 @@ export default function TreeGenPage() {
             <div className="treegen__stats-rule" />
             <div><dt>Triangles</dt><dd>{formatCount(meshStats?.faceCount)}</dd></div>
             <div><dt>Vertices</dt><dd>{formatCount(meshStats?.vertexCount)}</dd></div>
-            <div><dt>Leaf cards</dt><dd>{formatCount(tool?.foliage?.cards)}</dd></div>
+            <div>
+              <dt>Leaf cards</dt>
+              <dd>
+                {formatCount(tool?.foliage?.cards)}
+                {/* Which constraint bound. Without it a leaf budget that cannot
+                    help looks like a leaf budget that does not work. */}
+                {tool?.foliage?.limited_by && (
+                  <span className="treegen__stat-note"> · capped by {tool.foliage.limited_by}</span>
+                )}
+              </dd>
+            </div>
             <div><dt>Branch order</dt><dd>{tool?.skeleton?.max_order ?? '—'}</dd></div>
             <div><dt>Draw calls</dt><dd>{tool?.totals?.draw_calls ?? '—'}</dd></div>
             <div><dt>Build time</dt><dd>{tool ? `${tool.seconds.toFixed(2)} s` : '—'}</dd></div>

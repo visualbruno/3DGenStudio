@@ -33,7 +33,7 @@ from .crown import build_crown, sample_attractors
 from .lod import cull_skeleton
 from .presets import build_preset_spec, preset_names
 from .skeleton import build_skeleton
-from .spec import TreeSpec
+from .spec import SPEC_VERSION, TreeSpec
 
 # Golden expectations for `--preset X --seed 7`. Tolerances are wide on purpose:
 # these guard against a stage silently breaking (a tenfold jump, an empty mesh),
@@ -257,6 +257,40 @@ def check_lods(result: Result) -> None:
     result.note(f"  lods     {' -> '.join(f'{value:,}' for value in faces)} tris")
 
 
+def check_foliage_scaling(result: Result) -> None:
+    """Leaf placement must not collapse when the trunk gets thicker.
+
+    Every branch radius scales with the trunk, so a leaf filter measured against
+    the tree's HEIGHT silently tightens as the trunk thickens -- at a fat trunk
+    it disqualified most of the tree and the leaf budget stopped doing anything,
+    which reads as "the budget is broken". Measured against the trunk radius it
+    is scale-free, which is what this pins.
+    """
+    counts = {}
+    for trunk in (0.02, 0.08, 0.136):
+        spec = build_preset_spec("oak", seed=GOLDEN_SEED, overrides={
+            "branching": {"trunk_radius_ratio": trunk},
+            "foliage": {"max_cards": 40000},
+        })
+        counts[trunk] = generate_tree(spec)["stats"]["foliage"]["placements"]
+
+    thin, fat = counts[0.02], counts[0.136]
+    result.check(fat >= thin * 0.9,
+                 "foliage: a thick trunk does not starve the canopy",
+                 f"placements {thin} at trunk 0.02 vs {fat} at 0.136")
+    result.note(f"  foliage  placements by trunk thickness: "
+                + ", ".join(f"{k:g}->{v}" for k, v in counts.items()))
+
+    # And the stats have to say which constraint bound, or a budget that cannot
+    # help looks like a budget that does not work.
+    generous = build_preset_spec("oak", seed=GOLDEN_SEED, overrides={"foliage": {"max_cards": 40000}})
+    tight = build_preset_spec("oak", seed=GOLDEN_SEED, overrides={"foliage": {"max_cards": 400}})
+    result.check(generate_tree(generous)["stats"]["foliage"]["limited_by"] == "placements",
+                 "foliage: reports 'placements' when the budget is not the limit")
+    result.check(generate_tree(tight)["stats"]["foliage"]["limited_by"] == "budget",
+                 "foliage: reports 'budget' when it is")
+
+
 def check_determinism(result: Result, preset: str) -> None:
     """Same seed, same bytes. The claim the spec-as-asset design rests on."""
     spec = build_preset_spec(preset, seed=GOLDEN_SEED)
@@ -267,6 +301,32 @@ def check_determinism(result: Result, preset: str) -> None:
 
     other = generate_tree(build_preset_spec(preset, seed=GOLDEN_SEED + 1))["glb"]
     result.check(bytes(first) != bytes(other), f"determinism: {preset} re-rolls on a new seed")
+
+
+def check_migration(result: Result) -> None:
+    """A v1 spec must open as the same TREE, not the same numbers.
+
+    v1 measured foliage.max_radius_ratio against height, v2 against the trunk
+    radius. Both describe one absolute threshold, so the migration is a division
+    -- and if it is wrong, every spec saved before the change quietly grows a
+    different canopy.
+    """
+    from .spec import parse_spec
+
+    legacy = {"version": 1, "height": 9.0,
+              "branching": {"trunk_radius_ratio": 0.03},
+              "foliage": {"max_radius_ratio": 0.006}}
+    migrated = parse_spec(legacy)
+    result.check(migrated.version == SPEC_VERSION, "migration: version is bumped")
+    # 0.006 * height must equal new_ratio * (0.03 * height)
+    expected = 0.006 / 0.03
+    result.check(abs(migrated.foliage.max_radius_ratio - expected) < 1e-9,
+                 "migration: v1 leaf threshold converts to the same absolute radius",
+                 f"{migrated.foliage.max_radius_ratio} vs {expected}")
+    # A v2 spec must pass through untouched.
+    current = {"version": 2, "foliage": {"max_radius_ratio": 0.3}}
+    result.check(abs(parse_spec(current).foliage.max_radius_ratio - 0.3) < 1e-9,
+                 "migration: a current spec is left alone")
 
 
 def check_golden(result: Result, preset: str, update: bool) -> dict | None:
@@ -339,6 +399,8 @@ def run(presets: list[str] | None = None, update_golden: bool = False) -> tuple[
 
         check_determinism(result, "sapling")
         check_lods(result)
+        check_foliage_scaling(result)
+        check_migration(result)
 
         # Preview must stay fast enough to drive a slider drag.
         spec = build_preset_spec("oak", seed=GOLDEN_SEED)
