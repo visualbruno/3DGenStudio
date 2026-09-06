@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from ..services.treegen import generate_tree, preview_skeleton, resolve_spec
+from ..services.treegen.build import generate_tree_lods
 from ..services.treegen.presets import preset_catalog
 from .streaming import stream_payload
 
@@ -129,3 +130,47 @@ async def generate(request: TreeGenerateRequest) -> StreamingResponse:
         }
 
     return stream_payload(run, "Tree generation")
+
+
+@router.post("/lods")
+async def lods(request: TreeGenerateRequest) -> StreamingResponse:
+    """The whole LOD chain (and optionally an impostor) from one skeleton.
+
+    Separate from /generate rather than a flag on it: this answers with N meshes
+    plus texture atlases, and folding that into the single-mesh envelope would
+    make every ordinary caller carry the shape of the batch case.
+    """
+    spec = _resolve(request)
+
+    def run(emit):
+        result = generate_tree_lods(
+            spec,
+            bark_texture=request.bark_texture_b64,
+            branch_texture=request.branch_texture_b64,
+            leaf_images=request.leaf_images_b64,
+            leaf_atlas=request.leaf_atlas_b64,
+            on_progress=emit,
+        )
+        impostor = result.get("impostor")
+        return {
+            "format": "glb",
+            "levels": [
+                {
+                    "level": level["level"],
+                    "mesh_b64": base64.b64encode(level["glb"]).decode("ascii"),
+                    "stats": level["stats"],
+                }
+                for level in result["levels"]
+            ],
+            "impostor": None if impostor is None else {
+                "mesh_b64": base64.b64encode(impostor["glb"]).decode("ascii"),
+                "albedo_b64": base64.b64encode(impostor["albedo_png"]).decode("ascii"),
+                "normal_b64": base64.b64encode(impostor["normal_png"]).decode("ascii"),
+                "meta": impostor["meta"],
+            },
+            "spec": result["spec"].model_dump(mode="json"),
+            "skeleton": result["skeleton_stats"],
+            "seconds": result["seconds"],
+        }
+
+    return stream_payload(run, "Tree LOD chain")

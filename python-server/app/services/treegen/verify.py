@@ -28,8 +28,9 @@ import time
 import numpy as np
 import trimesh
 
-from .build import generate_tree, preview_skeleton
+from .build import generate_tree, generate_tree_lods, preview_skeleton
 from .crown import build_crown, sample_attractors
+from .lod import cull_skeleton
 from .presets import build_preset_spec, preset_names
 from .skeleton import build_skeleton
 from .spec import TreeSpec
@@ -152,6 +153,110 @@ def check_invariants(result: Result, spec: TreeSpec, label: str) -> None:
         result.check(welded.is_watertight, f"{label}: clean junctions are watertight")
 
 
+def check_lods(result: Result) -> None:
+    """The LOD chain, and the property the whole approach rests on."""
+    spec = build_preset_spec("oak", seed=GOLDEN_SEED)
+    spec.output.lods = 3
+    spec.output.impostor = True
+    spec.output.impostor_grid = 4      # 16 views is plenty to prove the mapping
+    spec.output.impostor_tile = 64
+    built = generate_tree_lods(spec)
+
+    levels = built["levels"]
+    result.check(len(levels) == 4, "lods: a level per requested step", f"got {len(levels)}")
+
+    faces = [level["stats"]["totals"]["faces"] for level in levels]
+    result.check(all(a > b for a, b in zip(faces, faces[1:])),
+                 "lods: every level is cheaper than the one before", f"{faces}")
+    result.check(faces[-1] < faces[0] * 0.5,
+                 "lods: the last level is at least half off", f"{faces[0]} -> {faces[-1]}")
+
+    # The load-bearing property. A branch present at two levels MUST be in the
+    # same place with the same thickness, or the levels visibly swap one tree
+    # for a different one.
+    skeleton = built["skeleton"]
+    for drop in (1, 2):
+        culled = cull_skeleton(skeleton, skeleton.max_order - drop)
+        keep = skeleton.order <= skeleton.max_order - drop
+        result.check(np.allclose(culled.positions, skeleton.positions[keep]),
+                     f"lods: culling by {drop} moves no surviving branch")
+        result.check(np.allclose(culled.radii, skeleton.radii[keep]),
+                     f"lods: culling by {drop} rethickens no surviving branch")
+        result.check(bool((culled.parents[1:] >= 0).all()),
+                     f"lods: culling by {drop} orphans nothing")
+
+    # Culling removes exactly the twigs that leaves grow on, so a level that
+    # silently lost its canopy is the easy mistake here.
+    for level in levels:
+        cards = level["stats"]["foliage"].get("cards", 0)
+        result.check(cards > 0, f"lods: LOD{level['level']} keeps a canopy", f"{cards} cards")
+
+    impostor = built.get("impostor")
+    result.check(impostor is not None, "impostor: baked when requested")
+    if impostor:
+        meta = impostor["meta"]
+        result.check(meta["views"] == 16, "impostor: one view per grid cell", f"{meta['views']}")
+        result.check(meta["atlas"] == [4 * 64, 4 * 64], "impostor: atlas is grid x tile", f"{meta['atlas']}")
+        # Coverage is the real test: an all-transparent atlas means the alpha
+        # test ate everything, and an opaque one means it ate nothing.
+        result.check(0.02 < meta["coverage"] < 0.9, "impostor: atlas has plausible coverage",
+                     f"{meta['coverage']:.3f}")
+        result.check(len(impostor["albedo_png"]) > 0 and len(impostor["normal_png"]) > 0,
+                     "impostor: albedo and normal atlases written")
+
+    # Regression: an ALPHA leaf atlas must still reach the impostor.
+    #
+    # The bug this guards was invisible to every check above, because the trunk
+    # alone cleared the coverage floor. Resolving texture colour per VERTEX puts
+    # every leaf card's four corners on the transparent corners of its atlas
+    # tile, so alpha reads 0, the alpha test eats the whole canopy, and the
+    # impostor comes out as bare branches.
+    #
+    # Coverage cannot detect that: leaves sit OVER the branches, so losing them
+    # barely changes how much of the atlas is filled (measured: 17.8% with a
+    # canopy against 17.7% without). What distinguishes them is the colour, so
+    # the leaves are painted a marker no bark texture can produce and the test
+    # simply asks whether that colour survived the bake.
+    from io import BytesIO
+
+    from PIL import Image
+
+    from .impostor import bake_impostor
+
+    tile_px = 64
+    leaf = np.zeros((tile_px, tile_px, 4), np.uint8)
+    yy, xx = np.mgrid[0:tile_px, 0:tile_px]
+    inside = ((yy - tile_px / 2) ** 2 + (xx - tile_px / 2) ** 2) <= (tile_px * 0.42) ** 2
+    leaf[..., 0] = 255
+    leaf[..., 2] = 255                              # magenta
+    leaf[..., 3] = inside.astype(np.uint8) * 255    # opaque centre, clear corners
+    buffer = BytesIO()
+    Image.fromarray(leaf, "RGBA").save(buffer, format="PNG")
+
+    leafy = build_preset_spec("sapling", seed=GOLDEN_SEED)
+    # The leaf material tints the atlas, so neutralise it: the marker has to
+    # arrive unmixed for the test to mean what it says.
+    leafy.foliage.size_ratio = 0.12
+    baked = bake_impostor(
+        generate_tree(leafy, leaf_images=[buffer.getvalue()])["scene"],
+        grid=3, tile=48, seed=GOLDEN_SEED)
+    pixels = np.asarray(Image.open(BytesIO(baked["albedo_png"])), dtype=np.float64) / 255.0
+    opaque = pixels[..., 3] > 0.5
+    rgb = pixels[..., :3][opaque]
+    # Magenta-ish: blue clearly above green. Bark is brown, so it never is.
+    marker = float(((rgb[:, 2] > rgb[:, 1] + 0.05).mean()) if len(rgb) else 0.0)
+    result.check(marker > 0.2, "impostor: an alpha leaf atlas still reaches the atlas",
+                 f"only {marker * 100:.1f}% of opaque pixels came from foliage")
+
+    # The hemisphere mapping must never look up from below the ground.
+    from .impostor import hemi_octahedral_directions
+    directions = hemi_octahedral_directions(8)
+    result.check(bool((directions[:, 1] >= 0).all()), "impostor: every view is above the horizon")
+    result.check(np.allclose(np.linalg.norm(directions, axis=1), 1.0),
+                 "impostor: view directions are unit length")
+    result.note(f"  lods     {' -> '.join(f'{value:,}' for value in faces)} tris")
+
+
 def check_determinism(result: Result, preset: str) -> None:
     """Same seed, same bytes. The claim the spec-as-asset design rests on."""
     spec = build_preset_spec(preset, seed=GOLDEN_SEED)
@@ -233,6 +338,7 @@ def run(presets: list[str] | None = None, update_golden: bool = False) -> tuple[
             "sapling+bare")
 
         check_determinism(result, "sapling")
+        check_lods(result)
 
         # Preview must stay fast enough to drive a slider drag.
         spec = build_preset_spec("oak", seed=GOLDEN_SEED)

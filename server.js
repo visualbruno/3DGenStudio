@@ -8060,6 +8060,21 @@ app.post('/api/tree/preview', async (req, res) => {
   }
 });
 
+// The LOD chain: N meshes plus optional impostor atlases, from one skeleton.
+// Its own route rather than a flag on /generate, because it answers with a
+// different shape and every ordinary caller would otherwise carry it.
+app.post('/api/tree/lods', async (req, res) => {
+  try {
+    await proxyJsonTool('/tree/lods', req, res, {
+      serviceLabel: 'Tree Generator',
+      baseUrlBuilder: buildMeshToolsBaseUrl,
+    });
+  } catch (err) {
+    console.error('Tree LOD proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Tree LOD generation failed' });
+  }
+});
+
 // Full generation. Same SSE contract as Auto UV and friends.
 app.post('/api/tree/generate', async (req, res) => {
   try {

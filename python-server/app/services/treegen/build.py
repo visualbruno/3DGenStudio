@@ -23,6 +23,8 @@ from .bark import build_bark
 from .crown import build_crown, sample_attractors
 from .foliage import build_foliage
 from .junctions import clean_junctions
+from .impostor import bake_impostor
+from .lod import cull_skeleton, describe_level, lod_levels, lod_spec
 from .skeleton import build_skeleton
 from .textures import decode_image, resolve_leaf_atlas
 from .spec import TreeSpec
@@ -80,6 +82,98 @@ def _orient(scene: trimesh.Scene, spec: TreeSpec) -> trimesh.Scene:
     return scene
 
 
+def build_level_scene(spec, skeleton, crown_centre, textures, emit=None, progress_base=0.58,
+                      progress_span=0.34):
+    """Skin one skeleton into a scene. The whole mesh stage, minus the growing.
+
+    Split out of `generate_tree` so an LOD chain can call it once per level
+    against the SAME skeleton -- which is the property the whole LOD approach
+    rests on (see lod.py).
+
+    `textures` is (trunk_image, branch_image, leaf_image).
+    """
+    trunk_image, branch_image, leaf_image = textures
+    split_branches = branch_image is not None
+    rng = np.random.default_rng(int(spec.seed))
+
+    def report(frac, message):
+        if emit is not None:
+            emit("mesh", progress_base + progress_span * frac, message)
+
+    report(0.0, "Sweeping bark")
+    bark_groups, bark_stats = build_bark(
+        spec, skeleton,
+        on_progress=lambda frac: report(0.55 * frac, "Sweeping bark"),
+        split_branches=split_branches,
+    )
+    if not bark_groups:
+        raise ValueError("The skeleton produced no bark geometry.")
+
+    if spec.bark.junction_mode == "clean":
+        report(0.6, "Welding junctions")
+        cleaned = {}
+        for name, (vertices, faces, _normals, _uvs, _wind) in bark_groups.items():
+            v, f, n, uv, w, junction_stats = clean_junctions(
+                spec, skeleton, vertices, faces,
+                on_progress=lambda frac, message: report(0.6 + 0.1 * frac, message),
+            )
+            cleaned[name] = (v, f, n, uv, w)
+            bark_stats = {**bark_stats, **junction_stats}
+        bark_groups = cleaned
+        bark_stats["vertices"] = int(sum(len(g[0]) for g in bark_groups.values()))
+        bark_stats["faces"] = int(sum(len(g[1]) for g in bark_groups.values()))
+
+    report(0.75, "Placing foliage")
+    leaf_vertices, leaf_faces, leaf_normals, leaf_uvs, leaf_wind, leaf_stats = build_foliage(
+        spec, skeleton, crown_centre, rng)
+
+    report(0.9, "Assembling")
+    scene = trimesh.Scene()
+    group_textures = {"trunk": trunk_image, "branches": branch_image or trunk_image}
+    group_names = {"trunk": "Tree_Trunk" if split_branches else "Tree_Bark",
+                   "branches": "Tree_Branches"}
+    for name, (vertices, faces, normals, uvs, wind) in bark_groups.items():
+        material = PBRMaterial(
+            name=f"Tree{name.capitalize()}",
+            baseColorFactor=_BARK_COLOR,
+            baseColorTexture=group_textures.get(name),
+            roughnessFactor=0.92,
+            metallicFactor=0.0,
+        )
+        node_name = group_names[name]
+        scene.add_geometry(
+            _make_geometry(vertices, faces, normals, uvs, wind, material, spec.output.wind_colors),
+            geom_name=node_name, node_name=node_name,
+        )
+
+    if len(leaf_faces):
+        leaf_material = PBRMaterial(
+            name="TreeFoliage",
+            baseColorFactor=_LEAF_COLOR,
+            baseColorTexture=leaf_image,
+            roughnessFactor=0.75,
+            metallicFactor=0.0,
+            # MASK, not BLEND: alpha-tested foliage sorts correctly against
+            # itself, which blended foliage never does.
+            alphaMode="MASK" if leaf_image else "OPAQUE",
+            alphaCutoff=0.5,
+            doubleSided=bool(spec.foliage.double_sided),
+        )
+        scene.add_geometry(
+            _make_geometry(leaf_vertices, leaf_faces, leaf_normals, leaf_uvs, leaf_wind,
+                           leaf_material, spec.output.wind_colors),
+            geom_name="Tree_Foliage", node_name="Tree_Foliage",
+        )
+
+    _orient(scene, spec)
+    totals = {
+        "vertices": int(bark_stats["vertices"] + len(leaf_vertices)),
+        "faces": int(bark_stats["faces"] + len(leaf_faces)),
+        "draw_calls": len(scene.geometry),
+    }
+    return scene, {"bark": bark_stats, "foliage": leaf_stats, "totals": totals}
+
+
 def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
                   branch_texture=None, leaf_images=None, on_progress=None) -> dict:
     """Build the full tree. Returns {scene, glb, stats}.
@@ -135,73 +229,13 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
     spec.foliage.atlas_tiles = int(atlas_tiles or spec.foliage.atlas_tiles)
     split_branches = branch_image is not None
 
-    emit("bark", 0.58, "Sweeping bark")
-    bark_groups, bark_stats = build_bark(
-        spec, skeleton,
-        on_progress=lambda frac: emit("bark", 0.58 + 0.20 * frac, "Sweeping bark"),
-        split_branches=split_branches,
+    emit("mesh", 0.58, "Building the mesh")
+    scene, level_stats = build_level_scene(
+        spec, skeleton, np.asarray(crown.centre, dtype=np.float64),
+        (trunk_image, branch_image, leaf_image), emit=emit,
     )
-    if not bark_groups:
-        raise ValueError("The skeleton produced no bark geometry.")
-
-    if spec.bark.junction_mode == "clean":
-        emit("junctions", 0.72, "Welding junctions")
-        cleaned = {}
-        for name, (vertices, faces, _normals, _uvs, _wind) in bark_groups.items():
-            v, f, n, uv, w, junction_stats = clean_junctions(
-                spec, skeleton, vertices, faces,
-                on_progress=lambda frac, message: emit("junctions", 0.72 + 0.06 * frac, message),
-            )
-            cleaned[name] = (v, f, n, uv, w)
-            bark_stats = {**bark_stats, **junction_stats}
-        bark_groups = cleaned
-        bark_stats["vertices"] = int(sum(len(g[0]) for g in bark_groups.values()))
-        bark_stats["faces"] = int(sum(len(g[1]) for g in bark_groups.values()))
-
-    emit("foliage", 0.80, "Placing foliage")
-    crown_centre = np.asarray(crown.centre, dtype=np.float64)
-    leaf_vertices, leaf_faces, leaf_normals, leaf_uvs, leaf_wind, leaf_stats = build_foliage(
-        spec, skeleton, crown_centre, rng)
-
-    emit("assemble", 0.90, "Assembling")
-    scene = trimesh.Scene()
-    group_textures = {"trunk": trunk_image, "branches": branch_image or trunk_image}
-    group_names = {"trunk": "Tree_Trunk" if split_branches else "Tree_Bark",
-                   "branches": "Tree_Branches"}
-    for name, (vertices, faces, normals, uvs, wind) in bark_groups.items():
-        material = PBRMaterial(
-            name=f"Tree{name.capitalize()}",
-            baseColorFactor=_BARK_COLOR,
-            baseColorTexture=group_textures.get(name),
-            roughnessFactor=0.92,
-            metallicFactor=0.0,
-        )
-        node_name = group_names[name]
-        scene.add_geometry(
-            _make_geometry(vertices, faces, normals, uvs, wind, material, spec.output.wind_colors),
-            geom_name=node_name, node_name=node_name,
-        )
-
-    if len(leaf_faces):
-        leaf_material = PBRMaterial(
-            name="TreeFoliage",
-            baseColorFactor=_LEAF_COLOR,
-            baseColorTexture=leaf_image,
-            roughnessFactor=0.75,
-            metallicFactor=0.0,
-            # MASK, not BLEND: alpha-tested foliage sorts correctly against
-            # itself, which blended foliage never does.
-            alphaMode="MASK" if leaf_image else "OPAQUE",
-            alphaCutoff=0.5,
-            doubleSided=bool(spec.foliage.double_sided),
-        )
-        scene.add_geometry(
-            _make_geometry(leaf_vertices, leaf_faces, leaf_normals, leaf_uvs, leaf_wind,
-                           leaf_material, spec.output.wind_colors),
-            geom_name="Tree_Foliage", node_name="Tree_Foliage",
-        )
-
-    _orient(scene, spec)
+    bark_stats = level_stats["bark"]
+    leaf_stats = level_stats["foliage"]
 
     glb = scene.export(file_type="glb")
     elapsed = time.time() - started
@@ -220,11 +254,7 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
         },
         "bark": bark_stats,
         "foliage": leaf_stats,
-        "totals": {
-            "vertices": int(bark_stats["vertices"] + len(leaf_vertices)),
-            "faces": int(bark_stats["faces"] + len(leaf_faces)),
-            "draw_calls": len(scene.geometry),
-        },
+        "totals": level_stats["totals"],
         "textures": {
             "trunk": bool(trunk_image),
             "branches": bool(branch_image),
@@ -237,6 +267,103 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
 
     emit("complete", 1.0, "Tree complete")
     return {"scene": scene, "glb": glb, "stats": stats, "skeleton": skeleton}
+
+
+def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
+                       branch_texture=None, leaf_images=None, on_progress=None) -> dict:
+    """Generate the whole LOD chain from ONE skeleton.
+
+    Returns {levels: [{level, glb, stats}], skeleton, seconds}.
+
+    The skeleton is grown once and every level is a different skin over it, so
+    the branches sit in identical places at every distance. Regrowing per level
+    would be both slower and worse -- a different tree at each threshold is the
+    most visible popping there is. See lod.py.
+    """
+    def emit(stage, frac, message=""):
+        if on_progress is not None:
+            on_progress(stage, frac, message)
+
+    started = time.time()
+    rng = np.random.default_rng(int(spec.seed))
+
+    emit("crown", 0.02, "Sampling the crown envelope")
+    crown = build_crown(spec)
+    attractors = sample_attractors(spec, crown, rng)
+    if len(attractors) == 0:
+        raise ValueError("The crown envelope produced no attraction points -- check its shape and radius.")
+
+    trunk_image = decode_image(bark_texture, "bark texture")
+    branch_image = decode_image(branch_texture, "branch texture")
+    leaf_image, atlas_cols, atlas_rows, atlas_tiles = resolve_leaf_atlas(
+        leaf_atlas, leaf_images, spec.foliage.atlas_cols, spec.foliage.atlas_rows)
+
+    base = spec.model_copy(deep=True)
+    base.foliage.atlas_cols = int(atlas_cols or base.foliage.atlas_cols)
+    base.foliage.atlas_rows = int(atlas_rows or base.foliage.atlas_rows)
+    base.foliage.atlas_tiles = int(atlas_tiles or base.foliage.atlas_tiles)
+
+    emit("skeleton", 0.08, "Growing branches")
+    skeleton = build_skeleton(
+        base, crown, attractors, rng,
+        on_progress=lambda frac, nodes: emit("skeleton", 0.08 + 0.22 * frac,
+                                             f"Growing branches ({nodes} nodes)"),
+    )
+    crown_centre = np.asarray(crown.centre, dtype=np.float64)
+    textures = (trunk_image, branch_image, leaf_image)
+
+    indices = lod_levels(base)
+    span = 0.65 / max(len(indices), 1)
+    levels = []
+    for position, level in enumerate(indices):
+        level_spec = lod_spec(base, level, skeleton_max_order=skeleton.max_order)
+        # Culling is applied to the BUILT skeleton, never by regrowing it: the
+        # surviving branches keep their exact positions and radii.
+        level_skeleton = cull_skeleton(skeleton, level_spec.branching.max_order)
+        emit("mesh", 0.30 + span * position, f"Building LOD{level}")
+        scene, level_stats = build_level_scene(
+            level_spec, level_skeleton, crown_centre, textures,
+        )
+        levels.append({
+            "level": level,
+            "scene": scene,
+            "glb": scene.export(file_type="glb"),
+            "stats": {**level_stats, "settings": describe_level(level, level_spec)},
+        })
+
+    impostor = None
+    if base.output.impostor:
+        emit("impostor", 0.95, "Baking impostor views")
+        # Baked from LOD0, the FULL-detail tree.
+        #
+        # Baking from the cheapest level to save time is the obvious move and it
+        # is wrong: the impostor replaces the geometry entirely at distance, so
+        # its silhouette IS the tree there, and a coarse level's thinned canopy
+        # gets frozen into the atlas permanently. Measured side by side, LOD0
+        # covers 19.6% of the atlas against 10.2% from the last level -- a full
+        # crown against a scraggly one -- for about two extra seconds.
+        impostor = bake_impostor(
+            levels[0]["scene"],
+            grid=int(base.output.impostor_grid),
+            tile=int(base.output.impostor_tile),
+            seed=int(base.seed),
+        )
+
+    elapsed = time.time() - started
+    emit("complete", 1.0, f"{len(levels)} LOD levels complete")
+    return {
+        "levels": levels,
+        "impostor": impostor,
+        "skeleton": skeleton,
+        "spec": base,
+        "seconds": round(elapsed, 3),
+        "skeleton_stats": {
+            "nodes": int(skeleton.node_count),
+            "chains": int(len(skeleton.chains)),
+            "max_order": int(skeleton.max_order),
+            "attractors": int(len(attractors)),
+        },
+    }
 
 
 def coarsen(spec: TreeSpec, quality: float) -> TreeSpec:

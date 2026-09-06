@@ -28,8 +28,8 @@ import TreeParamPanel from '../components/treeGen/TreeParamPanel'
 import TreeTexturePanel from '../components/treeGen/TreeTexturePanel'
 import { affectsSkeleton } from '../components/treeGen/treeParams'
 import {
-  fetchTreePresets, flattenAssetLibrary, generateTree, loadTreePresetAsset, previewTree,
-  resolveTextureAssetIds, resolveTextures, rollSeed, saveTreePresetAsset, setSpecValue,
+  fetchTreePresets, flattenAssetLibrary, generateTree, generateTreeLods, loadTreePresetAsset,
+  previewTree, resolveTextureAssetIds, resolveTextures, rollSeed, saveTreePresetAsset, setSpecValue,
 } from '../utils/treeGen'
 import AssetSelectorModal from '../components/AssetSelectorModal'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
@@ -95,6 +95,7 @@ export default function TreeGenPage() {
 
   const [presetBusy, setPresetBusy] = useState(false)
   const [variantsRunning, setVariantsRunning] = useState(false)
+  const [lodsRunning, setLodsRunning] = useState(false)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
   const [notice, setNotice] = useState(null)
 
@@ -104,6 +105,7 @@ export default function TreeGenPage() {
   const previewAbortRef = useRef(null)
   const generateAbortRef = useRef(null)
   const variantsAbortRef = useRef(null)
+  const lodsAbortRef = useRef(null)
   const meshObjectRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -478,6 +480,73 @@ export default function TreeGenPage() {
     }
   }, [spec, textures, variantsRunning, meshStats, download])
 
+  // The LOD chain, delivered as one archive: N meshes named to the app's
+  // _LOD<n> convention, plus the impostor atlases and a descriptor when one was
+  // baked. A zip for the same reason the variants use one — several files, and
+  // browsers block repeated automatic downloads.
+  const handleDownloadLods = useCallback(async () => {
+    if (!spec) return
+    if (lodsRunning) {
+      lodsAbortRef.current?.abort()
+      return
+    }
+    const controller = new AbortController()
+    lodsAbortRef.current = controller
+    setLodsRunning(true)
+    setError(null)
+    setNotice(null)
+    try {
+      setProgress({ frac: 0, message: 'Loading textures…' })
+      const resolved = await resolveTextures(textures, { signal: controller.signal })
+      const result = await generateTreeLods({
+        spec, ...resolved, signal: controller.signal,
+        onProgress: event => setProgress({ frac: event.frac, message: event.message || event.stage }),
+      })
+
+      const baseName = (spec.name || 'Tree').replace(/\s+/g, '_')
+      const files = []
+      for (const level of result.levels) {
+        files.push({
+          name: `${baseName}_LOD${level.level}.glb`,
+          data: new Uint8Array(await level.blob.arrayBuffer()),
+        })
+      }
+      if (result.impostor) {
+        files.push(
+          { name: `${baseName}_impostor.glb`, data: new Uint8Array(await result.impostor.blob.arrayBuffer()) },
+          { name: `${baseName}_impostor_albedo.png`, data: new Uint8Array(await result.impostor.albedo.arrayBuffer()) },
+          { name: `${baseName}_impostor_normal.png`, data: new Uint8Array(await result.impostor.normal.arrayBuffer()) },
+          { name: `${baseName}_impostor.json`, data: JSON.stringify(result.impostor.meta, null, 2) },
+        )
+      }
+      files.push({
+        name: 'lods.json',
+        data: JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          seconds: result.seconds,
+          skeleton: result.skeleton,
+          levels: result.levels.map(level => ({ level: level.level, ...level.stats })),
+          impostor: result.impostor?.meta ?? null,
+          spec: result.spec ?? spec,
+        }, null, 2),
+      })
+
+      setProgress({ frac: 1, message: 'Packing archive…' })
+      download(createZip(files), `${baseName}_LODs.zip`)
+      const triangles = result.levels.map(level => level.stats.totals.faces)
+      setNotice(
+        `Downloaded ${result.levels.length} LOD level${result.levels.length === 1 ? '' : 's'}`
+        + `${result.impostor ? ' and an impostor' : ''} — `
+        + `${triangles[0].toLocaleString()} down to ${triangles[triangles.length - 1].toLocaleString()} triangles.`
+      )
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message)
+    } finally {
+      setLodsRunning(false)
+      setProgress(null)
+    }
+  }, [spec, textures, lodsRunning, download])
+
   const saveToLibrary = useCallback(async () => {
     if (!meshBlob || !spec) return
     setSaveState({ status: 'saving' })
@@ -662,7 +731,7 @@ export default function TreeGenPage() {
             >
               {generating ? 'Cancel' : 'Generate mesh'}
             </button>
-            {(generating || variantsRunning) && progress && (
+            {(generating || variantsRunning || lodsRunning) && progress && (
               <div className="treegen__progress">
                 <div className="treegen__progress-bar" style={{ width: `${(progress.frac || 0) * 100}%` }} />
                 <span>{progress.message}</span>
@@ -673,8 +742,11 @@ export default function TreeGenPage() {
                 <button type="button" onClick={() => download(meshBlob, `${treeName}.glb`)}>
                   Download GLB
                 </button>
-                <button type="button" onClick={handleDownloadVariants}>
+                <button type="button" onClick={handleDownloadVariants} disabled={lodsRunning}>
                   {variantsRunning ? 'Cancel variants' : 'Download GLB Variants'}
+                </button>
+                <button type="button" onClick={handleDownloadLods} disabled={variantsRunning}>
+                  {lodsRunning ? 'Cancel LODs' : 'Download LODs'}
                 </button>
                 <button type="button" onClick={saveToLibrary} disabled={saveState?.status === 'saving' || variantsRunning}>
                   {saveState?.status === 'saving' ? 'Saving…'

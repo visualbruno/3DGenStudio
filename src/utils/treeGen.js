@@ -140,6 +140,53 @@ export async function generateTree({
   }
 }
 
+/**
+ * Generate the LOD chain (and optionally an impostor) in one request.
+ *
+ * Resolves to { levels: [{ level, blob, stats }], impostor, spec, seconds }.
+ * Every level comes from the same skeleton, so branches never move between
+ * them — see the service's lod.py for why that is the load-bearing property.
+ */
+export async function generateTreeLods({
+  spec, preset, seed, overrides,
+  barkTexture = null, branchTexture = null, leafImages = null, leafAtlas = null,
+  onProgress = null, signal = null,
+} = {}) {
+  await ensureDesktopService('meshtools')
+  const response = await fetch(`${API_BASE}/tree/lods`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      spec, preset, seed, overrides,
+      format: 'glb',
+      bark_texture_b64: barkTexture,
+      branch_texture_b64: branchTexture,
+      leaf_images_b64: leafImages?.length ? leafImages : null,
+      leaf_atlas_b64: leafAtlas,
+    }),
+    signal,
+  })
+  if (!response.ok) throw await readError(response, 'LOD generation failed')
+
+  const data = await readSseStream(response, onProgress)
+  return {
+    levels: (data.levels || []).map(entry => ({
+      level: entry.level,
+      blob: base64ToBlob(entry.mesh_b64, 'model/gltf-binary'),
+      stats: entry.stats,
+    })),
+    impostor: data.impostor ? {
+      blob: base64ToBlob(data.impostor.mesh_b64, 'model/gltf-binary'),
+      albedo: base64ToBlob(data.impostor.albedo_b64, 'image/png'),
+      normal: base64ToBlob(data.impostor.normal_b64, 'image/png'),
+      meta: data.impostor.meta,
+    } : null,
+    spec: data.spec || null,
+    skeleton: data.skeleton || null,
+    seconds: data.seconds,
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Texture slot entries
 // ---------------------------------------------------------------------------

@@ -206,7 +206,17 @@ class OutputSpec(BaseModel):
     scale: float = Field(default=1.0, gt=0.0, le=1000.0, description="Uniform export scale (100 = metres -> cm).")
     engine: Literal["generic", "unity", "unreal", "godot"] = Field(
         default="generic", description="Convenience preset for up_axis / scale.")
-    lods: int = Field(default=0, ge=0, le=3, description="Extra LOD levels regenerated from the skeleton.")
+    lods: int = Field(default=0, ge=0, le=4,
+                      description="Extra LOD levels, each regenerated from the SAME skeleton so branches never "
+                                  "move between levels. 0 = LOD0 only.")
+    impostor: bool = Field(default=False,
+                           description="Bake a hemi-octahedral impostor: a grid of pre-rendered views plus a quad, "
+                                       "for the distance at which even the cheapest mesh is wasted. Needs an "
+                                       "impostor shader engine-side to sample view-dependently.")
+    impostor_grid: int = Field(default=8, ge=2, le=16,
+                               description="Views per axis. 8 = 64 views, the usual quality/size trade.")
+    impostor_tile: int = Field(default=128, ge=32, le=512,
+                               description="Pixels per view. grid x tile is the atlas size, so 8 x 128 = 1024px.")
 
 
 class TreeSpec(BaseModel):

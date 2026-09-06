@@ -157,6 +157,18 @@ export const TREE_PARAMS = [
     hint: 'Writes wind data to vertex colours for an engine wind shader: R branch phase, G stiffness, '
       + 'B leaf flutter, A hierarchy weight. glTF treats vertex colour as a base-colour multiplier, so the '
       + 'tree looks wrong in plain glTF viewers with this on. The viewport here ignores it either way.' },
+  { path: 'output.lods', group: 'Output', label: 'LOD levels',
+    type: 'number', min: 0, max: 4, step: 1,
+    hint: 'Extra levels for Download LODs. Each is regenerated from the SAME skeleton — fewer branch sides, whole '
+      + 'twig generations dropped, fewer but larger leaf cards — so branches never move between levels.' },
+  { path: 'output.impostor', group: 'Output', label: 'Bake impostor', type: 'boolean',
+    hint: 'A grid of pre-rendered views plus a quad, for the distance where even the cheapest mesh is wasted. '
+      + 'Needs an impostor shader in your engine to sample it view-dependently.' },
+  { path: 'output.impostor_grid', group: 'Output', label: 'Impostor views per axis',
+    type: 'number', min: 2, max: 16, step: 1, hint: '8 means an 8x8 grid, so 64 views.' },
+  { path: 'output.impostor_tile', group: 'Output', label: 'Impostor view size', unit: 'px',
+    type: 'number', min: 32, max: 512, step: 32,
+    hint: 'Pixels per view. Views per axis x this is the atlas size.' },
   { path: 'output.engine', group: 'Output', label: 'Engine preset', type: 'select',
     options: [
       { value: 'generic', label: 'Generic (metres, Y-up)' },
