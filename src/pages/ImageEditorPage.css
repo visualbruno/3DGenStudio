@@ -564,10 +564,17 @@
   text-align: center;
 }
 
-.seamless-verdict[data-verdict='invisible'] { color: #3fbf7f; }
-.seamless-verdict[data-verdict='faint'] { color: #c9b458; }
-.seamless-verdict[data-verdict='visible'] { color: #e08b4a; }
-.seamless-verdict[data-verdict='obvious'] { color: #e5484d; }
+/* Two independent verdicts share these colours: how visible the join is, and
+ * how evenly the tile is lit. Same scale, worst to best, so a glance at the
+ * caption reads the same way for both. */
+.seamless-verdict[data-verdict='invisible'],
+.seamless-verdict[data-verdict='even'] { color: #3fbf7f; }
+.seamless-verdict[data-verdict='faint'],
+.seamless-verdict[data-verdict='slight banding'] { color: #c9b458; }
+.seamless-verdict[data-verdict='visible'],
+.seamless-verdict[data-verdict='banding'] { color: #e08b4a; }
+.seamless-verdict[data-verdict='obvious'],
+.seamless-verdict[data-verdict='strong banding'] { color: #e5484d; }
 
 .seamless-hint {
   margin: 0;
