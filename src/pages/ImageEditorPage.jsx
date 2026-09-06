@@ -8,6 +8,7 @@ import { useProjects } from '../context/ProjectContext'
 import { useNotifications } from '../context/NotificationContext'
 import { buildAssetUrl, createExecutionId } from '../utils/meshTexturing'
 import { applyShadowRemoverToCanvas, disposeShadowRemoverRenderer } from '../utils/shadowRemoverGPU'
+import { applySeamlessToCanvas, DEFAULT_SEAMLESS_VALUES } from '../utils/seamlessTexture'
 import {
   applyAdjustmentsToCanvas,
   applyBlurSharpenToCanvas,
@@ -29,6 +30,7 @@ import ResizeControls from '../components/imageEditor/controls/ResizeControls'
 import AdjustControls from '../components/imageEditor/controls/AdjustControls'
 import FilterControls from '../components/imageEditor/controls/FilterControls'
 import ShadowRemoverControls from '../components/imageEditor/controls/ShadowRemoverControls'
+import SeamlessControls from '../components/imageEditor/controls/SeamlessControls'
 import PaintControls from '../components/imageEditor/controls/PaintControls'
 import ComfyUIFullControls from '../components/imageEditor/controls/ComfyUIFullControls'
 import ComfyUIMaskControls from '../components/imageEditor/controls/ComfyUIMaskControls'
@@ -68,9 +70,11 @@ export default function ImageEditorPage() {
   const [adjustValues, setAdjustValues] = useState(DEFAULT_ADJUST_VALUES)
   const [filterValues, setFilterValues] = useState(DEFAULT_FILTER_VALUES)
   const [shadowRemoverValues, setShadowRemoverValues] = useState(DEFAULT_SHADOW_REMOVER_VALUES)
+  const [seamlessValues, setSeamlessValues] = useState(DEFAULT_SEAMLESS_VALUES)
   const [adjustPreviewDirty, setAdjustPreviewDirty] = useState(false)
   const [filterPreviewDirty, setFilterPreviewDirty] = useState(false)
   const [shadowRemoverPreviewDirty, setShadowRemoverPreviewDirty] = useState(false)
+  const [seamlessPreviewDirty, setSeamlessPreviewDirty] = useState(false)
 
   const [paintColor, setPaintColor] = useState('#ffffff')
   const [paintSize, setPaintSize] = useState(32)
@@ -281,6 +285,13 @@ export default function ImageEditorPage() {
         }
       }
 
+      if (layer.id === previewLayerId && toolGroup === 'edit' && toolId === 'seamless' && seamlessPreviewDirty) {
+        const previewCanvas = applySeamlessToCanvas(originalLayerCanvas, seamlessValues)
+        if (previewCanvas) {
+          layerCanvas = previewCanvas
+        }
+      }
+
       if (!layerCanvas) return
       context.save()
       context.globalAlpha = clamp(layer.opacity, 0, 1)
@@ -342,7 +353,7 @@ export default function ImageEditorPage() {
       context.fillText(`X:${x}  Y:${y}  W:${width}  H:${height}`, x + 8, Math.max(0, y - 13))
       context.restore()
     }
-  }, [adjustPreviewDirty, adjustValues, cropValues.height, cropValues.width, cropValues.x, cropValues.y, filterPreviewDirty, filterValues, getPreviewTargetLayerId, layers, shadowRemoverPreviewDirty, shadowRemoverValues, toolGroup, toolId])
+  }, [adjustPreviewDirty, adjustValues, cropValues.height, cropValues.width, cropValues.x, cropValues.y, filterPreviewDirty, filterValues, getPreviewTargetLayerId, layers, seamlessPreviewDirty, seamlessValues, shadowRemoverPreviewDirty, shadowRemoverValues, toolGroup, toolId])
 
   const bumpRender = useCallback(() => {
     setRenderRevision(prev => prev + 1)
@@ -1008,6 +1019,77 @@ export default function ImageEditorPage() {
     setShadowRemoverValues(DEFAULT_SHADOW_REMOVER_VALUES)
     setShadowRemoverPreviewDirty(false)
     setFeedback('Shadow remover sliders reset.')
+  }, [])
+
+  const handleApplySeamless = useCallback(() => {
+    const targetLayer = activeLayer && !activeLayer.locked
+      ? activeLayer
+      : layers.find(layer => !layer.locked) || layers[0]
+    const targetCanvas = layerCanvasesRef.current.get(targetLayer?.id)
+    if (!targetLayer || !targetCanvas) {
+      setFeedback('No editable layer available.')
+      return
+    }
+
+    const result = applySeamlessToCanvas(targetCanvas, seamlessValues)
+    if (!result) {
+      setFeedback('The image is too small to make seamless — try a smaller overlap.')
+      return
+    }
+
+    pushUndoSnapshot()
+
+    if (result.width === targetCanvas.width && result.height === targetCanvas.height) {
+      const context = targetCanvas.getContext('2d')
+      context.clearRect(0, 0, targetCanvas.width, targetCanvas.height)
+      context.drawImage(result, 0, 0)
+    } else {
+      // Turning off "keep original size" crops the image, so this is a document
+      // resize, not a filter. Every other layer and the mask have to follow or
+      // they would silently fall out of alignment — the same rule the Resize
+      // tool works by.
+      const { width, height } = result
+      layers.forEach(layer => {
+        const source = layerCanvasesRef.current.get(layer.id)
+        if (!source) return
+        const next = createEmptyCanvas(width, height)
+        const context = next.getContext('2d')
+        context.imageSmoothingEnabled = true
+        context.drawImage(layer.id === targetLayer.id ? result : source, 0, 0, width, height)
+        layerCanvasesRef.current.set(layer.id, next)
+      })
+
+      const oldMask = maskCanvasRef.current
+      if (oldMask) {
+        const nextMask = createEmptyCanvas(width, height)
+        const context = nextMask.getContext('2d')
+        context.imageSmoothingEnabled = true
+        context.drawImage(oldMask, 0, 0, width, height)
+        maskCanvasRef.current = nextMask
+        bumpMask()
+      }
+      setCropValues(prev => ({ ...prev, x: 0, y: 0, width, height }))
+      setResizeValues(prev => ({ ...prev, width, height }))
+    }
+
+    setSeamlessPreviewDirty(false)
+    bumpRender()
+    setFeedback(
+      result.width === targetCanvas.width && result.height === targetCanvas.height
+        ? 'Texture made seamless.'
+        : `Texture made seamless and cropped to ${result.width} x ${result.height}.`
+    )
+  }, [activeLayer, bumpMask, bumpRender, createEmptyCanvas, layers, pushUndoSnapshot, seamlessValues])
+
+  const getSeamlessSourceCanvas = useCallback(
+    () => layerCanvasesRef.current.get(getPreviewTargetLayerId()) || null,
+    [getPreviewTargetLayerId],
+  )
+
+  const handleResetSeamless = useCallback(() => {
+    setSeamlessValues(DEFAULT_SEAMLESS_VALUES)
+    setSeamlessPreviewDirty(false)
+    setFeedback('Seamless settings reset.')
   }, [])
 
   const clearMask = useCallback(() => {
@@ -1811,6 +1893,20 @@ export default function ImageEditorPage() {
           setShadowRemoverPreviewDirty={setShadowRemoverPreviewDirty}
           onReset={handleResetShadowRemover}
           onApply={handleApplyShadowRemover}
+        />
+      )
+    }
+
+    if (toolGroup === 'edit' && toolId === 'seamless') {
+      return (
+        <SeamlessControls
+          seamlessValues={seamlessValues}
+          setSeamlessValues={setSeamlessValues}
+          setSeamlessPreviewDirty={setSeamlessPreviewDirty}
+          getSourceCanvas={getSeamlessSourceCanvas}
+          sourceRevision={renderRevision}
+          onReset={handleResetSeamless}
+          onApply={handleApplySeamless}
         />
       )
     }

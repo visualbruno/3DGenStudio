@@ -16,7 +16,8 @@ export const TOOLS = {
     { id: 'resize', label: 'Resize', icon: 'open_in_full' },
     { id: 'adjust', label: 'Levels / Contrast / Saturation', icon: 'tune' },
     { id: 'filters', label: 'Blur / Sharpen', icon: 'blur_on' },
-    { id: 'shadow-remover', label: 'Shadow Remover', icon: 'light_mode' }
+    { id: 'shadow-remover', label: 'Shadow Remover', icon: 'light_mode' },
+    { id: 'seamless', label: 'Seamless (tileable)', icon: 'grid_view' }
   ],
   paint: [
     { id: 'paint', label: 'Brush / Image Brush', icon: 'brush' }
