@@ -35,6 +35,7 @@ export default function useAssemblySave({
   linkAssetToProject,
   getAssetRecord,
   baseRig,
+  rendererRef,
   onSaved,
 }) {
   const [busy, setBusy] = useState(false)
@@ -70,6 +71,7 @@ export default function useAssemblySave({
     const failed = []
     const repoint = []
     let hiddenStats = null
+    let atlasStats = null
     let merged = null
 
     try {
@@ -194,11 +196,19 @@ export default function useAssemblySave({
             sampler,
             animations: options.transferWeights ? (getEntry(base?.id)?.animations || []) : [],
             faceMasks,
+            atlas: options.singleTexture && rendererRef?.current ? {
+              renderer: rendererRef.current,
+              size: options.atlasSize,
+              maxAtlases: options.maxAtlases,
+              onProgress: (frac, message) => setProgress(
+                `${message} (${Math.round(frac * 100)}%)`),
+            } : null,
           })
         } finally {
           sampler?.dispose()
         }
         const file = merge.file
+        atlasStats = merge.atlas || null
         if (merge.warnings?.length) {
           // Surfaced, never swallowed: an asset that quietly came out unrigged
           // is discovered two workspaces later with nothing to explain it.
@@ -234,6 +244,7 @@ export default function useAssemblySave({
           baseAssetId: base?.assetId ?? null,
           pieceAssetIds: entries.map(e => e.piece.assetId).filter(Boolean),
           rigged: !!merge.skinned,
+          ...(merge.atlas ? { atlas: merge.atlas } : {}),
           bones: merge.bones ?? null,
           animations: merge.clips ?? 0,
           ...(hiddenStats ? { hiddenFacesRemoved: hiddenStats.hidden ?? 0 } : {}),
@@ -263,11 +274,11 @@ export default function useAssemblySave({
         onSaved?.({ merged: payload })
       }
 
-      setResult({ versions, merged, failed, hidden: hiddenStats })
+      setResult({ versions, merged, failed, hidden: hiddenStats, atlas: atlasStats })
     } catch (saveError) {
       console.error('Assembly save failed', saveError)
       setError(saveError.message || 'Save failed')
-      setResult({ versions, merged, failed, hidden: hiddenStats })
+      setResult({ versions, merged, failed, hidden: hiddenStats, atlas: atlasStats })
     } finally {
       // Point each saved piece at the version it produced, so the fit survives
       // leaving the page. Previews are session-only by design — the document
@@ -291,7 +302,8 @@ export default function useAssemblySave({
       setProgress('')
     }
   }, [doc, meta, getEntry, previews, patchPiece, setMerged, dropPreview, saveMeshEdit,
-      linkAssetToProject, refreshThumbnail, onSaved, baseRig, getAssetRecord])
+      linkAssetToProject, refreshThumbnail, onSaved, baseRig, getAssetRecord,
+      rendererRef])
 
   return { save, busy, progress, error, result, clear: () => { setResult(null); setError('') } }
 }

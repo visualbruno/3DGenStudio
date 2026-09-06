@@ -64,6 +64,7 @@ export default function AssemblyViewport({
   onContextLost,
   onCameraReady,
   onControlsReady,
+  onRendererReady,
   selectedPiece,
   onGizmoDragStart,
   onGizmoDrag,
@@ -102,6 +103,7 @@ export default function AssemblyViewport({
       style={{ width: '100%', height: '100%' }}
       gl={{ powerPreference: 'high-performance' }}
       onCreated={({ gl }) => {
+        onRendererReady?.(gl)
         const canvas = gl.domElement
         const handleLost = event => {
           // Preventing the default is what makes the context RECOVERABLE; without

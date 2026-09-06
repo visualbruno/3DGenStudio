@@ -21,10 +21,24 @@ deleted.
 
 ---- What counts as a blocker ------------------------------------------------
 
-Only GARMENT geometry. Body-on-body hits are deliberately ignored, because
-"hidden by the body itself" describes the armpits and the crotch: invisible at
-rest and very visible the moment the character moves. Same reasoning drives the
-erosion pass below, and the pose sampling described in `pose_samples`.
+Only GARMENT geometry, and only garment geometry CLOSE BY. Body-on-body hits are
+deliberately ignored, because "hidden by the body itself" describes the armpits
+and the crotch: invisible at rest and very visible the moment the character
+moves. Same reasoning drives the erosion pass below.
+
+There is also a COVER test, and its absence was a real bug. A ray leaving the
+side of the head travels down the figure, strikes a pauldron, and counts -- so
+the head reads as hidden by armour it is nowhere near, and faces vanish off the
+scalp. Armour hides the skin it SITS ON; a blocker several limbs away describes
+self-occlusion of the whole figure, which is exactly what the body-on-body
+exclusion already refuses to act on.
+
+So before the hemisphere test runs, one ray is cast straight out along the
+face's own normal, and the face is only considered at all if that ray finds an
+occluder within `max_cover_ratio` of the body's diagonal. That is a single extra
+ray, it states the intent directly, and unlike shortening every ray it does not
+cost the genuinely-covered areas anything: a chest face still finds the cuirass
+a centimetre out, while a scalp face finds nothing and is dropped immediately.
 
 ---- What comes back ----------------------------------------------------------
 
@@ -124,7 +138,8 @@ def _erode(hidden, adjacency, rings):
 def find_hidden_faces(body_mesh, occluder_mesh, *,
                       rays=16,
                       max_distance_ratio=0.08,
-                      ray_length_ratio=2.0,
+                      max_ray_ratio=None,
+                      max_cover_ratio=0.06,
                       erode_rings=1,
                       offset_ratio=1e-4,
                       device='auto',
@@ -169,13 +184,32 @@ def find_hidden_faces(body_mesh, occluder_mesh, *,
         stats['seconds'] = time.perf_counter() - started
         return np.zeros(len(F), dtype=bool), stats
 
-    # ---- 2. cast ---------------------------------------------------------
+    # ---- 2. the cover test -----------------------------------------------
+    # Is there armour directly over this face? One ray along its own normal.
+    if max_cover_ratio:
+        if progress:
+            progress(0.15, 'Checking what is covered')
+        cover_reach = max_cover_ratio * diagonal
+        origins = centroids[candidates] + normals[candidates] * (offset_ratio * diagonal)
+        points, ray_ids, _tri = occluder_mesh.ray.intersects_location(
+            origins, normals[candidates], multiple_hits=False)
+        covered = np.zeros(len(candidates), dtype=bool)
+        if len(ray_ids):
+            near = np.linalg.norm(points - origins[ray_ids], axis=1) <= cover_reach
+            covered[ray_ids[near]] = True
+        candidates = candidates[covered]
+        stats['covered'] = int(len(candidates))
+        if not len(candidates):
+            stats['seconds'] = time.perf_counter() - started
+            return np.zeros(len(F), dtype=bool), stats
+
+    # ---- 3. cast -----------------------------------------------------------
     generator = np.random.default_rng(seed)
     local = _hemisphere_directions(rays, generator)
     tangent, bitangent = _basis_from_normal(normals[candidates])
 
     origins = centroids[candidates] + normals[candidates] * (offset_ratio * diagonal)
-    reach = ray_length_ratio * diagonal
+    reach = max_ray_ratio * diagonal if max_ray_ratio else None
 
     blocked = np.zeros(len(candidates), dtype=np.int32)
     for index in range(rays):
@@ -185,8 +219,19 @@ def find_hidden_faces(body_mesh, occluder_mesh, *,
                      + bitangent * local[index, 1]
                      + normals[candidates] * local[index, 2])
         direction /= np.maximum(np.linalg.norm(direction, axis=1, keepdims=True), 1e-12)
-        hit = occluder_mesh.ray.intersects_any(origins, direction)
-        blocked += hit.astype(np.int32)
+
+        if reach is None:
+            blocked += occluder_mesh.ray.intersects_any(origins, direction).astype(np.int32)
+            continue
+
+        # intersects_location rather than intersects_any: the distance to the
+        # blocker is the whole point, and `any` cannot report it.
+        points, ray_ids, _tri = occluder_mesh.ray.intersects_location(
+            origins, direction, multiple_hits=False)
+        if not len(ray_ids):
+            continue
+        near = np.linalg.norm(points - origins[ray_ids], axis=1) <= reach
+        np.add.at(blocked, ray_ids[near], 1)
 
     # Every ray blocked, or the face is visible from somewhere.
     hidden = np.zeros(len(F), dtype=bool)
@@ -194,7 +239,7 @@ def find_hidden_faces(body_mesh, occluder_mesh, *,
     stats['hidden_raw'] = int(hidden.sum())
     stats['reach'] = reach
 
-    # ---- 3. erode --------------------------------------------------------
+    # ---- 4. erode --------------------------------------------------------
     if progress:
         progress(0.95, 'Keeping a margin')
     hidden = _erode(hidden, _face_adjacency(V, F), erode_rings)

@@ -114,28 +114,64 @@ export function buildBaseSkinSampler(baseEntry, basePiece) {
 }
 
 
-/** Vertex adjacency as CSR, for smoothing. */
-function buildAdjacency(geometry) {
-  const index = geometry.getIndex()
-  const count = geometry.getAttribute('position').count
-  const degree = new Uint32Array(count)
-  const get = index ? i => index.getX(i) : i => i
-  const total = index ? index.count : count
+/**
+ * Group vertices that occupy the same point in space.
+ *
+ * THE load-bearing step, and leaving it out produced the worst failure this
+ * feature has had: a merged character that looked perfect at rest and tore into
+ * holes everywhere the moment it was animated.
+ *
+ * The merged geometry is DE-INDEXED — three vertices per triangle, so adjacent
+ * triangles have separate vertices at identical positions. Deriving anything
+ * from the index buffer then makes every triangle an island: the smoothing
+ * below averages within one triangle only, neighbouring triangles reach
+ * different answers, and two vertices sitting on the same point end up bound to
+ * the skeleton differently. At rest that is invisible. Move a bone and they
+ * travel apart, and the surface splits along every single edge.
+ *
+ * So weights are computed in WELDED space and written back to every vertex of
+ * the group, which makes coincident vertices identical by construction rather
+ * than by luck.
+ */
+function weldGroups(geometry, tolerance = 1e-5) {
+  const position = geometry.getAttribute('position')
+  const lookup = new Map()
+  const group = new Uint32Array(position.count)
+  const inverse = 1 / tolerance
+  let count = 0
 
-  for (let i = 0; i < total; i += 3) {
-    for (let k = 0; k < 3; k += 1) {
-      degree[get(i + k)] += 2
-    }
+  for (let i = 0; i < position.count; i += 1) {
+    const key = `${Math.round(position.getX(i) * inverse)},`
+      + `${Math.round(position.getY(i) * inverse)},`
+      + `${Math.round(position.getZ(i) * inverse)}`
+    let id = lookup.get(key)
+    if (id === undefined) { id = count; count += 1; lookup.set(key, id) }
+    group[i] = id
   }
-  const offsets = new Uint32Array(count + 1)
-  for (let i = 0; i < count; i += 1) offsets[i + 1] = offsets[i] + degree[i]
+  return { group, count }
+}
 
-  const cursor = offsets.slice(0, count)
-  const neighbours = new Uint32Array(offsets[count])
+
+/** Adjacency between welded groups, as CSR. */
+function buildAdjacency(geometry, group, groupCount) {
+  const index = geometry.getIndex()
+  const vertexCount = geometry.getAttribute('position').count
+  const get = index ? i => index.getX(i) : i => i
+  const total = index ? index.count : vertexCount
+
+  const degree = new Uint32Array(groupCount)
   for (let i = 0; i < total; i += 3) {
-    const a = get(i)
-    const b = get(i + 1)
-    const c = get(i + 2)
+    for (let k = 0; k < 3; k += 1) degree[group[get(i + k)]] += 2
+  }
+  const offsets = new Uint32Array(groupCount + 1)
+  for (let i = 0; i < groupCount; i += 1) offsets[i + 1] = offsets[i] + degree[i]
+
+  const cursor = offsets.slice(0, groupCount)
+  const neighbours = new Uint32Array(offsets[groupCount])
+  for (let i = 0; i < total; i += 3) {
+    const a = group[get(i)]
+    const b = group[get(i + 1)]
+    const c = group[get(i + 2)]
     neighbours[cursor[a]++] = b; neighbours[cursor[a]++] = c
     neighbours[cursor[b]++] = c; neighbours[cursor[b]++] = a
     neighbours[cursor[c]++] = a; neighbours[cursor[c]++] = b
@@ -233,12 +269,12 @@ export function transferSkinFromBase(sampler, targetGeometry, targetPositions, {
     }
   }
 
-  const stats = { vertices: count, missed, farthest, smoothed: 0 }
+  const stats = { vertices: count, missed, farthest, smoothed: smoothIters }
 
-  if (smoothIters > 0) {
-    smoothWeights(targetGeometry, outIndex, outWeight, smoothIters, maxInfluences)
-    stats.smoothed = smoothIters
-  }
+  // ALWAYS, even at zero rounds: the unify half is what stops the mesh tearing
+  // when it is posed.
+  stats.weldedGroups = unifyAndSmoothWeights(
+    targetGeometry, outIndex, outWeight, smoothIters, maxInfluences)
 
   targetGeometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(outIndex, 4))
   targetGeometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(outWeight, 4))
@@ -249,51 +285,91 @@ export function transferSkinFromBase(sampler, targetGeometry, targetPositions, {
 
 
 /**
- * Average each vertex's weights with its neighbours', in place.
+ * Unify and smooth weights over WELDED groups, in place.
  *
- * A piece that spans two body regions picks up a hard line where the nearest
- * body point flips from one to the other — across a shoulder, or where a tasset
- * hangs between hip and thigh. The body itself has no such line because its own
- * weights were painted smooth; the transfer reintroduces it by sampling
- * pointwise. A couple of rounds over the piece's own topology removes it.
+ * Two jobs, and the first is not optional:
+ *
+ *   1. every vertex of a welded group is given the SAME weights, so coincident
+ *      vertices cannot separate under animation (see weldGroups);
+ *   2. each group is averaged with its neighbours, which removes the hard line
+ *      a piece picks up where the nearest body point flips from one region to
+ *      another — across a shoulder, or where a tasset hangs between hip and
+ *      thigh. The body has no such line because its own weights were painted
+ *      smooth; sampling pointwise reintroduces it.
+ *
+ * Job 1 runs even with `rounds` at 0.
  */
-function smoothWeights(geometry, outIndex, outWeight, rounds, maxInfluences) {
-  const { offsets, neighbours } = buildAdjacency(geometry)
-  const count = geometry.getAttribute('position').count
+function unifyAndSmoothWeights(geometry, outIndex, outWeight, rounds, maxInfluences) {
+  const { group, count: groupCount } = weldGroups(geometry)
+  const vertexCount = geometry.getAttribute('position').count
 
-  for (let round = 0; round < rounds; round += 1) {
-    const nextIndex = new Uint16Array(outIndex.length)
-    const nextWeight = new Float32Array(outWeight.length)
+  // Collapse each group to one weight set, summing its members.
+  let groupIndex = new Uint16Array(groupCount * 4)
+  let groupWeight = new Float32Array(groupCount * 4)
+  const accumulate = new Array(groupCount)
+  for (let v = 0; v < vertexCount; v += 1) {
+    const g = group[v]
+    let blended = accumulate[g]
+    if (!blended) { blended = new Map(); accumulate[g] = blended }
+    for (let s = 0; s < 4; s += 1) {
+      const weight = outWeight[v * 4 + s]
+      if (weight <= 0) continue
+      const bone = outIndex[v * 4 + s]
+      blended.set(bone, (blended.get(bone) || 0) + weight)
+    }
+  }
+  for (let g = 0; g < groupCount; g += 1) {
+    const kept = compress(accumulate[g] || new Map(), maxInfluences)
+    for (let s = 0; s < kept.length; s += 1) {
+      groupIndex[g * 4 + s] = kept[s][0]
+      groupWeight[g * 4 + s] = kept[s][1]
+    }
+  }
 
-    for (let v = 0; v < count; v += 1) {
-      const blended = new Map()
-      // The vertex counts as much as all its neighbours together, so smoothing
-      // softens the seam without washing the piece toward one average bone.
-      const add = (slot, scale) => {
-        for (let s = 0; s < 4; s += 1) {
-          const weight = outWeight[slot * 4 + s] * scale
-          if (weight <= 0) continue
-          const bone = outIndex[slot * 4 + s]
-          blended.set(bone, (blended.get(bone) || 0) + weight)
+  if (rounds > 0) {
+    const { offsets, neighbours } = buildAdjacency(geometry, group, groupCount)
+    for (let round = 0; round < rounds; round += 1) {
+      const nextIndex = new Uint16Array(groupIndex.length)
+      const nextWeight = new Float32Array(groupWeight.length)
+      for (let g = 0; g < groupCount; g += 1) {
+        const blended = new Map()
+        // The group counts as much as all its neighbours together, so smoothing
+        // softens the seam without washing the piece toward one average bone.
+        const add = (slot, scale) => {
+          for (let s = 0; s < 4; s += 1) {
+            const weight = groupWeight[slot * 4 + s] * scale
+            if (weight <= 0) continue
+            const bone = groupIndex[slot * 4 + s]
+            blended.set(bone, (blended.get(bone) || 0) + weight)
+          }
+        }
+        add(g, 1)
+        const start = offsets[g]
+        const end = offsets[g + 1]
+        if (end > start) {
+          const share = 1 / (end - start)
+          for (let n = start; n < end; n += 1) add(neighbours[n], share)
+        }
+        const kept = compress(blended, maxInfluences)
+        for (let s = 0; s < kept.length; s += 1) {
+          nextIndex[g * 4 + s] = kept[s][0]
+          nextWeight[g * 4 + s] = kept[s][1]
         }
       }
-      add(v, 1)
-      const start = offsets[v]
-      const end = offsets[v + 1]
-      if (end > start) {
-        const share = 1 / (end - start)
-        for (let n = start; n < end; n += 1) add(neighbours[n], share)
-      }
-
-      const kept = compress(blended, maxInfluences)
-      for (let s = 0; s < kept.length; s += 1) {
-        nextIndex[v * 4 + s] = kept[s][0]
-        nextWeight[v * 4 + s] = kept[s][1]
-      }
+      groupIndex = nextIndex
+      groupWeight = nextWeight
     }
-    outIndex.set(nextIndex)
-    outWeight.set(nextWeight)
   }
+
+  // Scatter back — every vertex of a group now carries identical weights.
+  for (let v = 0; v < vertexCount; v += 1) {
+    const g = group[v]
+    for (let s = 0; s < 4; s += 1) {
+      outIndex[v * 4 + s] = groupIndex[g * 4 + s]
+      outWeight[v * 4 + s] = groupWeight[g * 4 + s]
+    }
+  }
+  return groupCount
 }
 
 

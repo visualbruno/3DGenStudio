@@ -69,6 +69,9 @@ export default function AssemblyPage() {
 
   const shellRef = useRef(null)
   const cameraRef = useRef(null)
+  // The live renderer, borrowed by the atlas bake. A second context purely to
+  // bake would double the GPU memory of every source texture it reads.
+  const rendererRef = useRef(null)
   const controlsRef = useRef(null)
 
   const setAssemblyId = useCallback(id => {
@@ -164,6 +167,7 @@ export default function AssemblyPage() {
     linkAssetToProject,
     getAssetRecord,
     baseRig,
+    rendererRef,
   })
 
   const landmarks = useAssemblyLandmarks({
@@ -476,6 +480,7 @@ export default function AssemblyPage() {
                 contextRevision={contextRevision}
                 onContextLost={() => setContextRevision(revision => revision + 1)}
                 onCameraReady={camera => { cameraRef.current = camera }}
+                onRendererReady={gl => { rendererRef.current = gl }}
                 onControlsReady={controls => { controlsRef.current = controls }}
                 selectedPiece={selectedEntry ? selectedPiece : null}
                 landmarkBase={base}

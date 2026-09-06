@@ -17,6 +17,8 @@ import { composePieceMatrix } from './assemblyGeometry'
 import { transferSkinFromBase, validateSkin } from './assemblyWeights'
 import { rebindClipForExport } from './animationLibrary'
 import { removeMaskedFaces } from './assemblyHiddenFaces'
+import { planAtlas } from './assemblyAtlas'
+import { bakeAtlases, buildAtlasedGeometry } from './assemblyAtlasBake'
 
 /**
  * The geometry to save for one piece: its preview when it has been fitted or
@@ -175,10 +177,16 @@ export async function exportPieceGlb({ piece, entry, preview }) {
  * shared — these pieces have distinct textures.
  */
 export async function exportMergedAssemblyGlb(entries, name, {
-  rig = null, sampler = null, animations = [], faceMasks = null,
+  rig = null, sampler = null, animations = [], faceMasks = null, atlas = null,
 } = {}) {
   const group = buildGroup(entries, { faceMasks })
   group.name = `${sanitize(name)}_assembly`
+
+  // After the hidden-face mask, so no atlas space is spent on faces about to be
+  // deleted; before the rig, so skin weights are transferred once onto the
+  // merged geometry rather than once per piece.
+  const atlasWarnings = []
+  const atlasInfo = atlas?.renderer ? mergeIntoAtlas(group, atlas, atlasWarnings) : null
 
   if (rig?.rigScene && sampler) {
     const skinned = buildSkinnedAssembly(group, rig, sampler, name)
@@ -193,20 +201,130 @@ export async function exportMergedAssemblyGlb(entries, name, {
       const clips = (animations || []).map(rebindClipForExport)
       const file = await exportGroup(skinned.scene, `${name}-assembly`, clips)
       return {
-        file, skinned: true, warnings: skinned.warnings,
-        bones: skinned.bones, clips: clips.length,
+        file, skinned: true, warnings: [...atlasWarnings, ...skinned.warnings],
+        bones: skinned.bones, clips: clips.length, atlas: atlasInfo,
       }
     }
     // Fall through to the static export, carrying the reason with it. A
     // silently-unrigged asset is the failure people notice three steps later.
     stripSkin(group)
-    return { file: await exportGroup(group, `${name}-assembly`),
-             skinned: false, warnings: skinned.warnings }
+    return {
+      file: await exportGroup(group, `${name}-assembly`),
+      skinned: false, warnings: [...atlasWarnings, ...skinned.warnings], atlas: atlasInfo,
+    }
   }
 
   stripSkin(group)
-  return { file: await exportGroup(group, `${name}-assembly`), skinned: false, warnings: [] }
+  return {
+    file: await exportGroup(group, `${name}-assembly`),
+    skinned: false, warnings: atlasWarnings, atlas: atlasInfo,
+  }
 }
+
+/**
+ * Replace the group's per-piece meshes with one mesh per shared atlas.
+ *
+ * Everything the caller wanted from "one texture" happens here: a single UV
+ * layout across every piece, one baked texture set per atlas, and one material.
+ * With the default cap of one atlas that is literally one mesh, one material,
+ * one texture.
+ *
+ * Mutates `group` in place and returns what happened, or null when it could not
+ * run — in which case the caller still gets its per-piece merge, which is a
+ * worse asset but never a broken one.
+ */
+function mergeIntoAtlas(group, { renderer, size = 4096, maxAtlases = 1, onProgress }, warnings) {
+  const sources = group.children.map((mesh, index) => ({
+    id: `p${index}`,
+    geometry: mesh.geometry,
+    material: mesh.material,
+  }))
+
+  const missing = sources.filter(source => !source.geometry.getAttribute('uv'))
+  if (missing.length) {
+    warnings.push(`${missing.length} piece(s) have no UVs, so the textures were left separate`)
+    return null
+  }
+
+  // The planner needs indexed geometry: an island is a connected component over
+  // the index buffer, and a non-indexed mesh has no shared vertices to connect.
+  const planInput = sources.map(source => {
+    const geometry = source.geometry
+    if (!geometry.getIndex()) {
+      const count = geometry.getAttribute('position').count
+      geometry.setIndex(Array.from({ length: count }, (_, i) => i))
+    }
+    const image = source.material?.map?.image
+    return {
+      id: source.id,
+      indices: geometry.getIndex().array,
+      uv: geometry.getAttribute('uv').array,
+      vertexCount: geometry.getAttribute('position').count,
+      // The source's own resolution sets its share of the atlas, so a 2K armour
+      // keeps its detail beside a 1K boot.
+      textureSize: Math.max(image?.width || 0, image?.height || 0) || 1024,
+    }
+  })
+
+  const cutout = sources.filter(source =>
+    source.material?.transparent || (source.material?.alphaTest || 0) > 0)
+  if (cutout.length) {
+    // The bake writes alpha as coverage, so a material that used it to punch
+    // holes loses them. Said out loud rather than silently flattened.
+    warnings.push(`${cutout.length} piece(s) use cut-out transparency, which the`
+      + ' shared texture does not carry')
+  }
+
+  const plan = planAtlas(planInput, { size, maxAtlases })
+  if (!plan) {
+    warnings.push('the UV islands could not be packed, so the textures were left separate')
+    return null
+  }
+
+  let maps
+  try {
+    maps = bakeAtlases({ renderer, sources, plan, size, onProgress })
+  } catch (error) {
+    warnings.push(`the atlas bake failed (${error.message}), so the textures were left separate`)
+    return null
+  }
+
+  const replacements = []
+  for (let index = 0; index < plan.atlasCount; index += 1) {
+    const geometry = buildAtlasedGeometry(sources, plan, index)
+    if (!geometry) continue
+    const material = new THREE.MeshStandardMaterial({
+      name: `${group.name}_atlas${index}`,
+      ...maps[index],
+      // Any constant factor a source carried is already baked into its texels,
+      // so leaving one on the merged material would apply it twice.
+      color: 0xffffff,
+      roughness: 1,
+      metalness: maps[index]?.metalnessMap ? 1 : 0,
+    })
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.name = `${group.name}_atlas${index}`
+    mesh.frustumCulled = false
+    replacements.push(mesh)
+  }
+  if (!replacements.length) {
+    warnings.push('the atlas produced no geometry, so the textures were left separate')
+    return null
+  }
+
+  for (const source of sources) source.geometry.dispose()
+  group.clear()
+  for (const mesh of replacements) group.add(mesh)
+
+  return {
+    atlases: plan.atlasCount,
+    size,
+    islands: plan.islandCount,
+    fill: Math.round(plan.fill * 1000) / 10,
+    densityScale: Math.round(plan.scale * 1000) / 1000,
+  }
+}
+
 
 /**
  * Drop skin attributes from a STATIC export.

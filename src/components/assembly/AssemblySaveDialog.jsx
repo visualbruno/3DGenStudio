@@ -28,6 +28,9 @@ export default function AssemblySaveDialog({
   const [projectId, setProjectId] = useState('')
   const [transferWeights, setTransferWeights] = useState(!!baseRig)
   const [removeHiddenFaces, setRemoveHiddenFaces] = useState(false)
+  const [singleTexture, setSingleTexture] = useState(false)
+  const [atlasSize, setAtlasSize] = useState(4096)
+  const [maxAtlases, setMaxAtlases] = useState(1)
   const [names, setNames] = useState(() =>
     Object.fromEntries(editedPieces.map(({ piece }) => [piece.id, piece.name])))
 
@@ -156,6 +159,64 @@ export default function AssemblySaveDialog({
                 </p>
               )}
 
+              {/* One UV layout and one baked texture set across every piece.
+                  Off by default: it is a one-way simplification — the pieces
+                  stop being separately addressable — and the current per-node
+                  merge is already a single mesh for draw-call purposes. */}
+              <label className="assembly-save__check">
+                <input
+                  type="checkbox"
+                  checked={singleTexture}
+                  disabled={busy}
+                  onChange={event => setSingleTexture(event.target.checked)}
+                />
+                Merge into one texture and UV layout
+                {mergedMaterialCount > 1 && (
+                  <span className="assembly-save__muted">
+                    {' '}— {mergedMaterialCount} materials now
+                  </span>
+                )}
+              </label>
+
+              {singleTexture && (
+                <div className="assembly-save__atlas">
+                  <label>
+                    Texture size
+                    <select value={atlasSize} disabled={busy}
+                            onChange={event => setAtlasSize(Number(event.target.value))}>
+                      <option value={1024}>1024</option>
+                      <option value={2048}>2048</option>
+                      <option value={4096}>4096 (recommended)</option>
+                      <option value={8192}>8192</option>
+                    </select>
+                  </label>
+                  <label>
+                    At most
+                    <select value={maxAtlases} disabled={busy}
+                            onChange={event => setMaxAtlases(Number(event.target.value))}>
+                      <option value={1}>1 texture</option>
+                      <option value={2}>2 textures</option>
+                      <option value={4}>4 textures</option>
+                    </select>
+                  </label>
+                  {/* The trade is the whole reason this is a choice and not a
+                      default: too small a budget and everything is scaled down
+                      together, which is a uniform loss of sharpness. */}
+                  <p className="assembly-save__note">
+                    Each piece keeps its own texel density if there is room — a 2K
+                    armour stays sharper than a 1K boot. If the pieces need more space
+                    than the budget allows, everything is scaled down by one shared
+                    factor rather than some pieces losing more than others. Raise the
+                    size, or allow a second texture, if the result looks soft.
+                  </p>
+                  <p className="assembly-save__warn">
+                    One-way: the pieces stop being separately addressable, so you can no
+                    longer hide or replace the pauldrons on their own. Save the per-node
+                    version too if you might want that.
+                  </p>
+                </div>
+              )}
+
               {transferWeights && baseRig && (
                 <p className="assembly-save__note">
                   Every piece is bound to one copy of {baseName || 'the base'}&apos;s skeleton,
@@ -208,6 +269,17 @@ export default function AssemblySaveDialog({
                 <p>{result.versions.length} piece version{result.versions.length === 1 ? '' : 's'} saved.</p>
               )}
               {result.merged && <p>Saved “{result.merged.name}”.</p>}
+              {result.atlas && (
+                <p>
+                  Baked {result.atlas.atlases} texture
+                  {result.atlas.atlases === 1 ? '' : 's'} at {result.atlas.size}px
+                  {' '}({result.atlas.islands.toLocaleString()} UV islands,
+                  {' '}{result.atlas.fill}% packed
+                  {result.atlas.densityScale < 0.999
+                    ? `, detail scaled to ${Math.round(result.atlas.densityScale * 100)}%`
+                    : ', full detail'}).
+                </p>
+              )}
               {result.hidden?.hidden > 0 && (
                 <p>
                   Removed {result.hidden.hidden.toLocaleString()} hidden body faces
@@ -241,6 +313,9 @@ export default function AssemblySaveDialog({
               projectId: projectId || null,
               transferWeights: transferWeights && !!baseRig,
               removeHiddenFaces: removeHiddenFaces && includeBase,
+              singleTexture,
+              atlasSize,
+              maxAtlases,
               names,
             })}
           >
