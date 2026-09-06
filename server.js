@@ -21,7 +21,7 @@ import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
 // The self-managed PostgreSQL for a shared server that is not running Docker.
 import * as pgEmbedded from './pgEmbedded.js';
 import { mountAuth, resolveJwtSecret, seedAdminFromEnv } from './auth.js';
-import { mountLocalOnlyGuard } from './serverMode.js';
+import { findUncoveredAssetDirectories, mountLocalOnlyGuard } from './serverMode.js';
 import { isGatewayActive, mountGateway } from './gateway.js';
 import { buildProjectExportPlan, clearCardProcessing, copyAssetFileTo, createWorkflow, importProject, listWorkflows, getAssetRecord, getWorkflowDefinition, readAssetBytes, resolveProjectSource, replaceAssetFile, saveAssetEdit, saveAssetVersion, saveRootAsset, setCardProcessing, updateWorkflow } from './dataStore.js';
 
@@ -380,6 +380,24 @@ app.use(cors());
 // Mounted first, ahead of the body parsers and the auth gate, so a local-only
 // path reads as absent whether or not the caller is authenticated.
 mountLocalOnlyGuard(app, { mode: SERVER_MODE });
+
+// Warn if an asset subdirectory is not classified as user asset bytes: an
+// uncovered one is served off this machine's disk even when a remote is
+// configured, so it 404s for everyone whose files live on the shared server.
+try {
+  const subdirectories = (await fs.readdir(ASSETS_DIR, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name);
+  const uncovered = findUncoveredAssetDirectories(subdirectories);
+  if (uncovered.length > 0) {
+    console.warn(
+      `Asset directories missing from USER_ASSET_PREFIXES in serverMode.js: ${uncovered.join(', ')}. `
+      + 'They will 404 in the desktop app when it is connected to a shared server.'
+    );
+  }
+} catch {
+  // No asset directory yet (fresh install) -- nothing to classify.
+}
 
 // Forward the shared-data routes to a remote server when one is configured,
 // and serve its asset bytes from a local disk cache. Position is critical: it

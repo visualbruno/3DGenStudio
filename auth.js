@@ -115,8 +115,9 @@ const PUBLIC_PATHS = new Set(['/api/health', '/api/auth/login', '/api/auth/boots
 // '/assets' is NOT in this list, even though asset bytes live under it, because
 // so does the frontend's own bundle (dist/assets/index-<hash>.js). Gating the
 // whole prefix answered 401 for the JavaScript that draws the login form — a
-// deadlock, and a blank page with no way in. isUserAssetPath() knows the eight
-// real asset subdirectories; see USER_ASSET_PREFIXES in serverMode.js.
+// deadlock, and a blank page with no way in. isUserAssetPath() knows the real
+// asset subdirectories; see USER_ASSET_PREFIXES in serverMode.js. A missing one
+// is not only a 404 for the desktop app -- it is also an ungated read here.
 const PROTECTED_PREFIXES = ['/api', '/wiki-media'];
 
 function isProtectedPath(pathname) {

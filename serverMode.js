@@ -95,8 +95,22 @@ export const USER_ASSET_PREFIXES = [
   '/assets/brushes',
   '/assets/paintdocs',
   '/assets/wiki',
-  '/assets/motions'
+  '/assets/motions',
+  '/assets/animations',
+  '/assets/trees'
 ];
+
+// The note above says to add each new subdirectory here, and twice it was not
+// done -- animations and tree presets both shipped missing, which in remote mode
+// looks like a 404 from the LOCAL server for a file that only ever existed on the
+// shared one. Nothing about the feature hints that this file is involved, so the
+// rule is checked at startup instead of trusted to memory. Directories are made
+// on first write, so a name only shows up once the feature has been used; that is
+// still far earlier than a user reporting it.
+export function findUncoveredAssetDirectories(names) {
+  const covered = new Set(USER_ASSET_PREFIXES.map(prefix => prefix.replace('/assets/', '')));
+  return Array.from(names || []).filter(name => !covered.has(name));
+}
 
 // Everything the shared server owns. Forwarded verbatim by the gateway when a
 // remote is configured. /api/health is deliberately absent: a local install
@@ -120,8 +134,8 @@ const REMOTE_DATA_PREFIXES = [
   '/api/users',
   '/wiki-media',
 
-  // Asset bytes. See USER_ASSET_PREFIXES above for why this is eight entries
-  // and not a blanket '/assets'.
+  // Asset bytes. See USER_ASSET_PREFIXES above for why these are listed one by
+  // one and not as a blanket '/assets'.
   ...USER_ASSET_PREFIXES
 ];
 

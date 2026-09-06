@@ -1,0 +1,81 @@
+.promptdialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.promptdialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--surface-container-high, #23252b);
+  color: var(--on-surface, #e6e6e6);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.promptdialog__title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.promptdialog__message {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-line;
+  color: var(--on-surface-variant, #a8a8a8);
+}
+
+.promptdialog__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--outline-variant, #45474d);
+  background: var(--surface, #16171a);
+  color: inherit;
+  font-size: 13px;
+}
+
+.promptdialog__input:focus {
+  outline: none;
+  border-color: var(--primary, #7aa2f7);
+}
+
+.promptdialog__actions {
+  margin-top: 14px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.promptdialog__actions button {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--outline-variant, #45474d);
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.promptdialog__actions button:hover:not(:disabled) {
+  background: var(--surface-container-highest, #2c2e35);
+}
+
+.promptdialog__primary {
+  border-color: transparent !important;
+  background: var(--primary, #7aa2f7) !important;
+  color: var(--on-primary, #10131a) !important;
+  font-weight: 600;
+}
+
+.promptdialog__primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

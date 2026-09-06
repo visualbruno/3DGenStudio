@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import Header from '../components/Header'
+import PromptDialog from '../components/PromptDialog'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import TreeViewport from '../components/treeGen/TreeViewport'
@@ -101,6 +102,10 @@ export default function TreeGenPage() {
   // Saving without it can only ever create, which is how editing a preset
   // used to leave the original behind and fork a copy.
   const [openPreset, setOpenPreset] = useState(null)
+  // Stands in for window.prompt(), which Electron does not implement — it
+  // returns undefined without showing anything, so every prompt-driven button
+  // was a no-op in the desktop app while working fine in a dev browser.
+  const [prompt, setPrompt] = useState(null)
   const [notice, setNotice] = useState(null)
 
   const [frameKey, setFrameKey] = useState(0)
@@ -307,15 +312,7 @@ export default function TreeGenPage() {
   // stays on both paths so renaming still works, prefilled with the open
   // preset's own name rather than the spec's — they drift apart the moment a
   // preset is saved under a different name to the built-in it started from.
-  const handleSavePreset = useCallback(async ({ asNew = false } = {}) => {
-    if (!spec) return
-    const target = asNew ? null : openPreset
-    const name = window.prompt(
-      target ? `Update "${target.name}"` : 'Save this tree preset as',
-      target?.name || openPreset?.name || spec.name || 'Tree',
-    )
-    if (!name?.trim()) return
-
+  const savePresetAs = useCallback(async (name, target) => {
     setPresetBusy(true)
     setError(null)
     try {
@@ -340,7 +337,18 @@ export default function TreeGenPage() {
     } finally {
       setPresetBusy(false)
     }
-  }, [spec, textureRefs, meshStats, buildThumbnail, openPreset])
+  }, [spec, textureRefs, meshStats, buildThumbnail])
+
+  const handleSavePreset = useCallback(({ asNew = false } = {}) => {
+    if (!spec) return
+    const target = asNew ? null : openPreset
+    setPrompt({
+      title: target ? `Update "${target.name}"` : 'Save this tree preset as',
+      defaultValue: target?.name || openPreset?.name || spec.name || 'Tree',
+      confirmLabel: target ? 'Update' : 'Save',
+      onSubmit: name => savePresetAs(name, target),
+    })
+  }, [spec, openPreset, savePresetAs])
 
   const handleOpenPreset = useCallback(async asset => {
     setShowPresetPicker(false)
@@ -418,19 +426,7 @@ export default function TreeGenPage() {
   // A zip rather than N downloads because browsers treat repeated programmatic
   // downloads as suspicious — Chrome prompts on the second and can drop the
   // rest — and because a folder of trees is what the user actually wants anyway.
-  const handleDownloadVariants = useCallback(async () => {
-    if (!spec) return
-    if (variantsRunning) {
-      variantsAbortRef.current?.abort()
-      return
-    }
-
-    const answer = window.prompt(
-      `How many variants? Each is generated with a new random seed.\n`
-      + `About ${(meshStats?.tool?.seconds || 1).toFixed(1)}s each, downloaded as one zip.`,
-      '5',
-    )
-    if (answer === null) return
+  const runDownloadVariants = useCallback(async answer => {
     const count = Math.max(1, Math.min(50, Math.round(Number(answer) || 0)))
 
     const controller = new AbortController()
@@ -503,7 +499,27 @@ export default function TreeGenPage() {
       setVariantsRunning(false)
       setProgress(null)
     }
-  }, [spec, textures, variantsRunning, meshStats, download])
+  }, [spec, textures, download])
+
+  const handleDownloadVariants = useCallback(() => {
+    if (!spec) return
+    // The button doubles as Cancel while a batch is running.
+    if (variantsRunning) {
+      variantsAbortRef.current?.abort()
+      return
+    }
+    setPrompt({
+      title: 'How many variants?',
+      message: 'Each is generated with a new random seed. '
+        + `About ${(meshStats?.tool?.seconds || 1).toFixed(1)}s each, downloaded as one zip.`,
+      defaultValue: '5',
+      type: 'number',
+      min: 1,
+      max: 50,
+      confirmLabel: 'Generate',
+      onSubmit: runDownloadVariants,
+    })
+  }, [spec, variantsRunning, meshStats, runDownloadVariants])
 
   // The LOD chain, delivered as one archive: N meshes named to the app's
   // _LOD<n> convention, plus the impostor atlases and a descriptor when one was
@@ -854,6 +870,14 @@ export default function TreeGenPage() {
           </dl>
         </aside>
       </div>
+
+      {prompt && (
+        <PromptDialog
+          {...prompt}
+          onSubmit={value => { setPrompt(null); prompt.onSubmit(value) }}
+          onCancel={() => setPrompt(null)}
+        />
+      )}
 
       {showPresetPicker && (
         <AssetSelectorModal
