@@ -27,6 +27,14 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.3.0',
+    date: '2026-09-07',
+    items: [
+			'New: Tree Generator',
+			'Image Editor: Added Seamless mode'
+    ]
+  },
+  {
     version: 'v3.2.0',
     date: '2026-09-06',
     items: [
