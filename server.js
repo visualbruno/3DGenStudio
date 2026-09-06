@@ -7728,7 +7728,7 @@ async function proxyMeshTool(operationPath, req, res, {
 }
 
 // Stream a Python service's Server-Sent Events straight through to the browser.
-// Shared by proxyMeshTool and proxyMotionTool — the upstream error handling below
+// Shared by proxyMeshTool and proxyJsonTool — the upstream error handling below
 // is load-bearing, so it lives in one place rather than being copied per service.
 function pipeToolSse(operationPath, upstream, res) {
   res.status(200);
@@ -7765,12 +7765,17 @@ function pipeToolSse(operationPath, upstream, res) {
   return source.pipe(res);
 }
 
-// Forwards a JSON body (not a mesh upload) to the motion service and streams its
-// SSE back. Text-to-motion has no input file — the prompt IS the input — so it
-// cannot go through proxyMeshTool, which requires req.file.
-async function proxyMotionTool(operationPath, req, res, { serviceLabel = 'Motion Generation' } = {}) {
+// Forwards a JSON body (not a mesh upload) to a Python service and streams its
+// SSE back. Some tools have no input file — text-to-motion's prompt IS the
+// input, and a procedural tree's spec IS the input — so they cannot go through
+// proxyMeshTool, which requires req.file. The base URL is a parameter because
+// the same contract is spoken by two different services on two different ports.
+async function proxyJsonTool(operationPath, req, res, {
+  serviceLabel = 'Motion Generation',
+  baseUrlBuilder = buildMotionToolsBaseUrl,
+} = {}) {
   const settings = await getSettings();
-  const baseUrl = buildMotionToolsBaseUrl(settings);
+  const baseUrl = baseUrlBuilder(settings);
 
   let upstream;
   try {
@@ -7780,10 +7785,9 @@ async function proxyMotionTool(operationPath, req, res, { serviceLabel = 'Motion
       body: JSON.stringify(req.body ?? {}),
     });
   } catch (err) {
-    console.error(`Motion proxy (${operationPath}) could not reach the Python service:`, err);
+    console.error(`JSON tool proxy (${operationPath}) could not reach the Python service:`, err);
     return res.status(502).json({
-      error: `Could not reach the ${serviceLabel} (Python) service at ${baseUrl}. `
-        + 'Is it running? (First launch is slow — it loads the model and may download the text encoder.)',
+      error: `Could not reach the ${serviceLabel} (Python) service at ${baseUrl}. Is it running?`,
     });
   }
 
@@ -7791,12 +7795,50 @@ async function proxyMotionTool(operationPath, req, res, { serviceLabel = 'Motion
     // Validation failures (empty prompt, too many segments) arrive as JSON.
     const detail = await upstream.text().catch(() => '');
     return res.status(upstream.status).json({
-      error: `Motion generation failed (${upstream.status})`,
+      error: `${serviceLabel} failed (${upstream.status})`,
       detail: detail.slice(0, 2000),
     });
   }
 
   return pipeToolSse(operationPath, upstream, res);
+}
+
+// The JSON-in/JSON-out sibling of proxyJsonTool, for the endpoints that answer
+// with one body instead of a stream (/tree/preview, /tree/presets).
+async function proxyJsonToolJson(operationPath, req, res, {
+  serviceLabel = 'Mesh Tools',
+  baseUrlBuilder = buildMeshToolsBaseUrl,
+  method = 'POST',
+} = {}) {
+  const settings = await getSettings();
+  const baseUrl = baseUrlBuilder(settings);
+
+  let upstream;
+  try {
+    upstream = await fetch(`${baseUrl}${operationPath}`, method === 'GET' ? { method } : {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body ?? {}),
+    });
+  } catch (err) {
+    console.error(`JSON tool proxy (${operationPath}) could not reach the Python service:`, err);
+    return res.status(502).json({
+      error: `Could not reach the ${serviceLabel} (Python) service at ${baseUrl}. Is it running?`,
+    });
+  }
+
+  const text = await upstream.text().catch(() => '');
+  if (!upstream.ok) {
+    return res.status(upstream.status).json({
+      error: `${serviceLabel} failed (${upstream.status})`,
+      detail: text.slice(0, 2000),
+    });
+  }
+  try {
+    return res.json(JSON.parse(text));
+  } catch {
+    return res.status(502).json({ error: 'The service returned a malformed response.' });
+  }
 }
 
 // Same forwarding as proxyMeshTool, for the mesh-tools endpoints that answer with
@@ -7986,6 +8028,50 @@ app.post('/api/meshes/convert', meshToolsUpload.single('meshFile'), async (req, 
 // Auto Rig proxies to the dedicated rigging micro-service (SkinTokens/TokenRig),
 // which runs on its own host/port (settings.apis.rigtools) with a GPU/ML stack.
 // Same SSE contract as the mesh-tools routes above.
+// ---------------------------------------------------------------------------
+// Procedural trees (Tree Generator)
+// ---------------------------------------------------------------------------
+// The generator lives in the mesh-tools service (:8200) as a module, not a
+// service of its own — it already has trimesh/numpy, which is the whole
+// dependency list. These take a JSON TreeSpec instead of a mesh upload, because
+// for a tree the spec IS the input; the response envelope still matches the
+// other mesh tools so the browser decodes it with the same helper.
+
+// The species catalog for the picker. Cheap upstream (no generation), so it is
+// fetched on demand rather than cached here.
+app.get('/api/tree/presets', async (req, res) => {
+  try {
+    await proxyJsonToolJson('/tree/presets', req, res, { serviceLabel: 'Tree Generator', method: 'GET' });
+  } catch (err) {
+    console.error('Tree presets proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Could not load tree presets' });
+  }
+});
+
+// Skeleton-only preview: branch polylines, no mesh. Answers in ~100ms so the
+// panel can redraw the tree while a slider is still moving.
+app.post('/api/tree/preview', async (req, res) => {
+  try {
+    await proxyJsonToolJson('/tree/preview', req, res, { serviceLabel: 'Tree Generator' });
+  } catch (err) {
+    console.error('Tree preview proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Tree preview failed' });
+  }
+});
+
+// Full generation. Same SSE contract as Auto UV and friends.
+app.post('/api/tree/generate', async (req, res) => {
+  try {
+    await proxyJsonTool('/tree/generate', req, res, {
+      serviceLabel: 'Tree Generator',
+      baseUrlBuilder: buildMeshToolsBaseUrl,
+    });
+  } catch (err) {
+    console.error('Tree generation proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Tree generation failed' });
+  }
+});
+
 app.post('/api/meshes/rig', meshToolsUpload.single('meshFile'), async (req, res) => {
   try {
     await proxyMeshTool('/meshes/rig', req, res, { baseUrlBuilder: buildRigToolsBaseUrl, serviceLabel: 'Rigging' });
@@ -8337,7 +8423,7 @@ app.delete('/api/mesh-assemblies/:id/geometry/:pieceId', async (req, res) => {
 // but the request body is JSON — there is no mesh to upload, only a prompt.
 app.post('/api/motions/generate', async (req, res) => {
   try {
-    await proxyMotionTool('/motions/generate', req, res);
+    await proxyJsonTool('/motions/generate', req, res);
   } catch (err) {
     console.error('Motion generation proxy failed:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message || 'Motion generation failed' });

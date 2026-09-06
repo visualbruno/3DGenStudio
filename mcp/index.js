@@ -26,6 +26,7 @@ import { registerActionTools } from './tools/actions.js';
 import { registerMeshToolTools } from './tools/meshTools.js';
 import { registerAssetTools } from './tools/assets.js';
 import { registerSettingsTools } from './tools/settings.js';
+import { registerTreeTools } from './tools/tree.js';
 
 function readAppVersion() {
   try {
@@ -48,6 +49,7 @@ const TOOL_GROUPS = {
   workflows: { register: registerWorkflowTools, cost: 8957 },
   actions: { register: registerActionTools, cost: 19385 },
   mesh: { register: registerMeshToolTools, cost: 31972 },
+  tree: { register: registerTreeTools, cost: 6200 },
   assets: { register: registerAssetTools, cost: 12542 },
   settings: { register: registerSettingsTools, cost: 1684 }
 };
@@ -57,7 +59,8 @@ const GROUP_NAMES = Object.keys(TOOL_GROUPS);
 // Aliases so a client may use the source-file name it sees in the docs.
 const GROUP_ALIASES = {
   meshtools: 'mesh', meshtool: 'mesh', project: 'projects', card: 'cards',
-  asset: 'assets', workflow: 'workflows', action: 'actions', setting: 'settings'
+  asset: 'assets', workflow: 'workflows', action: 'actions', setting: 'settings',
+  trees: 'tree', treegen: 'tree'
 };
 
 function normalizeGroup(raw) {
@@ -165,6 +168,10 @@ const INSTRUCTION_BLOCKS = [
   {
     groups: ['assets'],
     text: '- Seeing results: use view_asset to LOOK at a generated image (returns the actual image; for meshes it returns the thumbnail when available). Use download_asset to save any asset file to a local folder. Assets also carry direct download URLs in every response.'
+  },
+  {
+    groups: ['tree'],
+    text: '- Procedural trees: list_tree_presets -> preview_tree_skeleton (fast, no mesh) to settle the shape -> generate_tree to build and save it. The tree IS its spec: a seeded ~2KB document reproduces the mesh exactly, so vary `seed` for variations and patch `overrides` for changes, rather than trying to edit the resulting mesh. Trees are not project-scoped; omit projectId to save to the global library.'
   }
 ];
 

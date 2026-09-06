@@ -14,6 +14,7 @@ import MeshEditorPage from './pages/MeshEditorPage'
 import ImageEditorPage from './pages/ImageEditorPage'
 import BoardPage from './pages/BoardPage'
 import AssemblyPage from './pages/AssemblyPage'
+import TreeGenPage from './pages/TreeGenPage'
 import WikiPage from './pages/WikiPage'
 
 function AppRoutes() {
@@ -27,6 +28,7 @@ function AppRoutes() {
       <Route path="/image-editor" element={<ImageEditorPage />} />
       <Route path="/board" element={<BoardPage />} />
       <Route path="/assembly" element={<AssemblyPage />} />
+      <Route path="/trees" element={<TreeGenPage />} />
       <Route path="/wiki" element={<WikiPage />} />
       <Route path="/wiki/:pageId" element={<WikiPage />} />
       <Route path="/library" element={<Navigate to="/assets" replace />} />

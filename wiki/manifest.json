@@ -431,6 +431,15 @@
       "position": 8,
       "createdAt": 1788617463727,
       "updatedAt": 1788684641898
+    },
+    {
+      "id": 49,
+      "parentId": null,
+      "title": "Trees",
+      "icon": "forest",
+      "position": 9,
+      "createdAt": 1788691984180,
+      "updatedAt": 1788691984180
     }
   ]
 }

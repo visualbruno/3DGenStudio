@@ -20,8 +20,6 @@ from __future__ import annotations
 
 import base64
 import json
-import queue
-import threading
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -45,14 +43,9 @@ from ..services.inspect import run_inspect
 from ..services.mesh_thumbnail import render_mesh_thumbnail
 from ..services.repair import run_repair
 from ..services.segment import run_segment
+from .streaming import stream_payload
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
-
-_SSE_HEADERS = {
-    "Cache-Control": "no-cache, no-transform",
-    "X-Accel-Buffering": "no",  # disable proxy buffering (nginx etc.)
-    "Connection": "keep-alive",
-}
 
 
 def _parse_options(raw: str | None, model):
@@ -94,66 +87,15 @@ def _envelope(mesh, fmt: str, tool_stats: dict | None, preview_png: bytes | None
     }
 
 
-def _sse(obj: dict) -> str:
-    return f"data: {json.dumps(obj, separators=(',', ':'))}\n\n"
-
-
-def _stream_payload(run_callable, label: str) -> StreamingResponse:
-    """Run `run_callable(emit)` in a worker thread and stream SSE progress events.
-
-    `run_callable(emit)` must return the terminal `done` payload dict and may
-    call emit(stage, frac, message) to report progress. Use this directly for
-    tools that build their own envelope (e.g. FBX conversion, which must never
-    round-trip through trimesh); use `_stream_tool` for trimesh-based tools.
-    """
-    events: "queue.Queue" = queue.Queue()
-    holder: dict = {}
-
-    def emit(stage, frac, message=""):
-        events.put({"type": "progress", "stage": stage, "frac": round(float(frac), 4), "message": message})
-
-    def worker():
-        try:
-            holder["payload"] = run_callable(emit)
-        except Exception as exc:  # noqa: BLE001 — surfaced to the client as an error event
-            holder["error"] = f"{label} failed: {exc}"
-        finally:
-            events.put(None)  # sentinel: worker finished
-
-    threading.Thread(target=worker, daemon=True).start()
-
-    def generate():
-        yield _sse({"type": "progress", "stage": "start", "frac": 0.0, "message": f"{label} starting…"})
-        while True:
-            try:
-                item = events.get(timeout=15)
-            except queue.Empty:
-                # Long blocking stages (e.g. "Building clean topology") emit no
-                # progress for minutes. Send an SSE comment heartbeat so bytes keep
-                # flowing; otherwise the Node proxy's fetch body timeout (~5 min of
-                # silence) aborts the stream and takes the request down with it.
-                yield ": keepalive\n\n"
-                continue
-            if item is None:
-                break
-            yield _sse(item)
-        if "error" in holder:
-            yield _sse({"type": "error", "detail": holder["error"]})
-        else:
-            yield _sse({"type": "done", **holder["payload"]})
-
-    return StreamingResponse(generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
-
-
 def _stream_tool(run_callable, fmt: str, label: str) -> StreamingResponse:
-    """`_stream_payload` for trimesh-based tools: `run_callable(emit)` returns
+    """`stream_payload` for trimesh-based tools: `run_callable(emit)` returns
     (mesh, tool_stats, preview_png) and the envelope is built here.
     """
     def run(emit):
         mesh, tool_stats, preview = run_callable(emit)
         return _envelope(mesh, fmt, tool_stats, preview)
 
-    return _stream_payload(run, label)
+    return stream_payload(run, label)
 
 
 @router.post("/auto-uv")
@@ -230,7 +172,7 @@ async def convert(
             "preview_b64": None,
         }
 
-    return _stream_payload(run, "Convert to FBX")
+    return stream_payload(run, "Convert to FBX")
 
 
 @router.post("/collision")
@@ -268,7 +210,7 @@ async def collision(
             "preview_b64": None,
         }
 
-    return _stream_payload(run, "Collision")
+    return stream_payload(run, "Collision")
 
 
 @router.post("/bake")
@@ -298,7 +240,7 @@ async def bake(
             "stats": {"tool": tool_stats},
         }
 
-    return _stream_payload(run, "Bake")
+    return stream_payload(run, "Bake")
 
 
 @router.post("/fit")
@@ -334,7 +276,7 @@ async def fit(
     def run(emit):
         return run_fit(piece, body, opts, progress=emit)
 
-    return _stream_payload(run, "Fit")
+    return stream_payload(run, "Fit")
 
 
 @router.post("/hidden-faces")
@@ -367,7 +309,7 @@ async def hidden_faces(
     def run(emit):
         return run_hidden_faces(body, occluders, opts, progress=emit)
 
-    return _stream_payload(run, "Hidden faces")
+    return stream_payload(run, "Hidden faces")
 
 
 @router.post("/segment")
@@ -397,7 +339,7 @@ async def segment(
     def run(emit):
         return run_segment(mesh, opts, progress=emit)
 
-    return _stream_payload(run, "Smart Segmentation")
+    return stream_payload(run, "Smart Segmentation")
 
 
 @router.post("/inspect")

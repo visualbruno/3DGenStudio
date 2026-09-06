@@ -21,6 +21,14 @@ pymeshlab>=2023.12        # isotropic remesh / decimation / quad conversion
 # real 200k-face asset is only practical with it.
 embreex>=2.17
 
+# --- Boolean union (Tree Generator, 'clean' junction mode) --------------------
+# trimesh's default boolean engine. Only the tree generator's optional watertight
+# junction mode uses it, and services/treegen/junctions.py falls back to the
+# (non-watertight) swept geometry with a reported reason when the import fails --
+# so a tree still generates without it. Fast enough to matter: ~900 branch tubes
+# union into one closed solid in about half a second.
+manifold3d>=2.5
+
 # --- Collision hulls ---------------------------------------------------------
 # Approximate convex decomposition for the collision proxies the export dialog
 # generates. Optional at runtime: services/collision.py falls back to a single

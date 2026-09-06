@@ -67,11 +67,13 @@ export function createApiClient(baseUrl) {
     if (buffer.trim()) handleEvent(buffer);
   }
 
-  // POST multipart to an endpoint that answers with an SSE stream (the mesh
-  // tool proxies). onProgress receives every `progress` event; resolves with
-  // the terminal `done` event; throws on an `error` event.
-  async function apiFormSse(apiPath, formData, onProgress) {
-    const res = await fetch(`${base}/api${apiPath}`, { method: 'POST', body: formData });
+  // POST to an endpoint that answers with an SSE stream (the mesh tool
+  // proxies). onProgress receives every `progress` event; resolves with the
+  // terminal `done` event; throws on an `error` event. The request body is a
+  // parameter because not every tool takes an upload — a procedural tree's spec
+  // IS its input, and it posts JSON.
+  async function apiSse(apiPath, init, onProgress) {
+    const res = await fetch(`${base}/api${apiPath}`, { method: 'POST', ...init });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       const detail = data?.detail ? `: ${JSON.stringify(data.detail)}` : '';
@@ -90,6 +92,15 @@ export function createApiClient(baseUrl) {
     if (!doneEvent) throw new Error('The mesh tool finished without returning a result.');
     return doneEvent;
   }
+
+  const apiFormSse = (apiPath, formData, onProgress) =>
+    apiSse(apiPath, { body: formData }, onProgress);
+
+  const apiJsonSse = (apiPath, body, onProgress) =>
+    apiSse(apiPath, {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {})
+    }, onProgress);
 
   // Subscribe to a long-lived SSE endpoint. Events are delivered to onData
   // until close() is called or the stream ends (onEnd fires on unexpected end).
@@ -124,7 +135,7 @@ export function createApiClient(baseUrl) {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  return { base, apiJson, apiForm, apiFormSse, subscribeSse, assetUrl, fetchAssetBuffer };
+  return { base, apiJson, apiForm, apiFormSse, apiJsonSse, subscribeSse, assetUrl, fetchAssetBuffer };
 }
 
 // ---------------------------------------------------------------------------
