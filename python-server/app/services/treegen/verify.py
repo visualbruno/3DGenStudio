@@ -248,6 +248,58 @@ def check_lods(result: Result) -> None:
     result.check(marker > 0.2, "impostor: an alpha leaf atlas still reaches the atlas",
                  f"only {marker * 100:.1f}% of opaque pixels came from foliage")
 
+    # Quality: the bake must not be NOISIER than the texture it sampled.
+    #
+    # Point-sampling a leaf atlas once per pixel and keeping only the nearest
+    # sample made neighbouring impostor pixels disagree far more than the source
+    # texture's own grain did (12.3 vs 8.1 per channel on a real bark tree) --
+    # visible as speckle. Averaging every sample in the depth slab fixes it, and
+    # comparing against the source is the only threshold that means anything.
+    #
+    # The marker leaf above is a FLAT colour, so its own noise is zero and
+    # nothing could ever beat it. This needs a texture with real high-frequency
+    # detail to compare against.
+    def neighbour_noise(rgb, mask):
+        difference = np.abs(np.diff(rgb, axis=1)).mean(axis=2)
+        both = mask[:, :-1] & mask[:, 1:]
+        return float(difference[both].mean() * 255.0) if np.any(both) else 0.0
+
+    grain = np.zeros((tile_px, tile_px, 4), np.uint8)
+    noise_rng = np.random.default_rng(GOLDEN_SEED)
+    grain[..., 0] = noise_rng.integers(30, 90, (tile_px, tile_px))
+    grain[..., 1] = noise_rng.integers(90, 200, (tile_px, tile_px))
+    grain[..., 2] = noise_rng.integers(20, 70, (tile_px, tile_px))
+    grain[..., 3] = inside.astype(np.uint8) * 255
+    grain_buffer = BytesIO()
+    Image.fromarray(grain, "RGBA").save(grain_buffer, format="PNG")
+
+    textured = build_preset_spec("oak", seed=GOLDEN_SEED)
+    scene = generate_tree(textured, leaf_images=[grain_buffer.getvalue()])["scene"]
+    source = np.asarray(
+        scene.geometry["Tree_Foliage"].visual.material.baseColorTexture.convert("RGBA"),
+        dtype=np.float64) / 255.0
+    source_noise = neighbour_noise(source[..., :3], source[..., 3] > 0.5)
+
+    atlas = bake_impostor(scene, grid=2, tile=192, seed=GOLDEN_SEED)
+    baked = np.asarray(Image.open(BytesIO(atlas["albedo_png"])), dtype=np.float64) / 255.0
+    baked_noise = neighbour_noise(baked[..., :3], baked[..., 3] > 0.5)
+    result.check(baked_noise <= source_noise,
+                 "impostor: no grainier than the texture it sampled",
+                 f"impostor {baked_noise:.1f} vs source {source_noise:.1f} per channel")
+
+    # Holes: pixels no sample reached, ringed by pixels that were. They read as
+    # salt-and-pepper speckle against a dark canopy.
+    opaque = baked[..., 3] > 0.5
+    padded = np.pad(opaque, 1)
+    neighbours = sum(padded[dy:dy + opaque.shape[0], dx:dx + opaque.shape[1]].astype(int)
+                     for dy in (0, 1, 2) for dx in (0, 1, 2) if (dy, dx) != (1, 1))
+    holes = int(((~opaque) & (neighbours >= 6)).sum())
+    share = holes / max(int(opaque.sum()), 1)
+    result.check(share < 0.005, "impostor: no speckle holes in the silhouette",
+                 f"{holes} interior holes = {share * 100:.2f}% of the canopy")
+    result.note(f"  impostor noise {baked_noise:.1f} vs source {source_noise:.1f} per channel, "
+                f"{share * 100:.2f}% holes")
+
     # The hemisphere mapping must never look up from below the ground.
     from .impostor import hemi_octahedral_directions
     directions = hemi_octahedral_directions(8)

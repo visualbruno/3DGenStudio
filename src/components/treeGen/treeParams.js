@@ -171,7 +171,13 @@ export const TREE_PARAMS = [
     type: 'number', min: 2, max: 16, step: 1, hint: '8 means an 8x8 grid, so 64 views.' },
   { path: 'output.impostor_tile', group: 'Output', label: 'Impostor view size', unit: 'px',
     type: 'number', min: 32, max: 512, step: 32,
-    hint: 'Pixels per view. Views per axis x this is the atlas size.' },
+    hint: 'Pixels per view. Views per axis x this is the atlas size — and the bake cost follows the ATLAS area, '
+      + 'so doubling this quadruples the time.' },
+  { path: 'output.impostor_samples', group: 'Output', label: 'Impostor quality',
+    type: 'number', min: 1, max: 32, step: 1,
+    hint: 'Supersamples per pixel. Every sample that survives the depth test is averaged into its pixel, so this is '
+      + 'the antialiasing control: too low and the atlas comes out grainier than the leaf texture it was baked from. '
+      + 'Cost is linear.' },
   { path: 'output.engine', group: 'Output', label: 'Engine preset', type: 'select',
     options: [
       { value: 'generic', label: 'Generic (metres, Y-up)' },

@@ -220,7 +220,14 @@ class OutputSpec(BaseModel):
     impostor_grid: int = Field(default=8, ge=2, le=16,
                                description="Views per axis. 8 = 64 views, the usual quality/size trade.")
     impostor_tile: int = Field(default=128, ge=32, le=512,
-                               description="Pixels per view. grid x tile is the atlas size, so 8 x 128 = 1024px.")
+                               description="Pixels per view. grid x tile is the atlas size, so 8 x 128 = 1024px. "
+                                           "Cost grows with the ATLAS area, so doubling this quadruples the bake.")
+    impostor_samples: float = Field(default=5.0, ge=1.0, le=32.0,
+                                    description="Supersamples per pixel of projected triangle area. Every sample that "
+                                                "wins the depth test is averaged into its pixel, so this is the "
+                                                "antialiasing control as well as the coverage one: too low and the "
+                                                "atlas comes out noisier than the leaf texture it was baked from. "
+                                                "Cost is linear in it.")
 
 
 class TreeSpec(BaseModel):

@@ -347,6 +347,8 @@ def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
             grid=int(base.output.impostor_grid),
             tile=int(base.output.impostor_tile),
             seed=int(base.seed),
+            samples_per_pixel=float(base.output.impostor_samples),
+            on_progress=lambda frac, message: emit("impostor", 0.95 + 0.05 * frac, message),
         )
 
     elapsed = time.time() - started

@@ -34,11 +34,27 @@ import numpy as np
 import trimesh
 from trimesh.visual.material import PBRMaterial
 
-# Samples per pixel of projected area. Above ~3 the coverage gain is invisible
-# and the cost is linear, below ~2 thin twigs start dropping out.
-SAMPLES_PER_PIXEL = 3.0
+# Samples per pixel of projected area.
+#
+# This is a supersampling rate, not just a coverage rate: every sample that wins
+# the depth test contributes to its pixel's average, so raising it antialiases as
+# well as filling holes. At 3 the atlas came out measurably noisier than the leaf
+# texture it sampled (12.3 vs 8.1 mean neighbour difference) because each pixel
+# was one point sample of a high-frequency texture. 5 samples per unit of
+# triangle area works out to ~14 per atlas pixel once overdraw is counted, which
+# measures at or below the source texture's own noise.
+SAMPLES_PER_PIXEL = 5.0
+# One, not two. A tree is mostly sub-pixel triangles at impostor resolution, so
+# the floor is what most of them get -- and with ~200k triangles a floor of 2
+# adds 400k samples per view that buy nothing, doubling the bake.
 MIN_SAMPLES_PER_TRIANGLE = 1
-MAX_SAMPLES_PER_TRIANGLE = 4096
+MAX_SAMPLES_PER_TRIANGLE = 65536
+
+# Depth window, as a fraction of the model radius, within which samples count as
+# "the same surface" and are averaged together. Without a window only the single
+# nearest sample survives and there is nothing to average -- but it has to stay
+# tight enough that the canopy behind does not bleed through.
+DEPTH_SLAB = 0.004
 
 
 def hemi_octahedral_directions(grid: int) -> np.ndarray:
@@ -106,7 +122,8 @@ def _flatten_scene(scene: trimesh.Scene):
         uv = getattr(geometry.visual, "uv", None)
         texture_id = -1
         if texture is not None and uv is not None and len(uv) == len(vertices):
-            textures.append(np.asarray(texture.convert("RGBA"), dtype=np.float64) / 255.0)
+            image = np.asarray(texture.convert("RGBA"), dtype=np.float32) / np.float32(255.0)
+            textures.append(image)
             texture_id = len(textures) - 1
             uv_array = np.asarray(uv, dtype=np.float64)
         else:
@@ -128,9 +145,9 @@ def _flatten_scene(scene: trimesh.Scene):
         "positions": np.concatenate(positions),
         "faces": np.concatenate(faces).astype(np.int64),
         "normals": np.concatenate(normals),
-        "uvs": np.concatenate(uvs),
-        "colours": np.concatenate(colours),
-        "alphas": np.concatenate(alphas),
+        "uvs": np.concatenate(uvs).astype(np.float32),
+        "colours": np.concatenate(colours).astype(np.float32),
+        "alphas": np.concatenate(alphas).astype(np.float32),
         "texture_ids": np.concatenate(texture_ids),
         "textures": textures,
     }
@@ -148,15 +165,77 @@ def _sample_textures(mesh, sample_uv, sample_texture_id, colour, alpha):
             continue
         height, width = image.shape[:2]
         # glTF: v runs downward from the top-left, and the wrap is REPEAT.
-        px = np.clip((np.mod(sample_uv[picked, 0], 1.0) * (width - 1)).astype(np.int64), 0, width - 1)
-        py = np.clip((np.mod(sample_uv[picked, 1], 1.0) * (height - 1)).astype(np.int64), 0, height - 1)
-        texel = image[py, px]
+        # Bilinear, not nearest. A leaf atlas is high-frequency, and point-sampling
+        # it makes neighbouring impostor pixels disagree wildly for no reason
+        # other than which texel each landed on.
+        #
+        # Indexed through a FLAT view of the image: `image[y, x]` on a 3-D array
+        # builds an intermediate index per axis, and at several million samples
+        # that costs more than the interpolation it feeds.
+        flat_image = image.reshape(-1, 4)
+        u = np.mod(sample_uv[picked, 0], 1.0) * (width - 1)
+        v = np.mod(sample_uv[picked, 1], 1.0) * (height - 1)
+        x0 = u.astype(np.int32)
+        y0 = v.astype(np.int32)
+        x1 = np.minimum(x0 + 1, width - 1)
+        y1 = np.minimum(y0 + 1, height - 1)
+        fx = (u - x0).astype(np.float32)[:, None]
+        fy = (v - y0).astype(np.float32)[:, None]
+        row0 = y0 * width
+        row1 = y1 * width
+        texel = (flat_image[row0 + x0] * (1 - fx) * (1 - fy)
+                 + flat_image[row0 + x1] * fx * (1 - fy)
+                 + flat_image[row1 + x0] * (1 - fx) * fy
+                 + flat_image[row1 + x1] * fx * fy)
         colour[picked] *= texel[:, :3]
         alpha[picked] *= texel[:, 3]
     return colour, alpha
 
 
-def _render_view(direction, tile, mesh, centre, radius, rng):
+def _fill_holes(albedo, normal):
+    """Fill single-pixel gaps from their neighbours.
+
+    Even at a high sample rate the splat leaves a scatter of pixels no sample
+    happened to land in, and against a dark canopy those read as salt-and-pepper
+    speckle. Filling a transparent pixel from its opaque neighbours also gives
+    the atlas a one-pixel gutter, so a mipmapped impostor does not pull the empty
+    background into the silhouette as it shrinks.
+    """
+    opaque = albedo[..., 3] > 0.5
+    holes = ~opaque
+    if not np.any(holes):
+        return albedo, normal
+
+    padded_mask = np.pad(opaque, 1).astype(np.float64)
+    padded_albedo = np.pad(albedo[..., :3], ((1, 1), (1, 1), (0, 0)))
+    padded_normal = np.pad(normal, ((1, 1), (1, 1), (0, 0)))
+    height, width = opaque.shape
+
+    count = np.zeros((height, width))
+    colour = np.zeros((height, width, 3))
+    normals = np.zeros((height, width, 3))
+    for dy in (0, 1, 2):
+        for dx in (0, 1, 2):
+            if dy == 1 and dx == 1:
+                continue
+            mask = padded_mask[dy:dy + height, dx:dx + width]
+            count += mask
+            colour += padded_albedo[dy:dy + height, dx:dx + width] * mask[..., None]
+            normals += padded_normal[dy:dy + height, dx:dx + width] * mask[..., None]
+
+    # Only true holes, not the outside edge of the silhouette: filling those
+    # would inflate the tree by a pixel on every view.
+    fill = holes & (count >= 5)
+    if np.any(fill):
+        divisor = count[fill][:, None]
+        albedo[fill, :3] = colour[fill] / divisor
+        albedo[fill, 3] = 1.0
+        filled = normals[fill] / divisor
+        normal[fill] = filled / np.maximum(np.linalg.norm(filled, axis=1, keepdims=True), 1e-9)
+    return albedo, normal
+
+
+def _render_view(direction, tile, mesh, centre, radius, rng, samples_per_pixel=SAMPLES_PER_PIXEL):
     """One orthographic view, splat-rasterized. Returns (albedo RGBA, normal RGB)."""
     right, up, forward = _basis(direction)
     vertices = mesh["positions"]
@@ -176,7 +255,7 @@ def _render_view(direction, tile, mesh, centre, radius, rng):
     cx, cy = screen_x[tri[:, 2]], screen_y[tri[:, 2]]
     area = np.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) * 0.5
     pixels = area * (tile * 0.5) ** 2
-    counts = np.clip(np.ceil(pixels * SAMPLES_PER_PIXEL),
+    counts = np.clip(np.ceil(pixels * samples_per_pixel),
                      MIN_SAMPLES_PER_TRIANGLE, MAX_SAMPLES_PER_TRIANGLE).astype(np.int64)
 
     index = np.repeat(np.arange(len(tri)), counts)
@@ -186,8 +265,8 @@ def _render_view(direction, tile, mesh, centre, radius, rng):
 
     # Uniform barycentric sampling of a triangle: the sqrt is what makes the
     # distribution even rather than bunched at one corner.
-    r1 = np.sqrt(rng.random(total))
-    r2 = rng.random(total)
+    r1 = np.sqrt(rng.random(total, dtype=np.float32))
+    r2 = rng.random(total, dtype=np.float32)
     w0 = (1.0 - r1)[:, None]
     w1 = (r1 * (1.0 - r2))[:, None]
     w2 = (r1 * r2)[:, None]
@@ -217,31 +296,52 @@ def _render_view(direction, tile, mesh, centre, radius, rng):
     flat = py * tile + px
     z = sz[keep]
 
-    # Depth resolve: nearest sample per pixel wins. np.minimum.at gives the
-    # winning depth, then a second pass writes the attributes of whichever
-    # samples match it.
+    # Depth resolve, then AVERAGE every sample on the winning surface.
+    #
+    # Keeping only the single nearest sample makes each pixel one point sample of
+    # a high-frequency leaf texture, and the atlas comes out noisier than the
+    # texture it was baked from. Accumulating the samples within a depth slab of
+    # the nearest one turns the same work into a box filter: supersampling for
+    # free, since the samples were already being generated and thrown away.
     zbuffer = np.full(tile * tile, np.inf)
     np.minimum.at(zbuffer, flat, z)
-    winners = z <= zbuffer[flat] + 1e-9
+    slab = max(radius * DEPTH_SLAB, 1e-6)
+    winners = z <= zbuffer[flat] + slab
 
-    sc = sc[keep][winners]
-    sn = (w0 * normals[i0] + w1 * normals[i1] + w2 * normals[i2])[keep][winners]
+    sn = (w0 * normals[i0] + w1 * normals[i1] + w2 * normals[i2])[keep]
     sn = sn / np.maximum(np.linalg.norm(sn, axis=1, keepdims=True), 1e-9)
-
-    albedo = np.zeros((tile * tile, 4), np.float32)
-    normal = np.zeros((tile * tile, 3), np.float32)
-    target = flat[winners]
-    albedo[target, :3] = sc
-    albedo[target, 3] = 1.0
     # View-space normals: an impostor shader reads them in the frame of the view
     # it sampled, so storing world space would need the decode to know which
     # cell it came from.
-    normal[target] = np.stack([sn @ right, sn @ up, -(sn @ forward)], axis=1)
+    sn = np.stack([sn @ right, sn @ up, -(sn @ forward)], axis=1)
 
-    return albedo.reshape(tile, tile, 4), normal.reshape(tile, tile, 3)
+    # Accumulated with bincount rather than np.add.at. They compute the same
+    # thing, but ufunc.at is unbuffered and runs several times slower -- which
+    # shows at the few million samples a 512px tile generates.
+    target = flat[winners]
+    pixels_total = tile * tile
+    won_colour = sc[keep][winners]
+    won_normal = sn[winners]
+    colour_sum = np.stack(
+        [np.bincount(target, weights=won_colour[:, k], minlength=pixels_total) for k in range(3)], axis=1)
+    normal_sum = np.stack(
+        [np.bincount(target, weights=won_normal[:, k], minlength=pixels_total) for k in range(3)], axis=1)
+    weight = np.bincount(target, minlength=pixels_total).astype(np.float64)
+
+    covered = weight > 0
+    divisor = np.maximum(weight, 1.0)[:, None]
+    albedo = np.zeros((tile * tile, 4), np.float32)
+    albedo[:, :3] = colour_sum / divisor
+    albedo[covered, 3] = 1.0
+    averaged = normal_sum / divisor
+    normal = (averaged / np.maximum(np.linalg.norm(averaged, axis=1, keepdims=True), 1e-9)).astype(np.float32)
+    normal[~covered] = 0.0
+
+    return (_fill_holes(albedo.reshape(tile, tile, 4), normal.reshape(tile, tile, 3)))
 
 
-def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: int = 0):
+def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: int = 0,
+                  samples_per_pixel: float = SAMPLES_PER_PIXEL, on_progress=None):
     """Render a hemi-octahedral impostor for `scene`.
 
     Returns {albedo_png, normal_png, glb, meta}. The GLB is a single quad, sized
@@ -265,7 +365,12 @@ def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: in
 
     for index, direction in enumerate(directions):
         row, column = divmod(index, grid)
-        albedo, normal = _render_view(direction, tile, mesh, centre, radius, rng)
+        # Reported per view: a 2048px atlas of a 200k-triangle tree takes the
+        # better part of a minute, and a single event at the start leaves the UI
+        # looking hung for all of it.
+        if on_progress is not None:
+            on_progress(index / len(directions), f"Impostor view {index + 1} of {len(directions)}")
+        albedo, normal = _render_view(direction, tile, mesh, centre, radius, rng, samples_per_pixel)
         albedo_atlas[row * tile:(row + 1) * tile, column * tile:(column + 1) * tile] = albedo
         normal_atlas[row * tile:(row + 1) * tile, column * tile:(column + 1) * tile] = normal
 
@@ -331,6 +436,7 @@ def bake_impostor(scene: trimesh.Scene, grid: int = 8, tile: int = 128, seed: in
             "radius": radius,
             "quad": {"width": half * 2.0, "height": half * 2.0, "centre_y": mid_y},
             "coverage": round(coverage, 4),
+            "samples_per_pixel": float(samples_per_pixel),
             "normals": "view-space, [-1,1] remapped to [0,1]",
         },
     }
