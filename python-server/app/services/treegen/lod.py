@@ -30,24 +30,45 @@ from .skeleton import TreeSkeleton, _build_chains, _build_children
 from .spec import TreeSpec
 
 # Per-level scaling, applied as factor**level so a chain of any length is smooth.
-#
-# CARD_SCALE and the card size are tied together on purpose: card area grows as
-# the square of its width, so to keep the canopy covering the same silhouette
-# with fewer cards the width must scale as 1/sqrt(count). Anything else and the
-# tree visibly thins out (or fattens) as levels swap -- which is the popping the
-# whole exercise is meant to avoid. See `_leaf_size_scale`.
 RADIAL_SCALE = 0.55
 CARD_SCALE = 0.42
-SPACING_SCALE = 1.7
+SPACING_SCALE = 1.2
+
+# How much of the branch-order range survives each level.
+#
+# Subtracting a fixed 1 per level looks reasonable and fails on exactly the trees
+# that need LODs most. How deep a skeleton goes is a property of the tree, not a
+# constant: a sparse oak reaches order 5, a densely branched one reaches 12. On
+# the latter, dropping one order of twelve removes almost no branches -- measured,
+# LOD3 to LOD4 changed the bark triangle count by +2%, so the two levels were
+# indistinguishable. Scaling the surviving depth instead cuts proportionally
+# whatever the tree's depth turns out to be.
+ORDER_SCALE = 0.6
+
+# Card width growth, and the cap on it.
+#
+# The tempting rule is to preserve total card AREA: coverage goes as
+# count * width^2 and the budget scales by CARD_SCALE**level, so width should
+# scale by CARD_SCALE**(-level/2). Measured, that is wrong twice over.
+#
+# It over-compensates, because the budget is not the only thing thinning the
+# canopy -- wider leaf spacing and the branch-order cull each remove placements
+# too, and all three compound. And it over-corrects into a worse artefact: past
+# roughly 2x, a card stops reading as a leaf and reads as a slab, and because a
+# card grows outward from the branch it is anchored to, the crown visibly
+# inflates. At the old rule LOD4 cards were 5.7x wide, the crown swelled to 113%
+# of LOD0 by LOD3, and only 56 cards survived.
+#
+# A gentler exponent with a hard cap measures better on every axis at the same
+# triangle cost: 218 cards instead of 56 at LOD4, and the crown holds within a
+# few percent of LOD0 all the way down.
+LEAF_SIZE_EXPONENT = 0.30
+MAX_LEAF_GROWTH = 2.0
 
 
 def _leaf_size_scale(level: int) -> float:
-    """Card width growth that preserves total canopy coverage.
-
-    total area ~ count * width^2, and count scales by CARD_SCALE**level, so
-    width must scale by CARD_SCALE**(-level/2) to hold the product constant.
-    """
-    return float(CARD_SCALE ** (-0.5 * level))
+    """Card width growth for a level, capped. See MAX_LEAF_GROWTH."""
+    return float(min(CARD_SCALE ** (-LEAF_SIZE_EXPONENT * level), MAX_LEAF_GROWTH))
 
 
 def cull_skeleton(skeleton: TreeSkeleton, max_order: int) -> TreeSkeleton:
@@ -111,7 +132,9 @@ def lod_spec(spec: TreeSpec, level: int, skeleton_max_order: int | None = None) 
     coarse.bark.junction_mode = "sink"
 
     ceiling = int(skeleton_max_order if skeleton_max_order is not None else spec.branching.max_order)
-    cull_order = max(1, ceiling - level)
+    # Proportional, with the fixed subtraction as a floor so a shallow tree still
+    # loses at least one generation per level.
+    cull_order = max(1, min(ceiling - level, int(round(ceiling * ORDER_SCALE ** level))))
     coarse.branching.max_order = cull_order
 
     card_factor = CARD_SCALE ** level

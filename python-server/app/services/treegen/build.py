@@ -34,6 +34,11 @@ from .spec import TreeSpec
 _BARK_COLOR = [0.36, 0.27, 0.20, 1.0]
 _LEAF_COLOR = [0.24, 0.42, 0.16, 1.0]
 
+# A level must cost at most this share of the one before it to be worth
+# shipping. Above it the two are visually indistinguishable and the extra
+# file only buys another LOD transition.
+LEVEL_STEP_MAX = 0.75
+
 _ENGINE_DEFAULTS = {
     # (up_axis, scale). Unreal works in centimetres; the rest in metres.
     "generic": ("y", 1.0),
@@ -331,6 +336,24 @@ def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
             "stats": {**level_stats, "settings": describe_level(level, level_spec)},
         })
 
+    # Drop trailing levels that stopped paying for themselves.
+    #
+    # Every lever bottoms out eventually -- radial sides hit their floor of 3,
+    # the leaf card size hits its cap, and the branch-order cull runs out of
+    # orders to remove. A level that costs 98% of the one before it is a file
+    # nobody would ever switch to and an extra LOD transition for nothing, so
+    # asking for five levels on a tree that only supports three yields three.
+    dropped = []
+    while len(levels) > 1:
+        previous = levels[-2]["stats"]["totals"]["faces"]
+        last = levels[-1]["stats"]["totals"]["faces"]
+        if last <= previous * LEVEL_STEP_MAX:
+            break
+        dropped.append({"level": levels[-1]["level"],
+                        "faces": last,
+                        "share_of_previous": round(last / max(previous, 1), 3)})
+        levels.pop()
+
     impostor = None
     if base.output.impostor:
         emit("impostor", 0.95, "Baking impostor views")
@@ -355,6 +378,7 @@ def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
     emit("complete", 1.0, f"{len(levels)} LOD levels complete")
     return {
         "levels": levels,
+        "dropped_levels": dropped,
         "impostor": impostor,
         "skeleton": skeleton,
         "spec": base,

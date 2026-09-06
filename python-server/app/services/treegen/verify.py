@@ -163,13 +163,23 @@ def check_lods(result: Result) -> None:
     built = generate_tree_lods(spec)
 
     levels = built["levels"]
-    result.check(len(levels) == 4, "lods: a level per requested step", f"got {len(levels)}")
+    result.check(2 <= len(levels) <= 4, "lods: a chain of levels was produced", f"got {len(levels)}")
 
     faces = [level["stats"]["totals"]["faces"] for level in levels]
     result.check(all(a > b for a, b in zip(faces, faces[1:])),
                  "lods: every level is cheaper than the one before", f"{faces}")
     result.check(faces[-1] < faces[0] * 0.5,
                  "lods: the last level is at least half off", f"{faces[0]} -> {faces[-1]}")
+
+    # Each STEP has to earn its place. "Monotonically cheaper" is too weak a test:
+    # a level that costs 93% of the one before it is a level nobody would ever
+    # switch to, and it hid a real bug -- the branch-order cull subtracted a
+    # fixed 1 per level, which on a tree twelve orders deep removed almost
+    # nothing and made the last two levels indistinguishable.
+    for index, (before, after) in enumerate(zip(faces, faces[1:]), start=1):
+        result.check(after <= before * 0.75,
+                     f"lods: LOD{index} is a real step down from LOD{index - 1}",
+                     f"{after:,} is {100 * after / before:.0f}% of {before:,}")
 
     # The load-bearing property. A branch present at two levels MUST be in the
     # same place with the same thickness, or the levels visibly swap one tree
@@ -184,6 +194,34 @@ def check_lods(result: Result) -> None:
                      f"lods: culling by {drop} rethickens no surviving branch")
         result.check(bool((culled.parents[1:] >= 0).all()),
                      f"lods: culling by {drop} orphans nothing")
+
+    # The SILHOUETTE has to hold. It is the only thing a distant viewer can see,
+    # so a level that quietly grows or shrinks the crown pops when it swaps in.
+    #
+    # This is what the original card-size rule got wrong: compensating for a
+    # smaller leaf budget by enlarging the cards, without accounting for spacing
+    # and the order cull thinning the canopy too, blew the cards up to 5.7x and
+    # pushed the crown to 113% of LOD0 before collapsing to 88%.
+    widths, heights = [], []
+    for level in levels:
+        points = np.concatenate([np.asarray(g.vertices) for g in level["scene"].geometry.values()])
+        low, high = points.min(axis=0), points.max(axis=0)
+        widths.append(float(max(high[0] - low[0], high[2] - low[2])))
+        heights.append(float(high[1] - low[1]))
+    for index, (width, height) in enumerate(zip(widths, heights)):
+        result.check(0.85 <= width / widths[0] <= 1.12,
+                     f"lods: LOD{index} keeps the crown width",
+                     f"{100 * width / widths[0]:.0f}% of LOD0")
+        result.check(0.9 <= height / heights[0] <= 1.12,
+                     f"lods: LOD{index} keeps the tree height",
+                     f"{100 * height / heights[0]:.0f}% of LOD0")
+
+    # And a card must never grow into a slab -- past roughly 2x it stops reading
+    # as a leaf and starts pushing the silhouette outward.
+    for level in levels:
+        growth = level["stats"]["settings"]["leaf_size_ratio"] / levels[0]["stats"]["settings"]["leaf_size_ratio"]
+        result.check(growth <= 2.05, f"lods: LOD{level['level']} leaf cards stay leaf-sized",
+                     f"{growth:.2f}x the LOD0 card")
 
     # Culling removes exactly the twigs that leaves grow on, so a level that
     # silently lost its canopy is the easy mistake here.
@@ -307,6 +345,28 @@ def check_lods(result: Result) -> None:
     result.check(np.allclose(np.linalg.norm(directions, axis=1), 1.0),
                  "impostor: view directions are unit length")
     result.note(f"  lods     {' -> '.join(f'{value:,}' for value in faces)} tris")
+
+    # A densely branched tree reaches a much deeper order than a sparse one, and
+    # that is precisely the case a fixed per-level subtraction fails on. The
+    # presets above are shallow, so the chain is checked on a deep tree as well.
+    deep = build_preset_spec("oak", seed=GOLDEN_SEED, overrides={
+        "skeleton": {"attractors": 6000, "step_ratio": 0.022},
+        "branching": {"max_order": 16},
+    })
+    deep.output.lods = 4
+    deep_built = generate_tree_lods(deep)
+    deep_faces = [level["stats"]["totals"]["faces"] for level in deep_built["levels"]]
+    for index, (before, after) in enumerate(zip(deep_faces, deep_faces[1:]), start=1):
+        result.check(after <= before * 0.75,
+                     f"lods (deep tree): LOD{index} is a real step down",
+                     f"{after:,} is {100 * after / before:.0f}% of {before:,}")
+    # Levels are numbered contiguously from 0 whether or not any were dropped,
+    # so the _LOD<n> filenames never gain a hole.
+    result.check([level["level"] for level in deep_built["levels"]] == list(range(len(deep_faces))),
+                 "lods: levels stay contiguous after pruning")
+    result.note(f"  lods deep {' -> '.join(f'{value:,}' for value in deep_faces)} tris"
+                + (f"  ({len(deep_built['dropped_levels'])} dropped as too similar)"
+                   if deep_built["dropped_levels"] else ""))
 
 
 def check_foliage_scaling(result: Result) -> None:
