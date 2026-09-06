@@ -125,7 +125,13 @@ def _flatten_scene(scene: trimesh.Scene):
             image = np.asarray(texture.convert("RGBA"), dtype=np.float32) / np.float32(255.0)
             textures.append(image)
             texture_id = len(textures) - 1
-            uv_array = np.asarray(uv, dtype=np.float64)
+            # The scene holds UVs in trimesh's bottom-left-origin convention so
+            # that the glTF writer's flip lands them right way up in the GLB
+            # (see _make_geometry). Sampling here indexes the texture by row,
+            # which is top-left-origin, so flip back -- otherwise every leaf
+            # card reads the mirrored tile and lands on transparent pixels.
+            uv_array = np.asarray(uv, dtype=np.float64).copy()
+            uv_array[:, 1] = 1.0 - uv_array[:, 1]
         else:
             uv_array = np.zeros((len(vertices), 2))
 

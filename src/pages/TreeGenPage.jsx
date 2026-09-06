@@ -267,7 +267,11 @@ export default function TreeGenPage() {
   const textureRefs = useMemo(() => ({
     trunk: textures.trunk?.id ?? null,
     branches: textures.branches?.id ?? null,
-    leaves: (textures.leaves || []).map(entry => entry.id).filter(Boolean),
+    // {id, pivot} per leaf: the pivot is a property of THIS tree, not of the
+    // image, so the same leaf photo can hang differently in two presets.
+    leaves: (textures.leaves || [])
+      .filter(entry => entry.id)
+      .map(entry => ({ id: entry.id, pivot: entry.pivot || null })),
   }), [textures])
 
   // A preset is worth nothing in a visual library without a picture, and the
@@ -790,6 +794,19 @@ export default function TreeGenPage() {
                     help looks like a leaf budget that does not work. */}
                 {tool?.foliage?.limited_by && (
                   <span className="treegen__stat-note"> · capped by {tool.foliage.limited_by}</span>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Leaf pivots</dt>
+              {/* Whether the pivots actually reached the generator. "I set it and
+                  nothing changed" is otherwise unanswerable from the render. */}
+              <dd>
+                {tool?.textures?.leaves_pivoted
+                  ? `${tool.textures.leaves_pivoted} from pivot`
+                  : 'none set'}
+                {tool?.textures?.leaves_auto_oriented > 0 && (
+                  <span className="treegen__stat-note"> · {tool.textures.leaves_auto_oriented} auto-oriented</span>
                 )}
               </dd>
             </div>

@@ -64,6 +64,11 @@ class TreeGenerateRequest(TreeRequest):
                                                           "composed into an atlas here and each card picks a tile at "
                                                           "random, so this is the field to use -- nobody has an atlas "
                                                           "lying around, they have leaf images.")
+    leaf_pivots: list[dict | None] | None = Field(
+        default=None, max_length=64,
+        description="Per leaf image, the attachment point as {x, y} normalized 0-1, or null to fall back to "
+                    "automatic detection. Positional: entry i belongs to leaf_images_b64[i]. This is where the "
+                    "stem meets the branch, and the leaf is framed hanging from it.")
     leaf_atlas_b64: str | None = Field(default=None,
                                        description="A ready-made leaf atlas, for callers that already built one. "
                                                    "Ignored when leaf_images_b64 is supplied.")
@@ -109,6 +114,7 @@ async def generate(request: TreeGenerateRequest) -> StreamingResponse:
             bark_texture=request.bark_texture_b64,
             branch_texture=request.branch_texture_b64,
             leaf_images=request.leaf_images_b64,
+            leaf_pivots=request.leaf_pivots,
             leaf_atlas=request.leaf_atlas_b64,
             on_progress=emit,
         )
@@ -148,6 +154,7 @@ async def lods(request: TreeGenerateRequest) -> StreamingResponse:
             bark_texture=request.bark_texture_b64,
             branch_texture=request.branch_texture_b64,
             leaf_images=request.leaf_images_b64,
+            leaf_pivots=request.leaf_pivots,
             leaf_atlas=request.leaf_atlas_b64,
             on_progress=emit,
         )
@@ -174,3 +181,29 @@ async def lods(request: TreeGenerateRequest) -> StreamingResponse:
         }
 
     return stream_payload(run, "Tree LOD chain")
+
+
+class LeafPivotRequest(BaseModel):
+    images_b64: list[str] = Field(default_factory=list, max_length=64,
+                                  description="Leaf cut-outs to locate stems in. Base64 or data: URLs.")
+
+
+@router.post("/leaf-pivots")
+async def leaf_pivots(request: LeafPivotRequest) -> dict:
+    """Detect each leaf's attachment point, for seeding the editor.
+
+    A guess the user can drag beats both a wrong guess they cannot see and an
+    empty field they have to fill in from scratch -- so this is deliberately
+    advisory. `null` for an image means nothing stem-like was found, and the
+    caller should fall back to its own default rather than treat it as an error.
+    """
+    from ..services.treegen.textures import decode_image, detect_leaf_pivot
+
+    results = []
+    for index, payload in enumerate(request.images_b64):
+        try:
+            image = decode_image(payload, f"leaf image {index + 1}")
+            results.append(detect_leaf_pivot(image) if image is not None else None)
+        except ValueError:
+            results.append(None)
+    return {"pivots": results}

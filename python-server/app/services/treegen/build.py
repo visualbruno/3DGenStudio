@@ -53,7 +53,16 @@ def _make_geometry(vertices, faces, normals, uvs, wind, material, wind_colors: b
     """One Trimesh with explicit normals, analytic UVs and the wind COLOR_0 channel."""
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False, validate=False)
 
-    visual = trimesh.visual.TextureVisuals(uv=np.asarray(uvs, dtype=np.float64), material=material)
+    # trimesh stores UVs bottom-left-origin (the OBJ convention) and flips V when
+    # it writes glTF. Every UV in this package is authored in glTF's own
+    # convention -- V down from the top-left, which is what makes "the leaf card's
+    # base edge samples the TOP of its atlas tile" mean the pivot sits on the
+    # branch. Undo the exporter's flip here, once, so the in-memory UVs are the
+    # truth and the GLB matches them. Without this the leaf atlas comes out
+    # mirrored and every leaf hangs by its tip with its stem in the air.
+    uv = np.asarray(uvs, dtype=np.float64).copy()
+    uv[:, 1] = 1.0 - uv[:, 1]
+    visual = trimesh.visual.TextureVisuals(uv=uv, material=material)
     if wind_colors and len(wind) == len(vertices):
         # glTF COLOR_0 as normalized uint8. trimesh only exports this alongside a
         # TextureVisuals when it is set as the `color` vertex attribute -- setting
@@ -180,7 +189,8 @@ def build_level_scene(spec, skeleton, crown_centre, textures, emit=None, progres
 
 
 def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
-                  branch_texture=None, leaf_images=None, on_progress=None) -> dict:
+                  branch_texture=None, leaf_images=None, leaf_pivots=None,
+                  on_progress=None) -> dict:
     """Build the full tree. Returns {scene, glb, stats}.
 
     Textures are optional and independent:
@@ -224,8 +234,9 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
     # geometry work, not after it.
     trunk_image = decode_image(bark_texture, "bark texture")
     branch_image = decode_image(branch_texture, "branch texture")
-    leaf_image, atlas_cols, atlas_rows, atlas_tiles = resolve_leaf_atlas(
-        leaf_atlas, leaf_images, spec.foliage.atlas_cols, spec.foliage.atlas_rows)
+    leaf_image, atlas_cols, atlas_rows, atlas_tiles, leaf_placement = resolve_leaf_atlas(
+        leaf_atlas, leaf_images, spec.foliage.atlas_cols, spec.foliage.atlas_rows,
+        auto_orient=spec.foliage.auto_orient_leaves, pivots=leaf_pivots)
     # The composed grid is authoritative -- the cards must index the atlas that
     # was actually baked, not the one the spec happened to say.
     spec = spec.model_copy(deep=True)
@@ -266,6 +277,8 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
             "leaves": bool(leaf_image),
             "atlas_grid": [spec.foliage.atlas_cols, spec.foliage.atlas_rows],
             "atlas_tiles": int(spec.foliage.atlas_tiles or spec.foliage.atlas_cols * spec.foliage.atlas_rows),
+            "leaves_pivoted": int(leaf_placement.get("pivoted", 0)),
+            "leaves_auto_oriented": int(leaf_placement.get("auto_oriented", 0)),
         },
         "seconds": round(elapsed, 3),
     }
@@ -275,7 +288,8 @@ def generate_tree(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
 
 
 def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
-                       branch_texture=None, leaf_images=None, on_progress=None) -> dict:
+                       branch_texture=None, leaf_images=None, leaf_pivots=None,
+                       on_progress=None) -> dict:
     """Generate the whole LOD chain from ONE skeleton.
 
     Returns {levels: [{level, glb, stats}], skeleton, seconds}.
@@ -300,8 +314,9 @@ def generate_tree_lods(spec: TreeSpec, bark_texture=None, leaf_atlas=None,
 
     trunk_image = decode_image(bark_texture, "bark texture")
     branch_image = decode_image(branch_texture, "branch texture")
-    leaf_image, atlas_cols, atlas_rows, atlas_tiles = resolve_leaf_atlas(
-        leaf_atlas, leaf_images, spec.foliage.atlas_cols, spec.foliage.atlas_rows)
+    leaf_image, atlas_cols, atlas_rows, atlas_tiles, leaf_placement = resolve_leaf_atlas(
+        leaf_atlas, leaf_images, spec.foliage.atlas_cols, spec.foliage.atlas_rows,
+        auto_orient=spec.foliage.auto_orient_leaves, pivots=leaf_pivots)
 
     base = spec.model_copy(deep=True)
     base.foliage.atlas_cols = int(atlas_cols or base.foliage.atlas_cols)

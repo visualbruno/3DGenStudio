@@ -11,7 +11,8 @@
 // bark in two, which is a real cost and so is never done behind the user's back.
 import { useCallback, useState } from 'react'
 import AssetSelectorModal from '../AssetSelectorModal'
-import { assetToTextureEntry } from '../../utils/treeGen'
+import { assetToTextureEntry, detectLeafPivots, resolveTextureEntry } from '../../utils/treeGen'
+import LeafPivotDialog from './LeafPivotDialog'
 
 const SLOTS = [
   {
@@ -30,8 +31,10 @@ const SLOTS = [
     key: 'leaves',
     label: 'Leaves',
     multiple: true,
-    hint: 'One or more leaf cut-outs WITH ALPHA. They are composed into an atlas and every card picks a tile at random, '
-      + 'so a few variants read as far more.',
+    pivots: true,
+    hint: 'One or more leaf cut-outs WITH ALPHA. They are composed into an atlas and every card picks a tile at '
+      + 'random, so a few variants read as far more. Use the crosshair on a thumbnail to set where its stem '
+      + 'attaches to the branch.',
   },
 ]
 
@@ -39,14 +42,13 @@ function fileToEntry(file) {
   return { id: null, name: file.name, url: URL.createObjectURL(file), source: null, file }
 }
 
-function Slot({ slot, value, onChange, onPick }) {
+function Slot({ slot, value, onChange, onUpload, onPick, onEditPivot }) {
   const entries = slot.multiple ? (value || []) : (value ? [value] : [])
 
-  const onUpload = event => {
+  const handleFiles = event => {
     const files = Array.from(event.target.files || [])
     if (!files.length) return
-    const added = files.map(fileToEntry)
-    onChange(slot.multiple ? [...(value || []), ...added] : added[0])
+    onUpload(files.map(fileToEntry))
     event.target.value = ''
   }
 
@@ -70,16 +72,29 @@ function Slot({ slot, value, onChange, onPick }) {
       {entries.length > 0 && (
         <div className="treegen__thumbs">
           {entries.map((entry, index) => (
-            <button
-              key={`${entry.id ?? entry.name}-${index}`}
-              type="button"
-              className="treegen__thumb"
-              title={`${entry.name} — click to remove`}
-              onClick={() => removeAt(index)}
-            >
-              <img src={entry.url} alt={entry.name} />
-              <span className="treegen__thumb-remove">×</span>
-            </button>
+            <div key={`${entry.id ?? entry.name}-${index}`} className="treegen__thumb-wrap">
+              <button
+                type="button"
+                className="treegen__thumb"
+                title={`${entry.name} — click to remove`}
+                onClick={() => removeAt(index)}
+              >
+                <img src={entry.url} alt={entry.name} />
+                <span className="treegen__thumb-remove">×</span>
+              </button>
+              {slot.pivots && (
+                <button
+                  type="button"
+                  className={`treegen__thumb-pivot ${entry.pivot ? 'treegen__thumb-pivot--set' : ''}`}
+                  title={entry.pivot
+                    ? `Stem at ${entry.pivot.x.toFixed(2)}, ${entry.pivot.y.toFixed(2)} — click to adjust`
+                    : 'Set where the stem attaches'}
+                  onClick={() => onEditPivot(slot, index)}
+                >
+                  ⌖
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -90,7 +105,7 @@ function Slot({ slot, value, onChange, onPick }) {
         </button>
         <label className="treegen__upload">
           Upload
-          <input type="file" accept="image/*" multiple={slot.multiple} onChange={onUpload} hidden />
+          <input type="file" accept="image/*" multiple={slot.multiple} onChange={handleFiles} hidden />
         </label>
       </div>
     </div>
@@ -99,16 +114,58 @@ function Slot({ slot, value, onChange, onPick }) {
 
 export default function TreeTexturePanel({ textures, onChange }) {
   const [picking, setPicking] = useState(null)
+  const [editing, setEditing] = useState(null)   // { slotKey, index }
 
-  const handlePicked = useCallback(selection => {
+  // Seed each new leaf's pivot from the detector, so the crosshair opens on a
+  // guess instead of a blank. Best-effort: a leaf with no pivot still renders
+  // (the service falls back to its own detection), so a failure here must not
+  // block adding images.
+  const seedPivots = useCallback(async added => {
+    try {
+      const images = await Promise.all(added.map(entry => resolveTextureEntry(entry)))
+      const usable = images.map((image, index) => ({ image, index })).filter(item => item.image)
+      if (!usable.length) return added
+      const detected = await detectLeafPivots(usable.map(item => item.image))
+      const withPivots = [...added]
+      usable.forEach((item, position) => {
+        const pivot = detected[position]
+        if (pivot) withPivots[item.index] = { ...withPivots[item.index], pivot }
+      })
+      return withPivots
+    } catch (error) {
+      console.warn('Could not detect leaf pivots', error)
+      return added
+    }
+  }, [])
+
+  const handlePicked = useCallback(async selection => {
     const slot = picking
     setPicking(null)
     if (!slot) return
     const chosen = Array.isArray(selection) ? selection : [selection]
-    const added = chosen.filter(Boolean).map(assetToTextureEntry)
+    let added = chosen.filter(Boolean).map(assetToTextureEntry)
     if (!added.length) return
+    if (slot.pivots) added = await seedPivots(added)
     onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...added] : added[0])
-  }, [picking, textures, onChange])
+  }, [picking, textures, onChange, seedPivots])
+
+  const handleUploaded = useCallback(async (slot, added) => {
+    const seeded = slot.pivots ? await seedPivots(added) : added
+    onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...seeded] : seeded[0])
+  }, [textures, onChange, seedPivots])
+
+  const editingEntry = editing
+    ? (textures[editing.slotKey] || [])[editing.index] || null
+    : null
+
+  const savePivot = useCallback(pivot => {
+    if (!editing) return
+    const list = [...(textures[editing.slotKey] || [])]
+    if (!list[editing.index]) return setEditing(null)
+    list[editing.index] = { ...list[editing.index], pivot }
+    onChange(editing.slotKey, list)
+    return setEditing(null)
+  }, [editing, textures, onChange])
 
   return (
     <div className="treegen__textures">
@@ -118,9 +175,19 @@ export default function TreeTexturePanel({ textures, onChange }) {
           slot={slot}
           value={textures[slot.key]}
           onChange={value => onChange(slot.key, value)}
+          onUpload={added => handleUploaded(slot, added)}
           onPick={setPicking}
+          onEditPivot={(target, index) => setEditing({ slotKey: target.key, index })}
         />
       ))}
+
+      {editingEntry && (
+        <LeafPivotDialog
+          entry={editingEntry}
+          onSave={savePivot}
+          onClose={() => setEditing(null)}
+        />
+      )}
 
       {picking && (
         <AssetSelectorModal

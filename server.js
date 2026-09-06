@@ -8060,6 +8060,17 @@ app.post('/api/tree/preview', async (req, res) => {
   }
 });
 
+// Detect where each leaf image's stem is, to seed the pivot editor. Advisory:
+// a null entry means nothing stem-like was found, not an error.
+app.post('/api/tree/leaf-pivots', async (req, res) => {
+  try {
+    await proxyJsonToolJson('/tree/leaf-pivots', req, res, { serviceLabel: 'Tree Generator' });
+  } catch (err) {
+    console.error('Leaf pivot detection proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Leaf pivot detection failed' });
+  }
+});
+
 // The LOD chain: N meshes plus optional impostor atlases, from one skeleton.
 // Its own route rather than a flag on /generate, because it answers with a
 // different shape and every ordinary caller would otherwise carry it.

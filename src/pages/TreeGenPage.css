@@ -419,10 +419,15 @@
 
 /* Clicking a thumbnail removes it — the × is an affordance, not a second
  * target, so the whole tile stays comfortably clickable at 44px. */
+.treegen__thumb-wrap {
+  position: relative;
+}
+
 .treegen__thumb {
   position: relative;
-  width: 44px;
-  height: 44px;
+  display: block;
+  width: 64px;
+  height: 64px;
   padding: 0;
   border: 1px solid var(--outline-variant);
   border-radius: 4px;
@@ -629,4 +634,194 @@
   font-family: inherit;
   font-size: 10px;
   color: var(--on-surface-variant);
+}
+
+/* Pivot control on a leaf thumbnail. Filled once a stem has been placed, so an
+ * unset leaf is visible at a glance. */
+.treegen__thumb-pivot {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--outline-variant);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--on-surface-variant);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.treegen__thumb-pivot:hover { background: var(--surface-container-high); color: var(--on-surface); }
+
+.treegen__thumb-pivot--set {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* ---- Leaf pivot dialog --------------------------------------------------- */
+
+.leafpivot__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.leafpivot {
+  width: min(760px, 92vw);
+  background: var(--surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.leafpivot__header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.leafpivot__header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.leafpivot__header button {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--on-surface-variant);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.leafpivot__hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+}
+
+.leafpivot__body {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+/* The checkerboard makes a transparent cut-out's silhouette readable, which is
+ * exactly what has to be judged when placing a stem. */
+.leafpivot__stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  aspect-ratio: 1;
+  max-height: 56vh;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: crosshair;
+  background-color: #2a2d31;
+  background-image:
+    linear-gradient(45deg, #33373c 25%, transparent 25%),
+    linear-gradient(-45deg, #33373c 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #33373c 75%),
+    linear-gradient(-45deg, transparent 75%, #33373c 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+}
+
+.leafpivot__stage img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  pointer-events: none;
+}
+
+.leafpivot__marker {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border: 2px solid #ff4d4d;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.leafpivot__marker::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  background: #ff4d4d;
+}
+
+.leafpivot__side {
+  width: 140px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.leafpivot__side-label {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+}
+
+.leafpivot__side canvas {
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+}
+
+.leafpivot__side code {
+  font-size: 11px;
+  color: var(--on-surface-variant);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.leafpivot__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.leafpivot__spacer { flex: 1; }
+
+.leafpivot__footer button {
+  padding: 6px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 6px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.leafpivot__footer button:hover { background: var(--surface-container-high); }
+
+.leafpivot__primary {
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+  font-weight: 600;
 }

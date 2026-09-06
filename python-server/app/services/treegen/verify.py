@@ -403,6 +403,184 @@ def check_foliage_scaling(result: Result) -> None:
                  "foliage: reports 'budget' when it is")
 
 
+def check_leaf_orientation(result: Result) -> None:
+    """A leaf image must end up with its stem where the card attaches.
+
+    Cards sample a tile's TOP edge at the branch, so a leaf that arrives rotated
+    -- which every generated cut-out does -- has to be turned before it goes into
+    the atlas, or it hangs from its tip or sideways.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    from .textures import find_leaf_stem, orient_leaf
+
+    # A synthetic leaf: an elliptical blade with a thin stalk, drawn pointing in
+    # a known direction so the correction can be checked rather than eyeballed.
+    def make_leaf(stem_angle_deg):
+        size = 256
+        canvas = np.zeros((size, size, 4), np.uint8)
+        yy, xx = np.mgrid[0:size, 0:size]
+        centre = size / 2
+        blade = (((yy - centre) / (size * 0.30)) ** 2 + ((xx - centre) / (size * 0.20)) ** 2) <= 1.0
+        # Stalk: a thin bar from the blade centre outward at the given angle.
+        radians = np.radians(stem_angle_deg)
+        dx, dy = np.sin(radians), -np.cos(radians)      # 0 deg = up
+        steps = np.linspace(0, size * 0.45, 400)
+        stalk = np.zeros_like(blade)
+        for step in steps:
+            x = int(round(centre + dx * step))
+            y = int(round(centre + dy * step))
+            if 0 <= x < size and 0 <= y < size:
+                stalk[max(y - 2, 0):y + 3, max(x - 2, 0):x + 3] = True
+        mask = blade | stalk
+        canvas[..., 1] = 150
+        canvas[..., 3] = mask.astype(np.uint8) * 255
+        buffer = BytesIO()
+        Image.fromarray(canvas, "RGBA").save(buffer, format="PNG")
+        return Image.open(BytesIO(buffer.getvalue()))
+
+    for planted in (0, 45, 90, 150, -120):
+        leaf = make_leaf(planted)
+        found = find_leaf_stem(leaf)
+        result.check(found is not None, f"leaf orientation: stem found at {planted} deg")
+        if found is None:
+            continue
+        turned, angle = orient_leaf(leaf)
+        result.check(angle is not None, f"leaf orientation: {planted} deg leaf is rotated")
+
+        # After turning, the stem must be in the TOP portion of the image.
+        alpha = np.asarray(turned.convert("RGBA"))[..., 3] > 127
+        ys, xs = np.nonzero(alpha)
+        height = ys.max() - ys.min() + 1
+        top_band = ys < ys.min() + height * 0.25
+        bottom_band = ys > ys.max() - height * 0.25
+        # The stalk is thin, so the attachment end holds far fewer pixels.
+        result.check(top_band.sum() < bottom_band.sum(),
+                     f"leaf orientation: {planted} deg leaf ends up stem-up",
+                     f"top band {int(top_band.sum())} px vs bottom {int(bottom_band.sum())} px")
+
+
+def check_leaf_pivots(result: Result) -> None:
+    """An explicit pivot must beat the detector, and frame the leaf from it.
+
+    The detector is a convenience; the click is the answer. If a supplied pivot
+    were quietly ignored the editor would look like it worked and change
+    nothing, which is the worst possible failure for a control whose entire
+    purpose is overriding a wrong guess.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    from .textures import detect_leaf_pivot, place_leaf_by_pivot
+
+    # A blade with a stalk pointing RIGHT, so a correct placement has to rotate
+    # it a quarter turn -- a no-op implementation cannot accidentally pass.
+    size = 256
+    canvas = np.zeros((size, size, 4), np.uint8)
+    yy, xx = np.mgrid[0:size, 0:size]
+    blade = (((yy - size / 2) / (size * 0.28)) ** 2 + ((xx - size * 0.4) / (size * 0.18)) ** 2) <= 1.0
+    stalk = (np.abs(yy - size / 2) <= 3) & (xx > size * 0.55) & (xx < size * 0.95)
+    canvas[..., 1] = 150
+    canvas[..., 3] = (blade | stalk).astype(np.uint8) * 255
+    buffer = BytesIO()
+    Image.fromarray(canvas, "RGBA").save(buffer, format="PNG")
+    leaf = Image.open(BytesIO(buffer.getvalue()))
+
+    detected = detect_leaf_pivot(leaf)
+    result.check(detected is not None, "leaf pivot: detector seeds a point")
+    if detected is not None:
+        result.check(detected["x"] > 0.7, "leaf pivot: detector finds the stalk end",
+                     f"x={detected['x']:.2f}, expected the right-hand side")
+
+    # Frame from an explicit pivot at the stalk tip: the blade must end up BELOW
+    # the pivot, which sits at the top-centre.
+    framed = place_leaf_by_pivot(leaf, {"x": 0.93, "y": 0.5}, 128)
+    alpha = np.asarray(framed.convert("RGBA"))[..., 3] > 127
+    result.check(alpha.any(), "leaf pivot: framing keeps the leaf")
+    if alpha.any():
+        ys, xs = np.nonzero(alpha)
+        result.check(ys.mean() > framed.height * 0.4,
+                     "leaf pivot: the blade hangs below the pivot",
+                     f"blade centre at y={ys.mean() / framed.height:.2f} of the tile")
+        # And the top row is the thin stalk, not the blade.
+        top = alpha[:max(int(framed.height * 0.08), 2)].sum()
+        middle = alpha[int(framed.height * 0.45):int(framed.height * 0.55)].sum()
+        result.check(top < middle, "leaf pivot: the tile's top edge is the stem end",
+                     f"{int(top)} px at the top vs {int(middle)} px across the middle")
+
+    # A pivot on the OPPOSITE side must produce a different framing -- proof the
+    # value is used rather than the detector silently winning.
+    other = place_leaf_by_pivot(leaf, {"x": 0.05, "y": 0.5}, 128)
+    same = np.array_equal(np.asarray(framed.convert("RGBA")), np.asarray(other.convert("RGBA")))
+    result.check(not same, "leaf pivot: a different pivot frames the leaf differently")
+
+
+def check_exported_uvs(result: Result) -> None:
+    """The leaf card's branch end must sample the TOP of its atlas tile -- in the
+    GLB, not in memory.
+
+    This is the one check that reads the exported bytes back, and it exists
+    because everything upstream of the writer once verified green while the
+    shipped tree had every leaf hanging by its tip: trimesh stores UVs
+    bottom-left-origin and flips V on glTF export, so an atlas authored in
+    glTF's own convention came out mirrored. In-memory assertions cannot see
+    that. Which edge touches the branch is decided geometrically here (nearest
+    bark vertex) rather than by trusting the corner order, so the check stays
+    honest if the card builder is rewritten.
+    """
+    import json
+    import struct
+
+    spec = build_preset_spec("oak", seed=GOLDEN_SEED)
+    spec.foliage.max_cards = 200
+    glb = generate_tree(spec)["glb"]
+
+    offset, chunks = 12, {}
+    while offset < len(glb):
+        length, kind = struct.unpack_from("<II", glb, offset)
+        offset += 8
+        chunks[kind] = glb[offset:offset + length]
+        offset += length
+    gltf = json.loads(chunks[0x4E4F534A].decode("utf-8"))
+    blob = chunks[0x004E4942]
+
+    def read(index: int) -> np.ndarray:
+        accessor = gltf["accessors"][index]
+        view = gltf["bufferViews"][accessor["bufferView"]]
+        width = {"VEC2": 2, "VEC3": 3, "SCALAR": 1}[accessor["type"]]
+        start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+        return np.frombuffer(blob, np.float32, accessor["count"] * width, start).reshape(-1, width)
+
+    meshes = {mesh["name"]: mesh["primitives"][0] for mesh in gltf["meshes"]}
+    if "Tree_Foliage" not in meshes or "Tree_Bark" not in meshes:
+        result.check(False, "exported UVs: the GLB carries bark and foliage")
+        return
+
+    bark = read(meshes["Tree_Bark"]["attributes"]["POSITION"])
+    positions = read(meshes["Tree_Foliage"]["attributes"]["POSITION"])
+    uvs = read(meshes["Tree_Foliage"]["attributes"]["TEXCOORD_0"])
+    rows = 2  # the composed atlas for this preset
+
+    inverted = 0
+    cards = min(len(positions) // 4, 40)
+    for card in range(cards):
+        span = np.arange(card * 4, card * 4 + 4)
+        distance = np.linalg.norm(bark[None] - positions[span][:, None], axis=2).min(axis=1)
+        order = np.argsort(distance)
+        base = (uvs[span[order[:2]], 1].mean() * rows) % 1.0
+        tip = (uvs[span[order[2:]], 1].mean() * rows) % 1.0
+        if base > tip:
+            inverted += 1
+
+    result.check(cards > 0, "exported UVs: the GLB carries leaf cards")
+    result.check(inverted <= cards * 0.25,
+                 "exported UVs: the leaf's branch end samples the top of its tile",
+                 f"{inverted}/{cards} cards are mirrored -- leaves hang by the tip")
+
+
 def check_determinism(result: Result, preset: str) -> None:
     """Same seed, same bytes. The claim the spec-as-asset design rests on."""
     spec = build_preset_spec(preset, seed=GOLDEN_SEED)
@@ -513,6 +691,9 @@ def run(presets: list[str] | None = None, update_golden: bool = False) -> tuple[
         check_lods(result)
         check_foliage_scaling(result)
         check_migration(result)
+        check_leaf_orientation(result)
+        check_leaf_pivots(result)
+        check_exported_uvs(result)
 
         # Preview must stay fast enough to drive a slider drag.
         spec = build_preset_spec("oak", seed=GOLDEN_SEED)

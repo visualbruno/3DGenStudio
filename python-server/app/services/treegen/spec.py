@@ -195,6 +195,12 @@ class FoliageSpec(BaseModel):
                                          "leaves need a 2x2 grid, which leaves one cell empty, and a card that "
                                          "sampled that cell would alpha-test away and punch a hole in the canopy.")
     double_sided: bool = Field(default=True, description="Emit both windings so cards are lit from behind too.")
+    auto_orient_leaves: bool = Field(default=True,
+                                     description="Find each leaf image's stem and rotate it so the stem is at the "
+                                                 "top, which is where a card attaches to its branch. Generated "
+                                                 "cut-outs come out at arbitrary angles, and without this a leaf can "
+                                                 "hang from its tip or sideways. Turn it off for a hand-authored "
+                                                 "atlas that is already laid out correctly.")
 
 
 class OutputSpec(BaseModel):

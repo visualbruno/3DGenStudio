@@ -131,6 +131,10 @@ export const TREE_PARAMS = [
   { path: 'foliage.atlas_rows', group: 'Foliage', label: 'Atlas rows',
     type: 'number', min: 1, max: 16, step: 1 },
   { path: 'foliage.double_sided', group: 'Foliage', label: 'Double sided', type: 'boolean' },
+  { path: 'foliage.auto_orient_leaves', group: 'Foliage', label: 'Auto-orient leaves', type: 'boolean',
+    hint: 'Finds the stem in each leaf image and rotates it so the stem sits at the top of its tile, which is '
+      + 'where a card attaches to its branch. Generated cut-outs arrive at arbitrary angles, so without this a '
+      + 'leaf can hang from its tip or sideways. Turn it off for a hand-authored atlas already laid out correctly.' },
 
   // --- Output -----------------------------------------------------------
   { path: 'bark.junction_mode', group: 'Output', label: 'Junctions', type: 'select',

@@ -94,10 +94,22 @@ export async function resolveTextures(textures = {}, { signal } = {}) {
     resolveTextureEntry(textures.branches, { signal }),
     Promise.all(leaves.map(entry => resolveTextureEntry(entry, { signal }))),
   ])
+  // Pivots stay POSITIONAL with the images, so an entry that failed to load is
+  // dropped from both lists together — otherwise every later leaf would be
+  // framed with the wrong leaf's pivot.
+  const keptImages = []
+  const keptPivots = []
+  leafImages.forEach((image, index) => {
+    if (!image) return
+    keptImages.push(image)
+    keptPivots.push(leaves[index]?.pivot || null)
+  })
+
   return {
     barkTexture: trunk,
     branchTexture: branches,
-    leafImages: leafImages.filter(Boolean),
+    leafImages: keptImages,
+    leafPivots: keptPivots,
   }
 }
 
@@ -107,7 +119,7 @@ export async function resolveTextures(textures = {}, { signal } = {}) {
 // reproduce what it just got.
 export async function generateTree({
   spec, preset, seed, overrides,
-  barkTexture = null, branchTexture = null, leafImages = null, leafAtlas = null,
+  barkTexture = null, branchTexture = null, leafImages = null, leafPivots = null, leafAtlas = null,
   onProgress = null, signal = null,
 } = {}) {
   await ensureDesktopService('meshtools')
@@ -120,6 +132,7 @@ export async function generateTree({
       bark_texture_b64: barkTexture,
       branch_texture_b64: branchTexture,
       leaf_images_b64: leafImages?.length ? leafImages : null,
+      leaf_pivots: leafPivots?.length ? leafPivots : null,
       leaf_atlas_b64: leafAtlas,
     }),
     signal,
@@ -149,7 +162,7 @@ export async function generateTree({
  */
 export async function generateTreeLods({
   spec, preset, seed, overrides,
-  barkTexture = null, branchTexture = null, leafImages = null, leafAtlas = null,
+  barkTexture = null, branchTexture = null, leafImages = null, leafPivots = null, leafAtlas = null,
   onProgress = null, signal = null,
 } = {}) {
   await ensureDesktopService('meshtools')
@@ -162,6 +175,7 @@ export async function generateTreeLods({
       bark_texture_b64: barkTexture,
       branch_texture_b64: branchTexture,
       leaf_images_b64: leafImages?.length ? leafImages : null,
+      leaf_pivots: leafPivots?.length ? leafPivots : null,
       leaf_atlas_b64: leafAtlas,
     }),
     signal,
@@ -266,14 +280,42 @@ export async function resolveTextureAssetIds(refs, { signal } = {}) {
 
   const trunk = lookup(refs.trunk)
   const branches = lookup(refs.branches)
-  const wanted = Array.isArray(refs.leaves) ? refs.leaves : []
-  const leaves = wanted.map(lookup).filter(Boolean)
+  // A leaf reference is {id, pivot} now and was a bare id before.
+  const wanted = (Array.isArray(refs.leaves) ? refs.leaves : [])
+    .map(entry => (entry && typeof entry === 'object' ? entry : { id: entry, pivot: null }))
+  const leaves = wanted
+    .map(entry => {
+      const resolved = lookup(entry.id)
+      return resolved ? { ...resolved, pivot: entry.pivot || null } : null
+    })
+    .filter(Boolean)
 
   const missing = (refs.trunk != null && !trunk ? 1 : 0)
     + (refs.branches != null && !branches ? 1 : 0)
     + (wanted.length - leaves.length)
 
   return { trunk, branches, leaves, missing }
+}
+
+/**
+ * Detect the stem in each leaf image, as normalized {x, y} or null.
+ *
+ * Used to seed the pivot editor when leaves are added, so the user is nudging a
+ * guess rather than placing every point from scratch. Advisory by design — the
+ * detector is right most of the time and wrong in ways that are obvious on
+ * sight, which is why the point is editable at all.
+ */
+export async function detectLeafPivots(imagesBase64, { signal } = {}) {
+  if (!imagesBase64?.length) return []
+  await ensureDesktopService('meshtools')
+  const response = await fetch(`${API_BASE}/tree/leaf-pivots`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ images_b64: imagesBase64 }),
+    signal,
+  })
+  if (!response.ok) throw await readError(response, 'Leaf stem detection failed')
+  return (await response.json()).pivots || []
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +342,9 @@ export function buildTreePresetDocument(spec, textureRefs) {
     textures: {
       trunk: textureRefs?.trunk ?? null,
       branches: textureRefs?.branches ?? null,
+      // Each leaf is {id, pivot}. Older presets stored a bare id, which
+      // `resolveTextureAssetIds` still accepts — a saved tree must not stop
+      // opening because the format grew a field.
       leaves: Array.isArray(textureRefs?.leaves) ? textureRefs.leaves : [],
     },
   }
