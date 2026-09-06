@@ -3887,6 +3887,41 @@ function inferSupportedAssetTypeFromFilename(filename = '') {
   return null;
 }
 
+// Tree presets arrive in two shapes and both have to import: the document the
+// Tree Generator saves ({ version, spec, textures }) and a bare exported spec,
+// which is what the Export spec button hands you. Returns the metadata a listing
+// needs -- mirrored out of the file so the Tree Presets grid and MCP clients can
+// read the seed and texture ids without fetching and parsing it again -- or null
+// if the JSON is not a preset at all.
+function readTreePresetMetadata(buffer) {
+  let parsed;
+  try {
+    parsed = JSON.parse(buffer.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const spec = parsed.spec && typeof parsed.spec === 'object' ? parsed.spec : parsed;
+  // A spec is recognisable by its stages, not by a version number alone -- every
+  // other JSON in this app has one of those too.
+  const looksLikeSpec = ['skeleton', 'crown', 'foliage', 'bark'].some(
+    key => spec[key] && typeof spec[key] === 'object'
+  );
+  if (!looksLikeSpec) return null;
+
+  const textures = parsed.textures && typeof parsed.textures === 'object' ? parsed.textures : null;
+  return {
+    kind: 'tree-preset',
+    format: parsed.format ?? null,
+    preset: spec.preset ?? null,
+    seed: spec.seed ?? null,
+    height: spec.height ?? null,
+    crown: spec.crown?.shape ?? null,
+    textureAssetIds: textures || { trunk: null, branches: null, leaves: [] }
+  };
+}
+
 function getExtensionFromContentType(contentType = '', fallback = 'bin') {
   const normalized = String(contentType || '').toLowerCase();
 
@@ -6772,11 +6807,16 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
 
     const overrideAssetType = (() => {
       const requested = String(req.query?.assetType || req.body?.assetType || '').toLowerCase();
-      return ['image', 'mesh', 'brush'].includes(requested) ? requested : null;
+      return ['image', 'mesh', 'brush', 'tree'].includes(requested) ? requested : null;
     })();
 
     await Promise.all(files.map(async (file, index) => {
       let assetType = overrideAssetType;
+      // Tree presets are read here rather than stored blind: a preset is a spec
+      // the generator has to be able to rebuild from, so a JSON file that is not
+      // one becomes a tile that fails only when someone clicks Edit. Parsing is
+      // cheap (a few kB) and turns that into a skip with a reason.
+      let treeMetadata = null;
       if (!assetType) {
         assetType = inferSupportedAssetTypeFromFilename(file.originalname);
       } else if (assetType === 'brush') {
@@ -6784,6 +6824,16 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         const extension = path.extname(file.originalname).toLowerCase();
         if (extension !== '.png') {
           skipped.push({ name: file.originalname, reason: 'Brushes must be PNG files' });
+          return;
+        }
+      } else if (assetType === 'tree') {
+        if (path.extname(file.originalname).toLowerCase() !== '.json') {
+          skipped.push({ name: file.originalname, reason: 'Tree presets must be JSON files' });
+          return;
+        }
+        treeMetadata = readTreePresetMetadata(file.buffer);
+        if (!treeMetadata) {
+          skipped.push({ name: file.originalname, reason: 'Not a tree preset' });
           return;
         }
       }
@@ -6824,7 +6874,8 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         height: dimensions.height,
         metadata: {
           resolution: (assetType === 'image' || assetType === 'brush') ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
-          source: 'LIBRARY IMPORT'
+          source: 'LIBRARY IMPORT',
+          ...(treeMetadata || {})
         },
         createdAt: Date.now(),
         ownerId: viewerId(req)

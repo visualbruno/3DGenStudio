@@ -761,9 +761,16 @@ export default function AssetsPage() {
           assetsToImport.push({ file, thumbnail })
         }
 
+        // The section decides the type for brushes and tree presets. Neither is
+        // inferable from the extension -- a brush is a PNG like any other image,
+        // and a preset is a .json -- so importing into those sections without
+        // saying so lands them in the wrong folder or skips them outright.
+        const sectionAssetType = activeSection === 'brushes' ? 'brush'
+          : activeSection === 'trees' ? 'tree'
+            : null
         const result = await importLibraryAssets(
           assetsToImport,
-          activeSection === 'brushes' ? { assetType: 'brush' } : undefined
+          sectionAssetType ? { assetType: sectionAssetType } : undefined
         )
         totalImported += result.imported?.length || 0
         totalSkipped += result.skipped?.length || 0
@@ -2135,7 +2142,11 @@ export default function AssetsPage() {
             type="file"
             multiple
             className="assets-page__file-input"
-            accept={activeSection === 'brushes' ? '.png,.abr' : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'}
+            accept={
+              activeSection === 'brushes' ? '.png,.abr'
+                : activeSection === 'trees' ? 'application/json,.json'
+                  : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'
+            }
             onChange={handleAssetImportChange}
           />
 
