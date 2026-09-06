@@ -27,6 +27,13 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.2.0',
+    date: '2026-09-06',
+    items: [
+			'New: Assembly Editor'
+    ]
+  },
+  {
     version: 'v3.1.0',
     date: '2026-09-03',
     items: [
