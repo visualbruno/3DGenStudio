@@ -33,6 +33,7 @@ import {
 } from '../utils/treeGen'
 import AssetSelectorModal from '../components/AssetSelectorModal'
 import { createMeshThumbnailFile } from '../utils/meshThumbnail'
+import { createZip } from '../utils/zipArchive'
 import { useProjects } from '../context/ProjectContext'
 import { API_BASE } from '../config'
 import './TreeGenPage.css'
@@ -93,6 +94,7 @@ export default function TreeGenPage() {
   const [textures, setTextures] = useState({ trunk: null, branches: null, leaves: [] })
 
   const [presetBusy, setPresetBusy] = useState(false)
+  const [variantsRunning, setVariantsRunning] = useState(false)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
   const [notice, setNotice] = useState(null)
 
@@ -101,6 +103,7 @@ export default function TreeGenPage() {
 
   const previewAbortRef = useRef(null)
   const generateAbortRef = useRef(null)
+  const variantsAbortRef = useRef(null)
   const meshObjectRef = useRef(null)
   const fileInputRef = useRef(null)
 
@@ -383,6 +386,98 @@ export default function TreeGenPage() {
     URL.revokeObjectURL(url)
   }, [])
 
+  // Batch re-roll: N trees, one new seed each, delivered as a single archive.
+  //
+  // A zip rather than N downloads because browsers treat repeated programmatic
+  // downloads as suspicious — Chrome prompts on the second and can drop the
+  // rest — and because a folder of trees is what the user actually wants anyway.
+  const handleDownloadVariants = useCallback(async () => {
+    if (!spec) return
+    if (variantsRunning) {
+      variantsAbortRef.current?.abort()
+      return
+    }
+
+    const answer = window.prompt(
+      `How many variants? Each is generated with a new random seed.\n`
+      + `About ${(meshStats?.tool?.seconds || 1).toFixed(1)}s each, downloaded as one zip.`,
+      '5',
+    )
+    if (answer === null) return
+    const count = Math.max(1, Math.min(50, Math.round(Number(answer) || 0)))
+
+    const controller = new AbortController()
+    variantsAbortRef.current = controller
+    setVariantsRunning(true)
+    setError(null)
+    setNotice(null)
+
+    const baseName = (spec.name || 'Tree').replace(/\s+/g, '_')
+    const files = []
+    const seeds = []
+    try {
+      // Resolved ONCE. The textures are identical across variants, and fetching
+      // and base64-ing them per tree would cost more than the geometry does.
+      setProgress({ frac: 0, message: 'Loading textures…' })
+      const resolved = await resolveTextures(textures, { signal: controller.signal })
+
+      for (let index = 0; index < count; index += 1) {
+        if (controller.signal.aborted) break
+        const seed = rollSeed()
+        const done = index / count
+        setProgress({ frac: done, message: `Variant ${index + 1} of ${count} — seed ${seed}` })
+        try {
+          const result = await generateTree({
+            spec: { ...spec, seed },
+            ...resolved,
+            signal: controller.signal,
+            onProgress: event => setProgress({
+              frac: done + (event.frac || 0) / count,
+              message: `Variant ${index + 1} of ${count} — ${event.message || event.stage}`,
+            }),
+          })
+          files.push({
+            name: `${baseName}_${seed}.glb`,
+            data: new Uint8Array(await result.blob.arrayBuffer()),
+          })
+          seeds.push(seed)
+        } catch (variantError) {
+          if (variantError.name === 'AbortError') break
+          throw variantError
+        }
+      }
+
+      if (!files.length) {
+        setNotice('Cancelled before the first variant finished.')
+        return
+      }
+
+      // The manifest makes the archive reproducible: the base spec plus the
+      // seed of every file in it regenerates the whole set exactly.
+      files.push({
+        name: 'variants.json',
+        data: JSON.stringify({
+          generatedAt: new Date().toISOString(),
+          name: spec.name || 'Tree',
+          count: seeds.length,
+          seeds,
+          spec,
+        }, null, 2),
+      })
+
+      setProgress({ frac: 1, message: 'Packing archive…' })
+      download(createZip(files), `${baseName}_variants.zip`)
+      setNotice(controller.signal.aborted
+        ? `Cancelled — downloaded the ${seeds.length} variant${seeds.length === 1 ? '' : 's'} already generated.`
+        : `Downloaded ${seeds.length} variant${seeds.length === 1 ? '' : 's'}.`)
+    } catch (err) {
+      if (err.name !== 'AbortError') setError(err.message)
+    } finally {
+      setVariantsRunning(false)
+      setProgress(null)
+    }
+  }, [spec, textures, variantsRunning, meshStats, download])
+
   const saveToLibrary = useCallback(async () => {
     if (!meshBlob || !spec) return
     setSaveState({ status: 'saving' })
@@ -563,11 +658,11 @@ export default function TreeGenPage() {
               type="button"
               className="treegen__generate"
               onClick={generating ? cancel : generate}
-              disabled={!spec}
+              disabled={!spec || variantsRunning}
             >
               {generating ? 'Cancel' : 'Generate mesh'}
             </button>
-            {generating && progress && (
+            {(generating || variantsRunning) && progress && (
               <div className="treegen__progress">
                 <div className="treegen__progress-bar" style={{ width: `${(progress.frac || 0) * 100}%` }} />
                 <span>{progress.message}</span>
@@ -578,7 +673,10 @@ export default function TreeGenPage() {
                 <button type="button" onClick={() => download(meshBlob, `${treeName}.glb`)}>
                   Download GLB
                 </button>
-                <button type="button" onClick={saveToLibrary} disabled={saveState?.status === 'saving'}>
+                <button type="button" onClick={handleDownloadVariants}>
+                  {variantsRunning ? 'Cancel variants' : 'Download GLB Variants'}
+                </button>
+                <button type="button" onClick={saveToLibrary} disabled={saveState?.status === 'saving' || variantsRunning}>
                   {saveState?.status === 'saving' ? 'Saving…'
                     : saveState?.status === 'thumbnailing' ? 'Rendering thumbnail…'
                       : saveState?.status === 'saved' ? 'Saved to library ✓' : 'Save to library'}
