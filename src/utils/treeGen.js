@@ -219,6 +219,21 @@ export function assetFileUrl(asset) {
   return relative ? assetUrl(relative) : null
 }
 
+// The numeric Assets-table id for a library row.
+//
+// A top-level row carries the real id as `assetId` and a PREFIXED "library:<id>"
+// as its display `id`; a child row (an edit or a version) carries only a bare
+// numeric `id`. Anything that builds a URL out of an asset id has to reduce both
+// to the number, because `Number('library:116')` is NaN and the route rejects it
+// as "A valid asset id is required" — which reads like a missing asset rather
+// than a mistyped one.
+export function assetNumericId(asset) {
+  const raw = asset?.assetId ?? asset?.id ?? asset
+  if (raw == null) return null
+  const numeric = Number(String(raw).replace(/^library:/, ''))
+  return Number.isFinite(numeric) ? numeric : null
+}
+
 // One texture slot entry. Uploaded Files and library assets both end up in this
 // shape so the panel does not care which it is holding.
 export function assetToTextureEntry(asset) {
@@ -393,7 +408,12 @@ export async function saveTreePresetAsset({
     stats,
   }))
 
-  if (assetId) {
+  const numericAssetId = assetNumericId(assetId)
+  if (assetId && numericAssetId == null) {
+    throw new Error(`"${assetId}" is not a valid asset id.`)
+  }
+
+  if (numericAssetId) {
     // The replace route speaks a different multipart dialect to library-upload:
     // one `payload` JSON part rather than loose fields, and it takes the new
     // thumbnail in the same request instead of a follow-up POST.
@@ -405,7 +425,7 @@ export async function saveTreePresetAsset({
       type: 'tree',
       metadata: form.get('metadata') ? JSON.parse(form.get('metadata')) : {},
     }))
-    const replaced = await fetch(`${API_BASE}/assets/${assetId}/replace`, {
+    const replaced = await fetch(`${API_BASE}/assets/${numericAssetId}/replace`, {
       method: 'POST', body: replaceForm,
     })
     const result = await replaced.json().catch(() => ({}))

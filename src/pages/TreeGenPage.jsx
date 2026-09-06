@@ -29,7 +29,7 @@ import TreeParamPanel from '../components/treeGen/TreeParamPanel'
 import TreeTexturePanel from '../components/treeGen/TreeTexturePanel'
 import { affectsSkeleton } from '../components/treeGen/treeParams'
 import {
-  fetchTreePresets, flattenAssetLibrary, generateTree, generateTreeLods, loadTreePresetAsset,
+  assetNumericId, fetchTreePresets, flattenAssetLibrary, generateTree, generateTreeLods, loadTreePresetAsset,
   previewTree, resolveTextureAssetIds, resolveTextures, rollSeed, saveTreePresetAsset, setSpecValue,
 } from '../utils/treeGen'
 import AssetSelectorModal from '../components/AssetSelectorModal'
@@ -327,7 +327,7 @@ export default function TreeGenPage() {
       })
       // A fork becomes the open preset, so the NEXT save updates the copy rather
       // than spawning a third.
-      if (asset?.id) setOpenPreset({ id: asset.id, name: asset.name || name.trim() })
+      if (asset?.id) setOpenPreset({ id: assetNumericId(asset), name: asset.name || name.trim() })
       setNotice(
         `${target ? 'Updated' : 'Saved'} "${asset?.name || name.trim()}"`
         + ` in Assets → Tree Presets${thumbnail ? '.' : ' (without a thumbnail).'}`
@@ -358,7 +358,7 @@ export default function TreeGenPage() {
     try {
       const { spec: loadedSpec, textures: refs } = await loadTreePresetAsset(asset)
       setSpec(loadedSpec)
-      setOpenPreset({ id: asset.id, name: asset.name })
+      setOpenPreset({ id: assetNumericId(asset), name: asset.name })
       setPresetId(loadedSpec.preset || '')
       setMeshObject(null)
 
