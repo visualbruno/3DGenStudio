@@ -97,6 +97,10 @@ export default function TreeGenPage() {
   const [variantsRunning, setVariantsRunning] = useState(false)
   const [lodsRunning, setLodsRunning] = useState(false)
   const [showPresetPicker, setShowPresetPicker] = useState(false)
+  // The library asset this page is editing, or null for an unsaved tree.
+  // Saving without it can only ever create, which is how editing a preset
+  // used to leave the original behind and fork a copy.
+  const [openPreset, setOpenPreset] = useState(null)
   const [notice, setNotice] = useState(null)
 
   const [frameKey, setFrameKey] = useState(0)
@@ -138,6 +142,10 @@ export default function TreeGenPage() {
     // from the same seed is a genuinely useful thing to do, and re-rolling
     // silently would take it away.
     setSpec(current => ({ ...entry.spec, seed: current?.seed ?? entry.spec.seed }))
+    // Switching species discards the loaded spec wholesale, so the page is no
+    // longer editing that saved preset. Keeping the link would let a save
+    // overwrite an oak with a pine under the oak's name.
+    setOpenPreset(null)
   }, [presets])
 
   // ---- live skeleton preview ------------------------------------------
@@ -295,9 +303,17 @@ export default function TreeGenPage() {
     }
   }, [meshBlob, spec, textures, treeName])
 
-  const handleSavePreset = useCallback(async () => {
+  // `asNew` forks; otherwise an open preset is overwritten in place. The prompt
+  // stays on both paths so renaming still works, prefilled with the open
+  // preset's own name rather than the spec's — they drift apart the moment a
+  // preset is saved under a different name to the built-in it started from.
+  const handleSavePreset = useCallback(async ({ asNew = false } = {}) => {
     if (!spec) return
-    const name = window.prompt('Save this tree preset as', spec.name || 'Tree')
+    const target = asNew ? null : openPreset
+    const name = window.prompt(
+      target ? `Update "${target.name}"` : 'Save this tree preset as',
+      target?.name || openPreset?.name || spec.name || 'Tree',
+    )
     if (!name?.trim()) return
 
     setPresetBusy(true)
@@ -310,17 +326,21 @@ export default function TreeGenPage() {
         textureRefs,
         thumbnail,
         stats: meshStats?.tool ?? null,
+        assetId: target?.id ?? null,
       })
+      // A fork becomes the open preset, so the NEXT save updates the copy rather
+      // than spawning a third.
+      if (asset?.id) setOpenPreset({ id: asset.id, name: asset.name || name.trim() })
       setNotice(
-        `Saved "${asset?.name || name.trim()}" to Assets → Tree Presets`
-        + (thumbnail ? '.' : ' (without a thumbnail).')
+        `${target ? 'Updated' : 'Saved'} "${asset?.name || name.trim()}"`
+        + ` in Assets → Tree Presets${thumbnail ? '.' : ' (without a thumbnail).'}`
       )
     } catch (err) {
       setError(err.message)
     } finally {
       setPresetBusy(false)
     }
-  }, [spec, textureRefs, meshStats, buildThumbnail])
+  }, [spec, textureRefs, meshStats, buildThumbnail, openPreset])
 
   const handleOpenPreset = useCallback(async asset => {
     setShowPresetPicker(false)
@@ -330,6 +350,7 @@ export default function TreeGenPage() {
     try {
       const { spec: loadedSpec, textures: refs } = await loadTreePresetAsset(asset)
       setSpec(loadedSpec)
+      setOpenPreset({ id: asset.id, name: asset.name })
       setPresetId(loadedSpec.preset || '')
       setMeshObject(null)
 
@@ -660,10 +681,27 @@ export default function TreeGenPage() {
           </div>
 
           <h2 className="treegen__title">Tree presets</h2>
+          {/* Which preset a save will land on, stated rather than implied. The
+              button alone cannot say whether it overwrites or forks, and that is
+              exactly the thing worth being sure about before clicking it. */}
+          <p className="treegen__open-preset">
+            {openPreset
+              ? <>Editing <strong>{openPreset.name}</strong></>
+              : 'Not linked to a saved preset — saving creates a new one.'}
+          </p>
           <div className="treegen__spec-io">
-            <button type="button" onClick={handleSavePreset} disabled={!spec || presetBusy}>
-              {presetBusy ? 'Working…' : 'Save preset…'}
+            <button type="button" onClick={() => handleSavePreset()} disabled={!spec || presetBusy}>
+              {presetBusy ? 'Working…' : openPreset ? 'Save preset' : 'Save preset…'}
             </button>
+            {openPreset && (
+              <button
+                type="button"
+                onClick={() => handleSavePreset({ asNew: true })}
+                disabled={!spec || presetBusy}
+              >
+                Save as new…
+              </button>
+            )}
             <button type="button" onClick={() => setShowPresetPicker(true)} disabled={presetBusy}>
               Open preset…
             </button>

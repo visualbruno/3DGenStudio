@@ -518,6 +518,17 @@
 .treegen__saved-form button:hover:not(:disabled),
 .treegen__saved-overwrite:hover:not(:disabled) { background: var(--surface-container-high); }
 
+.treegen__open-preset {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.treegen__open-preset strong {
+  color: var(--on-surface);
+}
+
 .treegen__saved-empty {
   margin: 2px 0;
   font-size: 11px;

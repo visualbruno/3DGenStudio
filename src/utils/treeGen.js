@@ -356,8 +356,17 @@ export function buildTreePresetDocument(spec, textureRefs) {
  * `thumbnail` is a File to attach after the upload — always supplied by the
  * page, because a grid of identical placeholder icons is exactly what an asset
  * library is meant to avoid.
+ *
+ * Pass `assetId` to overwrite that preset instead of creating another one. An
+ * editor that can only ever fork is not an editor: opening a preset, nudging a
+ * parameter and saving used to leave the original untouched and a near-identical
+ * copy beside it, so the library filled up with versions and none of them was
+ * the one links pointed at. Replacing keeps the id, which is what the Assets
+ * page's Edit link and any saved reference resolve through.
  */
-export async function saveTreePresetAsset({ name, spec, textureRefs, thumbnail = null, stats = null }) {
+export async function saveTreePresetAsset({
+  name, spec, textureRefs, thumbnail = null, stats = null, assetId = null,
+}) {
   const safeName = String(name || 'Tree').trim() || 'Tree'
   const document = buildTreePresetDocument(spec, textureRefs)
   const file = new File(
@@ -383,6 +392,26 @@ export async function saveTreePresetAsset({ name, spec, textureRefs, thumbnail =
     textureAssetIds: document.textures,
     stats,
   }))
+
+  if (assetId) {
+    // The replace route speaks a different multipart dialect to library-upload:
+    // one `payload` JSON part rather than loose fields, and it takes the new
+    // thumbnail in the same request instead of a follow-up POST.
+    const replaceForm = new FormData()
+    replaceForm.append('file', file)
+    if (thumbnail) replaceForm.append('thumbnail', thumbnail)
+    replaceForm.append('payload', JSON.stringify({
+      name: safeName,
+      type: 'tree',
+      metadata: form.get('metadata') ? JSON.parse(form.get('metadata')) : {},
+    }))
+    const replaced = await fetch(`${API_BASE}/assets/${assetId}/replace`, {
+      method: 'POST', body: replaceForm,
+    })
+    const result = await replaced.json().catch(() => ({}))
+    if (!replaced.ok) throw new Error(result?.error || 'Could not update the tree preset')
+    return result
+  }
 
   const response = await fetch(`${API_BASE}/assets/library-upload`, { method: 'POST', body: form })
   const payload = await response.json().catch(() => ({}))
