@@ -15,6 +15,31 @@ function getAssetPreviewUrl(filename) {
   return assetUrl(filename);
 }
 
+// Per-type behaviour, so the render below stays one code path.
+//
+// `preview` is the part worth naming: an image IS its own preview, while a mesh
+// or a tree preset has to fall back to a rendered thumbnail and then to an icon —
+// their stored file is a GLB or a JSON document and putting that in an <img> is
+// a broken image, not a picture.
+const TYPE_CONFIG = {
+  mesh: {
+    libraryKey: 'meshes', title: 'Mesh', plural: 'meshes', emptyIcon: 'deployed_code',
+    preview: 'thumbnail', placeholderIcon: 'view_in_ar', placeholderLabel: '3D MESH', childBadge: 'VERSION'
+  },
+  brush: {
+    libraryKey: 'brushes', title: 'Brush', plural: 'brushes', emptyIcon: 'brush',
+    preview: 'image', childBadge: 'EDIT'
+  },
+  tree: {
+    libraryKey: 'trees', title: 'Tree Preset', plural: 'tree presets', emptyIcon: 'forest',
+    preview: 'thumbnail', placeholderIcon: 'forest', placeholderLabel: 'TREE PRESET', childBadge: 'VERSION'
+  },
+  image: {
+    libraryKey: 'images', title: 'Image', plural: 'images', emptyIcon: 'image_not_supported',
+    preview: 'image', childBadge: 'EDIT'
+  }
+};
+
 const ASSETS_PER_PAGE = 20;
 // Meshes show 3 per row, so 21 (7 full rows) paginates more cleanly than 20.
 const MESHES_PER_PAGE = 21;
@@ -33,13 +58,11 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const [projectFilter, setProjectFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState([]);
 
-  // Valid types: 'image', 'mesh', or 'brush'
-  const validType = assetType === 'mesh' ? 'mesh' : (assetType === 'brush' ? 'brush' : 'image');
-
-  const libraryKey = validType === 'mesh' ? 'meshes' : (validType === 'brush' ? 'brushes' : 'images');
-  const titleLabel = validType === 'mesh' ? 'Mesh' : (validType === 'brush' ? 'Brush' : 'Image');
-  const pluralLabel = validType === 'mesh' ? 'meshes' : (validType === 'brush' ? 'brushes' : 'images');
-  const emptyIcon = validType === 'mesh' ? 'deployed_code' : (validType === 'brush' ? 'brush' : 'image_not_supported');
+  const validType = TYPE_CONFIG[assetType] ? assetType : 'image';
+  const {
+    libraryKey, title: titleLabel, plural: pluralLabel, emptyIcon,
+    preview: previewMode, placeholderIcon, placeholderLabel, childBadge
+  } = TYPE_CONFIG[validType];
   const includeChildren = showEdits || validType === 'brush';
 
   const getAssetSelectorKey = (asset) => {
@@ -167,7 +190,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
     setCurrentPage(1);
   }, [normalizedSearch, projectFilter, tagFilter]);
 
-  const assetsPerPage = validType === 'mesh' ? MESHES_PER_PAGE : ASSETS_PER_PAGE;
+  const assetsPerPage = previewMode === 'thumbnail' ? MESHES_PER_PAGE : ASSETS_PER_PAGE;
   const totalPages = Math.max(1, Math.ceil(filteredAssets.length / assetsPerPage));
   const pageStart = (currentPage - 1) * assetsPerPage;
   const paginatedAssets = filteredAssets.slice(pageStart, pageStart + assetsPerPage);
@@ -312,17 +335,17 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 											className={`asset-selector-card ${isSelected ? 'asset-selector-card--selected' : ''}`}
                       onClick={() => handleSelectAsset(asset.selectorKey)}
 										>
-                      <div className={`asset-selector-preview ${validType === 'mesh' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'} ${validType === 'brush' ? 'asset-selector-preview--brush' : ''}`}>
-												{validType !== 'mesh' ? (
+                      <div className={`asset-selector-preview ${previewMode === 'thumbnail' ? 'asset-selector-preview--mesh' : 'asset-selector-preview--image'} ${validType === 'brush' ? 'asset-selector-preview--brush' : ''}`}>
+												{previewMode === 'image' ? (
 													<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
 												) : (
 													<div className="asset-selector-mesh-placeholder">
-														{previewUrl ? (
-															<img src={previewUrl} alt={asset.name} className="asset-selector-image" />
+														{asset.thumbnailUrl ? (
+															<img src={asset.thumbnailUrl} alt={asset.name} className="asset-selector-image" />
 														) : (
 															<>
-																<span className="material-symbols-outlined asset-selector-mesh-icon">view_in_ar</span>
-																<span className="asset-selector-mesh-label font-label">3D MESH</span>
+																<span className="material-symbols-outlined asset-selector-mesh-icon">{placeholderIcon}</span>
+																<span className="asset-selector-mesh-label font-label">{placeholderLabel}</span>
 															</>
 														)}
 													</div>
@@ -331,9 +354,7 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
 													<span className="asset-selector-dimensions font-label">{dimensions}</span>
 												)}
 												{isChild && (
-													<span className="asset-selector-child-badge font-label">
-														{validType === 'mesh' ? 'VERSION' : 'EDIT'}
-													</span>
+													<span className="asset-selector-child-badge font-label">{childBadge}</span>
 												)}
 											</div>
 											<div className="asset-selector-info">

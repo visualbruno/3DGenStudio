@@ -166,7 +166,9 @@
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 
-.asset-selector-grid--mesh {
+/* Thumbnail-backed types: a rendered preview needs more room than a flat image. */
+.asset-selector-grid--mesh,
+.asset-selector-grid--tree {
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 
@@ -395,7 +397,8 @@
   .asset-selector-grid--brush {
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   }
-  .asset-selector-grid--mesh {
+  .asset-selector-grid--mesh,
+  .asset-selector-grid--tree {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   }
 }

@@ -472,3 +472,154 @@
 
 .treegen__slot-actions button:hover,
 .treegen__upload:hover { background: var(--surface-container-high); }
+
+/* ---- Saved parameter sets ----------------------------------------------- */
+
+.treegen__saved {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.treegen__saved-form {
+  display: flex;
+  gap: 4px;
+}
+
+.treegen__saved-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 5px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+.treegen__saved-form button,
+.treegen__saved-overwrite {
+  padding: 5px 9px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 5px;
+  background: var(--surface-container);
+  color: var(--on-surface);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.treegen__saved-form button:disabled { opacity: 0.5; cursor: default; }
+.treegen__saved-overwrite { width: 100%; }
+.treegen__saved-form button:hover:not(:disabled),
+.treegen__saved-overwrite:hover:not(:disabled) { background: var(--surface-container-high); }
+
+.treegen__saved-empty {
+  margin: 2px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.treegen__saved-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.treegen__saved-item {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 5px;
+  background: var(--surface-container);
+  overflow: hidden;
+}
+
+.treegen__saved-item--active {
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface-container));
+}
+
+.treegen__saved-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border: 0;
+  background: none;
+  color: var(--on-surface);
+  cursor: pointer;
+  text-align: left;
+}
+
+.treegen__saved-open:hover { background: var(--surface-container-high); }
+
+.treegen__saved-open img,
+.treegen__saved-placeholder {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+  font-size: 15px;
+}
+
+.treegen__saved-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.treegen__saved-name {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treegen__saved-meta {
+  font-size: 10px;
+  color: var(--on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.treegen__saved-actions {
+  display: flex;
+  flex-direction: column;
+}
+
+.treegen__saved-actions button {
+  flex: 1;
+  width: 22px;
+  border: 0;
+  border-left: 1px solid var(--outline-variant);
+  background: none;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.treegen__saved-actions button:hover { background: var(--surface-container-high); color: var(--on-surface); }
+.treegen__saved-confirm { color: var(--error, #e5484d) !important; }
+
+.treegen__notice {
+  margin: 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--on-surface-variant);
+  background: var(--surface);
+  border-top: 1px solid var(--outline-variant);
+}

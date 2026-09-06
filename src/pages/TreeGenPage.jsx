@@ -18,6 +18,7 @@
 // utils/treeGen.js. The thing being avoided is MeshEditorPage.jsx, which is
 // 12k lines because everything went inline.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
@@ -27,8 +28,12 @@ import TreeParamPanel from '../components/treeGen/TreeParamPanel'
 import TreeTexturePanel from '../components/treeGen/TreeTexturePanel'
 import { affectsSkeleton } from '../components/treeGen/treeParams'
 import {
-  fetchTreePresets, generateTree, previewTree, resolveTextures, rollSeed, setSpecValue,
+  fetchTreePresets, flattenAssetLibrary, generateTree, loadTreePresetAsset, previewTree,
+  resolveTextureAssetIds, resolveTextures, rollSeed, saveTreePresetAsset, setSpecValue,
 } from '../utils/treeGen'
+import AssetSelectorModal from '../components/AssetSelectorModal'
+import { createMeshThumbnailFile } from '../utils/meshThumbnail'
+import { useProjects } from '../context/ProjectContext'
 import { API_BASE } from '../config'
 import './TreeGenPage.css'
 
@@ -61,6 +66,11 @@ function stripWindTint(object) {
 }
 
 export default function TreeGenPage() {
+  const { uploadAssetThumbnail } = useProjects()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Read once, on the first render: the effect below clears the parameter, and
+  // the preset loader has to stay keyed to what the URL originally said.
+  const [deepLinkPresetId] = useState(() => searchParams.get('presetAssetId'))
   const [showSettings, setShowSettings] = useState(false)
 
   const [presets, setPresets] = useState([])
@@ -82,6 +92,10 @@ export default function TreeGenPage() {
   // { trunk: entry|null, branches: entry|null, leaves: entry[] }
   const [textures, setTextures] = useState({ trunk: null, branches: null, leaves: [] })
 
+  const [presetBusy, setPresetBusy] = useState(false)
+  const [showPresetPicker, setShowPresetPicker] = useState(false)
+  const [notice, setNotice] = useState(null)
+
   const [frameKey, setFrameKey] = useState(0)
   const [orthographic, setOrthographic] = useState(false)
 
@@ -97,6 +111,10 @@ export default function TreeGenPage() {
       .then(list => {
         if (cancelled) return
         setPresets(list)
+        // Seeding a default would race the deep-linked preset and, because this
+        // request goes out to the Python service, usually WIN — landing after it
+        // and replacing the opened tree with a fresh random oak.
+        if (deepLinkPresetId) return
         const first = list.find(entry => entry.id === 'oak') || list[0]
         if (first) {
           setPresetId(first.id)
@@ -105,7 +123,7 @@ export default function TreeGenPage() {
       })
       .catch(err => !cancelled && setError(err.message))
     return () => { cancelled = true }
-  }, [])
+  }, [deepLinkPresetId])
 
   const selectPreset = useCallback(id => {
     const entry = presets.find(p => p.id === id)
@@ -223,12 +241,137 @@ export default function TreeGenPage() {
 
   const cancel = useCallback(() => generateAbortRef.current?.abort(), [])
 
-  // ---- output ----------------------------------------------------------
+  // Declared here rather than beside the download helpers: the preset handlers
+  // below list it as a dependency, and a dependency array is evaluated during
+  // render — a `const` declared further down would be in its temporal dead zone
+  // and throw before the page ever painted.
   const treeName = useMemo(() => {
     const base = spec?.name || 'Tree'
     return `${base.replace(/\s+/g, '_')}_${spec?.seed ?? 0}`
   }, [spec])
 
+  // ---- tree presets (saved as library assets) --------------------------
+  //
+  // A saved tree is an asset of type 'tree', not a private list: it shows up in
+  // the Assets page with a thumbnail, takes tags, and is picked with the same
+  // modal as everything else.
+
+  // Textures are stored as asset references. An UPLOADED file cannot be one —
+  // its bytes only ever existed in this tab — so its slot is saved empty rather
+  // than as a name that would resolve to nothing later.
+  const textureRefs = useMemo(() => ({
+    trunk: textures.trunk?.id ?? null,
+    branches: textures.branches?.id ?? null,
+    leaves: (textures.leaves || []).map(entry => entry.id).filter(Boolean),
+  }), [textures])
+
+  // A preset is worth nothing in a visual library without a picture, and the
+  // user may never have pressed Generate — so build a mesh here if there is not
+  // one already. Textures are irrelevant to this: an untextured tree still
+  // thumbnails to a recognisable shape, which is the point.
+  const buildThumbnail = useCallback(async (signal) => {
+    try {
+      let blob = meshBlob
+      if (!blob) {
+        setNotice('Rendering a preview for the thumbnail…')
+        const resolved = await resolveTextures(textures, { signal })
+        blob = (await generateTree({ spec, ...resolved, signal })).blob
+      }
+      return await createMeshThumbnailFile(
+        new File([blob], `${treeName}.glb`, { type: 'model/gltf-binary' })
+      )
+    } catch (err) {
+      console.warn('Could not render the tree preset thumbnail', err)
+      return null
+    }
+  }, [meshBlob, spec, textures, treeName])
+
+  const handleSavePreset = useCallback(async () => {
+    if (!spec) return
+    const name = window.prompt('Save this tree preset as', spec.name || 'Tree')
+    if (!name?.trim()) return
+
+    setPresetBusy(true)
+    setError(null)
+    try {
+      const thumbnail = await buildThumbnail(null)
+      const asset = await saveTreePresetAsset({
+        name: name.trim(),
+        spec,
+        textureRefs,
+        thumbnail,
+        stats: meshStats?.tool ?? null,
+      })
+      setNotice(
+        `Saved "${asset?.name || name.trim()}" to Assets → Tree Presets`
+        + (thumbnail ? '.' : ' (without a thumbnail).')
+      )
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPresetBusy(false)
+    }
+  }, [spec, textureRefs, meshStats, buildThumbnail])
+
+  const handleOpenPreset = useCallback(async asset => {
+    setShowPresetPicker(false)
+    if (!asset) return
+    setPresetBusy(true)
+    setError(null)
+    try {
+      const { spec: loadedSpec, textures: refs } = await loadTreePresetAsset(asset)
+      setSpec(loadedSpec)
+      setPresetId(loadedSpec.preset || '')
+      setMeshObject(null)
+
+      // Resolved against the live library, walking EDITS as well as top-level
+      // assets: the texture picker shows edits, so a background-removed leaf or
+      // a bark map run through Seamless is a child row, and a top-level-only
+      // lookup finds none of them.
+      const resolved = await resolveTextureAssetIds(refs)
+      setTextures({ trunk: resolved.trunk, branches: resolved.branches, leaves: resolved.leaves })
+      setNotice(resolved.missing > 0
+        ? `Loaded "${asset.name}". ${resolved.missing} texture${resolved.missing === 1 ? '' : 's'} `
+          + 'could not be found in the library and were left empty.'
+        : `Loaded "${asset.name}".`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPresetBusy(false)
+    }
+  }, [])
+
+  // Assets -> Tree Presets -> EDIT lands here with ?presetAssetId=<id>.
+  //
+  // The id is looked up in the library rather than trusted as a path: the preset
+  // file carries the spec and its texture references, so the id is all the URL
+  // needs to carry, and a stale link fails as a message instead of a bad fetch.
+  //
+  // Deliberately WITHOUT a cancellation flag. Combining one with the run-once
+  // ref is what broke this: StrictMode mounts, cleans up and re-mounts, so the
+  // first attempt got cancelled while the second skipped itself as already
+  // started, and the preset silently never loaded — leaving a default oak that
+  // looks close enough to a successful load to be mistaken for one. The ref
+  // alone is the correct guard; a late state update on a still-mounted page is
+  // harmless.
+  const openedPresetRef = useRef(null)
+  useEffect(() => {
+    if (!deepLinkPresetId || openedPresetRef.current === deepLinkPresetId) return
+    openedPresetRef.current = deepLinkPresetId
+
+    fetch(`${API_BASE}/assets/library`)
+      .then(response => response.json())
+      .then(library => {
+        const asset = flattenAssetLibrary(library).get(Number(deepLinkPresetId))
+        if (!asset) throw new Error('That tree preset is no longer in the library.')
+        return handleOpenPreset(asset)
+      })
+      // Cleared only after the load, so a failure leaves the link intact to retry.
+      .then(() => setSearchParams({}, { replace: true }))
+      .catch(err => setError(err.message))
+  }, [deepLinkPresetId, handleOpenPreset, setSearchParams])
+
+  // ---- output ----------------------------------------------------------
   const download = useCallback((blob, filename) => {
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -269,11 +412,26 @@ export default function TreeGenPage() {
       const response = await fetch(`${API_BASE}/assets/library-upload`, { method: 'POST', body: form })
       const payload = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(payload?.error || 'Could not save the tree')
+
+      // Render a thumbnail so the tree is recognisable in the asset library — a
+      // grid of identical placeholder icons is useless once you have made more
+      // than two. Best-effort on purpose: the mesh is already saved, and losing
+      // the save over a cosmetic render would be the wrong trade.
+      setSaveState({ status: 'thumbnailing', assetId: payload?.id ?? null })
+      try {
+        const thumbnail = await createMeshThumbnailFile(
+          new File([meshBlob], `${treeName}.glb`, { type: 'model/gltf-binary' })
+        )
+        if (thumbnail && payload?.id) await uploadAssetThumbnail(payload.id, thumbnail)
+      } catch (thumbError) {
+        console.warn('Could not render the tree thumbnail', thumbError)
+      }
+
       setSaveState({ status: 'saved', assetId: payload?.id ?? null })
     } catch (err) {
       setSaveState({ status: 'error', message: err.message })
     }
-  }, [meshBlob, spec, treeName, presetId, meshStats, textures])
+  }, [meshBlob, spec, treeName, presetId, meshStats, textures, uploadAssetThumbnail])
 
   const importSpec = useCallback(event => {
     const file = event.target.files?.[0]
@@ -332,6 +490,21 @@ export default function TreeGenPage() {
               🎲
             </button>
           </div>
+
+          <h2 className="treegen__title">Tree presets</h2>
+          <div className="treegen__spec-io">
+            <button type="button" onClick={handleSavePreset} disabled={!spec || presetBusy}>
+              {presetBusy ? 'Working…' : 'Save preset…'}
+            </button>
+            <button type="button" onClick={() => setShowPresetPicker(true)} disabled={presetBusy}>
+              Open preset…
+            </button>
+          </div>
+          <p className="treegen__saved-empty">
+            Saved as an asset with a thumbnail, so presets are browsable under
+            Assets → Tree Presets. Textures are stored as references, so an image
+            uploaded from disk cannot be saved with one.
+          </p>
 
           <div className="treegen__spec-io">
             <button type="button" onClick={() => fileInputRef.current?.click()}>Import spec…</button>
@@ -407,7 +580,8 @@ export default function TreeGenPage() {
                 </button>
                 <button type="button" onClick={saveToLibrary} disabled={saveState?.status === 'saving'}>
                   {saveState?.status === 'saving' ? 'Saving…'
-                    : saveState?.status === 'saved' ? 'Saved to library ✓' : 'Save to library'}
+                    : saveState?.status === 'thumbnailing' ? 'Rendering thumbnail…'
+                      : saveState?.status === 'saved' ? 'Saved to library ✓' : 'Save to library'}
                 </button>
               </>
             )}
@@ -416,6 +590,7 @@ export default function TreeGenPage() {
           {(error || previewError || saveState?.status === 'error') && (
             <p className="treegen__error">{error || previewError || saveState.message}</p>
           )}
+          {notice && !error && <p className="treegen__notice">{notice}</p>}
         </main>
 
         {/* --- right: parameters + stats --- */}
@@ -444,6 +619,15 @@ export default function TreeGenPage() {
           </dl>
         </aside>
       </div>
+
+      {showPresetPicker && (
+        <AssetSelectorModal
+          assetType="tree"
+          title="Open a tree preset"
+          onSelect={handleOpenPreset}
+          onClose={() => setShowPresetPicker(false)}
+        />
+      )}
 
       <Footer variant="kanban" />
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}

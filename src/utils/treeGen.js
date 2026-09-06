@@ -10,7 +10,7 @@
 //                  is being dragged.
 //   generateTree() the full mesh over the same SSE contract the other mesh
 //                  tools use, only on commit.
-import { API_BASE } from '../config'
+import { API_BASE, assetUrl } from '../config'
 import { ensureDesktopService, readSseStream } from './meshTools'
 
 // Decode a base64 string into a Blob of the given MIME type.
@@ -136,6 +136,197 @@ export async function generateTree({
       faceCount: stats.face_count ?? null,
       hasUv: !!stats.has_uv,
       tool: stats.tool || null,
+    },
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Texture slot entries
+// ---------------------------------------------------------------------------
+
+// Where an asset's BYTES live.
+//
+// A library asset carries two paths that look interchangeable and are not:
+// `filename` ("images/x.png") is relative to the /assets mount, while `filePath`
+// ("data/assets/images/x.png") is storage-prefixed. Handing the second to
+// assetUrl() yields /assets/data/assets/... and a 404.
+export function assetFileUrl(asset) {
+  if (asset?.url) return asset.url
+  const relative = String(asset?.filename || asset?.filePath || '')
+    .replace(/^\/+/, '')
+    .replace(/^data\/assets\//, '')
+  return relative ? assetUrl(relative) : null
+}
+
+// One texture slot entry. Uploaded Files and library assets both end up in this
+// shape so the panel does not care which it is holding.
+export function assetToTextureEntry(asset) {
+  const source = assetFileUrl(asset)
+  return {
+    // Top-level library rows expose the real id as `assetId` beside a prefixed
+    // "library:<id>" display id; an EDIT (a child row) has only `id`. Both come
+    // from the same Assets sequence, so either is a valid reference.
+    id: asset.assetId ?? asset.id ?? null,
+    name: asset.name || asset.filename || 'Image',
+    url: asset.thumbnailUrl || source,
+    source,
+    file: null,
+  }
+}
+
+// Flatten the library, INCLUDING edits and versions.
+//
+// This is the part that is easy to get wrong: the texture picker runs with
+// `showEdits`, so the images a user actually reaches for — a background-removed
+// leaf, a bark map just run through Seamless — are child rows, not top-level
+// assets. A resolver that only walks the top level finds none of them and
+// silently drops every texture on load.
+export function flattenAssetLibrary(library) {
+  const byId = new Map()
+  const visit = asset => {
+    if (!asset) return
+    const id = asset.assetId ?? asset.id
+    if (id != null && !byId.has(Number(id))) byId.set(Number(id), asset)
+    for (const key of ['children', 'edits', 'versions']) {
+      if (Array.isArray(asset[key])) asset[key].forEach(visit)
+    }
+  }
+  for (const group of Object.values(library || {})) {
+    if (Array.isArray(group)) group.forEach(visit)
+  }
+  return byId
+}
+
+/**
+ * Turn saved texture ids back into slot entries.
+ *
+ * Resolved against the live library so an image deleted since the save empties
+ * its slot instead of becoming a broken thumbnail; `missing` says how many.
+ */
+export async function resolveTextureAssetIds(refs, { signal } = {}) {
+  const empty = { trunk: null, branches: null, leaves: [], missing: 0 }
+  if (!refs) return empty
+
+  const response = await fetch(`${API_BASE}/assets/library`, { signal })
+  if (!response.ok) throw await readError(response, 'Could not load the asset library')
+  const byId = flattenAssetLibrary(await response.json())
+
+  const lookup = id => {
+    if (id == null) return null
+    const asset = byId.get(Number(id))
+    return asset ? assetToTextureEntry(asset) : null
+  }
+
+  const trunk = lookup(refs.trunk)
+  const branches = lookup(refs.branches)
+  const wanted = Array.isArray(refs.leaves) ? refs.leaves : []
+  const leaves = wanted.map(lookup).filter(Boolean)
+
+  const missing = (refs.trunk != null && !trunk ? 1 : 0)
+    + (refs.branches != null && !branches ? 1 : 0)
+    + (wanted.length - leaves.length)
+
+  return { trunk, branches, leaves, missing }
+}
+
+// ---------------------------------------------------------------------------
+// Tree presets as ASSETS
+// ---------------------------------------------------------------------------
+//
+// A saved tree is an ordinary library asset of type 'tree', not a row in a
+// bespoke table. That is what makes it browsable in the Assets page with a
+// thumbnail, taggable, searchable and pickable through the same modal as every
+// other asset — a private list would have had to reinvent all of it.
+//
+// The stored FILE is the document below: the spec plus the ids of the images it
+// wore. Textures are referenced, never copied, so one bark photo can dress fifty
+// trees without fifty copies of it.
+
+export const TREE_PRESET_FORMAT = 1
+
+export function buildTreePresetDocument(spec, textureRefs) {
+  return {
+    format: TREE_PRESET_FORMAT,
+    kind: 'tree-preset',
+    savedAt: Date.now(),
+    spec,
+    textures: {
+      trunk: textureRefs?.trunk ?? null,
+      branches: textureRefs?.branches ?? null,
+      leaves: Array.isArray(textureRefs?.leaves) ? textureRefs.leaves : [],
+    },
+  }
+}
+
+/**
+ * Save a tree preset as a library asset.
+ *
+ * `thumbnail` is a File to attach after the upload — always supplied by the
+ * page, because a grid of identical placeholder icons is exactly what an asset
+ * library is meant to avoid.
+ */
+export async function saveTreePresetAsset({ name, spec, textureRefs, thumbnail = null, stats = null }) {
+  const safeName = String(name || 'Tree').trim() || 'Tree'
+  const document = buildTreePresetDocument(spec, textureRefs)
+  const file = new File(
+    [JSON.stringify(document, null, 2)],
+    `${safeName.replace(/[^\w.-]+/g, '_')}.tree.json`,
+    { type: 'application/json' },
+  )
+
+  const form = new FormData()
+  form.append('file', file)
+  form.append('type', 'tree')
+  form.append('name', safeName)
+  // Mirrored into metadata so a listing (or an MCP client) can read the seed and
+  // the texture ids without fetching and parsing the file.
+  form.append('metadata', JSON.stringify({
+    source: 'TREE GENERATOR',
+    kind: 'tree-preset',
+    format: TREE_PRESET_FORMAT,
+    preset: spec?.preset ?? null,
+    seed: spec?.seed ?? null,
+    height: spec?.height ?? null,
+    crown: spec?.crown?.shape ?? null,
+    textureAssetIds: document.textures,
+    stats,
+  }))
+
+  const response = await fetch(`${API_BASE}/assets/library-upload`, { method: 'POST', body: form })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not save the tree preset')
+
+  if (thumbnail && payload?.id) {
+    const thumbForm = new FormData()
+    thumbForm.append('thumbnail', thumbnail)
+    // Cosmetic: the preset is already saved, so a failed thumbnail must not
+    // surface as a failed save.
+    await fetch(`${API_BASE}/assets/${payload.id}/thumbnail`, { method: 'POST', body: thumbForm })
+      .catch(() => null)
+  }
+  return payload
+}
+
+/** Read a tree preset asset back into { spec, textures }. */
+export async function loadTreePresetAsset(asset, { signal } = {}) {
+  const source = asset?.url
+    || (asset?.filename || asset?.filePath
+      ? `${API_BASE.replace(/\/api$/, '')}/assets/${String(asset.filename || asset.filePath).replace(/^data\/assets\//, '')}`
+      : null)
+  if (!source) throw new Error('That tree preset has no stored file.')
+
+  const response = await fetch(source, { signal, cache: 'reload' })
+  if (!response.ok) throw new Error(`Could not read the tree preset (${response.status}).`)
+  const document = await response.json()
+
+  const spec = document?.spec || (document?.version ? document : null)
+  if (!spec) throw new Error('That file is not a tree preset.')
+  return {
+    spec,
+    textures: {
+      trunk: document?.textures?.trunk ?? null,
+      branches: document?.textures?.branches ?? null,
+      leaves: Array.isArray(document?.textures?.leaves) ? document.textures.leaves : [],
     },
   }
 }

@@ -6544,12 +6544,13 @@ app.delete('/api/boards/:id', async (req, res) => {
 app.get('/api/assets/library', async (req, res) => {
   try {
     const scope = scopeId(req);
-    const [images, meshes, brushes] = await Promise.all([
+    const [images, meshes, brushes, trees] = await Promise.all([
       listLibraryAssetsByType('image', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('mesh', getRequestBaseUrl(req), scope),
-      listLibraryAssetsByType('brush', getRequestBaseUrl(req), scope)
+      listLibraryAssetsByType('brush', getRequestBaseUrl(req), scope),
+      listLibraryAssetsByType('tree', getRequestBaseUrl(req), scope)
     ]);
-    res.json({ images, meshes, brushes });
+    res.json({ images, meshes, brushes, trees });
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });

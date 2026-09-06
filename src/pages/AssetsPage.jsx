@@ -57,6 +57,14 @@ const ASSET_SECTIONS = [
     emptyMessage: 'No brushes found in `assets/brushes`.'
   },
   {
+    key: 'trees',
+    label: 'Tree Presets',
+    icon: 'forest',
+    path: 'assets/trees',
+    emptyIcon: 'forest',
+    emptyMessage: 'No tree presets saved yet — save one from the Trees workspace.'
+  },
+  {
     key: 'workflows',
     label: 'Workflows',
     icon: 'account_tree',
@@ -173,6 +181,18 @@ function buildMeshEditorPath(asset, returnTo = '/assets') {
   })
 
   return `/mesh-editor?${query.toString()}`
+}
+
+// A tree preset opens in the Trees workspace, which needs only the asset id:
+// the preset file carries the spec and its texture references, so there is
+// nothing else to pass through the URL.
+function buildTreeGeneratorPath(asset, returnTo = '/assets') {
+  const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
+  const query = new URLSearchParams({
+    presetAssetId: assetIdMatch?.[1] || String(asset.assetId || ''),
+    returnTo
+  })
+  return `/trees?${query.toString()}`
 }
 
 function buildImageEditorPath(asset, returnTo = '/assets') {
@@ -589,7 +609,7 @@ export default function AssetsPage() {
   }
   const groupedAssets = buildGroupedAssets()
 
-  const assetsPerPage = activeSection === 'meshes' ? MESHES_PER_PAGE : ASSETS_PER_PAGE
+  const assetsPerPage = activeSection === 'meshes' || activeSection === 'trees' ? MESHES_PER_PAGE : ASSETS_PER_PAGE
   const totalPages = Math.max(1, Math.ceil(activeAssets.length / assetsPerPage))
   const pageStart = (currentPage - 1) * assetsPerPage
   const paginatedAssets = activeAssets.slice(pageStart, pageStart + assetsPerPage)
@@ -1350,7 +1370,7 @@ export default function AssetsPage() {
   }
 
   const renderAssetCard = (asset) => (
-    <article key={asset.id} className={`asset-card ${activeSection === 'meshes' ? 'asset-card--mesh' : 'asset-card--image'}`}>
+    <article key={asset.id} className={`asset-card ${activeSection === 'meshes' || activeSection === 'trees' ? 'asset-card--mesh' : 'asset-card--image'}`}>
       {activeSection === 'images' || activeSection === 'brushes' ? (
         <div className={`asset-card__preview asset-card__preview--image ${activeSection === 'brushes' ? 'asset-card__preview--brush' : ''}`}>
           <img src={asset.url} alt={asset.name} className="asset-card__image" />
@@ -1366,12 +1386,14 @@ export default function AssetsPage() {
           {asset.thumbnailUrl ? (
             <>
               <img src={asset.thumbnailUrl} alt={`${asset.name} thumbnail`} className="asset-card__image" />
-              <span className="asset-card__mesh-tag font-label">3D MESH</span>
+              <span className="asset-card__mesh-tag font-label">{activeSection === 'trees' ? 'TREE PRESET' : '3D MESH'}</span>
             </>
           ) : (
             <>
-              <span className="material-symbols-outlined asset-card__mesh-icon">view_in_ar</span>
-              <span className="asset-card__mesh-label font-label">3D MESH</span>
+              <span className="material-symbols-outlined asset-card__mesh-icon">
+                {activeSection === 'trees' ? 'forest' : 'view_in_ar'}
+              </span>
+              <span className="asset-card__mesh-label font-label">{activeSection === 'trees' ? 'TREE PRESET' : '3D MESH'}</span>
             </>
           )}
         </div>
@@ -1409,7 +1431,7 @@ export default function AssetsPage() {
           </div>
         )}
         <div className="asset-card__meta">
-          <span className={`asset-card__badge ${activeSection === 'meshes' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
+          <span className={`asset-card__badge ${activeSection === 'meshes' || activeSection === 'trees' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
           <div className="asset-card__actions">
             {(activeSection === 'images' || activeSection === 'brushes') && getAssetChildren(asset).length > 0 && (
               <button
@@ -1453,6 +1475,17 @@ export default function AssetsPage() {
                   type="button"
                   className="asset-card__link asset-card__link-btn"
                   onClick={() => navigate(buildImageEditorPath(asset))}
+                >
+                  EDIT
+                </button>
+              </>
+            ) : activeSection === 'trees' ? (
+              <>
+                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => navigate(buildTreeGeneratorPath(asset))}
                 >
                   EDIT
                 </button>

@@ -11,7 +11,7 @@
 // bark in two, which is a real cost and so is never done behind the user's back.
 import { useCallback, useState } from 'react'
 import AssetSelectorModal from '../AssetSelectorModal'
-import { assetUrl } from '../../config'
+import { assetToTextureEntry } from '../../utils/treeGen'
 
 const SLOTS = [
   {
@@ -34,37 +34,6 @@ const SLOTS = [
       + 'so a few variants read as far more.',
   },
 ]
-
-// Where an asset's BYTES actually live.
-//
-// A library asset carries two paths that look interchangeable and are not:
-// `filename` ("images/x.png") is relative to the /assets mount, while `filePath`
-// ("data/assets/images/x.png") is storage-prefixed. Handing the second to
-// assetUrl() yields /assets/data/assets/... and a 404 — and the mistake hides,
-// because thumbnails render off the absolute `url` field and look fine.
-function assetFileUrl(asset) {
-  if (asset.url) return asset.url
-  const relative = String(asset.filename || asset.filePath || '')
-    .replace(/^\/+/, '')
-    .replace(/^data\/assets\//, '')
-  return relative ? assetUrl(relative) : null
-}
-
-// An asset row and a File both end up here as { id, name, url, source, file }.
-function assetToEntry(asset) {
-  const source = assetFileUrl(asset)
-  return {
-    // Library listings expose the real numeric id as `assetId`, alongside a
-    // prefixed "library:<id>" display id — record the one that means something.
-    id: asset.assetId ?? asset.id ?? null,
-    name: asset.name || asset.filename || 'Image',
-    url: asset.thumbnailUrl || source,
-    // The bytes are fetched lazily at generate time, not here: picking six
-    // leaves should not download six images the user may never build with.
-    source,
-    file: null,
-  }
-}
 
 function fileToEntry(file) {
   return { id: null, name: file.name, url: URL.createObjectURL(file), source: null, file }
@@ -136,7 +105,7 @@ export default function TreeTexturePanel({ textures, onChange }) {
     setPicking(null)
     if (!slot) return
     const chosen = Array.isArray(selection) ? selection : [selection]
-    const added = chosen.filter(Boolean).map(assetToEntry)
+    const added = chosen.filter(Boolean).map(assetToTextureEntry)
     if (!added.length) return
     onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...added] : added[0])
   }, [picking, textures, onChange])

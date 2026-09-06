@@ -32,6 +32,10 @@ export const MESH_ASSETS_DIR = path.join(ASSETS_DIR, 'meshes');
 export const THUMBNAIL_ASSETS_DIR = path.join(ASSETS_DIR, 'thumbnails');
 export const WORKFLOW_ASSETS_DIR = path.join(ASSETS_DIR, 'workflows');
 export const BRUSH_ASSETS_DIR = path.join(ASSETS_DIR, 'brushes');
+// Tree Generator parameter sets. The stored file is the TreeSpec JSON itself:
+// ~2KB that regenerates the mesh exactly, so the spec IS the asset and the GLB
+// is a separate, derived one.
+export const TREE_ASSETS_DIR = path.join(ASSETS_DIR, 'trees');
 export const PAINT_DOCS_DIR = path.join(ASSETS_DIR, 'paintdocs');
 export const WIKI_ASSETS_DIR = path.join(ASSETS_DIR, 'wiki');
 // Generated motion clips (Kimodo), as BVH text. Not under a project — see the
@@ -55,7 +59,9 @@ const ASSET_TYPES = [
   { id: 1, name: 'Image' },
   { id: 2, name: 'Mesh' },
   { id: 3, name: 'Workflow' },
-  { id: 4, name: 'Brush' }
+  { id: 4, name: 'Brush' },
+  // Tree Generator parameter sets. The stored file is the spec JSON, not a mesh.
+  { id: 5, name: 'Tree' }
 ];
 const ATTRIBUTE_TYPES = [
   { id: 1, name: 'Text' },
@@ -1799,6 +1805,7 @@ export async function initializeStorage() {
   await fs.mkdir(THUMBNAIL_ASSETS_DIR, { recursive: true });
   await fs.mkdir(WORKFLOW_ASSETS_DIR, { recursive: true });
   await fs.mkdir(BRUSH_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(TREE_ASSETS_DIR, { recursive: true });
   await fs.mkdir(PAINT_DOCS_DIR, { recursive: true });
   await fs.mkdir(WIKI_ASSETS_DIR, { recursive: true });
   await fs.mkdir(MOTION_ASSETS_DIR, { recursive: true });
@@ -1903,6 +1910,7 @@ export function getAssetDirectory(type = 'image') {
   if (type === 'mesh') return MESH_ASSETS_DIR;
   if (type === 'workflow') return WORKFLOW_ASSETS_DIR;
   if (type === 'brush') return BRUSH_ASSETS_DIR;
+  if (type === 'tree') return TREE_ASSETS_DIR;
   return IMAGE_ASSETS_DIR;
 }
 
@@ -1910,6 +1918,7 @@ export function getAssetSubdirectory(type = 'image') {
   if (type === 'mesh') return 'meshes';
   if (type === 'workflow') return 'workflows';
   if (type === 'brush') return 'brushes';
+  if (type === 'tree') return 'trees';
   return 'images';
 }
 
@@ -2895,7 +2904,7 @@ export async function deleteProjectById(projectId, { deleteAssets = false } = {}
      FROM Assets a
      WHERE a.id IN (${placeholders})
        AND a.assetTypeId NOT IN (
-             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush')
+             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree')
            )
        AND NOT EXISTS (SELECT 1 FROM Assets_Projects WHERE Assets_Projects.assetId = a.id)
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = a.id)`,
