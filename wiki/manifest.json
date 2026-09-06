@@ -413,6 +413,24 @@
       "position": 4,
       "createdAt": 1788103686561,
       "updatedAt": 1788103686561
+    },
+    {
+      "id": 47,
+      "parentId": 12,
+      "title": "Segmentation",
+      "icon": "description",
+      "position": 10,
+      "createdAt": 1788617038635,
+      "updatedAt": 1788617051918
+    },
+    {
+      "id": 48,
+      "parentId": null,
+      "title": "Assembly",
+      "icon": "precision_manufacturing",
+      "position": 8,
+      "createdAt": 1788617463727,
+      "updatedAt": 1788684641898
     }
   ]
 }
