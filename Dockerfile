@@ -39,9 +39,30 @@ FROM node:24-bookworm-slim AS runtime
 # the data volume must be mounted at exactly <workdir>/data.
 WORKDIR /app
 
+# Baked defaults, so a NAS/Container Manager import of the saved .tar comes up
+# configured instead of needing every variable typed into the UI by hand. Each
+# is a plain ENV, which is what makes it pre-fill in that dialog; anything the
+# host sets (compose `environment:`, Container Manager, `docker run -e`) still
+# wins over these at runtime.
+#
+# Override at build time with e.g.
+#   docker compose build --build-arg GENSTUDIO_JWT_SECRET=<64 hex chars>
+#
+# NOTE: these values live in the image layers, so the saved .tar carries the
+# signing secret and the first-run admin password to anyone who can read it.
+# Fine for a private NAS; change them before the image travels further.
+ARG GENSTUDIO_JWT_SECRET=123456Secret123456Secret123456
+ARG GENSTUDIO_ADMIN_LOGIN=admin
+ARG GENSTUDIO_ADMIN_PASSWORD=admin123
+ARG TRUST_PROXY_HEADERS=0
+
 ENV NODE_ENV=production \
     GENSTUDIO_MODE=server \
-    PORT=3001
+    PORT=3001 \
+    GENSTUDIO_JWT_SECRET=${GENSTUDIO_JWT_SECRET} \
+    GENSTUDIO_ADMIN_LOGIN=${GENSTUDIO_ADMIN_LOGIN} \
+    GENSTUDIO_ADMIN_PASSWORD=${GENSTUDIO_ADMIN_PASSWORD} \
+    TRUST_PROXY_HEADERS=${TRUST_PROXY_HEADERS}
 
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
