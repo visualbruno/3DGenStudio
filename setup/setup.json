@@ -889,7 +889,7 @@
 				{ "Node": "326", "Input": "preprocess",  "Name": "Preprocess Image", "Type": "Boolean" },
 				{ "Node": "326", "Input": "azimuths",  "Name": "Azimuths", "Type": "String" },
 				{ "Node": "326", "Input": "elevations",  "Name": "Elevations", "Type": "String" },
-				{ "Node": "326", "Input": "removebackground",  "Name": "Remove Background", "Type": "Boolean" },
+				{ "Node": "326", "Input": "remove_background",  "Name": "Remove Background", "Type": "Boolean" },
 				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "272",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "300",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
@@ -897,7 +897,7 @@
 				{ "Node": "328",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
-				{ "Node": "203", "Name": "Save Mesh", "Type": "Mesh" }
+				{ "Node": "232", "Name": "Save Mesh", "Type": "Mesh" }
 			]
 		},
 		{
@@ -911,7 +911,7 @@
 				{ "Node": "326", "Input": "preprocess",  "Name": "Preprocess Image", "Type": "Boolean" },
 				{ "Node": "326", "Input": "azimuths",  "Name": "Azimuths", "Type": "String" },
 				{ "Node": "326", "Input": "elevations",  "Name": "Elevations", "Type": "String" },
-				{ "Node": "326", "Input": "removebackground",  "Name": "Remove Background", "Type": "Boolean" },				
+				{ "Node": "326", "Input": "remove_background",  "Name": "Remove Background", "Type": "Boolean" },				
 				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "272",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "300",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
@@ -919,7 +919,7 @@
 				{ "Node": "330",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
-				{ "Node": "19", "Name": "Output Mesh", "Type": "Mesh" }
+				{ "Node": "232", "Name": "Output Mesh", "Type": "Mesh" }
 			]
 		},
 		{
