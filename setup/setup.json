@@ -877,6 +877,50 @@
 			"Outputs": [
 				{ "Node": "19", "Name": "Output Mesh", "Type": "Mesh" }
 			]
+		},
+		{
+			"Name": "Gen MultiView Mesh Only with Pixal3D",
+			"File": "setup/Gen MultiView Mesh Only with Pixal3D.json",
+			"Inputs": [
+				{ "Node": "326", "Input": "firstimage",  "Name": "First Image", "Type": "Image" },
+				{ "Node": "326", "Input": "secondimage",  "Name": "Second Image", "Type": "Image" },
+				{ "Node": "326", "Input": "thirdimage",  "Name": "Third Image", "Type": "Image" },
+				{ "Node": "326", "Input": "fourthimage",  "Name": "Fourth Image", "Type": "Image" },
+				{ "Node": "326", "Input": "preprocess",  "Name": "Preprocess Image", "Type": "Boolean" },
+				{ "Node": "326", "Input": "azimuths",  "Name": "Azimuths", "Type": "String" },
+				{ "Node": "326", "Input": "elevations",  "Name": "Elevations", "Type": "String" },
+				{ "Node": "326", "Input": "removebackground",  "Name": "Remove Background", "Type": "Boolean" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "272",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "300",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "328",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
+			],
+			"Outputs": [
+				{ "Node": "203", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},
+		{
+			"Name": "Gen TexturedMesh MultiView with Pixal3D",
+			"File": "setup/Gen TexturedMesh MultiView with Pixal3D.json",
+			"Inputs": [
+				{ "Node": "326", "Input": "firstimage",  "Name": "First Image", "Type": "Image" },
+				{ "Node": "326", "Input": "secondimage",  "Name": "Second Image", "Type": "Image" },
+				{ "Node": "326", "Input": "thirdimage",  "Name": "Thrid Image", "Type": "Image" },
+				{ "Node": "326", "Input": "fourthimage",  "Name": "Fourth Image", "Type": "Image" },
+				{ "Node": "326", "Input": "preprocess",  "Name": "Preprocess Image", "Type": "Boolean" },
+				{ "Node": "326", "Input": "azimuths",  "Name": "Azimuths", "Type": "String" },
+				{ "Node": "326", "Input": "elevations",  "Name": "Elevations", "Type": "String" },
+				{ "Node": "326", "Input": "removebackground",  "Name": "Remove Background", "Type": "Boolean" },				
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "272",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "300",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "330",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
+			],
+			"Outputs": [
+				{ "Node": "19", "Name": "Output Mesh", "Type": "Mesh" }
+			]
 		}		
 	]
 }

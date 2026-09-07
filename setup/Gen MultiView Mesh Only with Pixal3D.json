@@ -1,0 +1,424 @@
+{
+  "39": {
+    "inputs": {
+      "modelname": "TencentARC/Pixal3D",
+      "backend": "flash_attn",
+      "device": "cuda",
+      "low_vram": true,
+      "keep_models_loaded": false,
+      "conv_backend": "flex_gemm",
+      "sparse_backend": "flash_attn",
+      "use_reconviagen": false,
+      "pixal3d_multiview": true
+    },
+    "class_type": "Trellis2LoadModel",
+    "_meta": {
+      "title": "Trellis2 - LoadModel"
+    }
+  },
+  "194": {
+    "inputs": {
+      "padding": 5,
+      "remove_background": false,
+      "max_size": 1024,
+      "image": [
+        "327",
+        0
+      ]
+    },
+    "class_type": "Trellis2PreProcessImage",
+    "_meta": {
+      "title": "Trellis2 - PreProcess Image"
+    }
+  },
+  "203": {
+    "inputs": {
+      "filename_prefix": [
+        "219",
+        0
+      ],
+      "file_format": "glb",
+      "trimesh": [
+        "324",
+        0
+      ]
+    },
+    "class_type": "Trellis2ExportMesh",
+    "_meta": {
+      "title": "Trellis2 - Export Mesh"
+    }
+  },
+  "209": {
+    "inputs": {
+      "value": 500000
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Target Face Number"
+    }
+  },
+  "213": {
+    "inputs": {
+      "max_views": 16,
+      "pipeline": [
+        "39",
+        0
+      ],
+      "image": [
+        "194",
+        0
+      ]
+    },
+    "class_type": "Trellis2ImageCondGenerator",
+    "_meta": {
+      "title": "Trellis2 - ImageCond Generator"
+    }
+  },
+  "215": {
+    "inputs": {
+      "resolution": 512,
+      "shape_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_guidance_rescale": 0.5,
+      "shape_rescale_t": 3,
+      "shape_sampler": "heun",
+      "shape_guidance_interval_start": 0.6,
+      "shape_guidance_interval_end": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "pipeline": [
+        "272",
+        2
+      ],
+      "image_cond": [
+        "213",
+        0
+      ],
+      "coords": [
+        "272",
+        0
+      ],
+      "image": [
+        "194",
+        0
+      ],
+      "moge_camera_config": [
+        "317",
+        1
+      ],
+      "pixal3d_mv_views": [
+        "317",
+        0
+      ]
+    },
+    "class_type": "Trellis2ShapeGenerator",
+    "_meta": {
+      "title": "Trellis2 - Shape Generator"
+    }
+  },
+  "217": {
+    "inputs": {
+      "resolution": [
+        "300",
+        1
+      ],
+      "use_tiled_decoder": true,
+      "pipeline": [
+        "300",
+        2
+      ],
+      "shape_slat": [
+        "300",
+        0
+      ]
+    },
+    "class_type": "Trellis2DecodeLatents",
+    "_meta": {
+      "title": "Trellis2 - Decode Latents"
+    }
+  },
+  "218": {
+    "inputs": {
+      "target_face_num": [
+        "209",
+        0
+      ],
+      "method": "Cumesh",
+      "mesh": [
+        "314",
+        0
+      ]
+    },
+    "class_type": "Trellis2SimplifyMesh",
+    "_meta": {
+      "title": "Trellis2 - Simplify Mesh"
+    }
+  },
+  "219": {
+    "inputs": {
+      "value": "3DGenStudio_Pixal3D_MV"
+    },
+    "class_type": "PrimitiveString",
+    "_meta": {
+      "title": "Name"
+    }
+  },
+  "232": {
+    "inputs": {
+      "model_file": [
+        "203",
+        0
+      ],
+      "image": ""
+    },
+    "class_type": "Preview3D",
+    "_meta": {
+      "title": "Preview 3D & Animation (DEPRECATED)"
+    }
+  },
+  "272": {
+    "inputs": {
+      "seed": 1234,
+      "sparse_structure_steps": 25,
+      "sparse_structure_guidance_strength": 7.5,
+      "sparse_structure_guidance_rescale": 0.7,
+      "sparse_structure_rescale_t": 5,
+      "sparse_structure_sampler": "heun",
+      "sparse_structure_resolution": 32,
+      "sparse_structure_guidance_interval_start": 0.6,
+      "sparse_structure_guidance_interval_end": 1,
+      "fill_holes": true,
+      "hole_iterations": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "hole_fill_algorithm": "flood_fill",
+      "dino_foundation_cap": 0.92,
+      "keep_only_shell": true,
+      "pipeline": [
+        "213",
+        2
+      ],
+      "image_cond": [
+        "213",
+        0
+      ],
+      "image": [
+        "194",
+        0
+      ],
+      "moge_camera_config": [
+        "317",
+        1
+      ],
+      "pixal3d_mv_views": [
+        "317",
+        0
+      ]
+    },
+    "class_type": "Trellis2SparseGenerator",
+    "_meta": {
+      "title": "Trellis2 - Sparse Generator"
+    }
+  },
+  "300": {
+    "inputs": {
+      "from_resolution": [
+        "215",
+        1
+      ],
+      "to_resolution": 1024,
+      "sparse_structure_resolution": [
+        "272",
+        1
+      ],
+      "max_num_tokens": 999999,
+      "shape_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_guidance_rescale": 0.5,
+      "shape_rescale_t": 3,
+      "shape_sampler": "heun",
+      "shape_guidance_interval_start": 0.6,
+      "shape_guidance_interval_end": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "pipeline": [
+        "215",
+        2
+      ],
+      "image_cond": [
+        "213",
+        1
+      ],
+      "shape_slat": [
+        "215",
+        0
+      ],
+      "image": [
+        "194",
+        0
+      ],
+      "moge_camera_config": [
+        "317",
+        1
+      ],
+      "pixal3d_mv_views": [
+        "317",
+        0
+      ]
+    },
+    "class_type": "Trellis2ShapeCascadeGenerator",
+    "_meta": {
+      "title": "Trellis2 - Shape Cascade Generator"
+    }
+  },
+  "303": {
+    "inputs": {
+      "fov": 0.1,
+      "unit": "rad",
+      "extend_pixel": 0,
+      "mesh_scale": 1
+    },
+    "class_type": "Trellis2FovMoGeCameraConfig",
+    "_meta": {
+      "title": "Trellis2 - Fov MoGe Camera Config"
+    }
+  },
+  "314": {
+    "inputs": {
+      "remesh_band": 1,
+      "resolution": 1024,
+      "remove_floaters": true,
+      "remove_inner_faces": true,
+      "mesh": [
+        "217",
+        0
+      ]
+    },
+    "class_type": "Trellis2ReconstructMeshWithQuad",
+    "_meta": {
+      "title": "Trellis2 - Reconstruct Mesh With Quad"
+    }
+  },
+  "317": {
+    "inputs": {
+      "azimuths": [
+        "326",
+        1
+      ],
+      "elevations": [
+        "326",
+        2
+      ],
+      "fov": 20,
+      "fov_unit": "deg",
+      "mesh_scale": 1,
+      "distance": 0,
+      "remove_background": false,
+      "invert_mask": false,
+      "framing": "auto",
+      "images": [
+        "326",
+        0
+      ],
+      "moge_camera_config": [
+        "303",
+        0
+      ]
+    },
+    "class_type": "Trellis2Pixal3DMultiViewConfig",
+    "_meta": {
+      "title": "Trellis2 - Pixal3D MultiView Config"
+    }
+  },
+  "323": {
+    "inputs": {
+      "mesh": [
+        "218",
+        0
+      ]
+    },
+    "class_type": "Trellis2FillHolesWithMeshlib",
+    "_meta": {
+      "title": "Trellis2 - Fill Holes with Meshlib"
+    }
+  },
+  "324": {
+    "inputs": {
+      "reorient_vertices": "None",
+      "mesh": [
+        "329",
+        0
+      ]
+    },
+    "class_type": "Trellis2MeshWithVoxelToTrimesh",
+    "_meta": {
+      "title": "Trellis2 - Mesh With Voxel To Trimesh"
+    }
+  },
+  "326": {
+    "inputs": {
+      "firstimage": "",
+      "preprocess": false,
+      "padding": 5,
+      "remove_background": false,
+      "max_size": 1024,
+      "azimuths": "0",
+      "elevations": "0",
+      "secondimage": "",
+      "thirdimage": "",
+      "fourthimage": ""
+    },
+    "class_type": "Trellis2SelectImagesForPixal3DMultiView",
+    "_meta": {
+      "title": "Trellis2 - Select Images For Pixal3D MultiView"
+    }
+  },
+  "327": {
+    "inputs": {
+      "batch_index": 0,
+      "length": 1,
+      "image": [
+        "326",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "328": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "329": {
+    "inputs": {
+      "switch": [
+        "328",
+        0
+      ],
+      "on_false": [
+        "218",
+        0
+      ],
+      "on_true": [
+        "323",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  }
+}
