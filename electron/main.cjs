@@ -1299,6 +1299,11 @@ function shutdown() {
   }
   // Backend is a lone Node process (no long-lived children) → a plain kill is fine.
   if (backendProc && !backendProc.killed) { try { backendProc.kill(); } catch { /* ignore */ } }
+  // On Windows child.kill() is TerminateProcess: no signal is delivered, so the
+  // backend's own cleanup never runs and its published location outlives it.
+  // Clear it here or discovery (mcp/stdio.js) keeps aiming MCP clients at a dead
+  // port long after the app has quit.
+  try { fs.rmSync(path.join(DATA_ROOT, 'data', 'runtime.json'), { force: true }); } catch { /* ignore */ }
 }
 
 if (!app.requestSingleInstanceLock()) {

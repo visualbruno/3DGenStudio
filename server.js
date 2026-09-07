@@ -182,6 +182,23 @@ function unpublishRuntimeInfo() {
 }
 process.on('exit', unpublishRuntimeInfo);
 
+// 'exit' does not run for a signal-terminated process, and signals are how this
+// backend usually dies: Ctrl+C in a dev shell, SIGTERM from a container or from
+// the desktop shell on POSIX. Without these the file outlives the server and
+// points discovery (mcp/stdio.js) at a port nothing is listening on. Windows
+// kills are TerminateProcess and deliver no signal at all, so the desktop shell
+// clears the file itself there (electron/main.cjs shutdown).
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  try {
+    process.on(signal, () => {
+      unpublishRuntimeInfo();
+      process.exit(0);
+    });
+  } catch {
+    // not every signal exists on every platform - the rest still register
+  }
+}
+
 // Last-resort safety net: a single dropped stream or stray async error should
 // never take the whole server down (which forced a full restart before). Log
 // and keep serving; individual requests still fail on their own if broken.

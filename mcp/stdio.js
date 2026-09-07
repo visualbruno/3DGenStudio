@@ -22,7 +22,8 @@ import { buildMcpServer } from './index.js';
 // The backend does not always live on 3001: the desktop shell moves it when
 // something else holds that port. It publishes where it landed to
 // <data dir>/runtime.json (server.js: publishRuntimeInfo), so look there before
-// falling back. Order: explicit URL/PORT -> published file -> 3001.
+// falling back. Candidate order: explicit URL/PORT -> published file(s) -> 3001,
+// each PROBED in turn because a published file can name a port that is dead.
 function runtimeDataDirs() {
   const dirs = [];
   if (process.env.GENSTUDIO_DATA_ROOT) dirs.push(path.join(process.env.GENSTUDIO_DATA_ROOT, 'data'));
@@ -40,21 +41,58 @@ function runtimeDataDirs() {
   return dirs;
 }
 
-function discoverBaseUrl() {
-  if (process.env.GENSTUDIO_URL) return process.env.GENSTUDIO_URL;
-  if (process.env.PORT) return `http://127.0.0.1:${process.env.PORT}`;
+// A published runtime.json can outlive the server that wrote it: 'exit' does not
+// run for a signal-terminated process, so a file naming a DEAD port survives a
+// hard kill. Returning the first file found therefore aims the bridge at a port
+// nothing is listening on — the "not reachable at :3002 while the app serves on
+// :3001" failure. Collect every candidate in priority order instead and let the
+// probe below pick the one that actually answers.
+function candidateBaseUrls() {
+  const urls = [];
+  const add = value => {
+    if (!value) return;
+    const clean = String(value).replace(/[/]+$/, '');
+    if (clean && !urls.includes(clean)) urls.push(clean);
+  };
+  if (process.env.GENSTUDIO_URL) add(process.env.GENSTUDIO_URL);
+  if (process.env.PORT) add(`http://127.0.0.1:${process.env.PORT}`);
   for (const dir of runtimeDataDirs()) {
     try {
       const info = JSON.parse(readFileSync(path.join(dir, 'runtime.json'), 'utf8'));
-      if (info?.port) return info.origin || `http://127.0.0.1:${info.port}`;
+      if (info?.port) add(info.origin || `http://127.0.0.1:${info.port}`);
     } catch {
       // not there, or stale/corrupt — try the next location
     }
   }
-  return 'http://127.0.0.1:3001';
+  add('http://127.0.0.1:3001');
+  return urls;
 }
 
-const baseUrl = discoverBaseUrl().replace(/\/+$/, '');
+// The timeout matters as much as the probe: a port that accepts the connection
+// and then never answers would hang the MCP handshake indefinitely, which the
+// client surfaces as the same opaque "Connection closed".
+async function isLive(url) {
+  try {
+    const res = await fetch(`${url}/api/projects`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// An explicit URL/PORT is an override, not a hint: if the caller named an
+// instance and it is down, say so rather than quietly attaching to a different
+// one they never asked for.
+const explicit = Boolean(process.env.GENSTUDIO_URL || process.env.PORT);
+const candidates = explicit ? candidateBaseUrls().slice(0, 1) : candidateBaseUrls();
+
+let baseUrl;
+for (const candidate of candidates) {
+  if (await isLive(candidate)) {
+    baseUrl = candidate;
+    break;
+  }
+}
 
 // --tools=a,b  |  --tools a,b  |  fall back to MCP_TOOLS, then every group.
 function readToolsFlag(argv) {
@@ -66,12 +104,10 @@ function readToolsFlag(argv) {
 
 const groups = readToolsFlag(process.argv.slice(2)) ?? process.env.MCP_TOOLS;
 
-try {
-  const res = await fetch(`${baseUrl}/api/projects`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-} catch (err) {
-  console.error(`3D Gen Studio is not reachable at ${baseUrl} (${err?.message || err}).`);
+if (!baseUrl) {
+  console.error(`3D Gen Studio is not reachable. Tried: ${candidates.join(', ')}.`);
   console.error('Start the app first (npm run dev, or launch the desktop app), then retry.');
+  console.error('If it is running elsewhere, set GENSTUDIO_URL=http://127.0.0.1:<port>.');
   process.exit(1);
 }
 
