@@ -1,0 +1,387 @@
+{
+  "1": {
+    "inputs": {
+      "front": "",
+      "preprocess": true,
+      "padding": 5,
+      "remove_background": false,
+      "max_size": 1024,
+      "back": "",
+      "left": "",
+      "right": ""
+    },
+    "class_type": "Trellis2SelectImagesForMultiView",
+    "_meta": {
+      "title": "Trellis2 - Select Images For MultiView"
+    }
+  },
+  "2": {
+    "inputs": {
+      "modelname": "microsoft/TRELLIS.2-4B",
+      "backend": "flash_attn",
+      "device": "cuda",
+      "low_vram": true,
+      "keep_models_loaded": false,
+      "conv_backend": "flex_gemm",
+      "sparse_backend": "flash_attn",
+      "use_reconviagen": false,
+      "pixal3d_multiview": false
+    },
+    "class_type": "Trellis2LoadModel",
+    "_meta": {
+      "title": "Trellis2 - LoadModel"
+    }
+  },
+  "3": {
+    "inputs": {
+      "remesh_band": 1,
+      "resolution": 1024,
+      "remove_floaters": true,
+      "remove_inner_faces": true,
+      "mesh": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "Trellis2ReconstructMeshWithQuad",
+    "_meta": {
+      "title": "Trellis2 - Reconstruct Mesh With Quad"
+    }
+  },
+  "4": {
+    "inputs": {
+      "target_face_num": 1000000,
+      "method": "Cumesh",
+      "mesh": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "Trellis2SimplifyMesh",
+    "_meta": {
+      "title": "Trellis2 - Simplify Mesh"
+    }
+  },
+  "5": {
+    "inputs": {
+      "mesh": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "Trellis2FillHolesWithMeshlib",
+    "_meta": {
+      "title": "Trellis2 - Fill Holes with Meshlib"
+    }
+  },
+  "7": {
+    "inputs": {
+      "trimesh": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "Trellis2SmoothNormals",
+    "_meta": {
+      "title": "Trellis2 - Smooth Normals"
+    }
+  },
+  "8": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioMV",
+      "file_format": "glb",
+      "trimesh": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "Trellis2ExportMesh",
+    "_meta": {
+      "title": "Trellis2 - Export Mesh"
+    }
+  },
+  "9": {
+    "inputs": {
+      "model_file": [
+        "8",
+        0
+      ],
+      "image": ""
+    },
+    "class_type": "Preview3D",
+    "_meta": {
+      "title": "Preview 3D & Animation"
+    }
+  },
+  "10": {
+    "inputs": {
+      "seed": 1624198322,
+      "sparse_structure_steps": 25,
+      "sparse_structure_guidance_strength": 7.5,
+      "sparse_structure_guidance_rescale": 0.01,
+      "sparse_structure_rescale_t": 5,
+      "sparse_structure_sampler": "heun",
+      "sparse_structure_resolution": 32,
+      "sparse_structure_guidance_interval_start": 0.1,
+      "sparse_structure_guidance_interval_end": 1,
+      "fill_holes": true,
+      "hole_iterations": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "hole_fill_algorithm": "flood_fill",
+      "dino_foundation_cap": 0.92,
+      "keep_only_shell": true,
+      "front_axis": "z",
+      "blend_temperature": 1,
+      "pipeline": [
+        "11",
+        3
+      ],
+      "image_conds": [
+        "11",
+        0
+      ],
+      "views_list": [
+        "11",
+        2
+      ]
+    },
+    "class_type": "Trellis2SparseMultiViewGenerator",
+    "_meta": {
+      "title": "Trellis2 - Sparse MultiView Generator"
+    }
+  },
+  "11": {
+    "inputs": {
+      "pipeline": [
+        "2",
+        0
+      ],
+      "front_image": [
+        "1",
+        0
+      ],
+      "back_image": [
+        "1",
+        1
+      ],
+      "left_image": [
+        "1",
+        2
+      ],
+      "right_image": [
+        "1",
+        3
+      ]
+    },
+    "class_type": "Trellis2ImageCondMultiViewGenerator",
+    "_meta": {
+      "title": "Trellis2 - ImageCond MultiView Generator"
+    }
+  },
+  "13": {
+    "inputs": {
+      "resolution": 512,
+      "shape_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_guidance_rescale": 0.5,
+      "shape_rescale_t": 3,
+      "shape_sampler": "heun",
+      "shape_guidance_interval_start": 0.6,
+      "shape_guidance_interval_end": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "front_axis": "z",
+      "blend_temperature": 1,
+      "pipeline": [
+        "10",
+        3
+      ],
+      "image_conds": [
+        "11",
+        0
+      ],
+      "views_list": [
+        "10",
+        2
+      ],
+      "coords": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "Trellis2ShapeMultiViewGenerator",
+    "_meta": {
+      "title": "Trellis2 - Shape MultiView Generator"
+    }
+  },
+  "14": {
+    "inputs": {
+      "from_resolution": [
+        "13",
+        1
+      ],
+      "to_resolution": 1024,
+      "sparse_structure_resolution": [
+        "10",
+        1
+      ],
+      "max_num_tokens": 999999,
+      "shape_steps": 12,
+      "shape_guidance_strength": 7.5,
+      "shape_guidance_rescale": 0.5,
+      "shape_rescale_t": 3,
+      "shape_sampler": "heun",
+      "shape_guidance_interval_start": 0.6,
+      "shape_guidance_interval_end": 1,
+      "verbose": false,
+      "dino_lock": 0.65,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "front_axis": "z",
+      "blend_temperature": 1,
+      "pipeline": [
+        "13",
+        3
+      ],
+      "image_conds": [
+        "11",
+        1
+      ],
+      "views_list": [
+        "13",
+        2
+      ],
+      "shape_slat": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "Trellis2ShapeCascadeMultiViewGenerator",
+    "_meta": {
+      "title": "Trellis2 - Shape Cascade MultiView Generator"
+    }
+  },
+  "15": {
+    "inputs": {
+      "resolution": [
+        "14",
+        1
+      ],
+      "use_tiled_decoder": true,
+      "pipeline": [
+        "18",
+        2
+      ],
+      "shape_slat": [
+        "14",
+        0
+      ],
+      "texture_slat": [
+        "18",
+        0
+      ]
+    },
+    "class_type": "Trellis2DecodeLatents",
+    "_meta": {
+      "title": "Trellis2 - Decode Latents"
+    }
+  },
+  "16": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "17": {
+    "inputs": {
+      "switch": [
+        "16",
+        0
+      ],
+      "on_false": [
+        "4",
+        0
+      ],
+      "on_true": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "18": {
+    "inputs": {
+      "resolution": 1024,
+      "texture_steps": 12,
+      "texture_guidance_strength": 1,
+      "texture_guidance_rescale": 0,
+      "texture_rescale_t": 3,
+      "texture_sampler": "euler",
+      "texture_guidance_interval_start": 0.6,
+      "texture_guidance_interval_end": 0.9,
+      "verbose": false,
+      "dino_lock": 0,
+      "dino_substeps": 2,
+      "dino_foundation_cap": 0.92,
+      "front_axis": "z",
+      "blend_temperature": 0.1,
+      "pipeline": [
+        "14",
+        3
+      ],
+      "image_conds": [
+        "11",
+        1
+      ],
+      "views_list": [
+        "14",
+        2
+      ],
+      "shape_slat": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "Trellis2TexSlatMultiViewGenerator",
+    "_meta": {
+      "title": "Trellis2 - Tex Slat MultiView Generator"
+    }
+  },
+  "19": {
+    "inputs": {
+      "mesh_cluster_threshold_cone_half_angle_rad": 60,
+      "mesh_cluster_refine_iterations": 0,
+      "mesh_cluster_global_iterations": 1,
+      "mesh_cluster_smooth_strength": 1,
+      "texture_size": 2048,
+      "texture_alpha_mode": "OPAQUE",
+      "double_side_material": false,
+      "bake_on_vertices": false,
+      "use_custom_normals": true,
+      "inpainting": "telea",
+      "reorient_vertices": "90 degrees",
+      "mesh": [
+        "17",
+        0
+      ],
+      "bvh": [
+        "15",
+        1
+      ]
+    },
+    "class_type": "Trellis2UnWrapAndRasterizer",
+    "_meta": {
+      "title": "Trellis2 - UV Unwrap and Rasterize"
+    }
+  }
+}

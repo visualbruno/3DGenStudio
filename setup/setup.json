@@ -921,6 +921,25 @@
 			"Outputs": [
 				{ "Node": "19", "Name": "Output Mesh", "Type": "Mesh" }
 			]
+		},
+		{
+			"Name": "Gen TexturedMesh MultiView with Trellis2",
+			"File": "setup/Gen TexturedMesh MultiView with Trellis2.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "front",  "Name": "Front Image", "Type": "Image" },
+				{ "Node": "1", "Input": "back",  "Name": "Back Image", "Type": "Image" },
+				{ "Node": "1", "Input": "left",  "Name": "Left Image", "Type": "Image" },
+				{ "Node": "1", "Input": "right",  "Name": "Right Image", "Type": "Image" },
+				{ "Node": "4",  "Input": "target_face_num",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "10",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "14",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "19",  "Input": "texture_size",  "Name": "Texture Size",   "Type": "Number" },
+				{ "Node": "2",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "16",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
+			],
+			"Outputs": [
+				{ "Node": "9", "Name": "Save Mesh", "Type": "Mesh" }
+			]
 		}		
 	]
 }
