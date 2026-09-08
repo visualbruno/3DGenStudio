@@ -218,17 +218,28 @@ import {
   undoBrushStroke,
   writeSegmentColors
 } from '../utils/meshSegment'
-import { exportObject3D, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
-import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig } from '../utils/meshRig'
+import { exportObject3D, loadObject3DFromUrl, measureUvHealth, uvsAreBroken, measureBakeOverlap, bakeSourceIsMisaligned, BAKE_COVERAGE_COMPLETE } from '../utils/meshExport'
+import { extractRigFromObject, buildRiggedObject, geometryHasSkin, translateRig, setRigAnimations } from '../utils/meshRig'
+import {
+  collectSkinSource,
+  planRigSourceAlignment,
+  buildSkinSampler,
+  transferSkin,
+  measureRigSourceFit,
+  validateSkin,
+  RIG_SOURCE_FAR_SAMPLE,
+} from '../utils/rigTransfer'
 import BoneTransformGizmo from '../components/meshEditor/BoneTransformGizmo'
 import {
   addChildBone,
+  cloneRigScene,
   computeRigInfluence,
   deleteRigBones,
   findUnusedBones,
   moveRigBone,
   renameRigBone,
   restoreRigSnapshot,
+  rigFromScene,
   rigSkeletonIndices,
   snapshotRig,
   takeWeightsFromParent,
@@ -549,6 +560,28 @@ export default function MeshEditorPage() {
   const [autoRigProgress, setAutoRigProgress] = useState(null)
   const [autoRigResult, setAutoRigResult] = useState(null)
   const [autoRigSaving, setAutoRigSaving] = useState(false)
+
+  // --- Transfer a rig from another mesh (Auto Rig panel) ----------------------
+  // Sampling an existing rig instead of generating one: the source is another
+  // mesh from the library — usually an earlier, rigged version of this very
+  // asset, which is why versions are selectable in the picker. Parsed at PICK
+  // time rather than at run time so the panel can report what the source
+  // carries, and whether it is even in the same space as this mesh, before the
+  // user spends a BVH build on it.
+  const [showRigSourceSelector, setShowRigSourceSelector] = useState(false)
+  const [rigSourceLoading, setRigSourceLoading] = useState(false)
+  const [rigSourceInfo, setRigSourceInfo] = useState(null)   // { name, boneCount, clipCount, meshes, skipped }
+  const [rigTransferSmoothing, setRigTransferSmoothing] = useState(2)
+  const [rigTransferRunning, setRigTransferRunning] = useState(false)
+  const [rigTransferResult, setRigTransferResult] = useState(null)
+  // The parsed source, out of React state because it is a scene graph plus a few
+  // megabytes of typed arrays: { rig, collected }. Kept after a run so the
+  // smoothing can be changed and the transfer repeated without re-downloading.
+  const rigSourceRef = useRef(null)
+  // The rig and weights this mesh had before the transfer, for the result card's
+  // Revert. The rig undo stack cannot express it: snapshotRig returns null when
+  // there is no rig, which is the ordinary case here.
+  const rigTransferUndoRef = useRef(null)
   // Skeleton overlay: the rig of the currently-loaded mesh (if it arrived rigged)
   // or of the freshly-generated rig result. `showSkeleton` toggles its visibility.
   const [skeleton, setSkeleton] = useState(null)
@@ -2582,6 +2615,12 @@ export default function MeshEditorPage() {
           setRigCanUndo(false)
           setRigCanRedo(false)
           setRigRevision(current => current + 1)
+          // The rig source was measured against the mesh that is going away, and
+          // the Revert snapshot describes its topology, so neither survives.
+          rigSourceRef.current = null
+          rigTransferUndoRef.current = null
+          setRigSourceInfo(null)
+          setRigTransferResult(null)
           // A new mesh means a new target skeleton — reset the Animations feature.
           setAnimReferenceId('')
           setAnimMapping(null)
@@ -5118,6 +5157,44 @@ export default function MeshEditorPage() {
     setAutoRigOptions(prev => ({ ...prev, [key]: value }))
   }, [])
 
+  // Everything that has to happen when a NEW skeleton lands on the mesh, shared
+  // by the two paths that do it: Auto Rig, and a rig transferred from another
+  // mesh. A new skeleton invalidates every piece of state keyed to the old one —
+  // the bone-edit history, the Revert baseline, and the Animations tab's cached
+  // target scene, retargets and bone mapping — and forgetting any one of them
+  // leaves the panel describing bones that no longer exist.
+  //
+  // Deliberately does NOT touch `rigRef`: Auto Rig has a case where the result
+  // is shown as an overlay without being adopted, so who owns the live rig stays
+  // the caller's decision.
+  const adoptRigState = useCallback(({ rig, geometry: rigGeometry, skeleton: nextSkeleton }) => {
+    setSkeleton(nextSkeleton)
+    setShowSkeleton(true)
+    setSelectedBone(null)
+    setRigEditDirty(false)
+    rigUndoStackRef.current = []
+    rigRedoStackRef.current = []
+    rigEditCountRef.current = 0
+    rigAddedBonesRef.current.clear()
+    // The incoming rig becomes what Revert returns to — anything the user had
+    // edited belonged to the skeleton that just went away.
+    rigBaselineRef.current = rig ? snapshotRig(rig, rigGeometry) : null
+    setRigCanUndo(false)
+    setRigCanRedo(false)
+    setRigRevision(current => current + 1)
+    animTargetRef.current = null
+    retargetedClipsRef.current.clear()
+    resetAnimEdits()
+    setAnimMapping(null)
+    setBoneMappingRestored(false)
+    setAnimClips([])
+    setSelectedAnimation(null)
+    setAnimPreview(null)
+    setAnimArmTargets(null)
+    setAnimArmExtension(0)
+    setCheckedAnimations(new Set())
+  }, [resetAnimEdits])
+
   // Auto Rig: generate a skeleton + skin weights via the SkinTokens rigging
   // service. Unlike the other mesh tools this does NOT replace the editable
   // geometry (that would discard the rig) — instead we parse the returned skinned
@@ -5194,33 +5271,13 @@ export default function MeshEditorPage() {
         }
       }
 
-      setSkeleton(rigSkeleton)
-      setShowSkeleton(true)
-      setSelectedBone(null)
-      setRigEditDirty(false)
-      rigUndoStackRef.current = []
-      rigRedoStackRef.current = []
-      rigEditCountRef.current = 0
-      rigAddedBonesRef.current.clear()
-      // Re-running Auto Rig replaces the skeleton, so anything the user had
-      // edited is gone with it — the fresh rig becomes what Revert returns to.
-      rigBaselineRef.current = adopted ? snapshotRig(nextRig, riggedGeometry) : null
-      setRigCanUndo(false)
-      setRigCanRedo(false)
-      setRigRevision(current => current + 1)
-      // The target skeleton changed — drop any cached target scene / mapping so
-      // the Animations tab re-maps against the freshly-rigged bones.
-      animTargetRef.current = null
-      retargetedClipsRef.current.clear()
-      resetAnimEdits()
-      setAnimMapping(null)
-      setBoneMappingRestored(false)
-      setAnimClips([])
-      setSelectedAnimation(null)
-      setAnimPreview(null)
-      setAnimArmTargets(null)
-      setAnimArmExtension(0)
-      setCheckedAnimations(new Set())
+      // `adopted` is false for a rig that stayed in the service's blob, which has
+      // no live rig to baseline or edit — hence the null.
+      adoptRigState({
+        rig: adopted ? nextRig : null,
+        geometry: riggedGeometry,
+        skeleton: rigSkeleton,
+      })
 
       const t = stats?.tool || {}
       const rows = []
@@ -5243,11 +5300,216 @@ export default function MeshEditorPage() {
       setAutoRigRunning(false)
       setAutoRigProgress(null)
     }
-  }, [geometry, autoRigRunning, autoRigOptions, texturableMesh, applyGeometryUpdate, adoptRiggedTexturable, resetAnimEdits])
+  }, [geometry, autoRigRunning, autoRigOptions, texturableMesh, applyGeometryUpdate, adoptRiggedTexturable, adoptRigState])
 
   const handleDismissRigResult = useCallback(() => {
     setAutoRigResult(null)
   }, [])
+
+  // -- Transfer a rig from another mesh ---------------------------------------
+  // The alternative to generating a rig: take the skeleton, skin weights and
+  // animation clips off a mesh that already has them. What it is for is written
+  // up in utils/rigTransfer.js; the decisions here are that the source is parsed
+  // at PICK time (so the panel can report what it carries, and whether it lines
+  // up with this mesh, before anything runs) and that the heavy half — the BVH
+  // and the sampling — is deferred to Run.
+
+  // Pull a rigged mesh in as the source. Versions count, which is the common
+  // case: the rigged high-poly is usually an earlier version of the very mesh
+  // being edited, and then the two are already in the same space.
+  const handlePickRigSource = useCallback(async (asset) => {
+    if (!asset) return
+    const url = buildAssetUrl(asset)
+    if (!url) {
+      setError('That asset has no file on disk.')
+      return
+    }
+    setRigSourceLoading(true)
+    setError('')
+    setRigTransferResult(null)
+    try {
+      // Not parseGlbScene: an FBX is as likely to be the rigged one, and both
+      // loaders leave the clips on the root, which is where
+      // extractRigFromObject reads them from.
+      const sourceRoot = await loadObject3DFromUrl(url)
+      const rig = extractRigFromObject(sourceRoot)
+      if (!rig) {
+        throw new Error('That mesh has no skeleton, so there is no rig to transfer. Pick a rigged mesh — an earlier rigged version of this one is usually the right answer.')
+      }
+      const collected = collectSkinSource(sourceRoot, rig.boneNames)
+      if (!collected) {
+        throw new Error('That mesh has a skeleton but no skin weights, so there is nothing to sample. It has to be a skinned mesh, not a bare armature.')
+      }
+      rigSourceRef.current = { rig, collected }
+      setRigSourceInfo({
+        name: asset.name || (asset.filePath || asset.filename || 'source mesh').split('/').pop(),
+        boneCount: rig.boneCount,
+        clipCount: rig.animations?.length || 0,
+        meshes: collected.meshes,
+        skipped: collected.skipped,
+      })
+      setFeedback(`Rig source set — ${rig.boneCount} bones${rig.animations?.length ? `, ${rig.animations.length} animation${rig.animations.length === 1 ? '' : 's'}` : ''}.`)
+    } catch (err) {
+      console.error('Loading the rig source failed:', err)
+      rigSourceRef.current = null
+      setRigSourceInfo(null)
+      setError(err?.message || 'Could not load that mesh as a rig source.')
+    } finally {
+      setRigSourceLoading(false)
+    }
+  }, [])
+
+  const handleClearRigSource = useCallback(() => {
+    rigSourceRef.current = null
+    setRigSourceInfo(null)
+    setRigTransferResult(null)
+  }, [])
+
+  // How well the chosen source sits on the mesh *as it is now*, for the panel's
+  // warning. Recomputed on every geometry change because an edit — or one click
+  // of the pivot fix — can separate the two after the source was picked.
+  // `rigSourceInfo` stands in for the ref, which is not reactive; the two are
+  // always set together.
+  const rigSourceFit = useMemo(() => {
+    const source = rigSourceInfo ? rigSourceRef.current : null
+    const target = geometryRevision >= 0 ? geometry : null
+    if (!source || !target) return null
+    const fit = measureRigSourceFit(target, source.collected.box)
+    return { ...planRigSourceAlignment(fit), fit }
+  }, [geometry, geometryRevision, rigSourceInfo])
+
+  const handleRunRigTransfer = useCallback(async () => {
+    const source = rigSourceRef.current
+    if (!geometry || rigTransferRunning || !source) return
+    setRigTransferRunning(true)
+    setRigTransferResult(null)
+    setError('')
+    setFeedback('Transferring the rig...')
+    let sampler = null
+    try {
+      // Measured here rather than trusting the pick-time figure: sampling across
+      // a gap does not fail, it returns a rig that binds every vertex to
+      // whichever bone happens to face it.
+      const fit = measureRigSourceFit(geometry, source.collected.box)
+      const plan = planRigSourceAlignment(fit)
+      if (plan.refuse) throw new Error(plan.refuse)
+
+      // The skeleton is taken WHOLE — that is what lets the clips come along
+      // unretargeted. Cloned per run because translateRig rewrites bone
+      // positions and the bind pose in place, so a second run has to start from
+      // the source rig as it arrived rather than from the moved copy.
+      const rig = rigFromScene(cloneRigScene(source.rig.rigScene))
+      if (!rig) throw new Error('The source skeleton could not be copied.')
+      setRigAnimations(rig, source.rig.animations)
+      // Both halves of the source have to make the same move: the surface being
+      // sampled, and the bones that surface's weights refer to.
+      if (plan.offset) translateRig(rig, plan.offset.x, plan.offset.y, plan.offset.z)
+
+      // Yielded first: computeBoundsTree on a dense source is seconds of blocked
+      // main thread, and the button should be showing its spinner by then.
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+      sampler = buildSkinSampler(source.collected, plan.offset)
+      if (!sampler) throw new Error('The source mesh could not be prepared for sampling.')
+
+      const nextGeometry = geometry.clone()
+      // clone() does not carry three-mesh-bvh's tree, and picking, sculpting and
+      // the weight brush all query it. Rebuilt here rather than left for the next
+      // click to fall back to a linear scan over the whole mesh.
+      if (geometry.boundsTree) nextGeometry.computeBoundsTree?.()
+      const stats = transferSkin(sampler, nextGeometry, {
+        smoothIters: rigTransferSmoothing,
+        diagonal: fit?.diagonal || 0,
+      })
+      // A rig that names a bone the skeleton does not have loads fine and then
+      // animates into knots, so it is checked before it can be saved rather
+      // than discovered in an engine.
+      const invalid = stats ? validateSkin(nextGeometry, rig.boneCount) : 'produced no weights'
+      if (invalid) {
+        nextGeometry.dispose()
+        throw new Error(`The transferred rig ${invalid} — the mesh was left as it was.`)
+      }
+
+      // Captured before anything changes. The rig undo stack cannot express
+      // this: snapshotRig returns null when there is no rig, which is the
+      // ordinary state of a mesh someone is about to transfer one onto.
+      rigTransferUndoRef.current = {
+        rig: rigRef.current,
+        skeleton,
+        dropped: rigDropped,
+        vertexCount: geometry.attributes.position.count,
+        skinIndex: geometry.attributes.skinIndex ? new Uint16Array(geometry.attributes.skinIndex.array) : null,
+        skinWeight: geometry.attributes.skinWeight ? new Float32Array(geometry.attributes.skinWeight.array) : null,
+      }
+
+      // Set before applyGeometryUpdate, which reads rigRef to decide whether an
+      // operation has just destroyed the weights.
+      rigRef.current = rig
+      setRigDropped(false)
+      // pushUndo: false — positions and UVs are untouched (only the skin
+      // attributes are new), so a modeling-undo entry would look like a no-op
+      // while silently stranding the rig. Revert on the result card is the way
+      // back.
+      applyGeometryUpdate(nextGeometry, [], { pushUndo: false })
+      adoptRigState({
+        rig,
+        geometry: nextGeometry,
+        skeleton: extractSkeletonFromObject(rig.rigScene),
+      })
+
+      const far = fit?.diagonal ? stats.farthest / fit.diagonal : 0
+      const rows = [
+        { label: 'Source', value: rigSourceInfo?.name || 'mesh' },
+        { label: 'Bones', value: rig.boneCount },
+        { label: 'Vertices weighted', value: (stats.vertices - stats.missed).toLocaleString() },
+      ]
+      if (stats.missed) rows.push({ label: 'Vertices missed', value: stats.missed.toLocaleString() })
+      if (rig.animations?.length) {
+        rows.push({ label: 'Animations', value: `${rig.animations.length} clip${rig.animations.length === 1 ? '' : 's'} carried over` })
+      }
+      if (plan.recentred) {
+        rows.push({ label: 'Source re-centred', value: `${plan.offset.length().toFixed(3)} units onto this mesh` })
+      }
+      rows.push({ label: 'Smoothing', value: `${rigTransferSmoothing} pass${rigTransferSmoothing === 1 ? '' : 'es'}` })
+      if (far) rows.push({ label: 'Farthest sample', value: `${(far * 100).toFixed(1)}% of the mesh size` })
+      setRigTransferResult({ rows, farSample: far > RIG_SOURCE_FAR_SAMPLE })
+      setFeedback('Rig transferred — save the mesh (or a new version) to keep it.')
+    } catch (err) {
+      console.error('Rig transfer failed:', err)
+      setError(err?.message || 'The rig transfer failed.')
+    } finally {
+      sampler?.dispose()
+      setRigTransferRunning(false)
+    }
+  }, [
+    geometry, rigTransferRunning, rigTransferSmoothing, rigSourceInfo,
+    skeleton, rigDropped, applyGeometryUpdate, adoptRigState,
+  ])
+
+  const handleRevertRigTransfer = useCallback(() => {
+    const snapshot = rigTransferUndoRef.current
+    if (!snapshot || !geometry) return
+    const restored = geometry.clone()
+    // Same-topology check, for the same reason restoreRigSnapshot makes it: an
+    // edit between the transfer and the Revert leaves the stored weights
+    // describing a mesh that no longer exists, and a wrong-length skin
+    // attribute is worse than none at all.
+    if (snapshot.vertexCount === geometry.attributes.position.count
+      && snapshot.skinIndex && snapshot.skinWeight) {
+      restored.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(new Uint16Array(snapshot.skinIndex), 4))
+      restored.setAttribute('skinWeight', new THREE.Float32BufferAttribute(new Float32Array(snapshot.skinWeight), 4))
+    } else {
+      restored.deleteAttribute('skinIndex')
+      restored.deleteAttribute('skinWeight')
+    }
+    if (geometry.boundsTree) restored.computeBoundsTree?.()
+    rigRef.current = snapshot.rig
+    applyGeometryUpdate(restored, [], { pushUndo: false })
+    setRigDropped(snapshot.dropped)
+    adoptRigState({ rig: snapshot.rig, geometry: restored, skeleton: snapshot.skeleton })
+    rigTransferUndoRef.current = null
+    setRigTransferResult(null)
+    setFeedback('Rig transfer reverted — the mesh is back to the rig it had.')
+  }, [geometry, applyGeometryUpdate, adoptRigState])
 
   // ── Bone editing (Skeleton panel → Edit) ─────────────────────────────────
   // Auto Rig gets joints wrong often enough — a shoulder inside the chest, a
@@ -11028,6 +11290,21 @@ export default function MeshEditorPage() {
                       rigDropped,
                       rigEdited: rigEditDirty,
                       boneMappings: boneMappingSummary,
+                      rigTransfer: {
+                        source: rigSourceInfo,
+                        loading: rigSourceLoading,
+                        onPickSource: () => setShowRigSourceSelector(true),
+                        onClearSource: handleClearRigSource,
+                        fit: rigSourceFit,
+                        smoothing: rigTransferSmoothing,
+                        onSmoothingChange: setRigTransferSmoothing,
+                        running: rigTransferRunning,
+                        result: rigTransferResult,
+                        onRun: handleRunRigTransfer,
+                        onRevert: handleRevertRigTransfer,
+                        onDismiss: () => setRigTransferResult(null),
+                        disabled: !geometry,
+                      },
                       weightPaint: weightPaintProps,
                       disabled: !geometry
                     }} />
@@ -12140,6 +12417,17 @@ export default function MeshEditorPage() {
             handleBakeSourceAsset(asset)
           }}
           onClose={() => setShowBakeSourceSelector(false)}
+          showEdits
+        />
+      )}
+      {showRigSourceSelector && (
+        <AssetSelectorModal
+          assetType="mesh"
+          onSelect={(asset) => {
+            setShowRigSourceSelector(false)
+            handlePickRigSource(asset)
+          }}
+          onClose={() => setShowRigSourceSelector(false)}
           showEdits
         />
       )}

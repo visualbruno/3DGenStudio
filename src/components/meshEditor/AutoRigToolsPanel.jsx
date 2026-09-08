@@ -12,6 +12,7 @@
 // textured mesh — where the generated file is the only copy of the rig.
 import { RangeField, ToggleField, SelectField } from './MeshToolField'
 import MeshToolProgress from './MeshToolProgress'
+import RigTransferSection from './RigTransferSection'
 import WeightPaintSection from './WeightPaintSection'
 import { AUTO_RIG_BONE_NAME_OPTIONS } from '../../utils/meshTools'
 
@@ -36,6 +37,7 @@ export default function AutoRigToolsPanel({
   rigDropped,
   rigEdited,
   boneMappings,
+  rigTransfer,
   weightPaint,
   disabled,
 }) {
@@ -208,6 +210,8 @@ export default function AutoRigToolsPanel({
         )}
       </div>
 
+      <RigTransferSection {...rigTransfer} />
+
       <WeightPaintSection {...weightPaint} />
 
       <div className="mesh-editor-panel__section">
@@ -246,6 +250,7 @@ export default function AutoRigToolsPanel({
 
       <div className="mesh-editor-panel__notes">
         <span className="mesh-editor-panel__hint">Auto Rig runs on the SkinTokens rigging service (Settings → Rigging). Needs an NVIDIA GPU.</span>
+        <span className="mesh-editor-panel__hint">Transferring a rig from an already-rigged mesh runs in the browser — no service and no GPU.</span>
         <span className="mesh-editor-panel__hint">The result is a skinned mesh; save it as a new version to keep the rig.</span>
       </div>
     </>

@@ -65,7 +65,33 @@ export function extractRigFromObject(root) {
     rigScene,
     boneCount: rigMesh.skeleton.bones.length,
     boneNames: rigMesh.skeleton.bones.map(bone => bone.name),
+    // Clips travel with the skeleton, not with the geometry: they address bones
+    // by NAME, so they stay valid through every edit that keeps the bone graph —
+    // and they are meaningless without it. Keeping them here is what stops an
+    // animated mesh losing its animations the first time it is saved from the
+    // editor, and what lets a transferred rig bring its clips along.
+    //
+    // Read off the CLONE rather than `root`: Object3D.copy slices `animations`,
+    // so the clone already holds them and the scene stays the one source of
+    // truth through every later cloneRigScene (undo, redo, export).
+    //
+    // Renaming a bone by hand invalidates the tracks that name it. The rig editor
+    // warns about the bone MAPPING for the same reason; the clips are the same
+    // trade and are left alone rather than silently rewritten.
+    animations: Array.isArray(rigScene.animations) ? rigScene.animations : [],
   }
+}
+
+// Put a set of animation clips on a rig, keeping the record and the scene it
+// caches from in step. The scene is the source of truth (a clone carries its
+// `animations` along for free, which is what makes the undo stack keep them);
+// the record's copy is what the UI counts.
+export function setRigAnimations(rig, clips) {
+  if (!rig?.rigScene) return rig
+  const animations = Array.isArray(clips) ? [...clips] : []
+  rig.rigScene.animations = animations
+  rig.animations = animations
+  return rig
 }
 
 // Move the captured skeleton with the mesh.
@@ -146,6 +172,12 @@ export function buildRiggedObject(rig, geometry, material = null) {
 
   mesh.bind(mesh.skeleton, new THREE.Matrix4())
   scene.updateMatrixWorld(true)
+
+  // exportObject3D reads `object.animations`, so this is the single point that
+  // puts the clips back into every save/export path at once. Tracks naming a
+  // node the rebuilt scene does not have are dropped by GLTFExporter with a
+  // warning rather than failing the export.
+  scene.animations = Array.isArray(rig.animations) ? rig.animations : []
 
   return scene
 }

@@ -820,7 +820,11 @@ function exportObjectToGlb(object) {
       },
       {
         binary: true,
-        onlyVisible: false
+        onlyVisible: false,
+        // buildRiggedObject puts the mesh's animation clips on the scene it
+        // returns; without this the save paths that come through here would
+        // write the skeleton and drop every clip that drives it.
+        animations: object.animations || []
       }
     )
   })

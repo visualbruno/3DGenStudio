@@ -75,7 +75,14 @@ function refreshBindPose(scene) {
 export function rigFromScene(rigScene) {
   const bones = collectSkeletonBones(rigScene)
   if (!bones.length) return null
-  return { rigScene, boneCount: bones.length, boneNames: bones.map(b => b.name) }
+  return {
+    rigScene,
+    boneCount: bones.length,
+    boneNames: bones.map(b => b.name),
+    // Carried by the scene itself through cloneRigScene, so undoing a bone edit
+    // does not quietly drop the mesh's animations along with it.
+    animations: Array.isArray(rigScene.animations) ? rigScene.animations : [],
+  }
 }
 
 // Refresh the cached counts/names after an edit changed them.

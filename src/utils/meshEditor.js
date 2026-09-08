@@ -348,6 +348,10 @@ export function parseGlbScene(arrayBuffer) {
             reject(new Error('The returned mesh did not contain a scene.'))
             return
           }
+          // Clips on the root, the same convention loadMeshRootFromUrl and
+          // FBXLoader use — extractRigFromObject reads them from there, so a
+          // GLB parsed here keeps its animations instead of dropping them.
+          if (gltf?.animations?.length) scene.animations = gltf.animations
           resolve(scene)
         },
         error => reject(error instanceof Error ? error : new Error('Failed to parse the returned GLB mesh.')),
@@ -1732,7 +1736,10 @@ export function exportGeometryToGlb(geometry, rig = null) {
       },
       {
         binary: true,
-        onlyVisible: false
+        onlyVisible: false,
+        // Present when a rig was supplied: buildRiggedObject carries the mesh's
+        // clips onto the scene it builds, and this is what writes them out.
+        animations: exportMesh.animations || []
       }
     )
   })
