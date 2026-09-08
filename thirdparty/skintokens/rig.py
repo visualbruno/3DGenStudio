@@ -245,6 +245,7 @@ class RigPipeline:
         temperature: float = 1.0,
         repetition_penalty: float = 2.0,
         num_beams: int = 10,
+        length_penalty: float = 1.0,
         progress=None,
     ) -> Path:
         """Rig a single mesh and write the result to ``output_path`` (.glb).
@@ -256,6 +257,10 @@ class RigPipeline:
             use_postprocess: Apply voxel-based skin cleanup to reduce weight bleed.
             rename_bones: One of ``"original"``, ``"mixamo"``, ``"ue5"``.
             use_skeleton: Reuse an existing skeleton in the input (skin-only).
+            length_penalty: Beam-search length preference. Above 1.0 favours LONGER
+                token sequences, i.e. skeletons with more bones — the knob for a
+                generation that stops before the fingers. Only has an effect with
+                ``num_beams`` > 1, which is how this pipeline decodes.
             progress: Optional ``callable(stage: str, frac: float, message: str)``
                 invoked as the pipeline advances (0.0 -> 1.0). Used by the rig
                 service to stream live progress to 3D Gen Studio.
@@ -272,6 +277,7 @@ class RigPipeline:
             temperature=temperature,
             repetition_penalty=repetition_penalty,
             num_beams=num_beams,
+            length_penalty=length_penalty,
             progress=progress,
         )
         return outputs[0]
@@ -290,6 +296,7 @@ class RigPipeline:
         temperature: float,
         repetition_penalty: float,
         num_beams: int,
+        length_penalty: float = 1.0,
         progress=None,
     ) -> List[Path]:
         assert len(filepaths) == len(output_paths)
@@ -352,6 +359,10 @@ class RigPipeline:
                 repetition_penalty=float(repetition_penalty),
                 num_return_sequences=1,
                 num_beams=int(num_beams),
+                # Beam search scores a hypothesis as sum_logprobs / len**this, so
+                # above 1.0 the longer skeleton wins ties — which is what keeps a
+                # hand from being dropped for the shorter, safer sequence.
+                length_penalty=float(length_penalty),
                 do_sample=True,
             )
 
@@ -509,6 +520,7 @@ def main() -> None:
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--repetition_penalty", type=float, default=2.0)
     parser.add_argument("--num_beams", type=int, default=10)
+    parser.add_argument("--length_penalty", type=float, default=1.0)
 
     parser.add_argument("--model_ckpt", default=DEFAULT_MODEL_CKPT)
     parser.add_argument("--hf_path", default=None)
@@ -552,6 +564,7 @@ def main() -> None:
             temperature=args.temperature,
             repetition_penalty=args.repetition_penalty,
             num_beams=args.num_beams,
+            length_penalty=args.length_penalty,
             progress=progress,
         )
 

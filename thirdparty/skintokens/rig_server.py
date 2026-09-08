@@ -140,6 +140,7 @@ def _run_cold_rig(in_path: Path, out_path: Path, opts: dict, report) -> None:
         "--temperature", str(opts["temperature"]),
         "--repetition_penalty", str(opts["repetition_penalty"]),
         "--num_beams", str(opts["num_beams"]),
+        "--length_penalty", str(opts["length_penalty"]),
         "--use_transfer" if opts["use_transfer"] else "--no_transfer",
     ]
     if opts["use_postprocess"]:
@@ -232,9 +233,15 @@ def _parse_options(raw: str | None) -> dict:
         use_skeleton=bool(data.get("use_skeleton", False)),
         top_k=_num("top_k", 5, int),
         top_p=_num("top_p", 0.95, float),
-        temperature=_num("temperature", 1.0, float),
-        repetition_penalty=_num("repetition_penalty", 2.0, float),
-        num_beams=_num("num_beams", 10, int),
+        # These four are 3D Gen Studio's tuned values, NOT rig.py's own defaults
+        # (1.0 / 2.0 / 10 / 1.0) — kept in step with DEFAULT_AUTO_RIG_OPTIONS in
+        # src/utils/meshTools.js so a request that omits a key rigs the same way
+        # the app does. rig.py keeps upstream's defaults for standalone CLI use;
+        # both paths here always pass every value explicitly.
+        temperature=_num("temperature", 0.7, float),
+        repetition_penalty=_num("repetition_penalty", 1.1, float),
+        num_beams=_num("num_beams", 15, int),
+        length_penalty=_num("length_penalty", 2.0, float),
         # Not a rig() argument — popped off before the call. When False, the model
         # is freed from memory after the rig (next request reloads it).
         keep_loaded=bool(data.get("keep_loaded", True)),

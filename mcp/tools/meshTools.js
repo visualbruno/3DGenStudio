@@ -102,9 +102,10 @@ const AUTO_RIG_OPTIONS = {
   keep_loaded: z.boolean().default(true).describe('Keep the rig model in (GPU) memory for fast repeat rigs.'),
   top_k: z.number().int().min(1).max(200).default(5).describe('Top-k sampling for the bone-token model.'),
   top_p: z.number().min(0.1).max(1).default(0.95).describe('Nucleus (top-p) sampling.'),
-  temperature: z.number().min(0.1).max(2).default(1).describe('Sampling temperature.'),
-  repetition_penalty: z.number().min(0.5).max(3).default(2).describe('Repetition penalty.'),
-  num_beams: z.number().int().min(1).max(20).default(10).describe('Beam-search width.')
+  temperature: z.number().min(0.1).max(2).default(0.7).describe('Sampling temperature. Lower stays nearer the prior the model was trained on.'),
+  repetition_penalty: z.number().min(0.5).max(3).default(1.1).describe('Repetition penalty, kept almost off on purpose: the tokens it penalises are quantised joint COORDINATES, and a hand has to reuse the same few bins, so a real penalty here is what makes a rig come back without fingers.'),
+  num_beams: z.number().int().min(1).max(20).default(15).describe('Beam-search width.'),
+  length_penalty: z.number().min(0.5).max(3).default(2).describe('Beam-search length preference: above 1.0 favours skeletons with MORE bones, which is the knob for a rig that comes back stopping short of the fingers or the tail. Needs num_beams above 1.')
 };
 
 // gltfpack (meshoptimizer) simplification. Runs in the Node backend, not the

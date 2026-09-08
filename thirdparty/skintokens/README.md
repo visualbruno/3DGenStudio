@@ -128,6 +128,7 @@ python demo.py --input examples/ --output results/ --use_transfer
 | `--temperature` | 1.0 | Sampling temperature |
 | `--repetition_penalty` | 2.0 | Repetition penalty |
 | `--num_beams` | 10 | Number of beams for beam search |
+| `--length_penalty` | 1.0 | Beam-search length preference; above 1.0 favours skeletons with more bones |
 | `--use_skeleton` | False | Use existing skeleton (generate skin only) |
 | `--use_transfer` | False | Transfer original texture and scale |
 | `--use_postprocess` | False | Apply voxel-based skin postprocessing |

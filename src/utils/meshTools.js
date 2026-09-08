@@ -390,9 +390,31 @@ export const DEFAULT_AUTO_RIG_OPTIONS = {
   keep_loaded: true,
   top_k: 5,
   top_p: 0.95,
-  temperature: 1.0,
-  repetition_penalty: 2.0,
-  num_beams: 10,
+  // ── The four below deliberately DIVERGE from SkinTokens' own defaults ──────
+  // (upstream: temperature 1.0, repetition_penalty 2.0, num_beams 10,
+  // length_penalty 1.0). Found by testing, and they hold across meshes
+  // including low-poly ones — the failure they fix is a rig that comes back
+  // stopping short of the fingers.
+  //
+  // The mechanism, since the numbers look arbitrary otherwise: rig.py decodes
+  // with do_sample AND num_beams, so every run is a fresh sample, and the
+  // decoder is mask-constrained to structurally valid tokens — meaning the
+  // model can never emit a BROKEN skeleton, only a prematurely finished one.
+  // Everything here pushes against finishing early.
+  //
+  //  * repetition_penalty divides the score of every token id already emitted,
+  //    and those ids are quantised coordinate BINS (the checkpoint quantises to
+  //    256 per axis). A hand packs 15-20 joints into a handful of bins, so at
+  //    2.0 it is the most penalised structure in the skeleton and stopping is
+  //    the cheapest way out. 1.1 leaves barely any of it (1.0 would be none).
+  //  * length_penalty scores a hypothesis as sum_logprobs / length**this, so
+  //    above 1.0 the longer skeleton wins ties. Only applies with beams > 1.
+  //  * a lower temperature stays nearer the prior the model was trained on
+  //    (rigs WITH fingers), and more beams search more of it.
+  temperature: 0.7,
+  repetition_penalty: 1.1,
+  num_beams: 15,
+  length_penalty: 2.0,
 }
 
 // The creature entries name bones the way the mesh2motion reference rigs do, so

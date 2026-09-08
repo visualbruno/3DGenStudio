@@ -2237,7 +2237,8 @@ export default function GraphPage({ project }) {
                   { label: 'Top-p', type: 'number', value: rigOptions.top_p },
                   { label: 'Temperature', type: 'number', value: rigOptions.temperature },
                   { label: 'Repetition penalty', type: 'number', value: rigOptions.repetition_penalty },
-                  { label: 'Beams', type: 'number', value: rigOptions.num_beams }
+                  { label: 'Beams', type: 'number', value: rigOptions.num_beams },
+                  { label: 'Length penalty', type: 'number', value: rigOptions.length_penalty }
                 ]
               })
             })

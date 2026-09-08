@@ -77,6 +77,9 @@ export default function AutoRigParameterFields({
       {renderNumber('temperature', 'Temperature', { min: 0.1, max: 2, step: 0.1 })}
       {renderNumber('repetition_penalty', 'Repetition penalty', { min: 0.5, max: 3, step: 0.1 })}
       {renderNumber('num_beams', 'Beams', { min: 1, max: 20, step: 1, hint: 'Beam-search width' })}
+      {renderNumber('length_penalty', 'Length penalty', {
+        min: 0.5, max: 3, step: 0.05, hint: 'Beam-search length preference. Above 1.0 favours skeletons with MORE bones — raise it when a rig comes back stopping short of the fingers or the tail. Only does anything with Beams above 1.',
+      })}
     </>
   )
 }

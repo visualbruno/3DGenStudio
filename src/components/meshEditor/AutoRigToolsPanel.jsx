@@ -246,6 +246,9 @@ export default function AutoRigToolsPanel({
         <RangeField label="Beams" min={1} max={20} step={1}
           value={o.num_beams} onChange={v => setOption('num_beams', v)} disabled={fieldsDisabled}
           hint="Beam-search width" />
+        <RangeField label="Length penalty" min={0.5} max={3} step={0.05} decimals={2}
+          value={o.length_penalty} onChange={v => setOption('length_penalty', v)} disabled={fieldsDisabled}
+          hint="Beam-search length preference. Above 1.0 favours skeletons with MORE bones — raise it when a rig comes back stopping short of the fingers or the tail. Only does anything with Beams above 1." />
       </div>
 
       <div className="mesh-editor-panel__notes">
