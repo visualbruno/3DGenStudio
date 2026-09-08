@@ -24,6 +24,8 @@
 !uploadQueue.js
 !logs.js
 !meshPivot.js
+!meshRigTransfer.js
+!skinTransfer.js
 !pgEmbedded.js
 !db/
 !version.json

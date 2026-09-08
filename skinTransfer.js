@@ -1,0 +1,323 @@
+// Skin-weight transfer: sampling one mesh's skinning onto another's vertices.
+//
+// The shared core of two features that are the same problem seen from different
+// sides — fitting armour onto a body (utils/assemblyWeights.js) and putting an
+// existing rig on a new mesh (utils/rigTransfer.js in the browser,
+// meshRigTransfer.js on the server) — so there is one implementation of the
+// maths and one place for its traps.
+//
+// ---- Why it lives at the repo ROOT ------------------------------------------
+//
+// The Node backend needs it too: `transfer_rig` over MCP has no browser to run
+// in. electron-builder packages dist/, not src/, so a backend module importing
+// src/utils/... dies with ERR_MODULE_NOT_FOUND in a packaged desktop app —
+// which is why meshPivot.js sits here rather than in src/. Same rule, same
+// place. It imports nothing but three, so it loads in both worlds.
+//
+// ---- Why this is not done with a mesh library --------------------------------
+//
+// trimesh cannot read or write glTF skinning at all -- 2,259 lines of
+// trimesh/exchange/gltf with zero occurrences of skin, joint, JOINTS_0 or
+// WEIGHTS_0. The codebase already knows this twice over: the FBX convert
+// endpoint exists because trimesh "flattens skinned meshes", and the rigging
+// service runs a bpy subprocess in its own venv for the same reason. So the
+// weights are computed here, against geometry the caller has already read.
+import * as THREE from 'three'
+
+// glTF's limit, and the default every engine expects. More influences per
+// vertex is not more accurate here — the extras are always the small ones.
+export const MAX_INFLUENCES = 4
+
+
+/**
+ * Group vertices that occupy the same point in space.
+ *
+ * THE load-bearing step, and leaving it out produced the worst failure this
+ * feature has had: a merged character that looked perfect at rest and tore into
+ * holes everywhere the moment it was animated.
+ *
+ * The merged geometry is DE-INDEXED — three vertices per triangle, so adjacent
+ * triangles have separate vertices at identical positions. Deriving anything
+ * from the index buffer then makes every triangle an island: the smoothing
+ * below averages within one triangle only, neighbouring triangles reach
+ * different answers, and two vertices sitting on the same point end up bound to
+ * the skeleton differently. At rest that is invisible. Move a bone and they
+ * travel apart, and the surface splits along every single edge.
+ *
+ * So weights are computed in WELDED space and written back to every vertex of
+ * the group, which makes coincident vertices identical by construction rather
+ * than by luck.
+ */
+function weldGroups(geometry, tolerance = 1e-5) {
+  const position = geometry.getAttribute('position')
+  const lookup = new Map()
+  const group = new Uint32Array(position.count)
+  const inverse = 1 / tolerance
+  let count = 0
+
+  for (let i = 0; i < position.count; i += 1) {
+    const key = `${Math.round(position.getX(i) * inverse)},`
+      + `${Math.round(position.getY(i) * inverse)},`
+      + `${Math.round(position.getZ(i) * inverse)}`
+    let id = lookup.get(key)
+    if (id === undefined) { id = count; count += 1; lookup.set(key, id) }
+    group[i] = id
+  }
+  return { group, count }
+}
+
+
+/** Adjacency between welded groups, as CSR. */
+function buildAdjacency(geometry, group, groupCount) {
+  const index = geometry.getIndex()
+  const vertexCount = geometry.getAttribute('position').count
+  const get = index ? i => index.getX(i) : i => i
+  const total = index ? index.count : vertexCount
+
+  const degree = new Uint32Array(groupCount)
+  for (let i = 0; i < total; i += 3) {
+    for (let k = 0; k < 3; k += 1) degree[group[get(i + k)]] += 2
+  }
+  const offsets = new Uint32Array(groupCount + 1)
+  for (let i = 0; i < groupCount; i += 1) offsets[i + 1] = offsets[i] + degree[i]
+
+  const cursor = offsets.slice(0, groupCount)
+  const neighbours = new Uint32Array(offsets[groupCount])
+  for (let i = 0; i < total; i += 3) {
+    const a = group[get(i)]
+    const b = group[get(i + 1)]
+    const c = group[get(i + 2)]
+    neighbours[cursor[a]++] = b; neighbours[cursor[a]++] = c
+    neighbours[cursor[b]++] = c; neighbours[cursor[b]++] = a
+    neighbours[cursor[c]++] = a; neighbours[cursor[c]++] = b
+  }
+  return { offsets, neighbours }
+}
+
+
+/** Keep the strongest `limit` influences and renormalise to sum 1. */
+function compress(map, limit) {
+  const entries = [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit)
+  let total = 0
+  for (const [, weight] of entries) total += weight
+  if (total <= 1e-12) return [[0, 1], [0, 0], [0, 0], [0, 0]].slice(0, limit)
+  return entries.map(([bone, weight]) => [bone, weight / total])
+}
+
+
+/**
+ * Sample the base's skinning at each of `targetPositions` and write it onto
+ * `targetGeometry`.
+ *
+ * `targetPositions` is the geometry's vertices in WORLD space — the same space
+ * the sampler is in. They are passed separately because a piece version is
+ * saved in its own local space while the weights must still be sampled where
+ * the piece actually sits on the body.
+ */
+export function transferSkinFromBase(sampler, targetGeometry, targetPositions, {
+  maxInfluences = MAX_INFLUENCES,
+  smoothIters = 2,
+  maxDistance = null,
+} = {}) {
+  if (!sampler || !targetGeometry) return null
+
+  const count = targetGeometry.getAttribute('position').count
+  const baseIndex = sampler.geometry.getIndex()
+  const raycaster = new THREE.Vector3()
+  const hit = { point: new THREE.Vector3(), distance: 0, faceIndex: -1 }
+
+  const outIndex = new Uint16Array(count * 4)
+  const outWeight = new Float32Array(count * 4)
+
+  const triangle = new THREE.Triangle()
+  const bary = new THREE.Vector3()
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const basePosition = sampler.geometry.getAttribute('position')
+
+  let missed = 0
+  let farthest = 0
+
+  for (let v = 0; v < count; v += 1) {
+    raycaster.set(targetPositions[v * 3], targetPositions[v * 3 + 1], targetPositions[v * 3 + 2])
+    hit.faceIndex = -1
+    sampler.geometry.boundsTree.closestPointToPoint(raycaster, hit)
+    if (hit.faceIndex < 0) { missed += 1; continue }
+    farthest = Math.max(farthest, hit.distance)
+
+    const i0 = baseIndex.getX(hit.faceIndex * 3)
+    const i1 = baseIndex.getX(hit.faceIndex * 3 + 1)
+    const i2 = baseIndex.getX(hit.faceIndex * 3 + 2)
+    a.fromBufferAttribute(basePosition, i0)
+    b.fromBufferAttribute(basePosition, i1)
+    c.fromBufferAttribute(basePosition, i2)
+
+    // Barycentric, not nearest-vertex. Nearest-vertex quantises the result to
+    // the BODY's resolution, so a denser piece gets visible banding wherever
+    // two bones meet — a stair-step across the shoulder instead of a blend.
+    triangle.set(a, b, c)
+    triangle.getBarycoord(hit.point, bary)
+    if (!Number.isFinite(bary.x) || !Number.isFinite(bary.y) || !Number.isFinite(bary.z)) {
+      bary.set(1, 0, 0)          // degenerate triangle: fall back to one corner
+    }
+
+    const blended = new Map()
+    const corners = [i0, i1, i2]
+    const shares = [bary.x, bary.y, bary.z]
+    for (let k = 0; k < 3; k += 1) {
+      const share = shares[k]
+      if (share <= 0) continue
+      const base = corners[k] * 4
+      for (let s = 0; s < 4; s += 1) {
+        const weight = sampler.skinWeight[base + s] * share
+        if (weight <= 0) continue
+        const bone = sampler.skinIndex[base + s]
+        blended.set(bone, (blended.get(bone) || 0) + weight)
+      }
+    }
+
+    const kept = compress(blended, maxInfluences)
+    for (let s = 0; s < kept.length; s += 1) {
+      outIndex[v * 4 + s] = kept[s][0]
+      outWeight[v * 4 + s] = kept[s][1]
+    }
+  }
+
+  const stats = { vertices: count, missed, farthest, smoothed: smoothIters }
+
+  // ALWAYS, even at zero rounds: the unify half is what stops the mesh tearing
+  // when it is posed.
+  stats.weldedGroups = unifyAndSmoothWeights(
+    targetGeometry, outIndex, outWeight, smoothIters, maxInfluences)
+
+  targetGeometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(outIndex, 4))
+  targetGeometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(outWeight, 4))
+
+  if (maxDistance && farthest > maxDistance) stats.suspicious = true
+  return stats
+}
+
+
+/**
+ * Unify and smooth weights over WELDED groups, in place.
+ *
+ * Two jobs, and the first is not optional:
+ *
+ *   1. every vertex of a welded group is given the SAME weights, so coincident
+ *      vertices cannot separate under animation (see weldGroups);
+ *   2. each group is averaged with its neighbours, which removes the hard line
+ *      a piece picks up where the nearest body point flips from one region to
+ *      another — across a shoulder, or where a tasset hangs between hip and
+ *      thigh. The body has no such line because its own weights were painted
+ *      smooth; sampling pointwise reintroduces it.
+ *
+ * Job 1 runs even with `rounds` at 0.
+ */
+function unifyAndSmoothWeights(geometry, outIndex, outWeight, rounds, maxInfluences) {
+  const { group, count: groupCount } = weldGroups(geometry)
+  const vertexCount = geometry.getAttribute('position').count
+
+  // Collapse each group to one weight set, summing its members.
+  let groupIndex = new Uint16Array(groupCount * 4)
+  let groupWeight = new Float32Array(groupCount * 4)
+  const accumulate = new Array(groupCount)
+  for (let v = 0; v < vertexCount; v += 1) {
+    const g = group[v]
+    let blended = accumulate[g]
+    if (!blended) { blended = new Map(); accumulate[g] = blended }
+    for (let s = 0; s < 4; s += 1) {
+      const weight = outWeight[v * 4 + s]
+      if (weight <= 0) continue
+      const bone = outIndex[v * 4 + s]
+      blended.set(bone, (blended.get(bone) || 0) + weight)
+    }
+  }
+  for (let g = 0; g < groupCount; g += 1) {
+    const kept = compress(accumulate[g] || new Map(), maxInfluences)
+    for (let s = 0; s < kept.length; s += 1) {
+      groupIndex[g * 4 + s] = kept[s][0]
+      groupWeight[g * 4 + s] = kept[s][1]
+    }
+  }
+
+  if (rounds > 0) {
+    const { offsets, neighbours } = buildAdjacency(geometry, group, groupCount)
+    for (let round = 0; round < rounds; round += 1) {
+      const nextIndex = new Uint16Array(groupIndex.length)
+      const nextWeight = new Float32Array(groupWeight.length)
+      for (let g = 0; g < groupCount; g += 1) {
+        const blended = new Map()
+        // The group counts as much as all its neighbours together, so smoothing
+        // softens the seam without washing the piece toward one average bone.
+        const add = (slot, scale) => {
+          for (let s = 0; s < 4; s += 1) {
+            const weight = groupWeight[slot * 4 + s] * scale
+            if (weight <= 0) continue
+            const bone = groupIndex[slot * 4 + s]
+            blended.set(bone, (blended.get(bone) || 0) + weight)
+          }
+        }
+        add(g, 1)
+        const start = offsets[g]
+        const end = offsets[g + 1]
+        if (end > start) {
+          const share = 1 / (end - start)
+          for (let n = start; n < end; n += 1) add(neighbours[n], share)
+        }
+        const kept = compress(blended, maxInfluences)
+        for (let s = 0; s < kept.length; s += 1) {
+          nextIndex[g * 4 + s] = kept[s][0]
+          nextWeight[g * 4 + s] = kept[s][1]
+        }
+      }
+      groupIndex = nextIndex
+      groupWeight = nextWeight
+    }
+  }
+
+  // Scatter back — every vertex of a group now carries identical weights.
+  for (let v = 0; v < vertexCount; v += 1) {
+    const g = group[v]
+    for (let s = 0; s < 4; s += 1) {
+      outIndex[v * 4 + s] = groupIndex[g * 4 + s]
+      outWeight[v * 4 + s] = groupWeight[g * 4 + s]
+    }
+  }
+  return groupCount
+}
+
+
+/**
+ * Does this geometry carry skinning every engine will accept?
+ *
+ * The gate in front of the skinned merged export. A piece missing weights, or
+ * referencing a bone the shared skeleton does not have, produces a GLB that
+ * loads and then animates into knots — the silent partial rig meshRig.js warns
+ * about. Better to fall back to a static export and say which piece failed.
+ */
+export function validateSkin(geometry, boneCount) {
+  const joints = geometry?.getAttribute('skinIndex')
+  const weights = geometry?.getAttribute('skinWeight')
+  if (!joints || !weights) return 'has no skin weights'
+  if (joints.count !== geometry.getAttribute('position').count) {
+    return 'has skin weights for the wrong number of vertices'
+  }
+
+  let worstSum = 0
+  for (let i = 0; i < joints.count; i += 1) {
+    let sum = 0
+    for (let s = 0; s < 4; s += 1) {
+      const bone = joints.getComponent(i, s)
+      if (bone < 0 || bone >= boneCount) {
+        return `references bone ${bone}, but the skeleton has ${boneCount}`
+      }
+      sum += weights.getComponent(i, s)
+    }
+    worstSum = Math.max(worstSum, Math.abs(sum - 1))
+  }
+  // Unnormalised weights are not fatal in every engine, but they are always a
+  // bug here — the transfer normalises, so a drift means something else wrote.
+  if (worstSum > 0.01) return `has weights summing to ${(1 + worstSum).toFixed(3)}`
+  return null
+}

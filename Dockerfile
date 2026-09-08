@@ -67,7 +67,7 @@ ENV NODE_ENV=production \
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json version.json ./
-COPY --chown=node:node server.js storage.js wikiStorage.js auth.js serverMode.js gateway.js dataStore.js uploadQueue.js logs.js meshPivot.js pgEmbedded.js ./
+COPY --chown=node:node server.js storage.js wikiStorage.js auth.js serverMode.js gateway.js dataStore.js uploadQueue.js logs.js meshPivot.js meshRigTransfer.js skinTransfer.js pgEmbedded.js ./
 # The SQL engine. db/index.js chooses a driver at startup -- PostgreSQL here,
 # SQLite on a desktop install -- and loads it by dynamic import, so the whole
 # directory ships rather than a name-by-name list that would look complete.

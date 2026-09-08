@@ -384,6 +384,56 @@ export function registerMeshToolTools(server, { api, notifyMutation }) {
     extra
   )));
 
+  server.registerTool('transfer_rig', {
+    title: 'Transfer rig between meshes',
+    description: 'Copy a rigged mesh\'s skeleton and skin weights onto an UNRIGGED mesh of the same character, and save the result as a new version. This is the deterministic alternative to auto_rig_mesh: it needs no GPU and no service, takes seconds, and — because it reuses an existing skeleton rather than generating a new one — it keeps every bone name, correction and saved bone mapping that skeleton already had. Use it for a retopologised or LOD version of an already-rigged asset, or to put the rig back after an edit rebuilt the topology and dropped the weights. Weights are sampled from the nearest point on the source surface (barycentric, then smoothed), so the two meshes MUST be the same character in the same space: a source that merely sits at a different pivot is re-centred automatically, but one at a different scale, or barely overlapping, is refused rather than producing a rig that binds every vertex to whatever bone faces it. The target\'s materials, images and UVs are preserved byte-for-byte — only the skeleton, a skin, and two vertex attributes are added. Read stats.far_sample_fraction: it is how far the furthest vertex had to reach for its weights, as a fraction of the mesh size, and anything much above 0.05 means the two surfaces are not really the same shape there (a limb the source does not have, usually). NOTE: animations are not carried over by this tool — clips live with the skeleton in the editor and in saved animation files, not in the target\'s glTF.',
+    inputSchema: {
+      projectId: z.number().int(),
+      assetId: z.number().int().describe('Mesh asset id to RIG — the unrigged target. Must not already have a skeleton.'),
+      sourceAssetId: z.number().int().describe('Rigged mesh asset id to copy the skeleton and weights FROM. Usually an earlier version of the same asset.'),
+      smooth_iters: z.number().int().min(0).max(4).default(2).describe('Averaging passes over the transferred weights. Softens the hard line a sparse mesh picks up where the nearest source point flips from one bone to another; too much washes small parts toward one bone.'),
+      ...saveFields
+    }
+  }, toolHandler(async ({ projectId, assetId, sourceAssetId, smooth_iters = 2, saveMode = 'version', name }, extra) => {
+    const reportProgress = createProgressReporter(extra);
+    const target = await loadMeshAsset(api, projectId, assetId);
+    const source = await loadMeshAsset(api, projectId, sourceAssetId);
+    await reportProgress(10, 100, `Transferring the rig from ${source.asset.name || 'the source'}`);
+
+    const form = new FormData();
+    form.append('meshFile', meshBlob(target.buffer), target.fileName);
+    form.append('sourceFile', meshBlob(source.buffer), source.fileName);
+    form.append('options', JSON.stringify({ smooth_iters }));
+
+    const result = await api.apiForm('POST', '/meshes/transfer-rig', form);
+    const buffer = Buffer.from(result.mesh_b64, 'base64');
+    const stats = result.stats || {};
+
+    await reportProgress(85, 100, 'Saving');
+    const saved = await saveMeshVersion(api, target.asset, buffer, { saveMode, name });
+    notifyMutation();
+
+    return {
+      assetId: target.asset.id,
+      assetName: saved?.asset?.name || target.asset.name,
+      sourceAssetId: source.asset.id,
+      sourceAssetName: source.asset.name,
+      bones: stats.bones,
+      bone_names: stats.boneNames,
+      vertices_weighted: stats.vertices,
+      vertices_missed: stats.missed,
+      primitives: stats.primitives,
+      // How far the furthest vertex reached for its weights, relative to the
+      // mesh — the number that says whether the two surfaces really match.
+      far_sample_fraction: stats.farthestFraction,
+      far_sample: stats.farSample,
+      recentred_by: stats.recentred,
+      skipped_source_parts: stats.skippedSourceParts,
+      warning: stats.warning,
+      saveMode
+    };
+  }));
+
   server.registerTool('inspect_mesh', {
     title: 'Game-Ready check',
     description: 'Check a project mesh asset against engine-readiness budgets and return the report — triangle count, UV coverage and overlap, texel density, material/draw-call count, scale sanity, non-manifold geometry, and pivot placement. READ-ONLY: it never modifies the mesh. Each finding carries a pass/warn/fail status and, where one exists, the tool that fixes it (repair_mesh, auto_uv_mesh, auto_retopo_mesh, optimize_mesh, move_mesh_pivot). Set expect_ground_pivot for props and characters. Requires the Python mesh-tools service running.',

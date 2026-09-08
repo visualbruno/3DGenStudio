@@ -115,7 +115,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
 | AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx` (all fully-typed), `run_mesh_tool` (the same operations, untyped), `export_mesh` |
-| Mesh finishing | `inspect_mesh` (Game-Ready check), `bake_mesh_maps`, `generate_lods`, `generate_collision`, `move_mesh_pivot` |
+| Mesh finishing | `inspect_mesh` (Game-Ready check), `bake_mesh_maps`, `generate_lods`, `generate_collision`, `move_mesh_pivot`, `transfer_rig` |
 | Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `unlink_asset`, `delete_asset` |
 | Asset tags | `list_asset_tags`, `tag_asset`, `find_assets_by_tags` |
 | Asset library | `import_library_assets`, `rename_library_asset`, `delete_library_asset` |
@@ -217,7 +217,7 @@ A key that still matches nothing is an error listing the workflow's real paramet
 
 ### Parameter-heavy mesh tools
 
-Every mesh operation has a dedicated tool that declares each parameter in its schema with type, range, default, and description (mirroring the Python service's Pydantic models 1:1), so a client can set exactly what it needs and see the valid bounds: `auto_uv_mesh` (14 parameters), `auto_retopo_mesh` (20), `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx`, `inspect_mesh`, `bake_mesh_maps`, `generate_collision`, `generate_lods`, `move_mesh_pivot`. Any subset of options may be set; unset keys fall back to the documented default. For Auto Retopo, the `shell_*` options apply only when `watertight` is `true`. `run_mesh_tool` still accepts every operation with a free-form options object for backward compatibility, but prefer the typed tools.
+Every mesh operation has a dedicated tool that declares each parameter in its schema with type, range, default, and description (mirroring the Python service's Pydantic models 1:1), so a client can set exactly what it needs and see the valid bounds: `auto_uv_mesh` (14 parameters), `auto_retopo_mesh` (20), `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx`, `inspect_mesh`, `bake_mesh_maps`, `generate_collision`, `generate_lods`, `move_mesh_pivot`, `transfer_rig`. Any subset of options may be set; unset keys fall back to the documented default. For Auto Retopo, the `shell_*` options apply only when `watertight` is `true`. `run_mesh_tool` still accepts every operation with a free-form options object for backward compatibility, but prefer the typed tools.
 
 ### The finishing pipeline
 
@@ -232,7 +232,9 @@ Every mesh operation has a dedicated tool that declares each parameter in its sc
 7. `generate_collision`, then `convert_mesh_fbx` or `export_mesh`.
 8. `inspect_mesh` again to confirm.
 
-Where results are saved differs by tool, deliberately: most save a **new version** of the source mesh, but `generate_collision` and `bake_mesh_maps` save **separate assets** (a collider is a sibling of the render mesh, not a newer take on it, and baked maps are images). `generate_lods` saves one version per reduced level, skipping a ratio of `1` since that level is the source itself. `move_mesh_pivot` saves nothing when the pivot is already in place and says so in the response.
+Where results are saved differs by tool, deliberately: most save a **new version** of the source mesh, but `generate_collision` and `bake_mesh_maps` save **separate assets** (a collider is a sibling of the render mesh, not a newer take on it, and baked maps are images). `generate_lods` saves one version per reduced level, skipping a ratio of `1` since that level is the source itself. `move_mesh_pivot` saves nothing when the pivot is already in place and says so in the response. `transfer_rig` saves a new version of the TARGET (the mesh being rigged), never of the source it copied from.
+
+**Rigging a reduced mesh.** Steps 3 and 4 rebuild the topology, which destroys any skin weights the mesh had — the result saves as a static mesh even if the original was rigged. `transfer_rig` is the repair: it copies the skeleton and weights off the pre-reduction version (or any rigged version of the same character) by sampling the nearest point on its surface. It needs no GPU and no service, and because it reuses the *existing* skeleton it keeps the bone names, hand corrections and saved bone mappings that `auto_rig_mesh` would throw away by generating a new one. The two meshes have to be the same character in the same space; a source at a different pivot is re-centred automatically, one at a different scale is refused. Check `far_sample_fraction` in the response — much above `0.05` means the surfaces do not really match.
 
 **The UV-seam trap.** gltfpack (behind `optimize_mesh` and `generate_lods`) will not collapse a vertex that sits on a UV seam, so a heavily-seamed textured mesh can barely reduce at all no matter what `simplify_ratio` you ask for. Always read `stats.achieved_ratio` and `stats.seam_limited` rather than assuming the request was met; setting `allow_seam_breaking: true` reaches the target but distorts the UVs, so re-unwrap or re-bake afterwards.
 
@@ -276,7 +278,7 @@ Tags are normalized server-side — trimmed, whitespace-collapsed, lower-cased, 
 | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `convert_mesh_fbx`, `inspect_mesh`, `bake_mesh_maps`, `generate_collision` | Python mesh-tools service (`:8200`) running — the desktop app can start it from Settings |
 | `auto_rig_mesh` | rigging service (`:8300`) running |
 | `optimize_mesh`, `generate_lods` | nothing extra (bundled gltfpack) |
-| `move_mesh_pivot` | nothing extra (runs in the app backend) |
+| `move_mesh_pivot`, `transfer_rig` | nothing extra (runs in the app backend) |
 
 ## Limitations
 

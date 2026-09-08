@@ -49,6 +49,11 @@ files:
   # root-level module server.js imports has to be listed here by name, or the
   # packaged backend dies at startup on ERR_MODULE_NOT_FOUND.
   - meshPivot.js
+  # Server-side rig transfer behind /api/meshes/transfer-rig (the MCP transfer_rig
+  # tool), and the weight maths it shares with the browser. Same rule as
+  # meshPivot.js: root-level modules server.js imports have to be named here.
+  - meshRigTransfer.js
+  - skinTransfer.js
   # Multi-user server mode. Same rule again: server.js imports all five
   # statically, so omitting any one is an instant ERR_MODULE_NOT_FOUND at
   # startup. auth.js (users/JWT), serverMode.js (which routes exist in which

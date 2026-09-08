@@ -18,6 +18,7 @@ import tencentcloudSdk from 'tencentcloud-sdk-nodejs-intl-en';
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
+import { transferRig } from './meshRigTransfer.js';
 // The self-managed PostgreSQL for a shared server that is not running Docker.
 import * as pgEmbedded from './pgEmbedded.js';
 import { mountAuth, resolveJwtSecret, seedAdminFromEnv } from './auth.js';
@@ -9086,6 +9087,39 @@ app.post('/api/meshes/pivot', meshToolsUpload.single('meshFile'), async (req, re
     if (!res.headersSent) res.status(500).json({ error: err.message || 'Pivot move failed' });
   }
 });
+
+// Put one mesh's skeleton and skin weights onto another. In-process, like the
+// pivot move above and for the same reason: it edits the target's glTF rather
+// than round-tripping the scene, so materials, images and UVs come through
+// untouched. The Mesh Editor has its own browser-side path (Auto Rig -> Transfer
+// Rig From Mesh); this is the one headless callers can reach.
+app.post('/api/meshes/transfer-rig',
+  meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, { name: 'sourceFile', maxCount: 1 }]),
+  async (req, res) => {
+    try {
+      const target = req.files?.meshFile?.[0];
+      const source = req.files?.sourceFile?.[0];
+      if (!target?.buffer?.length) return res.status(400).json({ error: 'meshFile (the mesh to rig) is required' });
+      if (!source?.buffer?.length) return res.status(400).json({ error: 'sourceFile (the rigged mesh to copy from) is required' });
+
+      let options = {};
+      if (typeof req.body?.options === 'string' && req.body.options.length) {
+        try { options = JSON.parse(req.body.options); } catch { options = {}; }
+      }
+      const smoothIters = Number.isFinite(Number(options.smooth_iters))
+        ? Math.max(0, Math.min(4, Math.round(Number(options.smooth_iters))))
+        : 2;
+
+      const result = transferRig(source.buffer, target.buffer, { smoothIters });
+      res.json({ mesh_b64: result.buffer.toString('base64'), stats: result.stats });
+    } catch (err) {
+      console.error('Rig transfer failed:', err);
+      // 422, not 500: every throw in transferRig is a judgement about the two
+      // meshes (no skeleton, already rigged, too far apart) that the caller can
+      // act on, not a server fault.
+      if (!res.headersSent) res.status(422).json({ error: err.message || 'Rig transfer failed' });
+    }
+  });
 
 app.post('/api/export/mesh', multer({ storage: multer.memoryStorage(), limits: { fileSize: 512 * 1024 * 1024 } }).array('files'), async (req, res) => {
   try {
