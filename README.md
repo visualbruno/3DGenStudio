@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-09-08** | Updated ComfyUI nodes and workflows for Trellis2, Pixal3D, Hunyuan<br>MeshEditor - AutoRig: Transfer skeleton and weights to another mesh (high poly to low poly)<br>Improved AutoRig<br>Fixed Animation Editor |
 | **2026-09-07** | New: Tree Generator<br>Image Editor: Added Seamless mode |
 | **2026-09-06** | New: Assembly Editor |
 | **2026-09-03** | MeshEditor: Added Segmentation mode<br>MeshEditor - AutoRig: Improved MoCap<br>MeshEditor Auto-Rig: Can save and import custom animations<br>MeshEditor Auto-Rig: Fixed Weight Painting mode<br>MeshEditor: Reorganized Tools Menu<br>ComfyUI: Can cancel a job<br>MeshEditor AutoUV: Fixed Normals<br>MeshEditor Segmentation: Exported parts can keep the mesh texture<br>MeshEditor Bake: Fixed bugs |

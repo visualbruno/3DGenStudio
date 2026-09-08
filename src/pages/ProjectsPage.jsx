@@ -27,6 +27,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.3.1',
+    date: '2026-09-08',
+    items: [
+			'Updated ComfyUI nodes and workflows for Trellis2, Pixal3D, Hunyuan',
+			'MeshEditor - AutoRig: Transfer skeleton and weights to another mesh',
+			'Improved AutoRig',
+			'Fixed Animation Editor'
+    ]
+  },
+  {
     version: 'v3.3.0',
     date: '2026-09-07',
     items: [
