@@ -169,19 +169,6 @@
       "title": "Name"
     }
   },
-  "232": {
-    "inputs": {
-      "model_file": [
-        "203",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation (DEPRECATED)"
-    }
-  },
   "272": {
     "inputs": {
       "seed": 1234,

@@ -100,19 +100,6 @@
       "title": "Trellis2 - Export Mesh"
     }
   },
-  "9": {
-    "inputs": {
-      "model_file": [
-        "8",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation"
-    }
-  },
   "10": {
     "inputs": {
       "seed": 1624198322,

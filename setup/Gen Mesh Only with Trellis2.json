@@ -17,7 +17,8 @@
       "keep_models_loaded": false,
       "conv_backend": "flex_gemm",
       "sparse_backend": "flash_attn",
-      "use_reconviagen": false
+      "use_reconviagen": false,
+      "pixal3d_multiview": false
     },
     "class_type": "Trellis2LoadModel",
     "_meta": {
@@ -66,20 +67,6 @@
     "class_type": "Trellis2MeshWithVoxelToTrimesh",
     "_meta": {
       "title": "Trellis2 - Mesh With Voxel To Trimesh"
-    }
-  },
-  "203": {
-    "inputs": {
-      "filename_prefix": "3DGenStudio",
-      "file_format": "glb",
-      "trimesh": [
-        "202",
-        0
-      ]
-    },
-    "class_type": "Trellis2ExportMesh",
-    "_meta": {
-      "title": "Trellis2 - Export Mesh"
     }
   },
   "209": {
@@ -211,19 +198,6 @@
       "title": "Trellis2 - Simplify Mesh"
     }
   },
-  "232": {
-    "inputs": {
-      "model_file": [
-        "203",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation"
-    }
-  },
   "258": {
     "inputs": {
       "from_resolution": [
@@ -301,6 +275,20 @@
     "class_type": "ComfySwitchNode",
     "_meta": {
       "title": "If/Else Switch"
+    }
+  },
+  "264": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioMeshOnly",
+      "file_format": "glb",
+      "trimesh": [
+        "202",
+        0
+      ]
+    },
+    "class_type": "Trellis2ExportMesh",
+    "_meta": {
+      "title": "Trellis2 - Export Mesh"
     }
   }
 }

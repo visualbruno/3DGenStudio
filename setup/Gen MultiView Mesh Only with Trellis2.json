@@ -24,7 +24,8 @@
       "keep_models_loaded": false,
       "conv_backend": "flex_gemm",
       "sparse_backend": "flash_attn",
-      "use_reconviagen": false
+      "use_reconviagen": false,
+      "pixal3d_multiview": false
     },
     "class_type": "Trellis2LoadModel",
     "_meta": {
@@ -110,19 +111,6 @@
     "class_type": "Trellis2ExportMesh",
     "_meta": {
       "title": "Trellis2 - Export Mesh"
-    }
-  },
-  "9": {
-    "inputs": {
-      "model_file": [
-        "8",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation"
     }
   },
   "10": {

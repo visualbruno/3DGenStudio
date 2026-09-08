@@ -22,19 +22,6 @@
       "title": "Hunyuan 3D 2.1 VAE Decoder"
     }
   },
-  "11": {
-    "inputs": {
-      "model_file": [
-        "20",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation"
-    }
-  },
   "19": {
     "inputs": {
       "remove_floaters": true,
@@ -56,7 +43,6 @@
     "inputs": {
       "filename_prefix": "3DGenStudioHy21",
       "file_format": "glb",
-      "save_file": true,
       "trimesh": [
         "19",
         0

@@ -56,19 +56,6 @@
       "title": "Hy3D VAE Decode"
     }
   },
-  "10": {
-    "inputs": {
-      "model_file": [
-        "62",
-        0
-      ],
-      "image": ""
-    },
-    "class_type": "Preview3D",
-    "_meta": {
-      "title": "Preview 3D & Animation"
-    }
-  },
   "27": {
     "inputs": {
       "remove_floaters": true,
@@ -84,21 +71,6 @@
     "class_type": "Hy3DPostprocessMesh",
     "_meta": {
       "title": "Hy3D Postprocess Mesh"
-    }
-  },
-  "62": {
-    "inputs": {
-      "filename_prefix": "3DGenStudioHy20",
-      "file_format": "glb",
-      "save_file": true,
-      "trimesh": [
-        "27",
-        0
-      ]
-    },
-    "class_type": "Hy3DExportMesh",
-    "_meta": {
-      "title": "Hy3DExportMesh"
     }
   },
   "75": {
@@ -141,6 +113,20 @@
     "class_type": "Hy3DMiniTurboModelLoader",
     "_meta": {
       "title": "Hy3D - Mini Turbo Model Loader"
+    }
+  },
+  "87": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioHy20",
+      "file_format": "glb",
+      "trimesh": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "Hy3DExportMesh",
+    "_meta": {
+      "title": "Hy3DExportMesh"
     }
   }
 }
