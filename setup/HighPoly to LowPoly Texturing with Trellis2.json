@@ -2,7 +2,7 @@
   "1": {
     "inputs": {
       "glb_path": "",
-      "only_vertices_and_faces": true
+      "only_vertices_and_faces": false
     },
     "class_type": "Trellis2LoadMesh",
     "_meta": {
