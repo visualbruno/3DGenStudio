@@ -102,12 +102,12 @@
     {
       "name": "ComfyUI-Hunyuan3d-2-1",
       "repo": "visualbruno/ComfyUI-Hunyuan3d-2-1",
-      "ref": "e0ddbbb6986cc2bbd7e93bae8a75a11adf90eee2"
+      "ref": "a0b26fbb94c9a9d32720526c52e64f87e05d2b53"
     },
     {
       "name": "ComfyUI-Hunyuan3DWrapper",
       "repo": "visualbruno/ComfyUI-Hunyuan3DWrapper",
-      "ref": "203bc4a7b14868a248d340d8a52522bd86ac360e",
+      "ref": "fd234623b37da64e41627f3acddb7eb809733235",
       "hasWheels": true
     },
     {
@@ -133,7 +133,7 @@
     {
       "name": "ComfyUI-Trellis2",
       "repo": "visualbruno/ComfyUI-Trellis2",
-      "ref": "87491a6420cfdf65a79f58782163cc0148efd513",
+      "ref": "14597418bbe33a440ead4667e2966408f0524a21",
       "hasWheels": true
     },
     {
