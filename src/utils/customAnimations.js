@@ -299,6 +299,22 @@ export async function saveCustomAnimation({ name, document, sourceMesh = '', sou
   return body.animation
 }
 
+// Overwrite an animation that is already in the library: the document AND, when
+// one is given, the name. What "save" means for a clip that came from the
+// library — a POST would fork it into a second row and leave the original
+// holding the motion as it was before the edits.
+export async function updateCustomAnimation(id, { name = '', document } = {}) {
+  const body = await libraryJson(
+    await fetch(`${LIBRARY_BASE}/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, data: document }),
+    }),
+    'Could not update the animation',
+  )
+  return body.animation
+}
+
 export async function renameCustomAnimation(id, name) {
   const body = await libraryJson(
     await fetch(`${LIBRARY_BASE}/${id}`, {

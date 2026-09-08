@@ -2867,6 +2867,21 @@
   width: 11rem;
 }
 
+/* What the last save did, in the dock rather than in the right-hand panel:
+   the button is down here, and a failure reported three columns away is a
+   failure nobody sees. Full width across the dock, above the frame ops. */
+.mesh-editor-anim-dock__save-message {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0.6rem 0.35rem;
+  font-size: 0.82rem;
+}
+
+.mesh-editor-anim-dock__save-message .mesh-editor-anim__search-clear {
+  margin-left: auto;
+}
+
 
 .mesh-editor-anim-dock__frame {
   width: 5rem;

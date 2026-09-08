@@ -82,13 +82,20 @@ function timeLabel(seconds) {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${String(Math.round((s % 1) * 100)).padStart(2, '0')}`
 }
 
-// Save the clip on screen — hand edits included — to the custom-animation
-// library, where it can be put on any other rigged mesh later.
+// Save the clip on screen — hand edits included — to the animation library,
+// where it can be put on any other rigged mesh later.
 //
 // The name field is inline rather than a modal: this is a two-second action at
 // the end of an edit, and the only decision in it is what to call the result.
 // It defaults to the clip's own name, which is right more often than not.
-function SaveAnimationControl({ clipName, saving, onSave }) {
+//
+// `targetName` is the library entry this clip ALREADY is, when it has one — a
+// clip applied from the library, or one saved from here earlier. Then saving
+// updates that entry (its motion and its name), and making a copy is the
+// separate, deliberate button. Saving always used to add a row, which left the
+// original entry holding the motion as it was before the edits and made an
+// edit-then-save look like it had done nothing.
+function SaveAnimationControl({ clipName, targetName, libraryNames = [], saving, onSave }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const inputRef = useRef(null)
@@ -97,24 +104,33 @@ function SaveAnimationControl({ clipName, saving, onSave }) {
 
   if (!onSave) return null
 
+  // The name in the box decides as much as the clip's history does: typing the
+  // name of an animation the library already has saves over it. Said here so
+  // that is visible before the button is pressed rather than discovered after.
+  const typed = name.trim().toLowerCase()
+  const taken = libraryNames.find(n => (n || '').trim().toLowerCase() === typed) || null
+  const willUpdate = taken || (targetName && typed === targetName.trim().toLowerCase() ? targetName : null)
+
   if (!open) {
     return (
       <button
         type="button"
         className="mesh-editor-btn mesh-editor-btn--ghost"
-        onClick={() => { setName(clipName || ''); setOpen(true) }}
-        title="Save this animation — with the edits — to your custom animations, so it can be applied to any other rigged mesh later"
+        onClick={() => { setName(targetName || clipName || ''); setOpen(true) }}
+        title={targetName
+          ? `Save the edits back to “${targetName}” in your animation library (or make a copy)`
+          : 'Save this animation — with the edits — to your animation library, so it can be applied to any other rigged mesh later'}
       >
-        <span className="material-symbols-outlined">bookmark_add</span>
+        <span className="material-symbols-outlined">{targetName ? 'save' : 'bookmark_add'}</span>
         <span>Save animation</span>
       </button>
     )
   }
 
-  const commit = async () => {
+  const commit = async (asNew) => {
     const trimmed = name.trim()
     if (!trimmed) return
-    await onSave(trimmed)
+    await onSave(trimmed, { asNew })
     setOpen(false)
   }
 
@@ -128,7 +144,7 @@ function SaveAnimationControl({ clipName, saving, onSave }) {
         disabled={saving}
         onChange={e => setName(e.target.value)}
         onKeyDown={e => {
-          if (e.key === 'Enter') commit()
+          if (e.key === 'Enter') commit(false)
           else if (e.key === 'Escape') setOpen(false)
         }}
         placeholder="Animation name"
@@ -137,12 +153,27 @@ function SaveAnimationControl({ clipName, saving, onSave }) {
       <button
         type="button"
         className="mesh-editor-icon-btn"
-        onClick={commit}
+        onClick={() => commit(false)}
         disabled={saving || !name.trim()}
-        title="Save it"
+        title={willUpdate
+          ? `Save over “${willUpdate}” in the Animation library`
+          : `Add “${name.trim() || clipName}” to the Animation library (Auto Rig → Custom)`}
       >
         <span className="material-symbols-outlined">{saving ? 'progress_activity' : 'check'}</span>
       </button>
+      {/* Only offered when the save WOULD overwrite something — for a name the
+          library does not hold, every save is already a new one. */}
+      {willUpdate && (
+        <button
+          type="button"
+          className="mesh-editor-icon-btn"
+          onClick={() => commit(true)}
+          disabled={saving || !name.trim()}
+          title={`Keep “${willUpdate}” as it is and add this as a separate animation`}
+        >
+          <span className="material-symbols-outlined">library_add</span>
+        </button>
+      )}
       <button
         type="button"
         className="mesh-editor-icon-btn"
@@ -195,8 +226,14 @@ export default function AnimationEditPanel({
   canRedo,
   onUndo,
   onRedo,
-  onSaveCustom,         // (name) — store this clip in the custom-animation library
+  onSaveCustom,         // (name, { asNew }) — store this clip in the animation library
   savingCustom,
+  saveTargetName,       // the library entry this clip already is, or null
+  libraryNames,         // names the library already holds — saving over one updates it
+  saveError,            // why the last save failed — shown HERE, next to the button
+  saveNotice,           // what the last save did
+  onDismissSaveMessage,
+  onOpenLibrary,        // show the library, so a save can be confirmed where it landed
   onClose,
 }) {
   const bones = useMemo(() => description?.bones || [], [description])
@@ -336,6 +373,8 @@ export default function AnimationEditPanel({
         <div className="mesh-editor-anim-dock__head-actions">
           <SaveAnimationControl
             clipName={clipName}
+            targetName={saveTargetName}
+            libraryNames={libraryNames}
             saving={savingCustom}
             onSave={onSaveCustom}
           />
@@ -355,6 +394,40 @@ export default function AnimationEditPanel({
           </button>
         </div>
       </header>
+
+      {/* Where a save's outcome belongs: beside the button that started it. The
+          library's own error line lives in the right-hand Custom tab, which is
+          not where anyone is looking after pressing Save down here — so a failed
+          save used to be indistinguishable from a save that never fired. */}
+      {(saveError || saveNotice) && (
+        <div
+          className={`mesh-editor-feedback ${saveError ? 'mesh-editor-feedback--error' : ''} mesh-editor-anim-dock__save-message`}
+          role="status"
+        >
+          <span className="material-symbols-outlined">{saveError ? 'error' : 'check_circle'}</span>
+          <span>{saveError || saveNotice}</span>
+          {!saveError && onOpenLibrary && (
+            <button
+              type="button"
+              className="mesh-editor-btn mesh-editor-btn--ghost"
+              onClick={onOpenLibrary}
+              title="Open the Animation library and see it there"
+            >
+              <span className="material-symbols-outlined">video_library</span>
+              <span>Open library</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className="mesh-editor-anim__search-clear"
+            onClick={onDismissSaveMessage}
+            title="Dismiss"
+            aria-label="Dismiss"
+          >
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+      )}
 
       {/* The frame-structure buttons. The scrub slider that used to lead this row is
           gone: the dopesheet's ruler scrubs the same clip with the frame numbers

@@ -62,6 +62,7 @@ import {
   listCustomAnimations,
   readCustomAnimationData,
   createCustomAnimation,
+  updateCustomAnimation,
   renameCustomAnimation,
   deleteCustomAnimation,
   listMeshAssemblies,
@@ -8294,6 +8295,24 @@ app.post('/api/animations/library', async (req, res) => {
     res.status(201).json({ animation });
   } catch (error) {
     console.error('Saving a custom animation failed:', error);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Overwrite an existing animation: the same document a POST carries, aimed at a
+// row that already exists. This is what saving an animation that CAME FROM the
+// library does — without it the only options are a duplicate row, or a rename
+// that leaves the old motion in the file.
+app.put('/api/animations/library/:id', async (req, res) => {
+  try {
+    const animation = await updateCustomAnimation(req.params.id, {
+      name: req.body?.name,
+      data: req.body?.data,
+    });
+    if (!animation) return res.status(404).json({ error: 'Animation not found' });
+    res.json({ animation });
+  } catch (error) {
+    console.error('Updating a custom animation failed:', error);
     res.status(400).json({ error: error.message });
   }
 });

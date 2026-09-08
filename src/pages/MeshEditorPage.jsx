@@ -183,7 +183,8 @@ import { KIMODO_SOURCE_ID, MOTION_SOURCE_MOCAP, countPromptSegments, generateMot
   loadSavedMotionClip } from '../utils/motionGen'
 import { CUSTOM_SOURCE_ID, buildCustomAnimationDocument, customClipFromDocument,
   customMappingKey, customSourceFromDocument, fetchCustomAnimationDocument, listCustomAnimations,
-  mapCustomBones, saveCustomAnimation, deleteCustomAnimation, renameCustomAnimation } from '../utils/customAnimations'
+  mapCustomBones, saveCustomAnimation, updateCustomAnimation, deleteCustomAnimation,
+  renameCustomAnimation } from '../utils/customAnimations'
 import { parseAnimationFile, buildImportedDocuments } from '../utils/animationImport'
 import AnimationLibraryModal from '../components/meshEditor/AnimationLibraryModal'
 import OptimizeToolsPanel from '../components/meshEditor/OptimizeToolsPanel'
@@ -741,6 +742,19 @@ export default function MeshEditorPage() {
   const customParsedRef = useRef([])
   const [customApplying, setCustomApplying] = useState(false)
   const [customSavingClip, setCustomSavingClip] = useState(false)
+  // Which library row the clip on screen IS, keyed by the clip name in the source
+  // slot (which apply already makes unique). Saving a clip that has an entry has
+  // to update that entry rather than fork a second copy of it — and the dock has
+  // to be able to say which one it will write to. Applied clips get an entry on
+  // apply; a clip saved from scratch gets one from its own save, so the second
+  // save of the same clip updates instead of duplicating.
+  const customClipOriginRef = useRef(new Map())
+  // Save outcome for the dock. The dock is at the BOTTOM of the page and the
+  // library's own error line is in the right-hand Custom tab, so a failure there
+  // is invisible from where the button is — which is exactly how a save that
+  // never fired reads as "nothing happened".
+  const [customSaveError, setCustomSaveError] = useState(null)
+  const [customSaveNotice, setCustomSaveNotice] = useState(null)
   const [customSavedNotice, setCustomSavedNotice] = useState(null)
   const [customAutoMapped, setCustomAutoMapped] = useState(false)
   // The rig the animations in the source slot were authored on. Two animations
@@ -2619,6 +2633,7 @@ export default function MeshEditorPage() {
           // the Revert snapshot describes its topology, so neither survives.
           rigSourceRef.current = null
           rigTransferUndoRef.current = null
+          customClipOriginRef.current.clear()
           setRigSourceInfo(null)
           setRigTransferResult(null)
           // A new mesh means a new target skeleton — reset the Animations feature.
@@ -7240,6 +7255,7 @@ export default function MeshEditorPage() {
           setCheckedAnimations(new Set())
           retargetedClipsRef.current.clear()
           resetAnimEdits()
+          customClipOriginRef.current.clear()
 
           // Mapping, in order of confidence: what this mesh already stored for this
           // rig, then a name-for-name match — the usual case for an animation off a
@@ -7268,6 +7284,8 @@ export default function MeshEditorPage() {
 
         taken.add(name)
         added.push(name)
+        // This clip IS that library row: editing and saving it updates the row.
+        customClipOriginRef.current.set(name, row.id)
       }
 
       if (added.length) {
@@ -7393,36 +7411,111 @@ export default function MeshEditorPage() {
   // animation. What makes it reusable is the second half of the document: the rig
   // it is playing on goes with it, because the retarget measures every frame
   // against that rig's rest pose.
-  const handleSaveEditedAnimation = useCallback(async (name) => {
+  // Opening the library always re-reads it: the list is the thing being checked
+  // after a save, and a stale one is exactly what makes a save look lost.
+  const handleOpenAnimationLibrary = useCallback(() => {
+    setCustomLibOpen(true)
+    customLibraryLoadedRef.current = true
+    void refreshCustomAnimations()
+  }, [refreshCustomAnimations])
+
+  // What the library already holds, for the dock's "this name is taken — saving
+  // updates it" wording.
+  const customLibraryNames = useMemo(
+    () => customAnimations.map(a => a.name).filter(Boolean),
+    [customAnimations],
+  )
+
+  // A save message describes one clip, so it goes when the clip does — otherwise
+  // "Updated X" sits under the next animation the user opens.
+  useEffect(() => {
+    setCustomSaveError(null)
+    setCustomSaveNotice(null)
+  }, [selectedAnimation])
+
+  // Which library row this clip would be saved over, if any. Drives the dock's
+  // "Update" vs "Save as new" wording rather than being decided at click time,
+  // so what the button will do is visible before it is pressed.
+  const customSaveTarget = useMemo(() => {
+    // customAnimations is in the dependency list so a rename or a delete of the
+    // row is reflected here — and so a row that has since been deleted stops
+    // being offered as an update target.
+    const id = selectedAnimation ? customClipOriginRef.current.get(selectedAnimation) : null
+    if (!id) return null
+    return customAnimations.find(a => a.id === id) || null
+  }, [selectedAnimation, customAnimations])
+
+  // Save the clip on screen to the custom-animation library.
+  //
+  // Two ways in, and the difference matters: a clip that came FROM the library
+  // (or was saved from here once already) UPDATES its own row, because forking a
+  // second copy on every save leaves the original holding the motion as it was
+  // before the edits — the bug this shape of the function exists to fix.
+  // `asNew` is the deliberate copy.
+  const handleSaveEditedAnimation = useCallback(async (name, { asNew = false } = {}) => {
     const clip = animPreview?.clip
-    const target = animTargetRef.current
-    if (!clip || !target || customSavingClip) return
+    if (!clip || customSavingClip) return
     setCustomSavingClip(true)
     setCustomLibError(null)
+    setCustomSaveError(null)
+    setCustomSaveNotice(null)
     try {
+      // Rebuilt rather than read off the ref: a bone edit or a re-rig
+      // invalidates the target scene, and reading the ref straight meant the
+      // save returned silently — no row, no error, nothing on screen.
+      const target = await ensureAnimTargetScene()
+      if (!target?.scene) {
+        throw new Error('The rigged mesh could not be loaded, so the skeleton this animation needs cannot be saved with it.')
+      }
       const stored = buildCustomAnimationDocument({
         clip,
         scene: target.scene,
         fps: describeClip(clip)?.fps || 30,
       })
-      const saved = await saveCustomAnimation({
-        name: String(name || '').trim() || clip.name,
-        document: stored,
-        sourceMesh: meshName || '',
-        sourceClip: clip.name,
-      })
+      const wanted = String(name || '').trim() || clip.name
+      // Two ways a save can be an update: this clip IS a library row (applied
+      // from the library, or saved from here already), or the name being saved
+      // under is one the library already holds. The second is what covers a clip
+      // that came from somewhere else entirely — a Kimodo motion, a MoCap
+      // capture, a reference clip — where saving twice under one name used to
+      // leave two identical rows and no way to tell which was the newer.
+      const byOrigin = selectedAnimation ? customClipOriginRef.current.get(selectedAnimation) : null
+      const byName = customAnimations.find(
+        a => (a.name || '').trim().toLowerCase() === wanted.toLowerCase())?.id || null
+      const existingId = asNew ? null : (byOrigin || byName)
+
+      const saved = existingId
+        ? await updateCustomAnimation(existingId, { name: wanted, document: stored })
+        : await saveCustomAnimation({
+          name: wanted,
+          document: stored,
+          sourceMesh: meshName || '',
+          sourceClip: clip.name,
+        })
+
       customLibraryLoadedRef.current = true
-      setCustomAnimations(prev => [saved, ...prev.filter(a => a.id !== saved.id)])
+      setCustomAnimations(prev => existingId
+        ? prev.map(a => (a.id === saved.id ? saved : a))
+        : [saved, ...prev.filter(a => a.id !== saved.id)])
+      // A clip saved from scratch is now in the library too, so the next save of
+      // it updates rather than adding a third row.
+      if (selectedAnimation) customClipOriginRef.current.set(selectedAnimation, saved.id)
       setCustomSavedNotice(saved.name)
-      setFeedback(`Saved “${saved.name}” to your custom animations.`)
+      setCustomSaveNotice(existingId
+        ? `Updated “${saved.name}” in the Animation library (Auto Rig → Custom).`
+        : `Saved “${saved.name}” to the Animation library (Auto Rig → Custom) — not the Kimodo motion library it may have come from.`)
+      setFeedback(existingId
+        ? `Updated “${saved.name}” in your custom animations.`
+        : `Saved “${saved.name}” to your custom animations.`)
     } catch (err) {
       console.error('Could not save the edited animation:', err)
-      setCustomLibError(err?.message || 'Could not save that animation.')
-      setAnimError(err?.message || 'Could not save that animation.')
+      const message = err?.message || 'Could not save that animation.'
+      setCustomLibError(message)
+      setCustomSaveError(message)
     } finally {
       setCustomSavingClip(false)
     }
-  }, [animPreview, customSavingClip, meshName])
+  }, [animPreview, customSavingClip, meshName, selectedAnimation, customAnimations, ensureAnimTargetScene])
 
   const handleRenameCustomAnimation = useCallback(async (animationId, name) => {
     try {
@@ -7490,7 +7583,7 @@ export default function MeshEditorPage() {
     // tab makes, and for the same reason twice over: this column already carries
     // the mapping step and the clip gallery, and an imported pack is dozens of
     // rows that need search and multi-select.
-    onOpenLibrary: () => { setCustomLibOpen(true); refreshCustomAnimations() },
+    onOpenLibrary: handleOpenAnimationLibrary,
     onOpenMapping: handleCustomOpenMapping,
     ownsSource: animReferenceId === CUSTOM_SOURCE_ID,
     autoMapped: customAutoMapped,
@@ -7498,7 +7591,7 @@ export default function MeshEditorPage() {
     savedNotice: customSavedNotice,
     onDismissSaved: () => setCustomSavedNotice(null),
   }), [handleCustomTabOpen, customAnimations, customLibLoading, customLibError,
-    customApplying, refreshCustomAnimations, handleCustomOpenMapping, animReferenceId,
+    customApplying, handleOpenAnimationLibrary, handleCustomOpenMapping, animReferenceId,
     customAutoMapped, boneMappingRestored, customSavedNotice])
 
   // Bundle for the SkeletonPanel Kimodo tab.
@@ -11827,6 +11920,12 @@ export default function MeshEditorPage() {
                   onRedo={() => stepAnimEditHistory('redo')}
                   onSaveCustom={handleSaveEditedAnimation}
                   savingCustom={customSavingClip}
+                  saveTargetName={customSaveTarget?.name || null}
+                  libraryNames={customLibraryNames}
+                  saveError={customSaveError}
+                  saveNotice={customSaveNotice}
+                  onDismissSaveMessage={() => { setCustomSaveError(null); setCustomSaveNotice(null) }}
+                  onOpenLibrary={handleOpenAnimationLibrary}
                   onClose={handleToggleAnimEdit}
                 />
               )}

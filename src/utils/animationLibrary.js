@@ -745,18 +745,56 @@ export function retargetAnimationClip({
   // Only target bones that map to an existing source bone get animated.
   const mapped = targetBones.filter(b => mapping[b.name] && sourceByName.has(mapping[b.name]))
 
+  // ── Bone positions other than the hip's ─────────────────────────────
+  //
+  // Retargeting is rotation-only by design: translating a bone from a rig of one
+  // proportion onto a rig of another pulls the mesh apart, which is why only the
+  // hip travels. But a clip can also carry a position a PERSON put there — the
+  // animation dock lets any bone be moved, and a hand nailed onto a prop is the
+  // usual reason — and dropping those silently made an edit look unsaved: it was
+  // in the stored document and gone again the moment the clip was replayed.
+  //
+  // Carried only where source and target are THE SAME bone (`mapping[x] === x`),
+  // which is the case the objection above does not apply to: a custom animation
+  // replayed on the rig it was authored on, or on another mesh rigged by the same
+  // pass. A mapped-by-hand reference clip keeps the old rotation-only behaviour,
+  // so a Mixamo or BVH pack cannot start deforming limbs across rigs.
+  const animatedPositions = new Set()
+  for (const track of clip.tracks || []) {
+    // Both spellings: ".bones[Name].position" as the mixer resolves it against a
+    // skeleton, and "Name.position" as the custom-animation library stores it.
+    const m = /^(?:\.bones\[(.+?)\]|(.+?))\.position$/.exec(track.name)
+    if (m) animatedPositions.add(m[1] || m[2])
+  }
+  const carried = mapped.filter(tb => tb !== hipTargetBone
+    && mapping[tb.name] === tb.name
+    && animatedPositions.has(tb.name))
+  // Bind-pose LOCAL positions, captured while both rigs stand in theirs. The
+  // transfer is of the OFFSET from rest, not of the raw local position, so a
+  // target whose bones sit at different lengths keeps its own skeleton and only
+  // picks up the movement. On one rig the two are identical and it round-trips
+  // exactly. Rest-pose matching only writes rotations, so these stay valid.
+  const srcBindLocal = new Map()
+  const tgtBindLocal = new Map()
+  for (const tb of carried) {
+    srcBindLocal.set(tb.name, sourceByName.get(mapping[tb.name]).position.clone())
+    tgtBindLocal.set(tb.name, tb.position.clone())
+  }
+
   const duration = clip.duration || 0
   const frameCount = Math.max(2, Math.round(duration * fps) + 1)
   const dt = frameCount > 1 ? duration / (frameCount - 1) : 0
   const times = new Float32Array(frameCount)
   const values = new Map(mapped.map(b => [b.name, new Float32Array(frameCount * 4)]))
   const hipPosValues = hipTargetBone ? new Float32Array(frameCount * 3) : null
+  const posValues = new Map(carried.map(b => [b.name, new Float32Array(frameCount * 3)]))
 
   const mixer = new AnimationMixer(sourceScene)
   mixer.clipAction(clip).play()
 
   const sAnimW = new Quaternion(), deltaW = new Quaternion(), desiredW = new Quaternion(), parentWInv = new Quaternion(), local = new Quaternion()
   const sHipAnim = new Vector3(), hipWorld = new Vector3(), hipLocal = new Vector3()
+  const posOffset = new Vector3()
 
   for (let f = 0; f < frameCount; f++) {
     const t = f * dt
@@ -778,6 +816,14 @@ export function retargetAnimationClip({
         hipLocal.toArray(hipPosValues, f * 3)
       }
       const sName = mapping[tb.name]
+      // Hand-authored bone movement: bind + the source's own offset from bind,
+      // scaled to this rig's size the way the hip's translation is.
+      if (posValues.has(tb.name)) {
+        posOffset.subVectors(sourceByName.get(sName).position, srcBindLocal.get(tb.name))
+          .multiplyScalar(hipScale)
+        tb.position.copy(tgtBindLocal.get(tb.name)).add(posOffset)
+        tb.position.toArray(posValues.get(tb.name), f * 3)
+      }
       sourceByName.get(sName).getWorldQuaternion(sAnimW)
       deltaW.multiplyQuaternions(sAnimW, srcBindWorldInv.get(sName))
       desiredW.multiplyQuaternions(deltaW, tgtBindWorld.get(tb.name))
@@ -799,6 +845,9 @@ export function retargetAnimationClip({
     new QuaternionKeyframeTrack(`.bones[${tb.name}].quaternion`, times, values.get(tb.name)))
   if (hipTargetBone && hipPosValues) {
     tracks.push(new VectorKeyframeTrack(`.bones[${hipTargetBone.name}].position`, times, hipPosValues))
+  }
+  for (const tb of carried) {
+    tracks.push(new VectorKeyframeTrack(`.bones[${tb.name}].position`, times, posValues.get(tb.name)))
   }
   const retargeted = new AnimationClip(clip.name, duration, tracks)
   retargeted.userData = { floorOffset, restMatchedBones: restMatched }

@@ -3765,6 +3765,61 @@ export async function createCustomAnimation({
   return await getCustomAnimationById(result.lastID);
 }
 
+// Replace a stored animation's document (and, optionally, its name) in place.
+//
+// The counterpart to createCustomAnimation, and what "save" means once a clip
+// has an entry in the library already: editing an animation that came FROM the
+// library and saving it should leave one row, not two. Without this the only
+// writes available are INSERT and rename, so every save of an existing
+// animation forked it.
+//
+// The catalogue columns are re-derived from the incoming document for the same
+// reason they are on create — the row has to describe what is actually in the
+// file, and an edit changes the frame count and duration.
+export async function updateCustomAnimation(animationId, { name = null, data } = {}) {
+  if (!data || !Array.isArray(data.bones) || !data.bones.length) {
+    throw new Error('An animation needs the skeleton it was authored on.');
+  }
+  if (!data.clip?.tracks?.length) {
+    throw new Error('An animation needs at least one animated bone.');
+  }
+
+  const db = await getDb();
+  const id = Number(animationId);
+  const row = await get(db, 'SELECT filePath FROM CustomAnimations WHERE id = ?', [id]);
+  if (!row) return null;
+
+  await fs.mkdir(ANIMATION_ASSETS_DIR, { recursive: true });
+  // A row whose file went missing still gets one back, named the same way create
+  // names it — recoverable rather than a dead entry.
+  const fileName = row.filePath || `animation-${id}.json`;
+  // Written before the row is touched: a failed write leaves the entry exactly as
+  // it was, which is the recoverable order (create does the same in reverse
+  // because there is no old file to keep).
+  await fs.writeFile(customAnimationFilePath(fileName), JSON.stringify(data), 'utf8');
+
+  const trimmed = String(name || '').trim();
+  await run(
+    db,
+    `UPDATE CustomAnimations
+        SET name = COALESCE(NULLIF(?, ''), name),
+            duration = ?, frameCount = ?, fps = ?, boneCount = ?, rigKey = ?, filePath = ?
+      WHERE id = ?`,
+    [
+      trimmed,
+      Number(data.clip.duration) || 0,
+      Number(data.frameCount) || 0,
+      Number(data.fps) || 0,
+      data.bones.length,
+      String(data.rigKey || ''),
+      fileName,
+      id,
+    ]
+  );
+
+  return await getCustomAnimationById(id);
+}
+
 export async function renameCustomAnimation(animationId, name) {
   const db = await getDb();
   const trimmed = String(name || '').trim();
