@@ -325,12 +325,20 @@ function resolveShapeTransform(state, pool, i, env) {
 }
 
 /**
- * Euler XYZ to a row-major 3x3, as R = Rz * Ry * Rx.
+ * Euler XYZ to a row-major 3x3, as R = Rx * Ry * Rz.
  *
- * XYZ INTRINSIC ORDER, matching three.js's default and therefore every other
- * rotation the author sees in this app. Getting the order wrong is invisible
- * for a single-axis rotation - which is the common case and so the one that
- * would pass a casual check - and wrong for any combination.
+ * THREE.JS'S 'XYZ' ORDER EXACTLY, which is what the property means to an author
+ * - every other rotation in this app is a three.js Euler, and the emitter gizmo
+ * hands these same numbers to an Object3D and expects the wireframe to land
+ * where the particles do.
+ *
+ * IT USED TO BE Rz * Ry * Rx, with a comment claiming it matched three. It did
+ * not, and the error is invisible in exactly the case anyone would check by
+ * hand: for a rotation about ONE axis the two orders agree, and every preset on
+ * the property is single-axis. Two axes at once and the emitter pointed
+ * somewhere else. Pinned against three.js itself in render.test.mjs rather than
+ * against arithmetic re-derived here, which would just be the same mistake
+ * written twice.
  */
 function eulerMatrix(x, y, z, m) {
   const cx = Math.cos(x);
@@ -340,13 +348,13 @@ function eulerMatrix(x, y, z, m) {
   const cz = Math.cos(z);
   const sz = Math.sin(z);
   m[0] = cy * cz;
-  m[1] = sx * sy * cz - cx * sz;
-  m[2] = cx * sy * cz + sx * sz;
-  m[3] = cy * sz;
-  m[4] = sx * sy * sz + cx * cz;
-  m[5] = cx * sy * sz - sx * cz;
-  m[6] = -sy;
-  m[7] = sx * cy;
+  m[1] = -cy * sz;
+  m[2] = sy;
+  m[3] = cx * sz + sx * sy * cz;
+  m[4] = cx * cz - sx * sy * sz;
+  m[5] = -sx * cy;
+  m[6] = sx * sz - cx * sy * cz;
+  m[7] = sx * cz + cx * sy * sz;
   m[8] = cx * cy;
 }
 

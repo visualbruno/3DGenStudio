@@ -66,6 +66,7 @@ import {
   indexDiagnostics,
   setNodePosition,
 } from '../utils/vfx/flow.js'
+import { emitterGizmos, gizmoMeshAssetId } from '../utils/vfx/gizmos.js'
 import { BLAME_ACTION } from '../utils/vfx/blame.js'
 import { readPaneSize } from '../utils/vfx/panes.js'
 import * as edits from '../utils/vfx/edits.js'
@@ -76,6 +77,9 @@ const SEVERITY_ICON = { error: 'error', warning: 'warning', warn: 'warning', inf
 const PARAMS_KEY = 'vfx:pane:params'
 const PREVIEW_KEY = 'vfx:pane:preview'
 const LEVEL_KEY = 'vfx:level'
+// One shared empty, so turning the gizmos off does not hand the viewport a new
+// array on every render.
+const EMPTY_GIZMOS = Object.freeze([])
 const PARAMS_DEFAULT = 300
 const PREVIEW_DEFAULT = 520
 
@@ -122,6 +126,8 @@ export default function VfxEditorPage() {
   const [profile, setProfile] = useState(false)
   const [showGrid, setShowGrid] = useState(true)
   const [showScale, setShowScale] = useState(false)
+  const [showEmitters, setShowEmitters] = useState(false)
+  const [showStats, setShowStats] = useState(true)
   const [orthographic, setOrthographic] = useState(false)
   const [engineTarget, setEngineTarget] = useState('')
   const [level, setLevel] = useState(readLevel)
@@ -251,6 +257,18 @@ export default function VfxEditorPage() {
     if (pinnedSystemId && ids.includes(pinnedSystemId)) return pinnedSystemId
     return ids[0] || null
   }, [doc, selection, pinnedSystemId])
+
+  // The emitter wireframes. Derived from the DOCUMENT rather than from the IR,
+  // because the author is asking about the shape they typed - and the compiler
+  // has already folded a constant radius into an index by the time the IR sees
+  // it. The mesh slot is resolved here because this is the only layer that
+  // knows how references work.
+  const gizmos = useMemo(() => (showEmitters
+    ? emitterGizmos(doc).map(gizmo => (gizmo.kind === 'mesh'
+      ? { ...gizmo, assetId: gizmoMeshAssetId(doc, gizmo.slot) }
+      : gizmo))
+    : EMPTY_GIZMOS
+  ), [doc, showEmitters])
 
   const diagnosticIndex = useMemo(
     () => indexDiagnostics(compiled.diagnostics),
@@ -866,9 +884,17 @@ export default function VfxEditorPage() {
             <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
             Grid
           </label>
-          <label>
+          <label title="A 1.8 m capsule and a 1 m cube, to judge scale against. They are references, not emitters, and never export.">
             <input type="checkbox" checked={showScale} onChange={e => setShowScale(e.target.checked)} />
             Scale
+          </label>
+          <label title="Draw every system's emitter shape in wireframe - where particles are born, before anything moves them.">
+            <input type="checkbox" checked={showEmitters} onChange={e => setShowEmitters(e.target.checked)} />
+            Emitters
+          </label>
+          <label title="The alive / spawned / dropped and timing panel over the preview.">
+            <input type="checkbox" checked={showStats} onChange={e => setShowStats(e.target.checked)} />
+            Stats
           </label>
           <label>
             <input type="checkbox" checked={orthographic} onChange={e => setOrthographic(e.target.checked)} />
@@ -1089,11 +1115,14 @@ export default function VfxEditorPage() {
             orthographic={orthographic}
             showGrid={showGrid}
             showScale={showScale}
+            showEmitters={showEmitters}
+            gizmos={gizmos}
+            meshes={meshes}
             bounds={bounds}
             frameKey={`${compiled.ir.graphHash}:${frameNonce}`}
             onCamera={handleCamera}
           />
-          <VfxPreviewHud statsRef={statsRef} showKernels={profile} />
+          {showStats && <VfxPreviewHud statsRef={statsRef} showKernels={profile} />}
           {/* "The preview never fails silently." Names the first
               render-blocking cause in causal order after a grace period, and
               distinguishes "nothing is produced" from "it is off screen" -

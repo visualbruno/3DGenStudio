@@ -35,6 +35,7 @@ import { compileVfxGraph } from '../../../vfx/compile.js';
 import { VALUE_MODE } from '../../../vfx/value.js';
 import { CURVE_PRESETS } from '../../../vfx/curve.js';
 import { VFX_TEMPLATES, templateById } from './templates.js';
+import { emitterGizmos, gizmoMeshAssetId } from './gizmos.js';
 import { indexLibraryAssets, vfxAssetId } from './library.js';
 import * as edits from './edits.js';
 import {
@@ -1305,6 +1306,151 @@ section('Reading a library listing');
   check('  and so does no listing', indexLibraryAssets(null).size === 0);
   check('a row with an unreadable id is skipped rather than crashing',
     indexLibraryAssets([{ id: 'nope', children: [{ id: 5 }] }]).size === 1);
+}
+
+// ---------------------------------------------------------------------------
+section('Emitter gizmos');
+// ---------------------------------------------------------------------------
+//
+// A GIZMO DRAWN WHERE THE PARTICLES ARE NOT IS WORSE THAN NO GIZMO: it turns
+// "where do these come from?" into a confident wrong answer. So these check
+// that the descriptor matches the BLOCK, and in particular the three rules that
+// are easy to get subtly wrong.
+{
+  // Local, because this suite has no block fixtures of its own and reaching
+  // into runtime.test.mjs for two three-line helpers would couple the files.
+  let seq = 0;
+  const constValue = (v) => ({ mode: 'const', v });
+  const blk = (type, props, modes) => {
+    seq += 1;
+    const b = { id: `gz${seq}`, type, enabled: true, props };
+    if (modes) b.modes = modes;
+    return b;
+  };
+
+  const shaped = (blocks, extra = {}) => normalizeVfxDoc({
+    ...createEmptyVfxDoc({ name: 'Gizmos' }),
+    ...extra,
+    systems: [{
+      id: 'sys-g',
+      name: 'S',
+      capacity: 64,
+      contexts: [
+        { id: 'c-spawn', kind: CONTEXT_KIND.SPAWN, blocks: [], params: {} },
+        { id: 'c-init', kind: CONTEXT_KIND.INITIALIZE, blocks, params: {} },
+      ],
+    }],
+  });
+  const one = (blocks, extra) => emitterGizmos(shaped(blocks, extra))[0];
+
+  // --- every shape is described --------------------------------------------
+  const sphere = one([blk('initialize.positionSphere', { radius: constValue(2.5) })]);
+  check('a sphere reports its radius', sphere?.kind === 'sphere' && sphere.radius === 2.5,
+    JSON.stringify(sphere));
+  check('  and whether it is a shell',
+    one([blk('initialize.positionSphere', { radius: constValue(1) }, { fill: 'surface' })]).hollow === true);
+  check('  a volume fill is not', sphere.hollow === false);
+
+  const box = one([blk('initialize.positionBox', { size: constValue([4, 2, 6]) })]);
+  check('a box reports its full size', String(box.size) === '4,2,6', String(box.size));
+
+  // The RING, not a disc: the kernel fills a band, and drawing a disc would
+  // claim particles appear in the middle where none do.
+  const ring = one([blk('initialize.positionCircle', {
+    radius: constValue(2), thickness: constValue(0.5),
+  })]);
+  check('a circle reports its band, not just its radius',
+    ring.radius === 2 && ring.inner === 1.5, `${ring.inner}..${ring.radius}`);
+  check('  and a thickness past the radius clamps at zero rather than inverting',
+    one([blk('initialize.positionCircle', {
+      radius: constValue(1), thickness: constValue(5),
+    })]).inner === 0);
+
+  const line = one([blk('initialize.positionLine', {
+    start: constValue([-1, 2, 0]), end: constValue([3, 2, 0]),
+  })]);
+  check('a line reports both endpoints',
+    String(line.start) === '-1,2,0' && String(line.end) === '3,2,0',
+    `${line.start} -> ${line.end}`);
+
+  const point = one([blk('initialize.positionPoint', {
+    offset: constValue([1, 2, 3]), jitter: constValue(0.25),
+  })]);
+  check('a point reports its position and jitter',
+    String(point.offset) === '1,2,3' && point.radius === 0.25, JSON.stringify(point));
+
+  // --- the transform, which is most of the point ---------------------------
+  const placed = one([blk('initialize.positionCircle', {
+    radius: constValue(1),
+    thickness: constValue(0.1),
+    offset: constValue([0, 1.5, 0]),
+    rotation: constValue([90, 0, 0]),
+  })]);
+  check('a shape carries its offset', String(placed.offset) === '0,1.5,0');
+  check('  and its rotation, in degrees as authored',
+    String(placed.rotation) === '90,0,0', String(placed.rotation));
+
+  // --- rule 1: every value mode keeps a usable literal ---------------------
+  // A random radius still has to draw SOMETHING, or the gizmo gives up on
+  // exactly the emitters worth looking at.
+  const random = one([blk('initialize.positionSphere', {
+    radius: { mode: 'random', a: 1, b: 3, v: 2 },
+  })]);
+  check('a random radius falls back to its literal', random.radius === 2, String(random.radius));
+
+  // --- rule 2: a disabled block places no particles ------------------------
+  const disabled = shaped([
+    { ...blk('initialize.positionBox', { size: constValue([9, 9, 9]) }), enabled: false },
+  ]);
+  check('a disabled shape draws nothing', emitterGizmos(disabled).length === 0);
+
+  // --- rule 3: the LAST shape in the stack wins ----------------------------
+  // Blocks WRITE position rather than accumulating it, so a stage holding two
+  // shapes emits from the second only. Drawing both would show a shape no
+  // particle uses.
+  const two = one([
+    blk('initialize.positionSphere', { radius: constValue(5) }),
+    blk('initialize.positionBox', { size: constValue([1, 1, 1]) }),
+  ]);
+  check('with two shapes in one stage, the last one wins', two.kind === 'box', two.kind);
+  check('  and only one gizmo is produced',
+    emitterGizmos(shaped([
+      blk('initialize.positionSphere', { radius: constValue(5) }),
+      blk('initialize.positionBox', { size: constValue([1, 1, 1]) }),
+    ])).length === 1);
+  // ...but a DISABLED last one hands it back to the enabled one above.
+  const lastOff = one([
+    blk('initialize.positionSphere', { radius: constValue(5) }),
+    { ...blk('initialize.positionBox', { size: constValue([1, 1, 1]) }), enabled: false },
+  ]);
+  check('  unless the last one is off', lastOff.kind === 'sphere', lastOff.kind);
+
+  // --- a stage with no shape at all ----------------------------------------
+  check('a system with no shape block produces no gizmo',
+    emitterGizmos(shaped([blk('initialize.setLifetime', { lifetime: constValue(1) })])).length === 0);
+
+  // --- the mesh slot resolves through references, never by id -------------
+  const meshDoc = shaped(
+    [blk('initialize.positionMesh', { mesh: constValue('mesh_x'), scale: constValue(3) })],
+    { references: { mesh_x: { kind: 'mesh', ref: 'asset:77', name: 'r.glb', colorSpace: 'srgb' } } },
+  );
+  const meshGizmo = emitterGizmos(meshDoc)[0];
+  check('a mesh emitter reports its slot and scale',
+    meshGizmo.slot === 'mesh_x' && meshGizmo.scale === 3, JSON.stringify(meshGizmo));
+  check('  and the slot resolves to an asset id',
+    gizmoMeshAssetId(meshDoc, meshGizmo.slot) === 77,
+    String(gizmoMeshAssetId(meshDoc, meshGizmo.slot)));
+  check('  while an unknown slot is null, not NaN',
+    gizmoMeshAssetId(meshDoc, 'nope') === null);
+  check('  and an empty slot too', gizmoMeshAssetId(meshDoc, '') === null);
+
+  // --- one per system, across a real effect --------------------------------
+  const explosion = normalizeVfxDoc(templateById('explosion').build());
+  const all = emitterGizmos(explosion);
+  check('every system of a template gets exactly one gizmo',
+    all.length === explosion.systems.length, `${all.length} of ${explosion.systems.length}`);
+  check('  each naming its own system',
+    new Set(all.map((g) => g.systemId)).size === all.length);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

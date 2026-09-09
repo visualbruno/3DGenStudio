@@ -62,6 +62,135 @@ function ScaleReference({ show }) {
   )
 }
 
+// The emitter shapes, in wireframe.
+//
+// "Where do these come from?" is the first question a shape emitter raises and
+// the hardest to answer from the result: a sphere and a box of the same size
+// look identical once the particles have moved a metre, an offset emitter looks
+// like an effect placed wrong, and a rotated one looks like a bug.
+//
+// THE ROTATION IS HANDED STRAIGHT TO THE GROUP, and that is only safe because
+// the kernel's own matrix is three.js Euler XYZ - it was Rz*Ry*Rx until the day
+// this was written, which would have put every multi-axis gizmo somewhere the
+// particles are not. Pinned against three itself in render.test.mjs.
+//
+// GEOMETRY IS BUILT PER DESCRIPTOR AND DISPOSED, rather than shared: the shapes
+// change as the author types, and nothing in this repo leaves GPU buffers to
+// R3F's auto-dispose.
+// A stable empty, so a viewport with no gizmos does not re-render on identity.
+const EMPTY_GIZMOS = Object.freeze([])
+const GIZMO_COLOR = '#4f8cf5'
+
+function EmitterGizmo({ gizmo, meshes }) {
+  const geometry = useMemo(() => {
+    switch (gizmo.kind) {
+      case 'sphere':
+        return new THREE.SphereGeometry(Math.max(0.001, gizmo.radius), 16, 12)
+      case 'box':
+        return new THREE.BoxGeometry(
+          Math.max(0.001, gizmo.size[0]),
+          Math.max(0.001, gizmo.size[1]),
+          Math.max(0.001, gizmo.size[2]),
+        )
+      case 'circle':
+        // A flat RING in XZ, matching the kernel: a torus would imply a volume
+        // the emitter does not fill, and a disc would hide the inner radius.
+        // Rotated -90 about X because RingGeometry is built in XY.
+        return new THREE.RingGeometry(
+          Math.max(0, gizmo.inner), Math.max(0.001, gizmo.radius), 32, 1,
+        ).rotateX(-Math.PI / 2)
+      case 'cone': {
+        // The kernel emits from a disc of `radius` at y=0 and fires into a cone
+        // of half-angle `angle`. The HEIGHT is this drawing's own invention -
+        // there is no height in the document - so it is derived from the angle
+        // at a fixed reach, which keeps a wide cone from looking like a narrow
+        // one that happens to be short.
+        const reach = 1
+        const half = Math.max(0.001, Math.tan(gizmo.angle * Math.PI / 180) * reach)
+        return new THREE.ConeGeometry(gizmo.radius + half, reach, 20, 1, true)
+          .translate(0, reach / 2, 0)
+      }
+      case 'line': {
+        const g = new THREE.BufferGeometry()
+        g.setAttribute('position', new THREE.Float32BufferAttribute(
+          [...gizmo.start, ...gizmo.end], 3,
+        ))
+        return g
+      }
+      case 'point':
+        // A jitter of zero is a true point, which cannot be drawn - so it gets
+        // a small fixed marker rather than nothing at all.
+        return new THREE.SphereGeometry(Math.max(0.02, gizmo.radius), 10, 8)
+      case 'mesh':
+        return null
+      default:
+        return null
+    }
+  }, [gizmo])
+
+  useEffect(() => () => geometry?.dispose(), [geometry])
+
+  // A mesh emitter draws the ACTUAL model when it has loaded, which is the only
+  // honest gizmo for it - a bounding box would say nothing about where on the
+  // surface particles appear. Before it loads there is nothing to draw, which
+  // matches what the emitter is doing.
+  const meshGeometry = gizmo.kind === 'mesh'
+    ? meshes?.get(gizmoAssetIdOf(gizmo)) || null
+    : null
+
+  const position = gizmo.kind === 'line' ? [0, 0, 0] : gizmo.offset
+  const rotation = useMemo(() => [
+    gizmo.rotation[0] * Math.PI / 180,
+    gizmo.rotation[1] * Math.PI / 180,
+    gizmo.rotation[2] * Math.PI / 180,
+  ], [gizmo.rotation])
+
+  if (gizmo.kind === 'line') {
+    return (
+      <line geometry={geometry}>
+        <lineBasicMaterial color={GIZMO_COLOR} transparent opacity={0.7} />
+      </line>
+    )
+  }
+
+  if (meshGeometry) {
+    return (
+      <mesh
+        geometry={meshGeometry}
+        position={position}
+        rotation={rotation}
+        scale={gizmo.scale}
+      >
+        <meshBasicMaterial color={GIZMO_COLOR} wireframe transparent opacity={0.35} />
+      </mesh>
+    )
+  }
+
+  if (!geometry) return null
+  return (
+    <mesh geometry={geometry} position={position} rotation={rotation}>
+      <meshBasicMaterial color={GIZMO_COLOR} wireframe transparent opacity={0.5} />
+    </mesh>
+  )
+}
+
+// Stashed on the descriptor by the page, which is the only place that can
+// resolve a slot key through doc.references.
+function gizmoAssetIdOf(gizmo) {
+  return gizmo.assetId ?? -1
+}
+
+function EmitterGizmos({ show, gizmos, meshes }) {
+  if (!show) return null
+  return (
+    <group>
+      {gizmos.map(gizmo => (
+        <EmitterGizmo key={gizmo.blockId} gizmo={gizmo} meshes={meshes} />
+      ))}
+    </group>
+  )
+}
+
 export default function VfxViewport({
   runtime,
   batches,
@@ -72,6 +201,9 @@ export default function VfxViewport({
   orthographic = false,
   showGrid = true,
   showScale = false,
+  showEmitters = false,
+  gizmos = EMPTY_GIZMOS,
+  meshes = null,
   bounds = null,
   frameKey = 0,
 }) {
@@ -134,6 +266,7 @@ export default function VfxViewport({
       )}
 
       <ScaleReference show={showScale} />
+      <EmitterGizmos show={showEmitters} gizmos={gizmos} meshes={meshes} />
 
       <VfxSystemView
         runtime={runtime}

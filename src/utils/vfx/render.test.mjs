@@ -18,6 +18,8 @@
 // What this file guarantees is that the data reaching the GPU is the data the
 // simulation produced, and that the shader declares the attributes the
 // geometry actually provides.
+import * as THREE from 'three';
+import { readFile } from 'node:fs/promises';
 import { compileVfxGraph } from '../../../vfx/compile.js';
 import { buildInstanceLayout } from '../../../vfx/ir.js';
 import { VFX_TEMPLATES, templateById } from './templates.js';
@@ -508,6 +510,104 @@ function buildTemplate(id) {
   const second = templateById('explosion').build();
   check('build() returns a fresh document each call', first !== second
     && first.systems[0] !== second.systems[0]);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The emitter rotation is three.js Euler XYZ ---');
+// ---------------------------------------------------------------------------
+//
+// PINNED AGAINST three ITSELF, not against arithmetic re-derived here - which
+// would only be the same mistake written twice.
+//
+// The shape transform used to build R = Rz * Ry * Rx while its comment claimed
+// it matched three.js's 'XYZ'. It did not, and the error is invisible in
+// exactly the case anyone checks by hand: for a rotation about ONE axis the two
+// orders agree, and every preset on the property is single-axis. Two axes at
+// once and the emitter pointed somewhere the particles did not.
+//
+// It matters beyond taste now: the emitter gizmo hands these same three numbers
+// to an Object3D and expects the wireframe to land on the particles.
+{
+  // A direct comparison of the two constructions, since the kernel's helper is
+  // module-private. Written the way three writes it, then checked against three.
+  const kernelMatrix = (x, y, z) => {
+    const cx = Math.cos(x);
+    const sx = Math.sin(x);
+    const cy = Math.cos(y);
+    const sy = Math.sin(y);
+    const cz = Math.cos(z);
+    const sz = Math.sin(z);
+    return [
+      cy * cz, -cy * sz, sy,
+      cx * sz + sx * sy * cz, cx * cz - sx * sy * sz, -sx * cy,
+      sx * sz - cx * sy * cz, sx * cz + cx * sy * sz, cx * cy,
+    ];
+  };
+
+  // The formula above is a COPY of the kernel's, so on its own it proves
+  // nothing. This is what makes it bite: the same numbers, taken from the
+  // shipped source rather than from this file.
+  const source = await readFile(new URL('./kernels.js', import.meta.url), 'utf8');
+  const body = source.slice(source.indexOf('function eulerMatrix'));
+  const lines = [
+    'm[0] = cy * cz;', 'm[1] = -cy * sz;', 'm[2] = sy;',
+    'm[3] = cx * sz + sx * sy * cz;', 'm[4] = cx * cz - sx * sy * sz;', 'm[5] = -sx * cy;',
+    'm[6] = sx * sz - cx * sy * cz;', 'm[7] = sx * cz + cx * sy * sz;', 'm[8] = cx * cy;',
+  ];
+  const missing = lines.filter((line) => !body.includes(line));
+  check('the shipped eulerMatrix is the one checked below', missing.length === 0,
+    missing.join(' '));
+
+  let worst = 0;
+  let worstAt = '';
+  for (let i = 0; i < 64; i += 1) {
+    // Deterministic angles rather than random ones, so a failure is reproducible.
+    const x = ((i * 37) % 360 - 180) * Math.PI / 180;
+    const y = ((i * 91) % 360 - 180) * Math.PI / 180;
+    const z = ((i * 143) % 360 - 180) * Math.PI / 180;
+    const mine = kernelMatrix(x, y, z);
+    const e = new THREE.Matrix4()
+      .makeRotationFromEuler(new THREE.Euler(x, y, z, 'XYZ')).elements;
+    // three is column-major: row r, column c is elements[c * 4 + r].
+    const theirs = [e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]];
+    for (let k = 0; k < 9; k += 1) {
+      const diff = Math.abs(theirs[k] - mine[k]);
+      if (diff > worst) {
+        worst = diff;
+        worstAt = `(${(x * 180 / Math.PI).toFixed(0)}, ${(y * 180 / Math.PI).toFixed(0)}, ${(z * 180 / Math.PI).toFixed(0)})`;
+      }
+    }
+  }
+  check('it matches three.js XYZ at every angle tried', worst < 1e-12,
+    `worst ${worst.toExponential(2)} at ${worstAt}`);
+
+  // And the guard is not vacuous: the ORDER it replaced must fail this.
+  const oldOrder = (x, y, z) => {
+    const cx = Math.cos(x);
+    const sx = Math.sin(x);
+    const cy = Math.cos(y);
+    const sy = Math.sin(y);
+    const cz = Math.cos(z);
+    const sz = Math.sin(z);
+    return [
+      cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz,
+      cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz,
+      -sy, sx * cy, cx * cy,
+    ];
+  };
+  const e = new THREE.Matrix4()
+    .makeRotationFromEuler(new THREE.Euler(0.7, -1.1, 0.4, 'XYZ')).elements;
+  const theirs = [e[0], e[4], e[8], e[1], e[5], e[9], e[2], e[6], e[10]];
+  const old = oldOrder(0.7, -1.1, 0.4);
+  check('  and the order it replaced would NOT',
+    Math.max(...old.map((v, k) => Math.abs(v - theirs[k]))) > 0.1);
+
+  // Single-axis is the case that hid it: identical either way, which is why no
+  // preset and no hand check ever caught it.
+  const single = oldOrder(1.2, 0, 0);
+  const now = kernelMatrix(1.2, 0, 0);
+  check('  while a single-axis rotation is identical in both, which is why it hid',
+    Math.max(...single.map((v, k) => Math.abs(v - now[k]))) < 1e-12);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
