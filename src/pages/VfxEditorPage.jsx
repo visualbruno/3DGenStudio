@@ -1,39 +1,83 @@
 // The VFX Editor page.
 //
-// A SHELL, on purpose - the same rule TreeGenPage states in its own header.
-// The viewport is VfxViewport, the numbers are VfxPreviewHud, the runtime is
-// useVfxRuntime, load/save/draft is useVfxDocument, the effects are
-// src/utils/vfx/templates.js and the compiler is vfx/compile.js. The thing
-// being avoided is MeshEditorPage.jsx, which is twelve thousand lines because
-// everything went inline.
+// A SHELL, on purpose - the same rule TreeGenPage states in its own header. The
+// board is VfxBoard, the parameters are VfxParamsPanel, the timeline is
+// VfxTimeline, the viewport is VfxViewport, the numbers are VfxPreviewHud, the
+// runtime is useVfxRuntime, load/save/draft is useVfxDocument, every document
+// change is a pure function in src/utils/vfx/edits.js and the compiler is
+// vfx/compile.js. What lives here is the wiring: selection, the action bundle,
+// the layout, and the keyboard.
 //
-// WHAT THIS IS AT PHASE 5: an effect can be opened from the Assets page,
-// edited, and saved back. There is still no node board and no parameters panel
-// - those are phase 6 - so "edited" currently means picking a template and
-// renaming. The three-pane layout is deliberately not scaffolded: laying out
-// panes with nothing to put in them would mean guessing at sizes the real
-// content will decide.
+// THE LAYOUT IS THREE GRID TRACKS THAT ALWAYS EXIST. The parameters track is
+// 0-wide when nothing is selected, so opening it is ONE custom-property write
+// on ONE element:
+//
+//     grid-template-columns: var(--vfx-params-w) minmax(0,1fr) var(--vfx-preview-w)
+//
+// No React re-render of the board or the preview, and - the part that decides
+// it - THE WEBGL CANVAS NEVER RESIZES, because only the board narrows. A
+// variant-class swap (MeshEditorPage's approach) would re-layout all three
+// panes and force a canvas resize on every open and close.
+//
+// MUTE AND SOLO ARE PREVIEW STATE, NOT DOCUMENT STATE. The compiler drops
+// disabled systems from the IR, so writing `enabled: false` would change the
+// graph hash and restart the whole effect - and the entire point of muting one
+// system is to watch the others keep running. system.js says the same thing at
+// setSystemState: "deliberately NOT part of the graph signature". So these two
+// toggles live in page state and are pushed at the runtime directly.
+//
+// SPACE IS THE ONE REAL SHORTCUT COLLISION, and it is decided rather than
+// discovered: it is play/pause everywhere on this page, and React Flow's
+// pan-on-space is turned off in VfxBoard (`panActivationKeyCode={null}`). It is
+// the most-pressed key here, so it gets the simple behaviour and panning keeps
+// the middle mouse button and the scroll wheel it already had.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { ReactFlowProvider } from '@xyflow/react'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
+import AssetSelectorModal from '../components/AssetSelectorModal'
 import VfxViewport from '../components/vfx/VfxViewport'
 import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
+import VfxBoard from '../components/vfx/VfxBoard'
+import VfxParamsPanel from '../components/vfx/VfxParamsPanel'
+import VfxTimeline from '../components/vfx/VfxTimeline'
+import VfxSplitter from '../components/vfx/VfxSplitter'
 import useVfxRuntime from '../hooks/useVfxRuntime'
 import useVfxDocument from '../hooks/useVfxDocument'
 import { useProjects } from '../context/ProjectContext'
 import { useNotifications } from '../context/NotificationContext'
 import { compileVfxGraph } from '../../vfx/compile.js'
 import { summarizeDiagnostics } from '../../vfx/diagnostics.js'
+import { PROP_TYPE } from '../../vfx/catalog.js'
+import { REF_KIND, formatAssetRef } from '../../vfx/doc.js'
 import { VFX_TEMPLATES } from '../utils/vfx/templates.js'
 import { makeTextureResolver } from '../utils/vfxApi.js'
 import { createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
-import { reset, seekTo } from '../utils/vfx/system.js'
+import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
+import { indexDiagnostics, clearLayout, setNodePosition } from '../utils/vfx/flow.js'
+import { readPaneSize } from '../utils/vfx/panes.js'
+import * as edits from '../utils/vfx/edits.js'
 import './VfxEditorPage.css'
 
-const SEVERITY_ICON = { error: 'error', warn: 'warning', info: 'info' }
+const SEVERITY_ICON = { error: 'error', warning: 'warning', warn: 'warning', info: 'info' }
+
+const PARAMS_KEY = 'vfx:pane:params'
+const PREVIEW_KEY = 'vfx:pane:preview'
+const LEVEL_KEY = 'vfx:level'
+const PARAMS_DEFAULT = 300
+const PREVIEW_DEFAULT = 520
+
+const readLevel = () => {
+  try {
+    const stored = window.localStorage.getItem(LEVEL_KEY)
+    return ['guided', 'standard', 'full'].includes(stored) ? stored : 'standard'
+  } catch {
+    return 'standard'
+  }
+}
 
 export default function VfxEditorPage() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -42,13 +86,37 @@ export default function VfxEditorPage() {
 
   const [showSettings, setShowSettings] = useState(false)
   const [playing, setPlaying] = useState(true)
+  const [timescale, setTimescale] = useState(1)
   const [profile, setProfile] = useState(false)
   const [showGrid, setShowGrid] = useState(true)
   const [showScale, setShowScale] = useState(false)
   const [orthographic, setOrthographic] = useState(false)
   const [engineTarget, setEngineTarget] = useState('')
+  const [level, setLevel] = useState(readLevel)
   const [libraryImages, setLibraryImages] = useState([])
+  const [libraryMeshes, setLibraryMeshes] = useState([])
+
+  // Selection: `{ kind, id }`, or null for the effect itself. Not part of the
+  // document, so not undoable - but an undo entry carries a focusNodeId so the
+  // caller can reveal whatever it changed.
+  const [selection, setSelection] = useState(null)
+  const [expanded, setExpanded] = useState({})
+  const [preview, setPreview] = useState({})
+  const [picker, setPicker] = useState(null)
+  const [timelineCollapsed, setTimelineCollapsed] = useState(false)
+
+  // Read in the state initialiser, so the very first paint is already the right
+  // width - no flash of the default, and no layout effect.
+  const [paramsWidth, setParamsWidth] = useState(() => readPaneSize(PARAMS_KEY, PARAMS_DEFAULT))
+  const [previewWidth, setPreviewWidth] = useState(() => readPaneSize(PREVIEW_KEY, PREVIEW_DEFAULT))
+
+  const bodyRef = useRef(null)
   const statsRef = useRef({})
+  const runtimeRef = useRef(null)
+  const flowRef = useRef(null)
+  // The preview's camera, handed out from inside the Canvas by VfxSystemView.
+  // It is how the thumbnail is taken from the author's own viewpoint.
+  const cameraRef = useRef(null)
 
   const notify = useCallback((message, type = 'error') => {
     addNotification?.({ type, message })
@@ -58,22 +126,24 @@ export default function VfxEditorPage() {
   const returnTo = searchParams.get('returnTo') || '/assets'
 
   const {
-    doc, name, setName, assetId, status, dirty,
+    doc, commit, undo, redo, canUndo, canRedo, undoLabel, redoLabel,
+    name, setName, assetId, status, dirty,
     draft, restoreDraft, discardDraft, loadTemplate, save,
   } = useVfxDocument({ assetId: urlAssetId, onError: notify })
 
-  // The image library, only so IR asset ids can be turned into URLs. The
-  // runtime deliberately has no opinion about where assets live (see the header
-  // of src/utils/vfx/assets.js), so the mapping is supplied from here.
+  // The library, only so IR asset ids can be turned into URLs and the picker
+  // has something to show. The runtime deliberately has no opinion about where
+  // assets live - see the header of src/utils/vfx/assets.js.
   useEffect(() => {
     let cancelled = false
     getLibraryAssets?.()
       .then(library => {
-        if (!cancelled) setLibraryImages(library?.images || [])
+        if (cancelled) return
+        setLibraryImages(library?.images || [])
+        setLibraryMeshes(library?.meshes || [])
       })
       .catch(() => {
-        // An effect with no textures still plays, on the built-in sprite. Not
-        // worth a notification.
+        // An effect with no textures still plays, on the built-in sprite.
       })
     return () => {
       cancelled = true
@@ -87,7 +157,21 @@ export default function VfxEditorPage() {
     [doc, engineTarget],
   )
 
-  const { runtime, batches } = useVfxRuntime({ ir: compiled.ir, resolveUrl, profile })
+  const { runtime, batches, textures } = useVfxRuntime({ ir: compiled.ir, resolveUrl, profile })
+
+  // Mirrored into a ref in an effect rather than assigned during render.
+  // The transport callbacks and the timeline's per-frame playhead read the
+  // runtime outside of rendering, and a ref written during render is what the
+  // hooks linter (correctly) rejects - the same fix as the savedSignature one
+  // in useVfxDocument.
+  useEffect(() => {
+    runtimeRef.current = runtime
+  }, [runtime])
+
+  const diagnosticIndex = useMemo(
+    () => indexDiagnostics(compiled.diagnostics),
+    [compiled.diagnostics],
+  )
 
   const summary = useMemo(() => summarizeDiagnostics(compiled.diagnostics, {
     peakParticles: compiled.stats.peakParticles,
@@ -100,29 +184,357 @@ export default function VfxEditorPage() {
     max: compiled.ir.effect.boundsMax,
   }), [compiled])
 
+  // Mute and solo pushed at the live runtime rather than into the document.
+  // Keyed on the runtime as well as the flags so a recompile - which builds a
+  // fresh runtime - reapplies them instead of silently losing them.
+  useEffect(() => {
+    if (!runtime) return
+    for (const system of doc.systems) {
+      const state = preview[system.id] || {}
+      setSystemState(runtime, system.id, {
+        muted: Boolean(state.muted),
+        solo: Boolean(state.solo),
+      })
+    }
+  }, [doc.systems, preview, runtime])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LEVEL_KEY, level)
+    } catch {
+      // Storage blocked. The level still applies for this session.
+    }
+  }, [level])
+
   // Once the effect has loaded, drop the id from the URL so a reload does not
-  // re-open it over unsaved work. Deliberately only after a SUCCESSFUL load -
-  // leaving it in place on failure keeps the link intact to retry, which is the
-  // same reasoning as TreeGenPage.jsx:407.
+  // re-open it over unsaved work. Only after a SUCCESSFUL load - leaving it in
+  // place on failure keeps the link intact to retry, which is the same
+  // reasoning as TreeGenPage.jsx:407.
   useEffect(() => {
     if (!urlAssetId || status === 'loading' || status === 'error') return
     if (assetId == null) return
     const next = new URLSearchParams(searchParams)
     next.delete('vfxAssetId')
     setSearchParams(next, { replace: true })
-    // searchParams/setSearchParams are fresh each render; keying on them would
-    // loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [urlAssetId, status, assetId])
+
+  // --- the action bundle ---------------------------------------------------
+  //
+  // One object, memoised, holding every edit the board, the panel and the
+  // timeline can perform. Each entry is `commit(edits.something(...), meta)` -
+  // so every change in the editor is one pure function plus one history entry,
+  // and a diagnostic's one-click fix is indistinguishable from doing it by hand.
+
+  const actions = useMemo(() => {
+    const edit = (fn, label, meta = {}) => commit(current => fn(current), { label, ...meta })
+
+    return {
+      // selection
+      select: blockId => setSelection(blockId ? { kind: 'block', id: blockId } : null),
+      selectContext: contextId => setSelection({ kind: 'context', id: contextId }),
+      selectSystem: systemId => setSelection({ kind: 'system', id: systemId }),
+      selectOperator: nodeId => setSelection({ kind: 'operator', id: nodeId }),
+      toggleExpanded: blockId => setExpanded(current => ({
+        ...current,
+        [blockId]: !current[blockId],
+      })),
+
+      // blocks
+      // `blockType`, not `type`: that is the key addBlock reads, and it is also
+      // the key the diagnostics' addBlock fixes use, so the two paths stay
+      // identical. Passing the wrong name made the button a silent no-op,
+      // because addBlock returns the document unchanged when it cannot resolve
+      // the type.
+      addBlock: (contextId, blockType) => edit(
+        d => edits.addBlock(d, { contextId, blockType }),
+        'Add block',
+      ),
+      remove: blockId => {
+        edit(d => edits.removeBlock(d, blockId), 'Delete block')
+        setSelection(current => (current?.id === blockId ? null : current))
+      },
+      duplicate: blockId => edit(d => edits.duplicateBlock(d, blockId), 'Duplicate block'),
+      toggleEnabled: blockId => edit(d => edits.toggleBlock(d, blockId), 'Toggle block'),
+      moveBlock: (blockId, toIndex) => edit(
+        d => edits.moveBlock(d, blockId, { toIndex }),
+        'Reorder blocks',
+      ),
+
+      // properties. `meta.coalesceKey` arrives from VfxDragNumber's live path
+      // and is what collapses a whole drag into one undo entry.
+      setProp: (blockId, prop, value, meta = {}) => commit(
+        d => edits.setBlockProp(d, blockId, prop, value),
+        {
+          label: 'Change setting',
+          coalesceKey: meta.coalesceKey ? `${blockId}:${meta.coalesceKey}` : null,
+        },
+      ),
+      setMode: (blockId, prop, mode) => edit(
+        d => edits.setBlockPropMode(d, blockId, prop, mode),
+        'Change value mode',
+      ),
+      setCurvePreset: (blockId, prop, presetId) => edit(
+        d => edits.setCurvePreset(d, blockId, prop, presetId),
+        'Change curve',
+      ),
+      setGradientPreset: (blockId, prop, presetId) => edit(
+        d => edits.setGradientPreset(d, blockId, prop, presetId),
+        'Change gradient',
+      ),
+      setBlockMode: (blockId, mode, value) => edit(
+        d => edits.setBlockMode(d, blockId, mode, value),
+        'Change mode',
+      ),
+
+      // contexts and systems
+      setContextParam: (contextId, param, value) => edit(
+        d => edits.setContextParam(d, contextId, param, value),
+        'Change stage setting',
+      ),
+      removeContext: contextId => {
+        edit(d => edits.removeContext(d, contextId), 'Remove stage')
+        setSelection(current => (current?.id === contextId ? null : current))
+      },
+      addSystem: () => edit(d => edits.addSystem(d), 'Add system'),
+      removeSystem: systemId => {
+        edit(d => edits.removeSystem(d, systemId), 'Delete system')
+        setSelection(current => (current?.id === systemId ? null : current))
+      },
+      duplicateSystem: systemId => edit(d => edits.duplicateSystem(d, systemId), 'Duplicate system'),
+      updateSystem: (systemId, patch) => {
+        // Mute and solo never reach the document - see the page header.
+        if ('enabled' in patch || 'solo' in patch) {
+          setPreview(current => {
+            const existing = current[systemId] || {}
+            return {
+              ...current,
+              [systemId]: {
+                ...existing,
+                ...('enabled' in patch ? { muted: !patch.enabled } : {}),
+                ...('solo' in patch ? { solo: patch.solo } : {}),
+              },
+            }
+          })
+          const rest = { ...patch }
+          delete rest.enabled
+          delete rest.solo
+          if (Object.keys(rest).length === 0) return
+          edit(d => edits.updateSystem(d, systemId, rest), 'Change system')
+          return
+        }
+        edit(d => edits.updateSystem(d, systemId, patch), 'Change system')
+      },
+
+      // clips
+      addClip: (systemId, spec) => edit(d => edits.addClip(d, systemId, spec), 'Add clip'),
+      // No coalesce key: a clip drag is DOM-direct and commits exactly once on
+      // release, so a key here would merge two DELIBERATE consecutive retimes
+      // rather than the frames of one drag.
+      updateClip: (systemId, clipId, patch) => edit(
+        d => edits.updateClip(d, systemId, clipId, patch),
+        patch.loop === undefined ? 'Retime clip' : 'Loop clip',
+      ),
+      removeClip: (systemId, clipId) => edit(
+        d => edits.removeClip(d, systemId, clipId),
+        'Delete clip',
+      ),
+      setEffectSettings: patch => edit(d => edits.setEffectSettings(d, patch), 'Change effect'),
+
+      // operators and wiring
+      addOperator: (type, position) => edit(
+        d => edits.addOperator(d, type, position),
+        'Add value node',
+      ),
+      removeOperator: nodeId => {
+        edit(d => edits.removeOperator(d, nodeId), 'Delete value node')
+        setSelection(current => (current?.id === nodeId ? null : current))
+      },
+      setOperatorProp: (nodeId, prop, value, meta = {}) => commit(
+        d => edits.setOperatorProp(d, nodeId, prop, value),
+        {
+          label: 'Change value',
+          coalesceKey: meta.coalesceKey ? `${nodeId}:${meta.coalesceKey}` : null,
+        },
+      ),
+      setOperatorMode: (nodeId, mode, value) => edit(
+        d => edits.setOperatorMode(d, nodeId, mode, value),
+        'Change value node',
+      ),
+      wire: (fromNodeId, blockId, prop) => edit(
+        d => edits.addEdge(d, { fromNodeId, blockId, prop }),
+        'Connect',
+      ),
+      removeEdge: edgeId => edit(d => edits.removeEdge(d, edgeId), 'Disconnect'),
+      unwire: (blockId, prop) => edit(d => edits.unwireProp(d, blockId, prop), 'Disconnect'),
+
+      // layout. No undo label and a coalesce key: moving a node is cosmetic,
+      // and `layout` is the one part of the document the compiler never reads.
+      moveNode: (nodeId, position) => commit(
+        d => setNodePosition(d, nodeId, position),
+        { coalesceKey: `layout:${nodeId}` },
+      ),
+      tidy: () => edit(d => clearLayout(d), 'Tidy layout'),
+
+      // assets
+      pickAsset: (blockId, prop, type) => setPicker({ blockId, prop, type }),
+
+      // diagnostics
+      canFix: fix => edits.canApplyFix(fix),
+      applyFix: diagnostic => edit(
+        d => edits.applyFix(d, diagnostic.fix),
+        diagnostic.fix?.label || 'Apply fix',
+      ),
+    }
+  }, [commit])
+
+  // --- asset picker --------------------------------------------------------
+
+  const handlePickAsset = useCallback(asset => {
+    if (!picker || !asset) return
+    const numericId = Number(String(asset.id).replace('library:', ''))
+    if (!Number.isFinite(numericId)) return
+
+    // The slot key is derived from the block and property rather than from the
+    // asset, so re-picking replaces the reference instead of accumulating
+    // slots - and the graph keeps pointing at a stable key. Blocks name slots,
+    // never asset ids; one table resolves them, which is what makes project
+    // import able to remap a whole effect in one place.
+    const slot = `${picker.type === PROP_TYPE.MESH ? 'mesh' : 'tex'}_${picker.blockId}_${picker.prop}`
+    const entry = {
+      kind: picker.type === PROP_TYPE.MESH ? REF_KIND.MESH : REF_KIND.IMAGE,
+      ref: formatAssetRef(numericId),
+      name: asset.name || '',
+      colorSpace: 'srgb',
+    }
+    commit(
+      d => edits.setBlockAssetSlot(edits.setAssetReference(d, slot, entry), picker.blockId, picker.prop, slot),
+      { label: 'Choose asset' },
+    )
+    setPicker(null)
+  }, [commit, picker])
+
+  // Resolved asset names, so a texture row reads "spark.png" rather than
+  // "tex_blk3_texture". Built per document rather than per row.
+  const fieldProps = useMemo(() => {
+    const byId = new Map()
+    for (const asset of [...libraryImages, ...libraryMeshes]) {
+      byId.set(Number(String(asset.id).replace('library:', '')), asset)
+    }
+    const out = {}
+    for (const system of doc.systems) {
+      for (const context of system.contexts) {
+        for (const block of context.blocks) {
+          for (const [prop, value] of Object.entries(block.props || {})) {
+            const slot = typeof value?.v === 'string' ? value.v : null
+            if (!slot) continue
+            const ref = doc.references?.[slot]
+            if (!ref) continue
+            const match = /^asset:(\d+)$/.exec(ref.ref || '')
+            const asset = match ? byId.get(Number(match[1])) : null
+            out[block.id] = out[block.id] || {}
+            out[block.id][prop] = { assetLabel: asset?.name || ref.name || slot }
+          }
+        }
+      }
+    }
+    return out
+  }, [doc, libraryImages, libraryMeshes])
+
+  // --- transport -----------------------------------------------------------
+
+  const restart = useCallback(() => {
+    if (runtimeRef.current) reset(runtimeRef.current)
+  }, [])
+
+  const stepOnce = useCallback(() => {
+    const current = runtimeRef.current
+    if (!current) return
+    setPlaying(false)
+    seekTo(current, current.time + current.ir.effect.fixedDt)
+  }, [])
+
+  const seek = useCallback(seconds => {
+    const current = runtimeRef.current
+    if (!current) return
+    setPlaying(false)
+    seekTo(current, Math.max(0, seconds))
+  }, [])
+
+  // Read per frame by the timeline's playhead loop. A function rather than a
+  // number, so the playhead can be smooth without the page re-rendering.
+  const getTime = useCallback(() => runtimeRef.current?.time || 0, [])
+
+  // Stable, so publishing the camera does not re-run VfxSystemView's effect on
+  // every render of this page.
+  const handleCamera = useCallback(camera => {
+    cameraRef.current = camera
+  }, [])
+
+  // --- keyboard ------------------------------------------------------------
+
+  useEffect(() => {
+    const onKeyDown = event => {
+      const target = event.target
+      const typing = target instanceof HTMLElement && (
+        target.tagName === 'INPUT'
+        || target.tagName === 'TEXTAREA'
+        || target.tagName === 'SELECT'
+        || target.isContentEditable
+      )
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+        event.preventDefault()
+        const entry = event.shiftKey ? redo() : undo()
+        // Reveal what the undo changed. Undoing something you cannot see is the
+        // classic graph-editor failure, so the entry carries a node id and the
+        // board pans to it.
+        if (entry?.focusNodeId && flowRef.current) {
+          try {
+            flowRef.current.fitView({ nodes: [{ id: entry.focusNodeId }], duration: 300, maxZoom: 1 })
+          } catch {
+            // The node is gone (an undo of an add). Nothing to reveal.
+          }
+        }
+        return
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') {
+        event.preventDefault()
+        redo()
+        return
+      }
+      if (typing) return
+      if (event.code === 'Space') {
+        event.preventDefault()
+        setPlaying(current => !current)
+        return
+      }
+      if (event.key === 'Escape') setSelection(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [redo, undo])
+
+  // --- save ----------------------------------------------------------------
 
   const handleSave = async ({ saveAs = false } = {}) => {
     let thumbnail = null
     try {
-      thumbnail = await createVfxThumbnailFile(compiled.ir, { name })
+      // THE CARD IS THE FRAME ON SCREEN. Passing the live runtime and camera
+      // means the author picks the thumbnail by pausing the timeline where the
+      // effect looks best and orbiting to the angle they want - which is a
+      // judgement only they can make. It falls back to a simulated frame when
+      // nothing is alive (t=0, or after a burst has died), because silently
+      // saving an empty card would read as the feature being broken.
+      thumbnail = await createVfxThumbnailFile(compiled.ir, {
+        name,
+        runtime,
+        camera: cameraRef.current,
+        textures,
+      })
     } catch {
-      // Always best-effort. The effect is what matters and it is about to be
-      // stored; losing the save over a cosmetic render would be the wrong
-      // trade. The house rule is at TreeGenPage.jsx:622.
+      // Always best-effort. Losing the save over a cosmetic render would be
+      // the wrong trade; the house rule is at TreeGenPage.jsx:622.
     }
     try {
       const saved = await save({ saveAs, thumbnail })
@@ -133,17 +545,11 @@ export default function VfxEditorPage() {
     }
   }
 
-  const restart = () => {
-    if (runtime) reset(runtime)
-  }
-
-  const stepOnce = () => {
-    if (!runtime) return
-    setPlaying(false)
-    seekTo(runtime, runtime.time + runtime.ir.effect.fixedDt)
-  }
-
   const saveLabel = status === 'saving' ? 'Saving...' : assetId == null ? 'Save to library' : 'Save'
+  const paramsOpen = selection != null
+  const selectionDiagnostics = selection
+    ? (diagnosticIndex.get(selection.id) || [])
+    : []
 
   return (
     <div className="vfx-page">
@@ -171,8 +577,34 @@ export default function VfxEditorPage() {
           aria-label="Effect name"
         />
 
+        <div className="vfx-page__history">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            title={canUndo ? `Undo ${undoLabel}` : 'Nothing to undo'}
+            aria-label="Undo"
+          >
+            <span className="material-symbols-outlined">undo</span>
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            title={canRedo ? `Redo ${redoLabel}` : 'Nothing to redo'}
+            aria-label="Redo"
+          >
+            <span className="material-symbols-outlined">redo</span>
+          </button>
+        </div>
+
         <div className="vfx-page__save">
-          <button type="button" onClick={() => handleSave()} disabled={status === 'saving'}>
+          <button
+            type="button"
+            onClick={() => handleSave()}
+            disabled={status === 'saving'}
+            title="Saves the effect. The library card is a picture of the frame on screen right now - pause the timeline where it looks best first."
+          >
             {saveLabel}
           </button>
           {assetId != null && (
@@ -181,6 +613,7 @@ export default function VfxEditorPage() {
               className="is-quiet"
               onClick={() => handleSave({ saveAs: true })}
               disabled={status === 'saving'}
+              title="Saves a separate copy, leaving the original untouched. The card is the frame on screen."
             >
               Save as new
             </button>
@@ -191,18 +624,6 @@ export default function VfxEditorPage() {
                 : dirty ? 'Unsaved changes'
                   : status === 'saved' ? 'Saved' : ''}
           </span>
-        </div>
-
-        <div className="vfx-page__transport">
-          <button type="button" onClick={restart} title="Restart">
-            <span className="material-symbols-outlined">replay</span>
-          </button>
-          <button type="button" onClick={() => setPlaying(p => !p)} title={playing ? 'Pause' : 'Play'}>
-            <span className="material-symbols-outlined">{playing ? 'pause' : 'play_arrow'}</span>
-          </button>
-          <button type="button" onClick={stepOnce} title="Step one frame">
-            <span className="material-symbols-outlined">skip_next</span>
-          </button>
         </div>
 
         <div className="vfx-page__toggles">
@@ -222,6 +643,17 @@ export default function VfxEditorPage() {
             <input type="checkbox" checked={profile} onChange={e => setProfile(e.target.checked)} />
             Profile
           </label>
+          {/* Labelled "Detail" rather than beginner/advanced: a developer will
+              pick the wrong one out of pride. */}
+          <select
+            value={level}
+            onChange={e => setLevel(e.target.value)}
+            title="How much the editor shows. Guided offers only the blocks you need to start."
+          >
+            <option value="guided">Detail: guided</option>
+            <option value="standard">Detail: standard</option>
+            <option value="full">Detail: full</option>
+          </select>
           <select
             value={engineTarget}
             onChange={e => setEngineTarget(e.target.value)}
@@ -245,7 +677,11 @@ export default function VfxEditorPage() {
             key={template.id}
             type="button"
             className="vfx-page__template"
-            onClick={() => loadTemplate(template)}
+            onClick={() => {
+              loadTemplate(template)
+              setSelection(null)
+              setExpanded({})
+            }}
             title={`${template.blurb}\n\nTeaches: ${template.teaches.join(', ')}`}
           >
             {template.name}
@@ -253,57 +689,184 @@ export default function VfxEditorPage() {
         ))}
       </div>
 
-      <div className="vfx-page__body">
+      <div
+        className={`vfx-page__body${paramsOpen ? ' has-params' : ''}`}
+        ref={bodyRef}
+        style={{
+          '--vfx-params-w': paramsOpen ? `${paramsWidth}px` : '0px',
+          '--vfx-preview-w': `${previewWidth}px`,
+        }}
+      >
+        <div className="vfx-page__params">
+          {/* Mounted only when open, but the TRACK always exists - that is what
+              makes the transition one custom-property write and leaves the
+              canvas alone. */}
+          {paramsOpen && (
+            <VfxParamsPanel
+              doc={doc}
+              selection={selection}
+              actions={actions}
+              fieldProps={fieldProps}
+              diagnostics={selectionDiagnostics}
+              level={level}
+              onClose={() => setSelection(null)}
+            />
+          )}
+        </div>
+
+        {/* The class is what places this in the grid. Without an explicit
+            column every item after a conditionally-rendered one lands in the
+            wrong track - see the note on .vfx-page__body. */}
+        {paramsOpen && (
+          <VfxSplitter
+            className="vfx-page__gutter-params"
+            orientation="vertical"
+            targetRef={bodyRef}
+            variable="--vfx-params-w"
+            value={paramsWidth}
+            onCommit={setParamsWidth}
+            min={220}
+            max={520}
+            defaultValue={PARAMS_DEFAULT}
+            storageKey={PARAMS_KEY}
+            label="Resize the parameters pane"
+          />
+        )}
+
+        <div className="vfx-page__board">
+          {/* The provider is above <ReactFlow> so VfxBoard can call
+              useReactFlow itself, and so the page can hold the instance. */}
+          <ReactFlowProvider>
+            <VfxBoard
+              doc={doc}
+              diagnosticIndex={diagnosticIndex}
+              actions={actions}
+              expanded={expanded}
+              fieldProps={fieldProps}
+              selectedBlockId={selection?.kind === 'block' ? selection.id : null}
+              selectedContextId={selection?.kind === 'context' ? selection.id : null}
+              engineTarget={engineTarget || null}
+              level={level}
+              onInit={instance => { flowRef.current = instance }}
+            />
+          </ReactFlowProvider>
+
+          {/* Pinned inside the board pane, above the timeline, so the two never
+              fight for the same edge and the strip never covers the canvas. */}
+          <div className={`vfx-page__diagnostics is-${summary.tone}`}>
+            <div className="vfx-page__diagnostics-summary">
+              <span className="material-symbols-outlined">
+                {summary.tone === 'ok' ? 'check_circle' : SEVERITY_ICON[summary.tone] || 'info'}
+              </span>
+              {summary.text}
+            </div>
+            {compiled.diagnostics.length > 0 && (
+              <ul className="vfx-page__diagnostics-list">
+                {compiled.diagnostics.map((diagnostic, index) => (
+                  <li key={`${diagnostic.code}-${index}`} className={`is-${diagnostic.severity}`}>
+                    <span className="material-symbols-outlined">
+                      {SEVERITY_ICON[diagnostic.severity] || 'info'}
+                    </span>
+                    <button
+                      type="button"
+                      className="vfx-page__diagnostics-text"
+                      onClick={() => {
+                        const id = diagnostic.target?.blockId
+                          || diagnostic.target?.contextId
+                          || diagnostic.target?.systemId
+                          || diagnostic.target?.nodeId
+                        if (!id) return
+                        setSelection({
+                          kind: diagnostic.target?.blockId ? 'block'
+                            : diagnostic.target?.contextId ? 'context'
+                              : diagnostic.target?.systemId ? 'system' : 'operator',
+                          id,
+                        })
+                      }}
+                      title="Show the thing this is about"
+                    >
+                      <strong>{diagnostic.title}</strong>
+                      {' '}
+                      {diagnostic.message}
+                      {diagnostic.hint && <em> {diagnostic.hint}</em>}
+                    </button>
+                    {diagnostic.fix && (
+                      <button
+                        type="button"
+                        className="vfx-page__diagnostics-fix"
+                        onClick={() => actions.applyFix(diagnostic)}
+                        disabled={!edits.canApplyFix(diagnostic.fix)}
+                        title={edits.canApplyFix(diagnostic.fix)
+                          ? 'Apply this fix. It becomes one undo step.'
+                          : 'This one needs a choice only you can make - open the block and set it.'}
+                      >
+                        {diagnostic.fix.label}
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        <VfxSplitter
+          className="vfx-page__gutter-preview"
+          orientation="vertical"
+          targetRef={bodyRef}
+          variable="--vfx-preview-w"
+          value={previewWidth}
+          onCommit={setPreviewWidth}
+          min={300}
+          max={900}
+          defaultValue={PREVIEW_DEFAULT}
+          storageKey={PREVIEW_KEY}
+          invert
+          label="Resize the preview pane"
+        />
+
         <div className="vfx-page__viewport">
           <VfxViewport
             runtime={runtime}
             batches={batches}
             playing={playing}
+            timescale={timescale}
             statsRef={statsRef}
             orthographic={orthographic}
             showGrid={showGrid}
             showScale={showScale}
             bounds={bounds}
             frameKey={compiled.ir.graphHash}
+            onCamera={handleCamera}
           />
           <VfxPreviewHud statsRef={statsRef} showKernels={profile} />
         </div>
       </div>
 
-      {/* Pinned inside the body rather than floating over the canvas, so it
-          never covers anything and is never a translucent layer over a live
-          WebGL surface. */}
-      <div className={`vfx-page__diagnostics is-${summary.tone}`}>
-        <div className="vfx-page__diagnostics-summary">
-          <span className="material-symbols-outlined">
-            {summary.tone === 'ok' ? 'check_circle' : SEVERITY_ICON[summary.tone]}
-          </span>
-          {summary.text}
-        </div>
-        {compiled.diagnostics.length > 0 && (
-          <ul className="vfx-page__diagnostics-list">
-            {compiled.diagnostics.map((diagnostic, index) => (
-              <li key={`${diagnostic.code}-${index}`} className={`is-${diagnostic.severity}`}>
-                <span className="material-symbols-outlined">{SEVERITY_ICON[diagnostic.severity]}</span>
-                <span className="vfx-page__diagnostics-text">
-                  <strong>{diagnostic.title}</strong>
-                  {' '}
-                  {diagnostic.message}
-                  {diagnostic.hint && <em> {diagnostic.hint}</em>}
-                </span>
-                {/* Fixes are descriptors, not functions - the applier registry
-                    lands with the editing surface in phase 6, so the label is
-                    shown disabled rather than pretending to work. */}
-                {diagnostic.fix && (
-                  <button type="button" disabled title="Fixes become clickable with the node board">
-                    {diagnostic.fix.label}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <VfxTimeline
+        doc={doc}
+        actions={actions}
+        playing={playing}
+        onTogglePlay={() => setPlaying(current => !current)}
+        onRestart={restart}
+        onStep={stepOnce}
+        onSeek={seek}
+        getTime={getTime}
+        timescale={timescale}
+        onTimescale={setTimescale}
+        selectedSystemId={selection?.kind === 'system' ? selection.id : null}
+        collapsed={timelineCollapsed}
+        onToggleCollapsed={() => setTimelineCollapsed(current => !current)}
+      />
+
+      {picker && (
+        <AssetSelectorModal
+          assetType={picker.type === PROP_TYPE.MESH ? 'mesh' : 'image'}
+          title={picker.type === PROP_TYPE.MESH ? 'Choose a mesh' : 'Choose a sprite texture'}
+          onSelect={handlePickAsset}
+          onClose={() => setPicker(null)}
+        />
+      )}
 
       <Footer variant="kanban" />
     </div>

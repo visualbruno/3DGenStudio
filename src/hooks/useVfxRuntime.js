@@ -87,5 +87,5 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     if (textures !== NO_TEXTURES) disposeVfxTextures(textures)
   }, [textures])
 
-  return { runtime, batches }
+  return { runtime, batches, textures }
 }

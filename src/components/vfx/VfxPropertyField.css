@@ -1,0 +1,353 @@
+.vfx-prop {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #1e2027;
+}
+
+.vfx-prop:last-child {
+  border-bottom: none;
+}
+
+.vfx-prop__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vfx-prop__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #c9cdd6;
+  letter-spacing: 0.01em;
+}
+
+/* The "moved off its default" marker. Amber rather than blue: it is not a
+   warning, but it is the thing the author is looking for when they wonder why
+   an effect does not match the template it came from. */
+.vfx-prop__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #e0a33c;
+  flex: 0 0 auto;
+}
+
+.vfx-prop__editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.vfx-prop__hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #767d8b;
+}
+
+.vfx-prop__summary {
+  margin: 0;
+  font-size: 10px;
+  color: #8fa4c8;
+  font-style: italic;
+}
+
+/* --- vectors and colours -------------------------------------------------- */
+
+.vfx-prop__vec,
+.vfx-prop__color,
+.vfx-prop__range {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vfx-prop__axis,
+.vfx-prop__color-num,
+.vfx-prop__scale {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.vfx-prop__axis-label {
+  font-size: 9px;
+  font-weight: 700;
+  color: #6d7484;
+  width: 8px;
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.vfx-prop__swatch {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+/* Chrome and Firefox both pad the colour input's swatch, which leaves a border
+   of the input's own background around the colour and makes a dark colour look
+   like an empty field. */
+.vfx-prop__swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.vfx-prop__swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.vfx-prop__swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.vfx-prop__bool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: #c9cdd6;
+  cursor: pointer;
+}
+
+.vfx-prop__range-to {
+  font-size: 10px;
+  color: #6d7484;
+  flex: 0 0 auto;
+}
+
+/* --- selects -------------------------------------------------------------- */
+
+.vfx-prop__freq,
+.vfx-prop__preset {
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #c9cdd6;
+  font-size: 11px;
+  height: 26px;
+  padding: 0 4px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.vfx-prop__freq {
+  flex: 0 0 auto;
+  max-width: 96px;
+}
+
+.vfx-prop__preset {
+  flex: 1 1 auto;
+}
+
+/* --- curve and gradient --------------------------------------------------- */
+
+.vfx-prop__curve,
+.vfx-prop__gradient {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vfx-prop__spark {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  /* The stroke must not scale with the non-uniform viewBox, or a steep curve
+     draws a hairline and a flat one draws a slab. */
+  vector-effect: non-scaling-stroke;
+}
+
+.vfx-prop__spark path {
+  fill: none;
+  stroke: #6fa8ff;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The checkerboard, so an alpha ramp reads as transparency rather than as a
+   fade to the panel colour. It has to be a SEPARATE element from the gradient:
+   the gradient arrives as an inline `background-image`, which would replace
+   this one rather than stacking with it. */
+.vfx-prop__bar-wrap {
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid #2a2d34;
+  overflow: hidden;
+  background-color: #101216;
+  background-image:
+    linear-gradient(45deg, #2a2d34 25%, transparent 25%, transparent 75%, #2a2d34 75%),
+    linear-gradient(45deg, #2a2d34 25%, transparent 25%, transparent 75%, #2a2d34 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+
+.vfx-prop__bar {
+  width: 100%;
+  height: 100%;
+}
+
+.vfx-prop__hdr {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #ffd88a;
+  background: #33290f;
+  border-radius: 3px;
+  padding: 2px 4px;
+}
+
+/* --- asset slots ---------------------------------------------------------- */
+
+.vfx-prop__asset {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.vfx-prop__asset-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 7px;
+  background: #16181d;
+  border: 1px dashed #3a3e47;
+  border-radius: 5px;
+  color: #8b929f;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.vfx-prop__asset-pick.is-set {
+  border-style: solid;
+  color: #d6d9df;
+}
+
+.vfx-prop__asset-pick:hover {
+  border-color: #2f6feb;
+  color: #e6e8ec;
+}
+
+.vfx-prop__asset-pick .material-symbols-outlined {
+  font-size: 15px;
+  flex: 0 0 auto;
+}
+
+.vfx-prop__asset-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-prop__asset-clear {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.vfx-prop__asset-clear:hover {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}
+
+.vfx-prop__asset-clear .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- read-only states ----------------------------------------------------- */
+
+.vfx-prop__wired-value {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: #8fa4c8;
+  background: #14181f;
+  border: 1px solid #262b34;
+  border-radius: 5px;
+  padding: 5px 7px;
+}
+
+/* --- per-property presets ------------------------------------------------- */
+
+.vfx-prop__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.vfx-prop__preset-btn {
+  background: #1c1f26;
+  border: 1px solid #2a2d34;
+  border-radius: 10px;
+  color: #9aa1af;
+  font-size: 10px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.vfx-prop__preset-btn:hover {
+  background: #24303f;
+  border-color: #3d6096;
+  color: #dce3ef;
+}
+
+/* --- compact (inline on a node's block row) ------------------------------- */
+
+.vfx-prop.is-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: none;
+}
+
+.vfx-prop.is-compact .vfx-prop__label {
+  flex: 0 0 auto;
+  width: 66px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #8b929f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-prop.is-compact .vfx-prop__editor {
+  flex: 1 1 auto;
+}

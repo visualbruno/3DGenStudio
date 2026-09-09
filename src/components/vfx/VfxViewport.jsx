@@ -66,7 +66,9 @@ export default function VfxViewport({
   runtime,
   batches,
   playing = true,
+  timescale = 1,
   statsRef = null,
+  onCamera = null,
   orthographic = false,
   showGrid = true,
   showScale = false,
@@ -137,7 +139,9 @@ export default function VfxViewport({
         runtime={runtime}
         batches={batches}
         playing={playing}
+        timescale={timescale}
         statsRef={statsRef}
+        onCamera={onCamera}
       />
 
       {/* Rendered last: GizmoHelper takes the render loop at priority 1, so

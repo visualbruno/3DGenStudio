@@ -16,6 +16,7 @@
 // owned by useVfxRuntime, above the Canvas, for the reasons in that hook's
 // header. This component is a mount point and a clock.
 
+import { useEffect } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import { updateBatch, writeBatch } from '../../utils/vfx/batch.js'
@@ -31,11 +32,29 @@ const cameraDirection = new Vector3()
  * @param {Object|null} props.runtime
  * @param {Array<Object>} props.batches
  * @param {boolean} props.playing
+ * @param {number} [props.timescale] 1 = real time
  * @param {{current: Object}} props.statsRef written each frame; the HUD polls it
+ * @param {(camera: Object|null) => void} [props.onCamera] called with the
+ *   scene camera on mount and null on unmount, so code OUTSIDE the Canvas can
+ *   capture what the author is looking at. A callback rather than a ref prop:
+ *   writing to a parent's ref from a child hides who owns it, and the hooks
+ *   linter rejects it.
  */
-export default function VfxSystemView({ runtime, batches, playing, statsRef }) {
+export default function VfxSystemView({
+  runtime, batches, playing, timescale = 1, statsRef, onCamera = null,
+}) {
   const camera = useThree(state => state.camera)
   const gl = useThree(state => state.gl)
+
+  // The camera published to the page, so the thumbnail can be taken from the
+  // author's own viewpoint. The identity only changes when the
+  // perspective/orthographic toggle swaps cameras, so this runs about twice a
+  // session.
+  useEffect(() => {
+    if (!onCamera) return undefined
+    onCamera(camera)
+    return () => onCamera(null)
+  }, [camera, onCamera])
 
   // Draw-call and triangle counts come from the renderer's own per-frame
   // accounting rather than from our batch list, so the number in the HUD is
@@ -49,7 +68,12 @@ export default function VfxSystemView({ runtime, batches, playing, statsRef }) {
       // Clamped before it reaches the accumulator as well as inside it: a tab
       // that was backgrounded hands back a delta of many seconds, and there is
       // no reason to simulate any of it.
-      advance(runtime, Math.min(delta, 0.25))
+      // Timescale scales the DELTA rather than the fixed step: the step is
+      // what determinism is defined against, and changing it would make a
+      // slow-motion preview a different simulation from the one that plays at
+      // speed. Scaling the delta just feeds the accumulator more slowly, so
+      // 0.25x is the same effect watched four times as closely.
+      advance(runtime, Math.min(delta, 0.25) * timescale)
     }
 
     camera.getWorldDirection(cameraDirection)

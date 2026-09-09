@@ -1,0 +1,355 @@
+.vfx-params {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: #15171c;
+  border-right: 1px solid #22252c;
+  /* The pane is inside a grid track that animates from 0 to its width. Without
+     this, the content reflows through every intermediate width and the text
+     visibly re-wraps during the transition. */
+  overflow: hidden;
+}
+
+.vfx-params__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #1b1e24;
+  border-bottom: 1px solid #22252c;
+  flex: 0 0 auto;
+}
+
+.vfx-params__titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.25;
+}
+
+.vfx-params__title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #e6e8ec;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-params__crumb {
+  font-size: 10px;
+  color: #7b8290;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-params__close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  background: none;
+  border: none;
+  color: #838a98;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.vfx-params__close:hover {
+  color: #e6e8ec;
+  background: #2b2f38;
+}
+
+.vfx-params__close .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.vfx-params__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* --- teaching text -------------------------------------------------------- */
+
+.vfx-params__teach {
+  margin: 0;
+  padding: 9px 10px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #98a0af;
+  background: #171b22;
+  border-bottom: 1px solid #1e2027;
+}
+
+.vfx-params__note {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 10px;
+  color: #767d8b;
+}
+
+.vfx-params__unknown {
+  margin: 0;
+  padding: 12px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #d6a3a3;
+}
+
+.vfx-params__unknown code {
+  background: #22252c;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+/* --- diagnostics ---------------------------------------------------------- */
+
+.vfx-params__diagnostics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.vfx-params__diagnostics li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  padding: 7px 10px;
+  font-size: 10px;
+  line-height: 1.45;
+  border-bottom: 1px solid #1e2027;
+}
+
+.vfx-params__diagnostics li.is-error {
+  background: #2a1618;
+  color: #f0b8b8;
+}
+
+.vfx-params__diagnostics li.is-warn {
+  background: #2a2413;
+  color: #ebd6a3;
+}
+
+.vfx-params__diagnostics li.is-info {
+  background: #16202c;
+  color: #a8c4e6;
+}
+
+.vfx-params__diagnostics button {
+  background: #2f6feb;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+
+.vfx-params__diagnostics button:hover {
+  background: #4482f5;
+}
+
+/* --- modes and plain fields ---------------------------------------------- */
+
+.vfx-params__modes {
+  border-bottom: 1px solid #1e2027;
+}
+
+.vfx-params__mode,
+.vfx-params__text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #1e2027;
+}
+
+.vfx-params__mode-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #c9cdd6;
+}
+
+.vfx-params__mode select,
+.vfx-params__text input {
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e8ec;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 6px;
+  width: 100%;
+}
+
+.vfx-params__mode select:focus,
+.vfx-params__text input:focus {
+  outline: none;
+  border-color: #2f6feb;
+}
+
+.vfx-params__mode-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #767d8b;
+}
+
+.vfx-params__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 11px;
+  color: #c9cdd6;
+  border-bottom: 1px solid #1e2027;
+  cursor: pointer;
+}
+
+/* --- advanced toggle ------------------------------------------------------ */
+
+.vfx-params__advanced {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 8px 10px;
+  background: #1c1f26;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #9aa1af;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 5px;
+  cursor: pointer;
+}
+
+.vfx-params__advanced:hover {
+  background: #242832;
+  color: #dce3ef;
+}
+
+/* --- engine compatibility ------------------------------------------------- */
+
+.vfx-params__engines {
+  margin: 8px 10px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  border: 1px solid #22252c;
+}
+
+.vfx-params__engines strong {
+  font-weight: 700;
+}
+
+.vfx-params__engines p {
+  margin: 4px 0 0;
+  color: #767d8b;
+}
+
+.vfx-params__engines.is-ok {
+  background: #14201a;
+  border-color: #274434;
+  color: #9fd0b3;
+}
+
+.vfx-params__engines.is-warn {
+  background: #221c0f;
+  border-color: #4a3a12;
+  color: #e6c98a;
+}
+
+.vfx-params__engines.is-bad {
+  background: #241414;
+  border-color: #4a1d1d;
+  color: #f0b8b8;
+}
+
+/* --- links, raw, actions -------------------------------------------------- */
+
+.vfx-params__links {
+  padding: 4px 10px 8px;
+}
+
+.vfx-params__learn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  color: #6fa8ff;
+  text-decoration: none;
+}
+
+.vfx-params__learn:hover {
+  text-decoration: underline;
+}
+
+.vfx-params__learn .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.vfx-params__raw {
+  margin: 0 10px 10px;
+  font-size: 10px;
+  color: #8b929f;
+}
+
+.vfx-params__raw summary {
+  cursor: pointer;
+  padding: 3px 0;
+}
+
+.vfx-params__raw pre {
+  margin: 4px 0 0;
+  padding: 7px;
+  background: #101216;
+  border: 1px solid #22252c;
+  border-radius: 5px;
+  overflow-x: auto;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #b8c0cf;
+}
+
+.vfx-params__actions {
+  display: flex;
+  gap: 5px;
+  padding: 8px 10px 14px;
+  border-top: 1px solid #1e2027;
+}
+
+.vfx-params__actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1c1f26;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.vfx-params__actions button:hover {
+  background: #242832;
+  color: #e6e8ec;
+}
+
+.vfx-params__actions button.is-danger:hover {
+  background: #2a1d1d;
+  border-color: #6d3131;
+  color: #ff9b9b;
+}
+
+.vfx-params__actions .material-symbols-outlined {
+  font-size: 14px;
+}

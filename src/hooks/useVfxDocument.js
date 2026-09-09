@@ -29,6 +29,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createEmptyVfxDoc, normalizeVfxDoc, vfxSignature } from '../../vfx/doc.js'
 import { loadVfxAsset, saveVfxAsset, vfxAssetId } from '../utils/vfxApi.js'
+import useVfxHistory from './useVfxHistory.js'
 
 const DRAFT_PREFIX = 'vfx:draft:'
 const DRAFT_DEBOUNCE_MS = 1000
@@ -74,7 +75,15 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
   const numericId = vfxAssetId(assetId)
   const key = draftKey(numericId)
 
-  const [doc, setDocState] = useState(() => createEmptyVfxDoc({ name: 'Untitled effect' }))
+  // A factory, so the empty document is built once on mount rather than on
+  // every render - useState reads a function as a lazy initialiser.
+  const history = useVfxHistory(() => createEmptyVfxDoc({ name: 'Untitled effect' }))
+  const doc = history.value
+  // Destructured because `history` is a fresh object each render while these
+  // three are useCallback-stable. Depending on the object would make every
+  // callback below unstable, and the board's memoised nodes would re-render on
+  // every keystroke anywhere on the page.
+  const { commit: commitHistory, reset: resetHistory } = history
   const [name, setName] = useState('Untitled effect')
   const [savedAssetId, setSavedAssetId] = useState(numericId)
   const [status, setStatus] = useState(numericId ? 'loading' : 'idle')
@@ -86,9 +95,19 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
   const [savedSignature, setSavedSignature] = useState(() => vfxSignature(doc))
   const loadedRef = useRef(null)
 
-  const setDoc = useCallback(next => {
-    setDocState(current => normalizeVfxDoc(typeof next === 'function' ? next(current) : next))
-  }, [])
+  /**
+   * Record an edit, with an undo label and an optional coalesce key.
+   *
+   * Normalising here rather than in each caller means a mutator can return a
+   * loosely-shaped document and the reconciler in normalizeVfxDoc still runs -
+   * which is what keeps the link mirror and the edge list in step.
+   */
+  const commit = useCallback((next, meta = {}) => {
+    commitHistory(
+      current => normalizeVfxDoc(typeof next === 'function' ? next(current) : next),
+      meta,
+    )
+  }, [commitHistory])
 
   // Load the asset named in the URL. Runs once per id - see the header for why
   // there is no cancellation flag.
@@ -99,7 +118,7 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
 
     loadVfxAsset(numericId)
       .then(({ doc: loaded, record }) => {
-        setDocState(loaded)
+        resetHistory(loaded)
         setName(loaded.name || record?.name || 'Effect')
         setSavedAssetId(numericId)
         setSavedSignature(vfxSignature(loaded))
@@ -148,10 +167,10 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
 
   const restoreDraft = useCallback(() => {
     if (!draft) return
-    setDocState(normalizeVfxDoc(draft.doc))
+    resetHistory(normalizeVfxDoc(draft.doc))
     if (draft.name) setName(draft.name)
     setDraft(null)
-  }, [draft])
+  }, [draft, resetHistory])
 
   const discardDraft = useCallback(() => {
     clearDraft(key)
@@ -160,7 +179,9 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
 
   const loadTemplate = useCallback(template => {
     const built = normalizeVfxDoc(template.build())
-    setDocState(built)
+    // reset, not commit: a template is a different document, and an undo that
+    // replaced the open effect with the previous one would be startling.
+    resetHistory(built)
     setName(template.name)
     // A template is a NEW effect, not an edit of the open one: clearing the
     // asset id is what stops Save silently overwriting whatever the author had
@@ -168,7 +189,7 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
     setSavedAssetId(null)
     setSavedSignature(vfxSignature(built))
     setStatus('idle')
-  }, [])
+  }, [resetHistory])
 
   /**
    * @param {{saveAs?: boolean, thumbnail?: File|Blob|null}} [options]
@@ -202,7 +223,13 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
 
   return {
     doc,
-    setDoc,
+    commit,
+    undo: history.undo,
+    redo: history.redo,
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
+    undoLabel: history.undoLabel,
+    redoLabel: history.redoLabel,
     name,
     setName,
     assetId: savedAssetId,

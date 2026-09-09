@@ -1,0 +1,592 @@
+/* Context nodes and the block rows inside them.
+   One file, because a block row only ever appears inside a context node and
+   splitting them would mean two files that must agree about spacing. */
+
+.vfx-board {
+  /* System accents. Six, cycled: enough that no two systems in a realistic
+     effect share one, few enough that they stay distinguishable. Chosen for
+     roughly equal luminance so none of them reads as "the important one". */
+  --vfx-accent-0: #4f8cf5;
+  --vfx-accent-1: #e07a4f;
+  --vfx-accent-2: #4fc38a;
+  --vfx-accent-3: #b678e6;
+  --vfx-accent-4: #e0c04f;
+  --vfx-accent-5: #4fc6d8;
+}
+
+.vfx-node {
+  width: 288px;
+  background: #191b20;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  /* No box-shadow with a blur: GraphPage.css records that blurred effects
+     inside the React Flow viewport collapse to ~2 fps in Electron once there
+     are a few dozen nodes. A solid ring reads as depth for free. */
+  box-shadow: 0 0 0 1px #101216;
+  color: #e6e8ec;
+  font-size: 12px;
+  overflow: hidden;
+}
+
+.vfx-node.is-selected {
+  border-color: #4f8cf5;
+  box-shadow: 0 0 0 1px #4f8cf5;
+}
+
+.vfx-node.has-warn {
+  border-color: #7a6229;
+}
+
+.vfx-node.has-error {
+  border-color: #8f3b3b;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.vfx-node__header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+  background: #20232a;
+  /* The accent bar identifies the system this stage belongs to. On the left
+     edge rather than the top, so a column of five stacked contexts reads as
+     one continuous stripe. */
+  border-left: 3px solid var(--vfx-system-accent, #4f8cf5);
+  cursor: grab;
+}
+
+.vfx-node__header:active {
+  cursor: grabbing;
+}
+
+.vfx-node__icon {
+  font-size: 17px;
+  color: var(--vfx-system-accent, #4f8cf5);
+  flex: 0 0 auto;
+}
+
+.vfx-node__titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  line-height: 1.25;
+}
+
+.vfx-node__kind {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.vfx-node__system {
+  font-size: 10px;
+  color: #838a98;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-node__note {
+  margin: 0;
+  padding: 5px 9px 6px;
+  font-size: 10px;
+  color: #767d8b;
+  border-bottom: 1px solid #22252c;
+  background: #16181d;
+}
+
+.vfx-node__tool {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #838a98;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.vfx-node__tool:hover {
+  color: #e6e8ec;
+  background: #2b2f38;
+}
+
+.vfx-node__tool .material-symbols-outlined {
+  font-size: 16px;
+}
+
+/* --- flow sockets --------------------------------------------------------- */
+
+/* Flat fills only, and no glow: see the note on box-shadow above. */
+.vfx-node__flow {
+  width: 12px;
+  height: 6px;
+  border-radius: 3px;
+  background: #4f8cf5;
+  border: 1px solid #101216;
+}
+
+/* --- the stack ------------------------------------------------------------ */
+
+.vfx-node__stack {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  position: relative;
+}
+
+/* Zero-height on purpose - see the comment where it is rendered. The line is
+   drawn by a pseudo-element that overflows its own box, so it changes nothing
+   about the rows around it. */
+.vfx-node__drop {
+  display: block;
+  height: 0;
+  position: relative;
+  overflow: visible;
+}
+
+.vfx-node__drop::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: -1px;
+  height: 2px;
+  background: #4f8cf5;
+  border-radius: 1px;
+}
+
+.vfx-node__empty {
+  margin: 0;
+  padding: 10px 9px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #6d7484;
+  background: #16181d;
+}
+
+/* --- context params ------------------------------------------------------- */
+
+.vfx-node__params {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 9px;
+  border-top: 1px solid #22252c;
+  background: #16181d;
+}
+
+.vfx-node__param {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  color: #8b929f;
+}
+
+.vfx-node__param select {
+  flex: 0 0 auto;
+  max-width: 130px;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #d6d9df;
+  font-size: 10px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+/* --- footer / add menu ---------------------------------------------------- */
+
+.vfx-node__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-top: 1px solid #22252c;
+  background: #1b1e24;
+  position: relative;
+}
+
+.vfx-node__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #232732;
+  border: 1px solid #313743;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.vfx-node__add:hover {
+  background: #2b3444;
+  border-color: #3d6096;
+  color: #e6e8ec;
+}
+
+.vfx-node__add .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.vfx-node__order {
+  font-size: 9px;
+  color: #5f6673;
+  letter-spacing: 0.02em;
+}
+
+.vfx-node__add-menu {
+  width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #101216;
+  border: 1px solid #313743;
+  border-radius: 6px;
+}
+
+.vfx-node__add-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b8c0cf;
+  border-bottom: 1px solid #22252c;
+  position: sticky;
+  top: 0;
+  background: #101216;
+}
+
+.vfx-node__add-head button {
+  display: inline-flex;
+  background: none;
+  border: none;
+  color: #838a98;
+  cursor: pointer;
+  padding: 0;
+}
+
+.vfx-node__add-head .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.vfx-node__add-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #1a1c22;
+  color: inherit;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.vfx-node__add-item:hover {
+  background: #1c2431;
+}
+
+.vfx-node__add-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #dce3ef;
+}
+
+.vfx-node__add-blurb {
+  font-size: 9px;
+  line-height: 1.4;
+  color: #767d8b;
+}
+
+.vfx-node__add-empty {
+  margin: 0;
+  padding: 8px;
+  font-size: 10px;
+  color: #6d7484;
+}
+
+/* ========================================================================== */
+/* Block rows                                                                 */
+/* ========================================================================== */
+
+.vfx-block {
+  position: relative;
+  border-bottom: 1px solid #1e2027;
+  background: #191b20;
+}
+
+.vfx-block:last-child {
+  border-bottom: none;
+}
+
+.vfx-block.is-selected {
+  background: #1c2735;
+  box-shadow: inset 2px 0 0 #4f8cf5;
+}
+
+.vfx-block.has-warn .vfx-block__name {
+  color: #e6c98a;
+}
+
+.vfx-block.has-error .vfx-block__name {
+  color: #f0a3a3;
+}
+
+.vfx-block.is-unknown .vfx-block__name {
+  color: #f0a3a3;
+  text-decoration: line-through;
+}
+
+/* A disabled block is dimmed AND says "Off". Dimming alone is unreadable at
+   0.5 zoom and invisible to a colour-blind reader. */
+.vfx-block.is-off .vfx-block__title {
+  opacity: 0.45;
+}
+
+.vfx-block.is-dragging {
+  background: #232935;
+  box-shadow: 0 0 0 1px #4f8cf5;
+  /* Not `position: relative` - it already is, and raising z-index is what
+     puts the dragged row above its neighbours. */
+  z-index: 5;
+}
+
+.vfx-block__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 4px;
+  min-height: 26px;
+}
+
+.vfx-block__grip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: #4d5461;
+  cursor: grab;
+  touch-action: none;
+}
+
+.vfx-block__grip:hover {
+  color: #8b929f;
+}
+
+.vfx-block__grip .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.vfx-block__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  align-items: flex-start;
+  background: none;
+  border: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.3;
+}
+
+.vfx-block__name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #dce3ef;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+/* The value digest. This is what makes a collapsed stack readable, so it gets
+   the same width budget as the name and truncates rather than wrapping. */
+.vfx-block__digest {
+  font-size: 9px;
+  color: #7b8290;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.vfx-block__off {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #9aa1af;
+  background: #2b2f38;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.vfx-block__flag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.vfx-block__flag .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.vfx-block__flag.is-warn {
+  color: #e0a33c;
+}
+
+.vfx-block__flag.is-error {
+  color: #e05f5f;
+}
+
+/* --- engine badges -------------------------------------------------------- */
+
+.vfx-block__engines {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+}
+
+.vfx-block__engine {
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  padding: 1px 3px;
+  /* Flat fill, no border, no shadow. The measured Electron regression in
+     GraphPage.css:734-737 was caused by blurred badges in this exact position. */
+}
+
+.vfx-block__engine.is-warn {
+  background: #4a3a12;
+  color: #ffd88a;
+}
+
+.vfx-block__engine.is-bad {
+  background: #4a1d1d;
+  color: #ffb3b3;
+}
+
+/* --- tools ---------------------------------------------------------------- */
+
+.vfx-block__tools {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 0;
+  /* Hidden until the row is hovered or holds focus, so a five-block stack is
+     five names rather than twenty icons. Focus-within is what keeps them
+     reachable from the keyboard. */
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.vfx-block:hover .vfx-block__tools,
+.vfx-block:focus-within .vfx-block__tools,
+.vfx-block.is-selected .vfx-block__tools {
+  opacity: 1;
+}
+
+.vfx-block__tool {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.vfx-block__tool:hover {
+  color: #e6e8ec;
+  background: #2b2f38;
+}
+
+.vfx-block__tool.is-danger:hover {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}
+
+.vfx-block__tool .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- sockets -------------------------------------------------------------- */
+
+.vfx-block__socket {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #3a3e47;
+  border: 1px solid #101216;
+  /* The block socket sits on the row's own vertical centre, which React Flow
+     computes from the handle's box - so it must not be absolutely positioned
+     by us. */
+}
+
+.vfx-block:hover .vfx-block__socket {
+  background: #4f8cf5;
+}
+
+.vfx-block__socket.is-prop {
+  background: #4f8cf5;
+  border-radius: 50%;
+  width: 7px;
+  height: 7px;
+}
+
+/* Wired handles on a COLLAPSED block all sit at the chip. They are still
+   mounted - unmounting a handle whose edge is alive leaves React Flow unable
+   to draw that edge - they are just stacked in one place. */
+.vfx-block__socket.is-stacked {
+  left: -10px;
+  top: 50%;
+}
+
+.vfx-block__wired-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  position: absolute;
+  left: 4px;
+  bottom: 2px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #8fb4f5;
+}
+
+.vfx-block__wired-chip .material-symbols-outlined {
+  font-size: 11px;
+}
+
+/* --- expanded body ------------------------------------------------------- */
+
+.vfx-block__body {
+  padding: 2px 8px 6px 22px;
+  background: #15171c;
+  border-top: 1px solid #1e2027;
+}
+
+.vfx-block__prop {
+  position: relative;
+}
+
+body.is-row-dragging,
+body.is-row-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}

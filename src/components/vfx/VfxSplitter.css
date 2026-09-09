@@ -1,0 +1,109 @@
+/* The drag handle is 6px wide but has a 12px hit area, because a 6px target is
+   under the ~9px minimum a mouse can hit reliably and this is a control the
+   author will reach for repeatedly. The overflow is achieved with a padded
+   pseudo-element rather than by widening the element, so the layout track stays
+   6px and the panes do not shift. */
+
+.vfx-splitter {
+  position: relative;
+  flex: 0 0 auto;
+  background: #1b1d22;
+  border: none;
+  padding: 0;
+  z-index: 3;
+}
+
+.vfx-splitter.is-vertical {
+  width: 6px;
+  cursor: col-resize;
+}
+
+.vfx-splitter.is-horizontal {
+  height: 6px;
+  cursor: row-resize;
+}
+
+.vfx-splitter::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.vfx-splitter.is-vertical::after {
+  inset: 0 -4px;
+}
+
+.vfx-splitter.is-horizontal::after {
+  inset: -4px 0;
+}
+
+.vfx-splitter:hover,
+.vfx-splitter:focus-visible {
+  background: #2f6feb;
+  outline: none;
+}
+
+/* The grip is three dots, drawn with a repeating gradient rather than three
+   elements. It appears on hover only - a permanent grip on every splitter is
+   visual noise on a page that already has a node board and a HUD. */
+.vfx-splitter__grip {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.vfx-splitter:hover .vfx-splitter__grip,
+.vfx-splitter:focus-visible .vfx-splitter__grip {
+  opacity: 1;
+}
+
+.vfx-splitter.is-vertical .vfx-splitter__grip {
+  width: 2px;
+  height: 26px;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.85) 0 2px,
+    transparent 2px 6px
+  );
+}
+
+.vfx-splitter.is-horizontal .vfx-splitter__grip {
+  width: 26px;
+  height: 2px;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.85) 0 2px,
+    transparent 2px 6px
+  );
+}
+
+/* Set on <body> for the duration of a drag. Without the cursor override the
+   pointer flickers to whatever it happens to be over, and without
+   `user-select: none` a drag that crosses a label selects text - both of which
+   read as the drag having gone wrong. `pointer-events: none` on iframes and
+   canvases stops a WebGL surface swallowing the capture. */
+body.is-col-resizing,
+body.is-col-resizing * {
+  cursor: col-resize !important;
+}
+
+body.is-row-resizing,
+body.is-row-resizing * {
+  cursor: row-resize !important;
+}
+
+body.is-col-resizing,
+body.is-row-resizing {
+  user-select: none;
+}
+
+body.is-col-resizing canvas,
+body.is-row-resizing canvas,
+body.is-col-resizing iframe,
+body.is-row-resizing iframe {
+  pointer-events: none;
+}

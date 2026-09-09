@@ -1,0 +1,417 @@
+.vfx-timeline {
+  flex: 0 0 auto;
+  background: #15171c;
+  border-top: 1px solid #22252c;
+  /* The accent palette is defined on .vfx-board too; repeated here so a track
+     swatch is the same colour as its board node even when the board is not
+     mounted (narrow layouts show one pane at a time). */
+  --vfx-accent-0: #4f8cf5;
+  --vfx-accent-1: #e07a4f;
+  --vfx-accent-2: #4fc38a;
+  --vfx-accent-3: #b678e6;
+  --vfx-accent-4: #e0c04f;
+  --vfx-accent-5: #4fc6d8;
+}
+
+/* --- the header bar ------------------------------------------------------- */
+
+.vfx-timeline__bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 10px;
+  background: #1b1e24;
+  border-bottom: 1px solid #22252c;
+  flex-wrap: wrap;
+}
+
+.vfx-timeline.is-collapsed .vfx-timeline__bar {
+  border-bottom: none;
+}
+
+.vfx-timeline__collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: #b8c0cf;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.vfx-timeline__collapse:hover {
+  background: #262b34;
+  color: #e6e8ec;
+}
+
+.vfx-timeline__transport {
+  display: inline-flex;
+  gap: 1px;
+  background: #14161a;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  padding: 1px;
+}
+
+.vfx-timeline__transport button {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #b8c0cf;
+  cursor: pointer;
+  padding: 2px 5px;
+}
+
+.vfx-timeline__transport button:hover {
+  background: #2b2f38;
+  color: #fff;
+}
+
+.vfx-timeline__transport .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.vfx-timeline__time {
+  font-size: 11px;
+  color: #7b8290;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-timeline__time strong {
+  color: #e6e8ec;
+  font-weight: 700;
+}
+
+.vfx-timeline__speed,
+.vfx-timeline__loop {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: #8b929f;
+  cursor: pointer;
+}
+
+.vfx-timeline__speed select {
+  background: #14161a;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #d6d9df;
+  font-size: 10px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.vfx-timeline__add {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #232732;
+  border: 1px solid #313743;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.vfx-timeline__add:hover {
+  background: #2b3444;
+  border-color: #3d6096;
+  color: #e6e8ec;
+}
+
+.vfx-timeline__add .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* --- the grid ------------------------------------------------------------- */
+
+.vfx-timeline__grid {
+  display: grid;
+  grid-template-columns: 188px minmax(0, 1fr);
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.vfx-timeline__tracks {
+  border-right: 1px solid #22252c;
+  background: #16181d;
+}
+
+.vfx-timeline__tracks-head {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #5f6673;
+  border-bottom: 1px solid #22252c;
+}
+
+.vfx-timeline__track {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 6px 0 0;
+  border-bottom: 1px solid #1c1e24;
+}
+
+.vfx-timeline__track.is-selected {
+  background: #1c2735;
+}
+
+/* Muted and solo-silenced look the same on the track, because they mean the
+   same thing to the author: this system is not contributing right now. */
+.vfx-timeline__track.is-muted .vfx-timeline__name,
+.vfx-timeline__track.is-silenced .vfx-timeline__name {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+.vfx-timeline__swatch {
+  flex: 0 0 auto;
+  width: 3px;
+  align-self: stretch;
+  background: var(--vfx-track-accent, #4f8cf5);
+}
+
+.vfx-timeline__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: #dce3ef;
+  font-size: 11px;
+  text-align: left;
+  padding: 0 0 0 5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-timeline__name:hover {
+  color: #fff;
+}
+
+.vfx-timeline__flag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #4d5461;
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 3px;
+}
+
+.vfx-timeline__flag:hover {
+  color: #b8c0cf;
+  background: #2b2f38;
+}
+
+.vfx-timeline__flag.is-on {
+  color: #e0a33c;
+}
+
+.vfx-timeline__flag .material-symbols-outlined {
+  font-size: 14px;
+}
+
+/* --- ruler and lanes ------------------------------------------------------ */
+
+.vfx-timeline__lanes-wrap {
+  min-width: 0;
+  position: relative;
+}
+
+.vfx-timeline__ruler {
+  position: relative;
+  height: 20px;
+  border-bottom: 1px solid #22252c;
+  background: #16181d;
+  cursor: col-resize;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.vfx-timeline__tick {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: 3px;
+  border-left: 1px solid #2a2d34;
+  font-size: 9px;
+  color: #5f6673;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.vfx-timeline__lanes {
+  position: relative;
+  min-width: 0;
+}
+
+.vfx-timeline__lane {
+  position: relative;
+  border-bottom: 1px solid #1c1e24;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0 63px,
+    #1c1e24 63px 64px
+  );
+}
+
+/* --- clips ---------------------------------------------------------------- */
+
+.vfx-timeline__clip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: stretch;
+  border-radius: 3px;
+  background: var(--vfx-track-accent, #4f8cf5);
+  /* A flat fill and a dark hairline, so overlapping clips on one track are
+     still distinguishable without any blur. */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+  min-width: 8px;
+  overflow: hidden;
+}
+
+/* A one-shot burst. Kept narrow and given a pointed look, because a
+   zero-length bar is both unreadable and impossible to grab. */
+.vfx-timeline__clip.is-burst {
+  border-radius: 2px;
+  background:
+    linear-gradient(to bottom, #fff 0 2px, transparent 2px),
+    var(--vfx-track-accent, #4f8cf5);
+}
+
+.vfx-timeline__clip.is-loop {
+  /* Diagonal hatching says "this repeats" without needing a legend. */
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 0 3px,
+    transparent 3px 7px
+  );
+}
+
+.vfx-timeline__clip-body {
+  flex: 1 1 auto;
+  cursor: grab;
+  min-width: 0;
+}
+
+.vfx-timeline__clip-body:active {
+  cursor: grabbing;
+}
+
+.vfx-timeline__handle {
+  flex: 0 0 auto;
+  width: 5px;
+  cursor: ew-resize;
+  background: rgba(0, 0, 0, 0.3);
+  touch-action: none;
+}
+
+.vfx-timeline__handle:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.vfx-timeline__clip-tools {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.vfx-timeline__clip:hover .vfx-timeline__clip-tools {
+  opacity: 1;
+}
+
+/* A burst is too narrow to hold its own buttons, so they sit outside it. */
+.vfx-timeline__clip.is-burst {
+  overflow: visible;
+}
+
+.vfx-timeline__clip.is-burst .vfx-timeline__clip-tools {
+  right: -34px;
+}
+
+.vfx-timeline__clip-tools button {
+  display: inline-flex;
+  align-items: center;
+  background: #101216;
+  border: none;
+  border-radius: 3px;
+  color: #b8c0cf;
+  cursor: pointer;
+  padding: 1px;
+}
+
+.vfx-timeline__clip-tools button:hover:not(:disabled) {
+  color: #fff;
+  background: #2b2f38;
+}
+
+.vfx-timeline__clip-tools button.is-on {
+  color: #ffd88a;
+}
+
+.vfx-timeline__clip-tools button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.vfx-timeline__clip-tools .material-symbols-outlined {
+  font-size: 12px;
+}
+
+/* --- playhead ------------------------------------------------------------- */
+
+.vfx-timeline__playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: #ff5f5f;
+  pointer-events: none;
+  /* will-change is justified here and almost nowhere else on the page: this
+     element's transform is written every single frame. */
+  will-change: transform;
+}
+
+.vfx-timeline__playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 7px;
+  height: 5px;
+  background: #ff5f5f;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}

@@ -26,6 +26,7 @@ import { buildVertexShader, createParticleMaterial } from './materials.js';
 import { getDefaultSprite } from './assets.js';
 import { sortIndicesByValue } from './sort.js';
 import { createVfxRuntime, step } from './system.js';
+import { aliveCount, liveParticleBounds } from '../vfxThumbnail.js';
 
 let failures = 0;
 
@@ -381,6 +382,56 @@ function buildTemplate(id) {
     for (const batch of batches) disposeBatch(batch);
   }
   check('every template produces instances to draw', allDrew, rows.join(' '));
+}
+
+// ---------------------------------------------------------------------------
+// 8. Thumbnail framing
+// ---------------------------------------------------------------------------
+//
+// The RENDER cannot be tested here - it needs a WebGL context - but the two
+// decisions that make a card usable are pure, and both of them had a bug.
+{
+  const ir = buildTemplate('sparks');
+  const runtime = createVfxRuntime(ir);
+
+  // This is what makes the simulated fallback fire. Capturing the live frame at
+  // t = 0 would save an empty card, and an empty card reads as a broken
+  // feature rather than as the author having caught a bad moment.
+  check('nothing is alive before the first step', aliveCount(runtime) === 0);
+
+  for (let i = 0; i < 30; i += 1) step(runtime);
+  const alive = aliveCount(runtime);
+  check('  and particles are alive after 30 steps', alive > 0, String(alive));
+
+  const box = liveParticleBounds(runtime);
+  check('  so the framing box is not empty', !box.isEmpty());
+
+  // THE BUG THIS CATCHES: the first version grew the box by EVERY particle's
+  // radius in turn, so the box scaled with the particle COUNT rather than with
+  // the particle SIZE - a few hundred sparks inflated it by tens of units and
+  // framed the effect as a distant speck. Measured against the raw extent of
+  // the positions, the padding has to be a couple of particle radii.
+  let lo = Infinity;
+  let hi = -Infinity;
+  let maxSize = 0;
+  for (const emitter of runtime.emitters) {
+    const { planes, count } = emitter.pool;
+    for (let i = 0; i < count; i += 1) {
+      const y = planes.position[i * 3 + 1];
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+      if (planes.size[i] > maxSize) maxSize = planes.size[i];
+    }
+  }
+  const padding = (box.max.y - box.min.y) - (hi - lo);
+  check('  padded by the LARGEST radius, not the sum of all of them',
+    padding <= maxSize * 2 + 1e-3,
+    `padding ${padding.toFixed(4)}, largest particle ${maxSize.toFixed(4)}, ${alive} alive`);
+
+  // The sum-of-radii version passed this one too, so on its own it proves
+  // nothing - it is here to stop a fix that pads by too little.
+  check('  and it still contains every particle',
+    box.min.y <= lo + 1e-6 && box.max.y >= hi - 1e-6);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

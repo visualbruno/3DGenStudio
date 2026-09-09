@@ -1,0 +1,192 @@
+.vfx-board {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: #121316;
+}
+
+.vfx-board .react-flow {
+  width: 100%;
+  height: 100%;
+}
+
+/* React Flow paints its own selection ring on the node wrapper, which would
+   sit outside our card's rounded corner and read as a second border. The node
+   components draw their own. */
+.vfx-board .react-flow__node.selected {
+  outline: none;
+  box-shadow: none;
+}
+
+.vfx-board .react-flow__node {
+  /* Cards are sized by their content, and letting React Flow apply its default
+     node padding would put a transparent gutter around each one that still
+     catches pointer events. */
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font-family: inherit;
+}
+
+.vfx-board .react-flow__handle {
+  /* Flat, no transition. Animating a handle means a repaint inside the
+     transformed viewport for every one of them - the exact cost
+     GraphPage.css:734-737 measured. */
+  transition: none;
+  min-width: 0;
+  min-height: 0;
+}
+
+.vfx-board .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.vfx-board .react-flow__controls-button {
+  background: #1b1e24;
+  border-bottom: 1px solid #2a2d34;
+  fill: #b8c0cf;
+}
+
+.vfx-board .react-flow__controls-button:hover {
+  background: #262b34;
+}
+
+/* --- the toolbar panel ---------------------------------------------------- */
+
+.vfx-board__panel {
+  display: flex;
+  gap: 5px;
+  margin: 8px;
+}
+
+.vfx-board__panel button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.vfx-board__panel button:hover {
+  background: #262b34;
+  border-color: #3d6096;
+  color: #e6e8ec;
+}
+
+.vfx-board__panel .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- the property chooser ------------------------------------------------- */
+
+/* Positioned in the board pane's own coordinates, OUTSIDE the React Flow
+   viewport, so it does not scale with zoom - a menu rendered at 0.3 zoom would
+   be unreadable, and one at 1.75 would cover the board. */
+.vfx-board__chooser {
+  position: absolute;
+  z-index: 10;
+  min-width: 172px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #16181d;
+  border: 1px solid #3d6096;
+  border-radius: 6px;
+  /* Opaque. No backdrop-filter anywhere on this page - AssemblyPage.css and
+     TreeGenPage.css both record why over a live WebGL canvas. */
+  box-shadow: 0 0 0 1px #0b0c0e;
+}
+
+.vfx-board__chooser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: #b8c0cf;
+  border-bottom: 1px solid #22252c;
+}
+
+.vfx-board__chooser-head button {
+  display: inline-flex;
+  background: none;
+  border: none;
+  color: #838a98;
+  cursor: pointer;
+  padding: 0;
+}
+
+.vfx-board__chooser-head .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.vfx-board__chooser-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid #1a1c22;
+  color: #dce3ef;
+  font-size: 11px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.vfx-board__chooser-item:last-child {
+  border-bottom: none;
+}
+
+.vfx-board__chooser-item:hover {
+  background: #1c2431;
+}
+
+.vfx-board__chooser-width {
+  font-size: 9px;
+  color: #7b8290;
+}
+
+/* --- edge affordance ------------------------------------------------------ */
+
+.vfx-edge__remove {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: #2d2440;
+  border: 1px solid #8c5fc0;
+  border-radius: 50%;
+  color: #d4a6ff;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: all;
+}
+
+.vfx-edge__remove:hover,
+.react-flow__edge:hover .vfx-edge__remove,
+.react-flow__edge.selected .vfx-edge__remove {
+  opacity: 1;
+}
+
+.vfx-edge__remove .material-symbols-outlined {
+  font-size: 12px;
+}

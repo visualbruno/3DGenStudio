@@ -6,10 +6,29 @@
  * roughly half the framerate in the Electron build. The same rule is documented
  * at the top of AssemblyPage.css and TreeGenPage.css. Opaque panels only.
  *
- * The three-pane grid the feature is built around (Parameters | Board |
- * Preview) is not scaffolded yet: the board and the parameters panel arrive in
- * phase 6, and laying out panes with nothing to put in them would mean guessing
- * at sizes that the real content will decide. */
+ * THE THREE-PANE GRID IS THREE TRACKS THAT ALWAYS EXIST, with the parameters
+ * track at 0 width when nothing is selected. Opening it is therefore ONE
+ * custom-property write on ONE element - no React re-render of the board or the
+ * preview, and critically THE WEBGL CANVAS NEVER RESIZES, because only the
+ * middle track narrows. MeshEditorPage swaps variant classes for its layouts;
+ * that would re-lay-out all three panes here and force a canvas resize on every
+ * open and close of the parameters pane.
+ *
+ * @property is what makes that transition animate. A bare custom property is an
+ * untyped token, so the browser cannot interpolate it and the pane would snap;
+ * registering it as a <length> gives it a real animated type. */
+
+@property --vfx-params-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --vfx-preview-w {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 520px;
+}
 
 .vfx-page {
   display: flex;
@@ -59,33 +78,6 @@
   background: rgba(172, 137, 255, 0.14);
 }
 
-.vfx-page__transport {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.vfx-page__transport button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid var(--outline-variant);
-  border-radius: var(--radius-md, 8px);
-  background: transparent;
-  color: var(--on-surface-variant);
-  cursor: pointer;
-}
-
-.vfx-page__transport button:hover {
-  color: var(--on-surface);
-  border-color: var(--primary);
-}
-
-.vfx-page__transport .material-symbols-outlined {
-  font-size: 1.15rem;
-}
-
 .vfx-page__toggles {
   display: flex;
   align-items: center;
@@ -117,10 +109,56 @@
 
 .vfx-page__body {
   flex: 1;
-  display: flex;
   min-height: 0;
+  position: relative;
+  display: grid;
+  /* params | gutter | board | gutter | preview.
+   *
+   * EVERY PANE NAMES ITS OWN COLUMN below, and that is not tidiness - it is the
+   * fix for a real bug. The params gutter is only rendered when the pane is
+   * open, so with it closed there were four children for five track
+   * definitions and CSS placed each one in the next free track: the board took
+   * the gutter's `auto`, the preview gutter took the board's `1fr`, and the
+   * viewport took an `auto` track sized to its content while the 520px track
+   * sat empty. The visible symptom was a 3D view that filled its pane only
+   * after the parameters pane was opened, because opening it restored the
+   * fifth child and everything lined up again.
+   *
+   * An unrendered grid item does NOT collapse its track - it shifts every
+   * later item. Auto-placement and conditional children cannot be mixed. */
+  grid-template-columns:
+    var(--vfx-params-w, 0px) auto minmax(0, 1fr) auto var(--vfx-preview-w, 520px);
+  transition: --vfx-params-w 180ms ease;
   background: var(--background);
-  padding: 1rem 1.5rem;
+}
+
+/* No padding between the panes and no rounded corners: at this density the
+ * editor reads better as one surface divided by rules than as three cards
+ * floating on a background, and every pixel of gutter is board the author
+ * cannot use. */
+.vfx-page__params {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The two drag handles. Their tracks are `auto`, so an unrendered handle leaves
+   a zero-width track rather than shifting anything. */
+.vfx-page__gutter-params {
+  grid-column: 2;
+}
+
+.vfx-page__gutter-preview {
+  grid-column: 4;
+}
+
+.vfx-page__board {
+  grid-column: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* The canvas fills this, so it has to be size-constrained. Without the
@@ -128,15 +166,14 @@
  * WebGL drawing buffer chases the overflow - the same trap documented on
  * .assembly-page__viewport. */
 .vfx-page__viewport {
+  grid-column: 5;
   position: relative;
-  flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--outline-variant);
+  border-left: 1px solid var(--outline-variant);
   /* A dark ground, because additive particles are invisible on white. The
-   * background presets in phase 6 make this switchable; black is the honest
+   * background presets in phase 8 make this switchable; black is the honest
    * default for authoring glow. */
   background:
     radial-gradient(circle at 50% 40%, rgba(172, 137, 255, 0.06), transparent 60%),
@@ -223,11 +260,14 @@
 
 /* --- Diagnostics strip --------------------------------------------------- */
 
+/* Pinned inside the board pane, above the timeline dock, so the two never
+ * compete for the bottom edge and the strip never covers the canvas. */
 .vfx-page__diagnostics {
+  flex: 0 0 auto;
   border-top: 1px solid var(--outline-variant);
   background: var(--surface-container);
-  padding: 0.5rem 1.5rem 0.6rem;
-  max-height: 190px;
+  padding: 0.4rem 0.8rem 0.5rem;
+  max-height: 150px;
   overflow-y: auto;
   font-family: var(--font-label);
   font-size: 0.78rem;
@@ -294,9 +334,24 @@
   color: var(--primary);
 }
 
+/* A button, so clicking a diagnostic selects the thing it is about - the
+ * difference between a message and a route to fixing something. Styled back to
+ * plain text so it does not read as a second action beside the fix button. */
 .vfx-page__diagnostics-text {
   flex: 1;
   min-width: 0;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.vfx-page__diagnostics-text:hover strong {
+  text-decoration: underline;
 }
 
 .vfx-page__diagnostics-text strong {
@@ -314,26 +369,61 @@
   margin-top: 0.15rem;
 }
 
-.vfx-page__diagnostics-list li button {
+.vfx-page__diagnostics-fix {
   flex: 0 0 auto;
   padding: 0.25rem 0.6rem;
-  border: 1px solid var(--outline-variant);
+  border: 1px solid var(--primary);
   border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--on-surface-variant);
+  background: rgba(172, 137, 255, 0.16);
+  color: var(--on-surface);
   font-family: var(--font-label);
   font-size: 0.72rem;
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.vfx-page__diagnostics-list li button:disabled {
-  opacity: 0.4;
+.vfx-page__diagnostics-fix:hover:not(:disabled) {
+  background: rgba(172, 137, 255, 0.3);
+}
+
+/* Disabled means the fix needs a choice only the author can make - picking an
+ * asset, splitting a schedule. It is shown rather than hidden, with the reason
+ * in the tooltip, because the label still says what would need to happen. */
+.vfx-page__diagnostics-fix:disabled {
+  border-color: var(--outline-variant);
+  background: transparent;
+  color: var(--on-surface-variant);
+  opacity: 0.5;
   cursor: default;
 }
 
+/* Below 1200px a 520px preview leaves the board unusable, so the preview is
+ * pinned to 340px rather than given a share of a width that no longer exists.
+ * The Board/Preview toggle the plan describes lands with the mobile pass; a
+ * narrow-but-real preview is honest in the meantime, and hiding the canvas
+ * would stop the simulation being visible at all. */
+@media (max-width: 1200px) {
+  .vfx-page__body {
+    grid-template-columns: var(--vfx-params-w, 0px) auto minmax(0, 1fr) auto 340px;
+  }
+}
+
+/* Below 900px the parameters pane overlays the board instead of taking a track
+ * from it. Opaque, per the rule at the top of this file. */
 @media (max-width: 900px) {
   .vfx-page__body {
-    padding: 0.5rem 0.75rem;
+    grid-template-columns: 0px auto minmax(0, 1fr) auto 300px;
+  }
+
+  .vfx-page__body.has-params .vfx-page__params {
+    position: absolute;
+    z-index: 20;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(340px, 86vw);
+    background: #15171c;
+    border-right: 1px solid var(--outline-variant);
   }
 
   .vfx-page__toggles {
@@ -460,4 +550,38 @@
   color: var(--on-surface-variant);
   opacity: 0.7;
   margin-right: 0.3rem;
+}
+
+/* --- Undo / redo ---------------------------------------------------------- */
+
+.vfx-page__history {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.vfx-page__history button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.vfx-page__history button:hover:not(:disabled) {
+  color: var(--on-surface);
+  border-color: var(--primary);
+}
+
+.vfx-page__history button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.vfx-page__history .material-symbols-outlined {
+  font-size: 1.05rem;
 }

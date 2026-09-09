@@ -1,0 +1,86 @@
+.vfx-modes {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  background: #14161a;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  padding: 1px;
+  flex: 0 0 auto;
+}
+
+.vfx-modes__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #8b929f;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 3px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vfx-modes__btn .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.vfx-modes__btn:hover:not(:disabled) {
+  color: #d6d9df;
+  background: #20232a;
+}
+
+.vfx-modes__btn.is-active {
+  background: #2f6feb;
+  color: #fff;
+}
+
+.vfx-modes__btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The wired state is a chip, not a button: it is a statement about where the
+   value comes from, and the only action available is to undo it. */
+.vfx-modes.is-wired {
+  border-color: #4a7bd4;
+  background: #16202f;
+  gap: 4px;
+  padding: 1px 3px;
+}
+
+.vfx-modes__wired {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #8fb4f5;
+  font-size: 10px;
+  font-weight: 600;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-modes__wired .material-symbols-outlined {
+  font-size: 13px;
+}
+
+.vfx-modes__unwire {
+  background: none;
+  border: none;
+  color: #7b8290;
+  font-size: 10px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.vfx-modes__unwire:hover {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}

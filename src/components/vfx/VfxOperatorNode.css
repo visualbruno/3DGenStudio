@@ -1,0 +1,137 @@
+.vfx-op {
+  width: 208px;
+  background: #191b20;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #101216;
+  color: #e6e8ec;
+  overflow: hidden;
+}
+
+.vfx-op.is-selected {
+  border-color: #b678e6;
+  box-shadow: 0 0 0 1px #b678e6;
+}
+
+.vfx-op.has-warn {
+  border-color: #7a6229;
+}
+
+.vfx-op.has-error,
+.vfx-op.is-unknown {
+  border-color: #8f3b3b;
+}
+
+.vfx-op__header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 6px;
+  background: #232030;
+  /* Purple, so operators are visually a different KIND of thing from the
+     blue-accented stage chain rather than another stage in it. */
+  border-left: 3px solid #b678e6;
+  cursor: grab;
+}
+
+.vfx-op__header:active {
+  cursor: grabbing;
+}
+
+.vfx-op__icon {
+  font-size: 15px;
+  color: #b678e6;
+  flex: 0 0 auto;
+}
+
+.vfx-op__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-op__freq {
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #c9a6e6;
+  background: #2d2440;
+  border-radius: 3px;
+  padding: 1px 3px;
+}
+
+.vfx-op__tool {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.vfx-op:hover .vfx-op__tool,
+.vfx-op:focus-within .vfx-op__tool {
+  opacity: 1;
+}
+
+.vfx-op__tool.is-danger:hover {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}
+
+.vfx-op__tool .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.vfx-op__body {
+  padding: 5px 8px 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vfx-op__mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 10px;
+  color: #8b929f;
+}
+
+.vfx-op__mode select {
+  flex: 0 0 auto;
+  max-width: 110px;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #d6d9df;
+  font-size: 10px;
+  padding: 2px 3px;
+  cursor: pointer;
+}
+
+.vfx-op__blurb {
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.4;
+  color: #767d8b;
+}
+
+.vfx-op__socket {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b678e6;
+  border: 1px solid #101216;
+}

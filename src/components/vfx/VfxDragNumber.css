@@ -1,0 +1,63 @@
+.vfx-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  padding: 0 6px;
+  height: 26px;
+  flex: 1 1 auto;
+}
+
+.vfx-num:hover {
+  border-color: #3a3e47;
+}
+
+.vfx-num.is-editing {
+  border-color: #2f6feb;
+  background: #101216;
+}
+
+.vfx-num.is-disabled {
+  opacity: 0.5;
+}
+
+.vfx-num__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  background: none;
+  border: none;
+  color: #e6e8ec;
+  font-size: 12px;
+  /* Tabular figures so a column of numbers does not jitter horizontally while
+     being scrubbed - the digits are all the same width, so only the value
+     changes, not the layout. */
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  outline: none;
+}
+
+/* The scrub cursor is the entire affordance for "you can drag this", so it is
+   on the input itself rather than the wrapper. It flips to a text caret once
+   the field is actually editable. */
+.vfx-num__input[readonly] {
+  cursor: ew-resize;
+  /* A readOnly input still allows selection, and a drag that selects the text
+     leaves it highlighted afterwards, which reads as a mis-click. */
+  user-select: none;
+}
+
+.vfx-num.is-editing .vfx-num__input {
+  cursor: text;
+  user-select: text;
+}
+
+.vfx-num__unit {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: #7b8290;
+  pointer-events: none;
+}
