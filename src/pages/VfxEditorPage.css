@@ -340,3 +340,124 @@
     margin-left: 0;
   }
 }
+
+/* --- Name, save, draft banner, template row ------------------------------ */
+
+.vfx-page__name {
+  min-width: 220px;
+  padding: 0.35rem 0.6rem;
+  background: var(--surface-container-highest, #1f2226);
+  color: var(--on-surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.vfx-page__save {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vfx-page__save button {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-full);
+  background: rgba(172, 137, 255, 0.16);
+  color: var(--on-surface);
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.vfx-page__save button.is-quiet {
+  border-color: var(--outline-variant);
+  background: transparent;
+  color: var(--on-surface-variant);
+}
+
+.vfx-page__save button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.vfx-page__status {
+  font-family: var(--font-label);
+  font-size: 0.75rem;
+  color: var(--on-surface-variant);
+  min-width: 108px;
+}
+
+.vfx-page__status.is-dirty {
+  color: #ffc46b;
+}
+
+.vfx-page__status.is-saved {
+  color: #79e388;
+}
+
+.vfx-page__status.is-error {
+  color: var(--error, #ff6b6b);
+}
+
+.vfx-page__back {
+  color: var(--on-surface-variant);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.vfx-page__back:hover {
+  color: var(--on-surface);
+  border-bottom-color: var(--primary);
+}
+
+/* The draft banner. Opaque, and above the toolbar rather than over the canvas:
+ * it is a decision the author has to make before carrying on, so it should be
+ * in the flow rather than floating. */
+.vfx-page__draft {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1.5rem;
+  background: #2a2416;
+  border-bottom: 1px solid #6b5a24;
+  color: #ffd79a;
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+}
+
+.vfx-page__draft button {
+  padding: 0.25rem 0.7rem;
+  border: 1px solid #6b5a24;
+  border-radius: var(--radius-full);
+  background: rgba(255, 215, 154, 0.12);
+  color: #ffd79a;
+  font-family: var(--font-label);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.vfx-page__draft button.is-quiet {
+  background: transparent;
+  opacity: 0.75;
+}
+
+.vfx-page__templates {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 1.5rem;
+  background: var(--surface-container);
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.vfx-page__templates-label {
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--on-surface-variant);
+  opacity: 0.7;
+  margin-right: 0.3rem;
+}

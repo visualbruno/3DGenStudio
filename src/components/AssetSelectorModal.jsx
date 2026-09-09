@@ -37,6 +37,10 @@ const TYPE_CONFIG = {
   image: {
     libraryKey: 'images', title: 'Image', plural: 'images', emptyIcon: 'image_not_supported',
     preview: 'image', childBadge: 'EDIT'
+  },
+  vfx: {
+    libraryKey: 'vfx', title: 'VFX Effect', plural: 'effects', emptyIcon: 'auto_awesome',
+    preview: 'thumbnail', placeholderIcon: 'auto_awesome', placeholderLabel: 'VFX', childBadge: 'VERSION'
   }
 };
 

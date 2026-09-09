@@ -45,6 +45,13 @@ export const MOTION_ASSETS_DIR = path.join(ASSETS_DIR, 'motions');
 // JSON (a bone hierarchy + one clip). Not under a project — see the
 // CustomAnimations table for why.
 export const ANIMATION_ASSETS_DIR = path.join(ASSETS_DIR, 'animations');
+// VFX graph documents. The stored file is the graph JSON itself: a few tens of
+// kB that references image and mesh assets by id rather than embedding them, so
+// the graph IS the asset. Held as a FILE and not in the metadata column because
+// metadata is MERGED rather than replaced (see replaceAssetFileById below) - a
+// document kept there could never lose a key, so deleting a block and saving
+// would bring the block back.
+export const VFX_ASSETS_DIR = path.join(ASSETS_DIR, 'vfx');
 
 const DATA_ASSETS_PREFIX = 'data/assets/';
 const KANBAN_COLUMNS = [
@@ -61,7 +68,14 @@ const ASSET_TYPES = [
   { id: 3, name: 'Workflow' },
   { id: 4, name: 'Brush' },
   // Tree Generator parameter sets. The stored file is the spec JSON, not a mesh.
-  { id: 5, name: 'Tree' }
+  { id: 5, name: 'Tree' },
+  // VFX graphs. Stored as 'Vfx', NOT 'VFX': normalizeAssetTypeName title-cases
+  // every lookup, and getAssetTypeIdByName compares against a plain
+  // (case-sensitive) column - so seeding 'VFX' would make every call throw
+  // "Unknown asset type: vfx". This is never user-visible: mapAssetRow
+  // lower-cases the wire type to 'vfx', and the label the user reads lives in
+  // ASSET_SECTIONS in src/pages/AssetsPage.jsx, which says "VFX".
+  { id: 6, name: 'Vfx' }
 ];
 const ATTRIBUTE_TYPES = [
   { id: 1, name: 'Text' },
@@ -1810,6 +1824,7 @@ export async function initializeStorage() {
   await fs.mkdir(WIKI_ASSETS_DIR, { recursive: true });
   await fs.mkdir(MOTION_ASSETS_DIR, { recursive: true });
   await fs.mkdir(ANIMATION_ASSETS_DIR, { recursive: true });
+  await fs.mkdir(VFX_ASSETS_DIR, { recursive: true });
 
   // Back up the DB before the one-time Nodes→Cards migration touches it. That
   // migration only ever applies to a SQLite file that predates the unified Cards
@@ -1911,6 +1926,7 @@ export function getAssetDirectory(type = 'image') {
   if (type === 'workflow') return WORKFLOW_ASSETS_DIR;
   if (type === 'brush') return BRUSH_ASSETS_DIR;
   if (type === 'tree') return TREE_ASSETS_DIR;
+  if (type === 'vfx') return VFX_ASSETS_DIR;
   return IMAGE_ASSETS_DIR;
 }
 
@@ -1919,6 +1935,10 @@ export function getAssetSubdirectory(type = 'image') {
   if (type === 'workflow') return 'workflows';
   if (type === 'brush') return 'brushes';
   if (type === 'tree') return 'trees';
+  // Must stay in step with getAssetDirectory above. Omitting a type here does
+  // not error - it falls through to 'images', and the file is written into the
+  // wrong directory and exported into the wrong one in a .3dgp too.
+  if (type === 'vfx') return 'vfx';
   return 'images';
 }
 
@@ -2904,7 +2924,7 @@ export async function deleteProjectById(projectId, { deleteAssets = false } = {}
      FROM Assets a
      WHERE a.id IN (${placeholders})
        AND a.assetTypeId NOT IN (
-             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree')
+             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree', 'Vfx')
            )
        AND NOT EXISTS (SELECT 1 FROM Assets_Projects WHERE Assets_Projects.assetId = a.id)
        AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = a.id)`,
@@ -6221,7 +6241,15 @@ export async function importProjectExport(manifest, bundleDir, { name, ownerId =
       if (asset.originalFilePath) {
         editPathMap.set(String(asset.originalFilePath).replace(/\\/g, '/'), newStoredPath);
       }
-      insertedAssets.push({ newId, metadata: asset.metadata || {} });
+      // typeName and filePath are carried so Phase B can find the VFX graphs
+      // and rewrite the asset references inside their FILES - the metadata
+      // remap alone leaves the file pointing at the exporting install's ids.
+      insertedAssets.push({
+        newId,
+        metadata: asset.metadata || {},
+        typeName: asset.typeName || '',
+        filePath: newStoredPath
+      });
 
       // Tags (absent from pre-tag bundles, hence the guard).
       for (const tag of normalizeTagList(asset.tags || [])) {
@@ -6287,6 +6315,39 @@ export async function importProjectExport(manifest, bundleDir, { name, ownerId =
       const remapped = remapReferencesDeep(entry.metadata, assetIdMap, editPathMap);
       await run(db, 'UPDATE Assets SET metadata = ? WHERE id = ?', [JSON.stringify(remapped), entry.newId]);
     }
+
+    // A VFX graph's references live in its FILE as well as in its metadata, and
+    // the file was copied verbatim - so its `asset:<id>` entries still point at
+    // the EXPORTING installation's numbering. Rewriting them here, where the id
+    // maps are complete, is the only place that can be done.
+    //
+    // This is the bug tree presets ship with, in the one form that is worth
+    // fixing: it fails silently, and only in a second installation, so nobody
+    // notices until an imported effect draws with someone else's textures.
+    // (Tree presets store BARE NUMBERS, which remapReferencesDeep cannot see at
+    // all - hence the TODO below.)
+    for (const entry of insertedAssets) {
+      if (String(entry.typeName || '').toLowerCase() !== 'vfx') continue;
+      try {
+        const absolute = path.join(process.cwd(), entry.filePath);
+        const raw = await fs.readFile(absolute, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && parsed.references) {
+          parsed.references = remapReferencesDeep(parsed.references, assetIdMap, editPathMap);
+          await fs.writeFile(absolute, JSON.stringify(parsed, null, 2), 'utf8');
+        }
+      } catch (err) {
+        // A graph that cannot be reread or reparsed is still importable - the
+        // effect will simply have dangling slots, which the editor reports as
+        // a missing asset. Failing the whole project import over one file
+        // would be the wrong trade.
+        console.warn('Could not remap VFX references for asset', entry.newId, err?.message || err);
+      }
+    }
+    // TODO: tree presets need the same treatment, but they store bare numeric
+    // ids in metadata.textureAssetIds, which collectAssetIdsFromValue cannot
+    // see - so they are not even collected into the bundle. Fixing that means
+    // migrating the stored shape to 'asset:<id>' strings first.
 
     // Batch Processing recipe. Optional: only Batch projects carry one, and
     // bundles written before Batch existed have none. Written here rather than

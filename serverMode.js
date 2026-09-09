@@ -97,7 +97,8 @@ export const USER_ASSET_PREFIXES = [
   '/assets/wiki',
   '/assets/motions',
   '/assets/animations',
-  '/assets/trees'
+  '/assets/trees',
+  '/assets/vfx'
 ];
 
 // The note above says to add each new subdirectory here, and twice it was not

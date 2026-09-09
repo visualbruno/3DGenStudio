@@ -3959,6 +3959,69 @@ function readTreePresetMetadata(buffer) {
   };
 }
 
+// The digest of a VFX graph that gets mirrored into the metadata column.
+//
+// Mirrored out of the file for the same reason readTreePresetMetadata does it:
+// so an effect's dependencies can be read without fetching and parsing the
+// graph. Worth being precise about who actually benefits, because the obvious
+// guess is wrong: listLibraryAssetsByType does NOT project the metadata column,
+// so the Assets grid never sees this. The real consumers are project export
+// (collectAssetIdsFromValue walks the column directly), project import
+// (remapReferencesDeep rewrites it), GET /api/assets/record, and MCP.
+//
+// The asset references are 'asset:<id>' STRINGS held in ARRAYS, and both of
+// those details are load-bearing rather than stylistic. collectAssetIdsFromValue
+// (storage.js) only matches /^asset:(\d+)$/ against strings, and reaches inside
+// arrays - so this shape makes project export carry a VFX effect's textures and
+// project import renumber them with no changes to either walker. Bare numeric
+// ids are invisible to both, which is exactly why a tree preset in a .3dgp does
+// not bring its bark texture along.
+function readVfxGraphMetadata(buffer) {
+  let parsed;
+  try {
+    parsed = JSON.parse(buffer.toString('utf8'));
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  // Recognised by structure, not by a version number alone -- every other JSON
+  // in this app has one of those too.
+  const looksLikeGraph = parsed.kind === 'vfx-graph'
+    || (Array.isArray(parsed.systems) && parsed.systems.some(
+      system => system && Array.isArray(system.contexts)
+    ));
+  if (!looksLikeGraph) return null;
+
+  const references = parsed.references && typeof parsed.references === 'object' ? parsed.references : {};
+  const textureRefs = [];
+  const meshRefs = [];
+  for (const entry of Object.values(references)) {
+    if (!entry || typeof entry !== 'object' || typeof entry.ref !== 'string') continue;
+    if (!/^asset:\d+$/.test(entry.ref)) continue;
+    if (entry.kind === 'mesh') meshRefs.push(entry.ref);
+    else textureRefs.push(entry.ref);
+  }
+
+  const systems = Array.isArray(parsed.systems) ? parsed.systems : [];
+  const blockCount = systems.reduce((total, system) => total + (
+    Array.isArray(system?.contexts)
+      ? system.contexts.reduce((sum, context) => sum + (Array.isArray(context?.blocks) ? context.blocks.length : 0), 0)
+      : 0
+  ), 0);
+
+  return {
+    kind: 'vfx-graph',
+    format: parsed.format ?? null,
+    duration: parsed.effect?.duration ?? null,
+    looping: parsed.effect?.loop ?? null,
+    systemCount: systems.length,
+    blockCount,
+    textureRefs: [...new Set(textureRefs)].sort(),
+    meshRefs: [...new Set(meshRefs)].sort()
+  };
+}
+
 function getExtensionFromContentType(contentType = '', fallback = 'bin') {
   const normalized = String(contentType || '').toLowerCase();
 
@@ -6616,13 +6679,14 @@ app.delete('/api/boards/:id', async (req, res) => {
 app.get('/api/assets/library', async (req, res) => {
   try {
     const scope = scopeId(req);
-    const [images, meshes, brushes, trees] = await Promise.all([
+    const [images, meshes, brushes, trees, vfx] = await Promise.all([
       listLibraryAssetsByType('image', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('mesh', getRequestBaseUrl(req), scope),
       listLibraryAssetsByType('brush', getRequestBaseUrl(req), scope),
-      listLibraryAssetsByType('tree', getRequestBaseUrl(req), scope)
+      listLibraryAssetsByType('tree', getRequestBaseUrl(req), scope),
+      listLibraryAssetsByType('vfx', getRequestBaseUrl(req), scope)
     ]);
-    res.json({ images, meshes, brushes, trees });
+    res.json({ images, meshes, brushes, trees, vfx });
   } catch (err) {
     console.error('Failed to list asset library:', err);
     res.status(500).json({ error: 'Failed to list asset library' });
@@ -6844,7 +6908,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
 
     const overrideAssetType = (() => {
       const requested = String(req.query?.assetType || req.body?.assetType || '').toLowerCase();
-      return ['image', 'mesh', 'brush', 'tree'].includes(requested) ? requested : null;
+      return ['image', 'mesh', 'brush', 'tree', 'vfx'].includes(requested) ? requested : null;
     })();
 
     await Promise.all(files.map(async (file, index) => {
@@ -6854,6 +6918,7 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
       // one becomes a tile that fails only when someone clicks Edit. Parsing is
       // cheap (a few kB) and turns that into a skip with a reason.
       let treeMetadata = null;
+      let vfxMetadata = null;
       if (!assetType) {
         assetType = inferSupportedAssetTypeFromFilename(file.originalname);
       } else if (assetType === 'brush') {
@@ -6871,6 +6936,19 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         treeMetadata = readTreePresetMetadata(file.buffer);
         if (!treeMetadata) {
           skipped.push({ name: file.originalname, reason: 'Not a tree preset' });
+          return;
+        }
+      } else if (assetType === 'vfx') {
+        // Same reasoning as tree presets: a graph that is not a graph would
+        // become a tile that only fails when someone clicks Edit. Parsing a few
+        // tens of kB is cheap and turns that into a skip with a reason.
+        if (path.extname(file.originalname).toLowerCase() !== '.json') {
+          skipped.push({ name: file.originalname, reason: 'VFX effects must be JSON files' });
+          return;
+        }
+        vfxMetadata = readVfxGraphMetadata(file.buffer);
+        if (!vfxMetadata) {
+          skipped.push({ name: file.originalname, reason: 'Not a VFX graph' });
           return;
         }
       }
@@ -6912,7 +6990,8 @@ app.post('/api/assets/library/import', libraryImportUpload.any(), async (req, re
         metadata: {
           resolution: (assetType === 'image' || assetType === 'brush') ? formatImageResolution(dimensions.width, dimensions.height) : 'Unknown',
           source: 'LIBRARY IMPORT',
-          ...(treeMetadata || {})
+          ...(treeMetadata || {}),
+          ...(vfxMetadata || {})
         },
         createdAt: Date.now(),
         ownerId: viewerId(req)

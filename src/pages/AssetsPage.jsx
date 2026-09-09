@@ -16,6 +16,12 @@ import {
 } from '../utils/workflowEnums'
 import './AssetsPage.css'
 
+// Sections whose cards show a RENDERED thumbnail rather than the file itself,
+// and therefore use the wider 3-across grid. Extracted because the membership
+// test appeared in three separate places as a chain of ||, and every new
+// section of this kind had to be added to all three.
+const THUMBNAIL_SECTIONS = new Set(['meshes', 'trees', 'vfx'])
+
 const ASSETS_PER_PAGE = 20
 // The mesh grid is 3 columns wide, so 21 (7 full rows) paginates more cleanly
 // than 20 (which leaves a ragged last row).
@@ -62,7 +68,19 @@ const ASSET_SECTIONS = [
     icon: 'forest',
     path: 'assets/trees',
     emptyIcon: 'forest',
-    emptyMessage: 'No tree presets saved yet — save one from the Trees workspace.'
+    emptyMessage: 'No tree presets saved yet — save one from the Trees workspace.',
+    cardTag: 'TREE PRESET',
+    cardIcon: 'forest'
+  },
+  {
+    key: 'vfx',
+    label: 'VFX',
+    icon: 'auto_awesome',
+    path: 'assets/vfx',
+    emptyIcon: 'auto_awesome',
+    emptyMessage: 'No VFX effects saved yet — build one in the VFX Editor.',
+    cardTag: 'VFX',
+    cardIcon: 'auto_awesome'
   },
   {
     key: 'workflows',
@@ -195,6 +213,18 @@ function buildTreeGeneratorPath(asset, returnTo = '/assets') {
   return `/trees?${query.toString()}`
 }
 
+// A VFX effect opens in the VFX Editor, which needs only the asset id: the
+// graph file carries the systems, the blocks and its texture references, so
+// there is nothing else to pass through the URL.
+function buildVfxEditorPath(asset, returnTo = '/assets') {
+  const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
+  const query = new URLSearchParams({
+    vfxAssetId: assetIdMatch?.[1] || String(asset.assetId || ''),
+    returnTo
+  })
+  return `/vfx?${query.toString()}`
+}
+
 function buildImageEditorPath(asset, returnTo = '/assets') {
   const assetIdMatch = String(asset.id || '').match(/^library:(\d+)$/) || String(asset.id || '').match(/^(\d+)$/)
   const inheritedProjectId = asset.projectId || asset.parentProjectId || null
@@ -325,7 +355,7 @@ export default function AssetsPage() {
     updateComfyWorkflow
   } = useProjects()
   const navigate = useNavigate()
-  const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [], brushes: [] })
+  const [libraryAssets, setLibraryAssets] = useState({ images: [], meshes: [], brushes: [], trees: [], vfx: [] })
   const [loading, setLoading] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [activeSection, setActiveSection] = useState('images')
@@ -609,7 +639,7 @@ export default function AssetsPage() {
   }
   const groupedAssets = buildGroupedAssets()
 
-  const assetsPerPage = activeSection === 'meshes' || activeSection === 'trees' ? MESHES_PER_PAGE : ASSETS_PER_PAGE
+  const assetsPerPage = THUMBNAIL_SECTIONS.has(activeSection) ? MESHES_PER_PAGE : ASSETS_PER_PAGE
   const totalPages = Math.max(1, Math.ceil(activeAssets.length / assetsPerPage))
   const pageStart = (currentPage - 1) * assetsPerPage
   const paginatedAssets = activeAssets.slice(pageStart, pageStart + assetsPerPage)
@@ -767,6 +797,7 @@ export default function AssetsPage() {
         // saying so lands them in the wrong folder or skips them outright.
         const sectionAssetType = activeSection === 'brushes' ? 'brush'
           : activeSection === 'trees' ? 'tree'
+            : activeSection === 'vfx' ? 'vfx'
             : null
         const result = await importLibraryAssets(
           assetsToImport,
@@ -1377,7 +1408,7 @@ export default function AssetsPage() {
   }
 
   const renderAssetCard = (asset) => (
-    <article key={asset.id} className={`asset-card ${activeSection === 'meshes' || activeSection === 'trees' ? 'asset-card--mesh' : 'asset-card--image'}`}>
+    <article key={asset.id} className={`asset-card ${THUMBNAIL_SECTIONS.has(activeSection) ? 'asset-card--mesh' : 'asset-card--image'}`}>
       {activeSection === 'images' || activeSection === 'brushes' ? (
         <div className={`asset-card__preview asset-card__preview--image ${activeSection === 'brushes' ? 'asset-card__preview--brush' : ''}`}>
           <img src={asset.url} alt={asset.name} className="asset-card__image" />
@@ -1393,14 +1424,14 @@ export default function AssetsPage() {
           {asset.thumbnailUrl ? (
             <>
               <img src={asset.thumbnailUrl} alt={`${asset.name} thumbnail`} className="asset-card__image" />
-              <span className="asset-card__mesh-tag font-label">{activeSection === 'trees' ? 'TREE PRESET' : '3D MESH'}</span>
+              <span className="asset-card__mesh-tag font-label">{activeConfig.cardTag || '3D MESH'}</span>
             </>
           ) : (
             <>
               <span className="material-symbols-outlined asset-card__mesh-icon">
-                {activeSection === 'trees' ? 'forest' : 'view_in_ar'}
+                {activeConfig.cardIcon || 'view_in_ar'}
               </span>
-              <span className="asset-card__mesh-label font-label">{activeSection === 'trees' ? 'TREE PRESET' : '3D MESH'}</span>
+              <span className="asset-card__mesh-label font-label">{activeConfig.cardTag || '3D MESH'}</span>
             </>
           )}
         </div>
@@ -1438,7 +1469,7 @@ export default function AssetsPage() {
           </div>
         )}
         <div className="asset-card__meta">
-          <span className={`asset-card__badge ${activeSection === 'meshes' || activeSection === 'trees' ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
+          <span className={`asset-card__badge ${THUMBNAIL_SECTIONS.has(activeSection) ? 'asset-card__badge--secondary' : ''}`}>{asset.extension}</span>
           <div className="asset-card__actions">
             {(activeSection === 'images' || activeSection === 'brushes') && getAssetChildren(asset).length > 0 && (
               <button
@@ -1493,6 +1524,17 @@ export default function AssetsPage() {
                   type="button"
                   className="asset-card__link asset-card__link-btn"
                   onClick={() => navigate(buildTreeGeneratorPath(asset))}
+                >
+                  EDIT
+                </button>
+              </>
+            ) : activeSection === 'vfx' ? (
+              <>
+                <a href={asset.url} target="_blank" rel="noreferrer" className="asset-card__link">OPEN</a>
+                <button
+                  type="button"
+                  className="asset-card__link asset-card__link-btn"
+                  onClick={() => navigate(buildVfxEditorPath(asset))}
                 >
                   EDIT
                 </button>
@@ -2144,7 +2186,7 @@ export default function AssetsPage() {
             className="assets-page__file-input"
             accept={
               activeSection === 'brushes' ? '.png,.abr'
-                : activeSection === 'trees' ? 'application/json,.json'
+                : activeSection === 'trees' || activeSection === 'vfx' ? 'application/json,.json'
                   : '.png,.jpg,.jpeg,.webp,.gif,.bmp,.glb,.gltf,.obj,.fbx,.stl,.ply'
             }
             onChange={handleAssetImportChange}

@@ -1,0 +1,217 @@
+// Loading, saving and draft recovery for one VFX effect.
+//
+// LOCAL DRAFT PLUS AN EXPLICIT SAVE - deliberately not a debounced server
+// autosave like the Brainstorming Board's. Three reasons, and the third is the
+// one that decides it:
+//
+//   - every server save is a full multipart file replace PLUS a WebGL
+//     thumbnail render. On a two-second debounce that is a PNG render and two
+//     round trips per slider drag.
+//   - replaceAssetFileById has no optimistic-concurrency check, so two tabs
+//     autosaving is a silent last-write-wins.
+//   - the one thing in this repo that DOES autosave, Mesh Assembly, earned it
+//     by having a partial-update route: updateMeshAssembly writes only the
+//     fields present, with a comment saying "an autosave in flight can never
+//     clobber a rename". VFX has no such route, and adding one means a new
+//     top-level prefix and a serverMode.js classification entry.
+//
+// So the draft goes to localStorage on a short debounce and the author presses
+// Save. Nothing is lost to a crash or a stray navigation, and nothing is
+// written to the library the author did not ask for.
+//
+// THE LOAD-ONCE GUARD HAS NO CANCELLATION FLAG, and that is not an oversight.
+// TreeGenPage.jsx:391 records the bug: combining a cleanup flag with a
+// run-once ref meant StrictMode's mount -> cleanup -> re-mount cancelled the
+// first fetch while the second self-skipped, so the document silently never
+// loaded and the page showed a default that looked like a successful load. The
+// ref alone is correct.
+
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { createEmptyVfxDoc, normalizeVfxDoc, vfxSignature } from '../../vfx/doc.js'
+import { loadVfxAsset, saveVfxAsset, vfxAssetId } from '../utils/vfxApi.js'
+
+const DRAFT_PREFIX = 'vfx:draft:'
+const DRAFT_DEBOUNCE_MS = 1000
+
+const draftKey = assetId => `${DRAFT_PREFIX}${assetId ?? 'new'}`
+
+// localStorage throws in a few real contexts - a private window, site data
+// blocked, a thumbnail capture - so every access is guarded and a failure
+// degrades to "no draft" rather than taking the editor down.
+function readDraft(key) {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed?.doc) return null
+    return { doc: parsed.doc, savedAt: parsed.savedAt || 0, name: parsed.name || '' }
+  } catch {
+    return null
+  }
+}
+
+function writeDraft(key, payload) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(payload))
+  } catch {
+    // Quota, or a browser refusing storage. Nothing to do and nothing worth
+    // telling the author: the document is still in memory and Save still works.
+  }
+}
+
+function clearDraft(key) {
+  try {
+    window.localStorage.removeItem(key)
+  } catch {
+    // As above.
+  }
+}
+
+/**
+ * @param {{assetId?: string|number|null, onError?: (message: string) => void}} options
+ */
+export default function useVfxDocument({ assetId = null, onError = null } = {}) {
+  const numericId = vfxAssetId(assetId)
+  const key = draftKey(numericId)
+
+  const [doc, setDocState] = useState(() => createEmptyVfxDoc({ name: 'Untitled effect' }))
+  const [name, setName] = useState('Untitled effect')
+  const [savedAssetId, setSavedAssetId] = useState(numericId)
+  const [status, setStatus] = useState(numericId ? 'loading' : 'idle')
+  // Read in a state initialiser rather than an effect: reading storage during
+  // render is fine, and setting state from an effect body is what the hooks
+  // linter (correctly) objects to.
+  const [draft, setDraft] = useState(() => readDraft(key))
+
+  const [savedSignature, setSavedSignature] = useState(() => vfxSignature(doc))
+  const loadedRef = useRef(null)
+
+  const setDoc = useCallback(next => {
+    setDocState(current => normalizeVfxDoc(typeof next === 'function' ? next(current) : next))
+  }, [])
+
+  // Load the asset named in the URL. Runs once per id - see the header for why
+  // there is no cancellation flag.
+  useEffect(() => {
+    if (numericId == null) return
+    if (loadedRef.current === numericId) return
+    loadedRef.current = numericId
+
+    loadVfxAsset(numericId)
+      .then(({ doc: loaded, record }) => {
+        setDocState(loaded)
+        setName(loaded.name || record?.name || 'Effect')
+        setSavedAssetId(numericId)
+        setSavedSignature(vfxSignature(loaded))
+        setStatus('idle')
+      })
+      .catch(error => {
+        setStatus('error')
+        onError?.(error?.message || 'Could not open that effect')
+      })
+    // onError is intentionally absent: it is a fresh closure each render and
+    // including it would re-fetch on every keystroke elsewhere on the page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [numericId])
+
+  const signature = vfxSignature(doc)
+  const dirty = signature !== savedSignature
+
+  // Mirror to localStorage while dirty. Debounced, and skipped entirely when
+  // clean, so opening an effect and looking at it writes nothing.
+  useEffect(() => {
+    if (!dirty) return undefined
+    const timer = setTimeout(() => {
+      writeDraft(key, { doc, name, savedAt: Date.now() })
+    }, DRAFT_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [dirty, doc, key, name])
+
+  // A draft has to survive the tab closing, which the debounce above cannot
+  // promise on its own. pagehide rather than beforeunload: it fires on mobile
+  // and on back-forward cache navigations too, which is the same reason
+  // BoardPage.jsx uses it.
+  useEffect(() => {
+    const flush = () => {
+      if (signature !== savedSignature) {
+        writeDraft(key, { doc, name, savedAt: Date.now() })
+      }
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', flush)
+      flush()
+    }
+  }, [doc, key, name, savedSignature, signature])
+
+  const restoreDraft = useCallback(() => {
+    if (!draft) return
+    setDocState(normalizeVfxDoc(draft.doc))
+    if (draft.name) setName(draft.name)
+    setDraft(null)
+  }, [draft])
+
+  const discardDraft = useCallback(() => {
+    clearDraft(key)
+    setDraft(null)
+  }, [key])
+
+  const loadTemplate = useCallback(template => {
+    const built = normalizeVfxDoc(template.build())
+    setDocState(built)
+    setName(template.name)
+    // A template is a NEW effect, not an edit of the open one: clearing the
+    // asset id is what stops Save silently overwriting whatever the author had
+    // open with something they picked out of a gallery.
+    setSavedAssetId(null)
+    setSavedSignature(vfxSignature(built))
+    setStatus('idle')
+  }, [])
+
+  /**
+   * @param {{saveAs?: boolean, thumbnail?: File|Blob|null}} [options]
+   */
+  const save = useCallback(async (options = {}) => {
+    setStatus('saving')
+    try {
+      const targetId = options.saveAs ? null : savedAssetId
+      const result = await saveVfxAsset({
+        name,
+        doc,
+        thumbnail: options.thumbnail || null,
+        assetId: targetId,
+      })
+      const newId = vfxAssetId(result) ?? targetId
+      setSavedAssetId(newId)
+      setSavedSignature(vfxSignature(doc))
+      // The draft only exists to survive a crash before a save; once the
+      // library has the document, keeping it would mean offering to restore
+      // something older than what is on screen.
+      clearDraft(key)
+      setDraft(null)
+      setStatus('saved')
+      return { ...result, id: newId }
+    } catch (error) {
+      setStatus('error')
+      onError?.(error?.message || 'Could not save the effect')
+      throw error
+    }
+  }, [doc, key, name, onError, savedAssetId])
+
+  return {
+    doc,
+    setDoc,
+    name,
+    setName,
+    assetId: savedAssetId,
+    status,
+    dirty,
+    draft,
+    restoreDraft,
+    discardDraft,
+    loadTemplate,
+    save,
+  }
+}

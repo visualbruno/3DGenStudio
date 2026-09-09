@@ -107,14 +107,52 @@ function disposeSceneObject(root) {
   })
 }
 
-async function renderObjectToBlob(object) {
+/**
+ * Render a prepared scene to a PNG blob, on a throwaway renderer.
+ *
+ * Extracted so the VFX thumbnail path can share it (src/utils/vfxThumbnail.js)
+ * rather than duplicating forty lines of renderer setup and the toBlob dance.
+ * Behaviour-preserving for the mesh path: the defaults below are exactly what
+ * it used before.
+ *
+ * `toneMapping` is an option because it has to be. Particle materials include
+ * three's tonemapping chunk gated on the renderer's own setting, so a thumbnail
+ * rendered with NoToneMapping would come out brighter and more saturated than
+ * the same effect in the preview - the card would not match the thing it is a
+ * picture of. Meshes want the existing NoToneMapping default; effects pass ACES.
+ *
+ * @param {THREE.Scene} scene
+ * @param {THREE.Camera} camera
+ * @param {{size?: number, clearColor?: string, toneMapping?: number}} [options]
+ * @returns {Promise<Blob>}
+ */
+export async function renderSceneToBlob(scene, camera, options = {}) {
+  const size = options.size || THUMBNAIL_SIZE
   const canvas = document.createElement('canvas')
   const renderer = new THREE.WebGLRenderer({ antialias: true, canvas, preserveDrawingBuffer: true })
-  renderer.setSize(THUMBNAIL_SIZE, THUMBNAIL_SIZE, false)
+  renderer.setSize(size, size, false)
   renderer.setPixelRatio(1)
-  renderer.setClearColor('#121316', 1)
+  renderer.setClearColor(options.clearColor || '#121316', 1)
   renderer.outputColorSpace = THREE.SRGBColorSpace
+  renderer.toneMapping = options.toneMapping ?? THREE.NoToneMapping
 
+  renderer.render(scene, camera)
+
+  const blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(result => {
+      if (result) {
+        resolve(result)
+        return
+      }
+      reject(new Error('Failed to capture thumbnail'))
+    }, 'image/png')
+  })
+
+  renderer.dispose()
+  return blob
+}
+
+async function renderObjectToBlob(object) {
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#121316')
 
@@ -139,22 +177,8 @@ async function renderObjectToBlob(object) {
   camera.lookAt(0, 0, 0)
   camera.updateProjectionMatrix()
 
-  renderer.render(scene, camera)
-
-  const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob(result => {
-      if (result) {
-        resolve(result)
-        return
-      }
-
-      reject(new Error('Failed to capture mesh thumbnail'))
-    }, 'image/png')
-  })
-
-  renderer.dispose()
+  const blob = await renderSceneToBlob(scene, camera)
   disposeSceneObject(object)
-
   return blob
 }
 
