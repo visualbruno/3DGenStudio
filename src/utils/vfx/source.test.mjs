@@ -103,6 +103,57 @@ console.log('\n--- Asset wiring ---');
   const page = await readFile(
     new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
 
+  // ASSETS MUST LOAD WHEN THE LIBRARY ARRIVES, NOT ONLY WHEN THE DOCUMENT DOES.
+  //
+  // THE BUG: opening a SAVED effect drew it with no textures and no emitter
+  // mesh until the author touched any property. The two loader effects in
+  // useVfxRuntime were keyed on the graph hash alone, while `resolveUrl` is
+  // built from the asset library the page fetches asynchronously - so the
+  // document usually won the race, every asset resolved to null, the
+  // `size === 0` early return fired, and nothing re-ran when the library
+  // landed. Touching a property recompiled the graph, changed the hash and ran
+  // the loaders again - by which time the library was there. That is why it
+  // looked like the mesh needed "a property change to apply".
+  //
+  // Checked in the source because the failure is a RACE: both orderings are
+  // valid React, only one of them is broken, and which one you get depends on
+  // how fast the library endpoint answers.
+  const runtimeHook = await readFile(
+    new URL('../../hooks/useVfxRuntime.js', import.meta.url), 'utf8');
+  const depsOf = (loader) => {
+    const at = runtimeHook.indexOf(loader);
+    if (at < 0) return null;
+    // The dependency array closing this effect: the first `}, [ ... ])` after
+    // the loader call.
+    const match = /\}, \[([^\]]*)\]\)/.exec(runtimeHook.slice(at));
+    return match ? match[1].split(',').map((d) => d.trim()).filter(Boolean) : null;
+  };
+  for (const loader of ['loadVfxTextures(ir', 'loadVfxMeshes(ir']) {
+    const deps = depsOf(loader);
+    check(`${loader.replace('(ir', '')} re-runs when the resolver arrives`,
+      Boolean(deps) && deps.includes('resolveUrl'),
+      deps ? deps.join(', ') : 'effect not found');
+  }
+  // The mesh loader installs samplers INTO the runtime, so one handed to a
+  // runtime that has since been replaced is a sampler nothing will read.
+  check('  and the mesh loader also follows the runtime it fills',
+    (depsOf('loadVfxMeshes(ir') || []).includes('runtime'),
+    (depsOf('loadVfxMeshes(ir') || []).join(', '));
+  // `ir` must stay OUT: it is a new object on every recompile, including ones
+  // the hash deliberately ignores, so keying on it would reload every texture
+  // when the author moved a node.
+  check('  while `ir` stays out, so tidying the board reloads nothing',
+    !(depsOf('loadVfxTextures(ir') || []).includes('ir'),
+    (depsOf('loadVfxTextures(ir') || []).join(', '));
+
+  // And the page hands over no resolver at all until the library has answered,
+  // so the runtime waits rather than burning a pass on one that resolves
+  // nothing. An empty array cannot express "not loaded yet".
+  check('the page withholds the resolver until the library has answered',
+    /libraryReady \? makeAssetResolver/.test(page));
+  check('  including when the fetch errors, or it would wait for ever',
+    /\.finally\(\(\) => \{[\s\S]{0,400}?setLibraryReady\(true\)/.test(page));
+
   // EDITS AND VERSIONS ARE SELECTABLE. AssetSelectorModal hides them unless
   // asked, so the sprite picker offered only ROOT images - and a sprite is very
   // often an edit rather than the original: the generated image cropped, its

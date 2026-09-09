@@ -61,9 +61,18 @@ const LOCAL_EXECUTION_DATA_PREFIXES = [
   '/api/projects/import'
 ];
 
-// Same idea, but the path carries a project id: /api/projects/42/export.
+// Same idea, but the path carries an id: /api/projects/42/export, and
+// /api/assets/42/vfx-export.
+//
+// NOTE THE PAIRING IN BOTH CASES. The route that WRITES a bundle to the user's
+// disk is listed here and runs locally; its sibling that only builds the PLAN
+// (/export-plan, /vfx-export-plan) is deliberately absent, because that half
+// has to run where the database is. This classifier sees the path and not the
+// method, which is exactly why the two halves have different paths rather than
+// being a GET and a POST on one.
 const LOCAL_EXECUTION_DATA_PATTERNS = [
-  /^\/api\/projects\/[^/]+\/export$/
+  /^\/api\/projects\/[^/]+\/export$/,
+  /^\/api\/assets\/[^/]+\/vfx-export$/
 ];
 
 // The subdirectories of data/assets, as URL prefixes.

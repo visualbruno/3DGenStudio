@@ -22,12 +22,13 @@
     "electron:dev": "npm run build && electron .",
     "check:packaging": "node tools/check-packaged-modules.mjs",
     "check:db": "node tools/check-generated-db.mjs",
+    "check:vfx": "node tools/check-vfx-generated.mjs",
     "db:migrate": "node tools/migrate-sqlite-to-postgres.mjs",
-    "dist": "npm run check:packaging && npm run check:db && npm run build && electron-builder --publish never",
-    "dist:win": "npm run check:packaging && npm run check:db && npm run build && electron-builder --win --publish never",
-    "dist:mac": "npm run check:packaging && npm run check:db && npm run build && electron-builder --mac --publish never",
-    "dist:linux": "npm run check:packaging && npm run check:db && npm run build && electron-builder --linux --publish never",
-    "dist:dir": "npm run check:packaging && npm run check:db && npm run build && electron-builder --dir"
+    "dist": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --publish never",
+    "dist:win": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --mac --publish never",
+    "dist:linux": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --linux --publish never",
+    "dist:dir": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --dir"
   },
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",

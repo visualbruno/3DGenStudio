@@ -161,7 +161,31 @@ export default function WikiPage() {
   const imageInputRef = useRef(null)
   const videoInputRef = useRef(null)
 
-  const activeId = pageId ? Number(pageId) : null
+  // A NON-NUMERIC :pageId IS RESOLVED BY TITLE, and that is a bug fix rather
+  // than a feature. Wiki pages have no slug column, so every link into the wiki
+  // has to carry a database id - which means no other part of the app can link
+  // to a page by name. The VFX editor's "Learn more" tried
+  // `/wiki/vfx-<blockId>`, Number() of that is NaN, NaN is falsy, and the pane
+  // rendered the empty welcome state. A link that silently goes nowhere is
+  // worse than no link.
+  //
+  // Matched against the tree that is already loaded, so this costs no request.
+  // Case- and space-insensitive, because the caller is writing a name by hand.
+  const activeId = useMemo(() => {
+    if (!pageId) return null
+    const numeric = Number(pageId)
+    if (Number.isFinite(numeric) && numeric > 0) return numeric
+    const wanted = decodeURIComponent(pageId).trim().toLowerCase().replace(/\s+/g, ' ')
+    const match = (pages || []).find(
+      page => String(page.title || '').trim().toLowerCase().replace(/\s+/g, ' ') === wanted,
+    )
+    return match ? match.id : null
+  }, [pageId, pages])
+
+  // Told apart from "nothing selected", so the pane can say which it is.
+  const unresolvedName = pageId && activeId == null && !loadingTree
+    ? decodeURIComponent(pageId)
+    : null
 
   const showFeedback = useCallback((type, message) => {
     setFeedback({ type, message })
@@ -574,9 +598,18 @@ export default function WikiPage() {
             </div>
           ) : !currentPage ? (
             <div className="wiki-content__placeholder">
-              <span className="material-symbols-outlined">auto_stories</span>
-              <h2>Welcome to the Wiki</h2>
-              <p>{authorMode ? 'Select a page from the left, or create a new one to get started.' : 'Select a page from the left to start reading.'}</p>
+              <span className="material-symbols-outlined">
+                {unresolvedName ? 'search_off' : 'auto_stories'}
+              </span>
+              {/* Named, not blank. Someone arriving from a "Learn more" link
+                  needs to know the page has not been written yet - otherwise
+                  the wiki looks broken rather than empty. */}
+              <h2>{unresolvedName ? `No page called "${unresolvedName}"` : 'Welcome to the Wiki'}</h2>
+              <p>{unresolvedName
+                ? (authorMode
+                  ? 'Nothing here yet. Create it, and every link pointing at that name will find it.'
+                  : 'Nothing here yet. Ask whoever maintains the wiki to add it.')
+                : (authorMode ? 'Select a page from the left, or create a new one to get started.' : 'Select a page from the left to start reading.')}</p>
               {authorMode && (
                 <button type="button" className="wiki-btn wiki-btn--primary" onClick={() => handleCreate(null)} disabled={busy}>
                   <span className="material-symbols-outlined">add</span> New Page

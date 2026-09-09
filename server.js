@@ -24,7 +24,7 @@ import * as pgEmbedded from './pgEmbedded.js';
 import { mountAuth, resolveJwtSecret, seedAdminFromEnv } from './auth.js';
 import { findUncoveredAssetDirectories, mountLocalOnlyGuard } from './serverMode.js';
 import { isGatewayActive, mountGateway } from './gateway.js';
-import { buildProjectExportPlan, clearCardProcessing, copyAssetFileTo, createWorkflow, importProject, listWorkflows, getAssetRecord, getWorkflowDefinition, readAssetBytes, resolveProjectSource, replaceAssetFile, saveAssetEdit, saveAssetVersion, saveRootAsset, setCardProcessing, updateWorkflow } from './dataStore.js';
+import { buildProjectExportPlan, buildVfxExportPlan, clearCardProcessing, copyAssetFileTo, createWorkflow, importProject, listWorkflows, getAssetRecord, getWorkflowDefinition, readAssetBytes, resolveProjectSource, replaceAssetFile, saveAssetEdit, saveAssetVersion, saveRootAsset, setCardProcessing, updateWorkflow } from './dataStore.js';
 
 // Node 20 (bundled by Electron 33) has no global WebSocket, so fall back to the
 // `ws` package. Newer Node runtimes (dev) expose a global WebSocket we can reuse.
@@ -39,6 +39,8 @@ import {
   createProject,
   updateProject,
   buildProjectExport,
+  buildVfxExport,
+  getAssetTypeNameById,
   importProjectExport,
   createLibraryAsset,
   createCardAttribute,
@@ -7332,6 +7334,139 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
   }
 });
 
+// Write a VFX bundle to a folder on THIS machine's disk.
+//
+// THE SAME SPLIT AS PROJECT EXPORT, and for the same reason. The -plan route
+// below returns a manifest and writes nothing, which is what a remote install
+// and the MCP tools need; this one does the writing, which is what a human
+// clicking Export needs, because a browser cannot write a folder of files.
+//
+// KEPT OFF THE GATEWAY by serverMode.js's LOCAL_EXECUTION_DATA_PATTERNS. The
+// folder is on the machine the user is sitting at: forwarded, "C:\Travaux" is
+// not an absolute path on Linux and the export fails - and had the user typed
+// a POSIX-looking path it would have silently written inside the container
+// instead, which is the failure the project route already learned.
+app.post('/api/assets/:id/vfx-export', async (req, res) => {
+  try {
+    const assetId = Number(req.params.id);
+    if (!assetId) return res.status(400).json({ error: 'A valid asset id is required' });
+
+    const folder = typeof req.body?.folder === 'string' ? req.body.folder.trim() : '';
+    if (!folder) return res.status(400).json({ error: 'A destination folder is required.' });
+    if (!path.isAbsolute(folder)) {
+      return res.status(400).json({ error: 'The destination folder must be an absolute path.' });
+    }
+    const engineTarget = typeof req.body?.engineTarget === 'string' && req.body.engineTarget
+      ? String(req.body.engineTarget)
+      : null;
+    if (engineTarget && !['unity', 'unreal'].includes(engineTarget)) {
+      return res.status(400).json({ error: 'engineTarget must be "unity" or "unreal"' });
+    }
+
+    // Through dataStore, so a remote-connected install asks its shared server
+    // for the plan and then writes the bundle to the user's own disk. Calling
+    // buildVfxExport directly here would read a database this machine does not
+    // have in remote mode.
+    const { manifest, files } = await buildVfxExportPlan(assetId, {
+      appVersion: await readAppVersion(),
+      engineTarget
+    });
+
+    const bundleName = sanitizeProjectExportName(
+      typeof req.body?.name === 'string' && req.body.name ? req.body.name : manifest.asset.name,
+      'effect'
+    );
+    const bundleDir = path.join(path.resolve(folder), bundleName);
+    await fs.mkdir(bundleDir, { recursive: true });
+
+    let copied = 0;
+    for (const file of files) {
+      const destination = path.join(bundleDir, file.dest);
+      await fs.mkdir(path.dirname(destination), { recursive: true });
+      // copyAssetFileTo, not fs.copyFile: in remote mode the plan carries no
+      // absolute `source` at all, and the bytes arrive over HTTP.
+      //
+      // Best-effort per file, like the project export: one unreadable texture
+      // must not cost the author the other nine files and the manifest.
+      try {
+        await copyAssetFileTo(file.storagePath, destination);
+        copied += 1;
+      } catch (copyErr) {
+        manifest.warnings.push({
+          code: 'FILE_UNREADABLE',
+          severity: 'warn',
+          message: `Could not copy ${file.dest}: ${copyErr?.message || copyErr}`
+        });
+      }
+    }
+
+    // Written LAST, so its warnings include any that copying produced.
+    await fs.writeFile(
+      path.join(bundleDir, 'manifest.json'),
+      JSON.stringify(manifest, null, 2),
+      'utf8'
+    );
+
+    res.status(201).json({
+      folder: bundleDir,
+      name: bundleName,
+      fileCount: copied,
+      warnings: manifest.warnings
+    });
+  } catch (err) {
+    if (err.message === 'Effect not found') return res.status(404).json({ error: 'Effect not found' });
+    if (err.message === 'Not a VFX effect') return res.status(400).json({ error: 'That asset is not a VFX effect' });
+    console.error('Failed to write the VFX export bundle:', err);
+    const message = err.code === 'EACCES'
+      ? 'Access to the destination folder is denied.'
+      : (err.message || 'Failed to write the VFX export bundle');
+    res.status(500).json({ error: message });
+  }
+});
+
+// The VFX export bundle: a plan, not an archive. Writes nothing.
+//
+// UNDER /api/assets/<digits>/ ON PURPOSE. That prefix already gets request
+// forwarding to a shared server, ownership checks and auth for free; a new
+// /api/vfx prefix would need its own classification in serverMode.js and be a
+// fourth place to forget when the rules change.
+//
+// NAMED -plan, LIKE /api/projects/:id/export-plan, and the suffix is
+// load-bearing rather than decorative: serverMode.js classifies by PATH and not
+// by method, so the half that must run where the DATABASE is and the half that
+// must run where the USER is cannot be a GET and a POST on one path.
+//
+// Returns { manifest, files: [{ storagePath, dest }] } with no absolute
+// `source`, exactly as /api/projects/:id/export-plan does - the caller fetches
+// each file's bytes over HTTP by storagePath, so a remote-connected install
+// works with no extra code.
+app.get('/api/assets/:id/vfx-export-plan', async (req, res) => {
+  try {
+    const assetId = Number(req.params.id);
+    if (!assetId) return res.status(400).json({ error: 'A valid asset id is required' });
+
+    const engineTarget = typeof req.query.engineTarget === 'string' && req.query.engineTarget
+      ? String(req.query.engineTarget)
+      : null;
+    if (engineTarget && !['unity', 'unreal'].includes(engineTarget)) {
+      return res.status(400).json({ error: 'engineTarget must be "unity" or "unreal"' });
+    }
+    const appVersion = typeof req.query.appVersion === 'string' ? req.query.appVersion : '';
+
+    const { manifest, files } = await buildVfxExport(assetId, { appVersion, engineTarget });
+    res.json({ manifest, files: files.map(({ storagePath, dest }) => ({ storagePath, dest })) });
+  } catch (err) {
+    if (err.message === 'Effect not found') {
+      return res.status(404).json({ error: 'Effect not found' });
+    }
+    if (err.message === 'Not a VFX effect') {
+      return res.status(400).json({ error: 'That asset is not a VFX effect' });
+    }
+    console.error('Failed to build the VFX export bundle:', err);
+    res.status(500).json({ error: err.message || 'Failed to build the VFX export bundle' });
+  }
+});
+
 app.post('/api/assets/:id/thumbnail', thumbnailUpload.single('thumbnail'), async (req, res) => {
   try {
     const assetId = Number(req.params.id);
@@ -7459,7 +7594,17 @@ async function prepareIngest(req, { requireFile = true } = {}) {
     }
   }
 
-  const type = String(payload.type || inferAssetTypeFromFilename(file?.originalname || '') || 'image');
+  // THE TYPE OF AN EXISTING ASSET IS NOT A GUESS. When the caller does not say,
+  // ask the database before falling back to the filename - a replace must never
+  // change what an asset IS, and getAssetSubdirectory falls through to images/
+  // for anything it does not recognise without erroring. A .vfx.json replaced
+  // without an explicit type used to land in data/assets/images/, work
+  // perfectly (the path is stored), and only show up as a file in the wrong
+  // place months later.
+  const existingType = await getAssetTypeNameById(assetId);
+  const type = String(
+    payload.type || existingType || inferAssetTypeFromFilename(file?.originalname || '') || 'image'
+  );
 
   // Callers may dictate the layout. Image edits in particular live under
   // images/<source>/<editId>/, and deleting or renaming one looks the record up

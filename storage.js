@@ -1,4 +1,12 @@
 import path from 'path';
+// The VFX contract. Imported HERE rather than reimplemented: the export
+// bundle carries the compiled IR, and a second compiler in the backend is
+// exactly the divergence vfx/ exists as a root directory to prevent. See
+// vfx/index.js for the three build registrations that keep this resolvable
+// in a packaged app and in Docker.
+import { normalizeVfxDoc } from './vfx/doc.js';
+import { compileVfxGraph } from './vfx/compile.js';
+import { buildEngineMapping, unsupportedFor } from './vfx/engineMapping.js';
 import process from 'process';
 import fs from 'fs/promises';
 // The SQL engine lives behind db/index.js: SQLite for a desktop install,
@@ -52,6 +60,12 @@ export const ANIMATION_ASSETS_DIR = path.join(ASSETS_DIR, 'animations');
 // document kept there could never lose a key, so deleting a block and saving
 // would bring the block back.
 export const VFX_ASSETS_DIR = path.join(ASSETS_DIR, 'vfx');
+
+// Bumped when a change would make an existing importer plugin MISREAD a
+// bundle. A plugin declares the range it supports and must refuse anything
+// outside it rather than half-importing - the same contract VFX_IR_FORMAT
+// states for the IR inside.
+export const VFX_BUNDLE_FORMAT = 1;
 
 const DATA_ASSETS_PREFIX = 'data/assets/';
 const KANBAN_COLUMNS = [
@@ -1984,6 +1998,28 @@ export function toAssetUrlPath(filePath) {
   return normalizedPath;
 }
 
+/**
+ * The asset-type NAME of an existing asset ('image', 'mesh', 'vfx', ...).
+ *
+ * Exists so a REPLACE can default to the type the asset already has. Guessing
+ * from the filename instead is what put every re-saved VFX effect in
+ * data/assets/images/: getAssetSubdirectory falls through to images/ for an
+ * unrecognised type and does not error, so the only symptom is a file in the
+ * wrong directory, discovered by looking.
+ *
+ * @param {number} assetId
+ * @returns {Promise<string|null>} lower-cased, or null when there is no such asset
+ */
+export async function getAssetTypeNameById(assetId) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    'SELECT at.name AS typeName FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId WHERE a.id = ?',
+    [Number(assetId)]
+  );
+  return row ? String(row.typeName || '').toLowerCase() : null;
+}
+
 export function toAbsoluteStoragePath(filePath) {
   const normalizedPath = String(filePath || '').replace(/\\/g, '/').replace(/^\.\//, '');
   if (!normalizedPath) return normalizedPath;
@@ -2513,7 +2549,15 @@ export async function replaceAssetFileById(assetId, { name, type, filePath, thum
       String(name || '').trim() || existingAsset.name,
       toStoredAssetPath(nextType, filePath),
       JSON.stringify(nextMetadata),
-      thumbnailPath === undefined
+      // undefined AND null both mean "the caller sent no thumbnail", and both
+      // must KEEP the existing one. Only an explicit empty string clears it.
+      //
+      // It used to clear on null, and prepareIngest passes null whenever the
+      // request has no thumbnail part - so a save whose thumbnail render failed
+      // wiped the card's picture. Thumbnails are best-effort by design ("never
+      // fail a save over a cosmetic render"), which made the failure mode
+      // "the one save that could not draw a thumbnail also deleted the old one".
+      thumbnailPath === undefined || thumbnailPath === null
         ? existingAsset.thumbnail || null
         : (thumbnailPath ? toStoredThumbnailPath(thumbnailPath) : null),
       Number(width) || 0,
@@ -5719,6 +5763,174 @@ function orderAssetsParentFirst(assets) {
 
   assets.forEach(visit);
   return ordered;
+}
+
+/**
+ * Build the export bundle for one VFX effect.
+ *
+ * A PLAN, NOT AN ARCHIVE, exactly like buildProjectExport: there is no zip
+ * library in this repo, and `.3dgp` export already works this way. The caller
+ * gets a manifest plus a list of files to fetch, and `source` is stripped by
+ * the route before it goes over the wire - it is an absolute path on this
+ * machine, which means nothing to a remote-connected install.
+ *
+ * WHAT AN IMPORTER PLUGIN ACTUALLY READS IS `ir`, NOT `graph`.
+ *
+ * The graph travels too, for provenance and for future round-tripping, but the
+ * IR is what a plugin parses - because the IR is what the compiler produces
+ * AFTER operator topological sort, frequency classification and curve baking.
+ * If each plugin read the raw graph, that compiler would be reimplemented twice
+ * more, once in C# and once in C++, and any divergence would mean Unity and
+ * Unreal disagreeing about the same effect. `irFormat` is versioned so a plugin
+ * can refuse a bundle it does not understand rather than half-importing it.
+ *
+ * A MISSING REFERENCE IS A WARNING, NOT A FAILURE. A half-authored effect is
+ * the normal case - an author exports to check something in-engine long before
+ * every texture is final - and refusing would make the tool useless at exactly
+ * the moment it is most useful.
+ *
+ * COMPILED HERE, not by the caller, so a bundle produced by the editor, by the
+ * MCP tools and by a script are the same bundle.
+ *
+ * @param {number} assetId a Vfx asset
+ * @param {{appVersion?: string, engineTarget?: string}} [options]
+ * @returns {Promise<{manifest: Object, files: Array<Object>}>}
+ */
+export async function buildVfxExport(assetId, { appVersion = '', engineTarget = null } = {}) {
+  const db = await getDb();
+  const row = await get(
+    db,
+    `SELECT a.*, at.name AS typeName
+     FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId
+     WHERE a.id = ?`,
+    [Number(assetId)]
+  );
+  if (!row) throw new Error('Effect not found');
+  if (String(row.typeName || '').toLowerCase() !== 'vfx') {
+    throw new Error('Not a VFX effect');
+  }
+
+  let graph = null;
+  try {
+    const raw = await fs.readFile(toAbsoluteStoragePath(row.filePath), 'utf8');
+    graph = normalizeVfxDoc(JSON.parse(raw));
+  } catch (err) {
+    // Unreadable or unparseable. Unlike a missing texture this is not a
+    // degraded bundle but an empty one, so it fails rather than warns.
+    throw new Error(`Could not read the effect file: ${err?.message || err}`);
+  }
+
+  const warnings = [];
+  const references = [];
+  const files = [];
+  const seenDest = new Set();
+  // `storagePath` is the DB-relative path; `source` resolves it against this
+  // machine and is dropped by the route. Same split as buildProjectExport, for
+  // the same reason - a remote install fetches the bytes over HTTP.
+  const addFile = (storagePath, dest) => {
+    if (!storagePath || !dest || seenDest.has(dest)) return;
+    seenDest.add(dest);
+    files.push({ source: toAbsoluteStoragePath(storagePath), storagePath, dest });
+  };
+
+  // The graph file itself, so a bundle is self-describing even without the
+  // manifest.
+  addFile(row.filePath, `vfx/${path.basename(row.filePath)}`);
+  if (row.thumbnail) addFile(row.thumbnail, `vfx/${path.basename(row.thumbnail)}`);
+
+  // One query per referenced id rather than a library scan: an effect
+  // references a handful of assets and a library can hold thousands.
+  for (const [slot, entry] of Object.entries(graph.references || {})) {
+    const match = /^asset:(\d+)$/.exec(String(entry?.ref || ''));
+    const record = {
+      slot,
+      kind: entry?.kind || 'image',
+      ref: entry?.ref || '',
+      name: entry?.name || '',
+      colorSpace: entry?.colorSpace || 'srgb',
+      file: null
+    };
+    if (!match) {
+      // An EMPTY slot is not a broken one: the author has not chosen yet and
+      // the effect draws with a built-in stand-in. Recorded as a reference with
+      // no file rather than as a warning, or every new effect would export
+      // shouting about work in progress.
+      references.push(record);
+      continue;
+    }
+    const referenced = await get(
+      db,
+      `SELECT a.id, a.name, a.filePath, at.name AS typeName
+       FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId
+       WHERE a.id = ?`,
+      [Number(match[1])]
+    );
+    if (!referenced || !referenced.filePath) {
+      warnings.push({
+        code: 'MISSING_ASSET',
+        severity: 'warn',
+        slot,
+        ref: record.ref,
+        message: `The ${record.kind} slot "${slot}" points at an asset that is not in this library. The bundle ships without it.`
+      });
+      references.push(record);
+      continue;
+    }
+    const dest = `assets/${assetSubdirForTypeName(referenced.typeName)}/${path.basename(referenced.filePath)}`;
+    addFile(referenced.filePath, dest);
+    record.file = dest;
+    record.assetName = referenced.name || '';
+    references.push(record);
+  }
+
+  // Only the ids that RESOLVED. That distinction is the whole point of passing
+  // an index: without it the compiler cannot tell an author who has not chosen
+  // a texture yet from one whose texture was deleted, and only the second is
+  // worth warning about.
+  const assetIndex = new Set();
+  for (const record of references) {
+    if (!record.file) continue;
+    const id = Number((/^asset:(\d+)$/.exec(record.ref) || [])[1]);
+    if (Number.isFinite(id)) assetIndex.add(id);
+  }
+
+  const compiled = compileVfxGraph(graph, { assetIndex, engineTarget: engineTarget || null });
+  for (const diagnostic of compiled.diagnostics) {
+    // Infos are guidance for the author, not fidelity gaps in the bundle, and a
+    // manifest listing "you could pick a nicer sprite" alongside a genuine
+    // compile error teaches a plugin author to ignore the list.
+    if (diagnostic.severity === 'info') continue;
+    warnings.push({
+      code: diagnostic.code,
+      severity: diagnostic.severity,
+      message: diagnostic.message
+    });
+  }
+
+  const mapping = buildEngineMapping();
+  const manifest = {
+    bundleFormat: VFX_BUNDLE_FORMAT,
+    appVersion: String(appVersion || ''),
+    exportedAt: Date.now(),
+    engineTarget: engineTarget || null,
+    asset: {
+      id: row.id,
+      name: row.name || '',
+      file: `vfx/${path.basename(row.filePath)}`,
+      thumbnail: row.thumbnail ? `vfx/${path.basename(row.thumbnail)}` : null
+    },
+    graph,
+    ir: compiled.ir,
+    stats: compiled.stats,
+    engineMapping: mapping,
+    // Only what THIS bundle's target cannot take intact, so a plugin author is
+    // not left diffing the whole table to find the four rows that matter.
+    engineGaps: engineTarget ? unsupportedFor(engineTarget, mapping) : null,
+    references,
+    warnings
+  };
+
+  return { manifest, files };
 }
 
 // Build the export manifest + the list of files to copy for a single project.

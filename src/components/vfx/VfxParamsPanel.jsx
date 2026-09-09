@@ -303,7 +303,15 @@ function BlockParams({
       <div className="vfx-params__links">
         {/* The wiki route already exists, so a deep link costs nothing and
             gives every block somewhere to point at. */}
-        <Link to={`/wiki/vfx-${def.id}`} className="vfx-params__learn">
+        {/* ONE page, by NAME, not a per-block id. `/wiki/vfx-<blockId>` was a
+            dead link for every block: wiki pages are addressed by database id
+            and Number('vfx-update.gravity') is NaN, so the pane rendered its
+            empty welcome state. WikiPage now resolves a non-numeric id by
+            title, so this lands on the page if someone has written it and says
+            so plainly if not - and nobody was ever going to write thirty-five
+            of them. The per-block teaching lives in the hover card and in the
+            panel above this link. */}
+        <Link to="/wiki/VFX%20Editor" className="vfx-params__learn">
           Learn more about {def.label}
           <span className="material-symbols-outlined">arrow_forward</span>
         </Link>

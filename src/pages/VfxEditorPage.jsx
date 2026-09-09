@@ -39,6 +39,7 @@ import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import AssetSelectorModal from '../components/AssetSelectorModal'
+import VfxExportDialog from '../components/vfx/VfxExportDialog'
 import VfxViewport from '../components/vfx/VfxViewport'
 import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
 import VfxBoard from '../components/vfx/VfxBoard'
@@ -125,6 +126,9 @@ export default function VfxEditorPage() {
   const [level, setLevel] = useState(readLevel)
   const [libraryImages, setLibraryImages] = useState([])
   const [libraryMeshes, setLibraryMeshes] = useState([])
+  // Whether the library fetch has FINISHED, which is not the same question as
+  // whether it found anything - see resolveUrl below.
+  const [libraryReady, setLibraryReady] = useState(false)
 
   // Selection: `{ kind, id }`, or null for the effect itself. Not part of the
   // document, so not undoable - but an undo entry carries a focusNodeId so the
@@ -133,6 +137,7 @@ export default function VfxEditorPage() {
   const [expanded, setExpanded] = useState({})
   const [preview, setPreview] = useState({})
   const [picker, setPicker] = useState(null)
+  const [exporting, setExporting] = useState(false)
   const [timelineCollapsed, setTimelineCollapsed] = useState(false)
   // Bumped to force CameraRig to re-frame. Combined with the graph hash rather
   // than replacing it, so an edit still re-frames on a new effect and "Frame
@@ -179,6 +184,12 @@ export default function VfxEditorPage() {
       .catch(() => {
         // An effect with no textures still plays, on the built-in sprite.
       })
+      .finally(() => {
+        // SET ON FAILURE TOO. This gates the resolver below, and a library
+        // fetch that 500s must fall through to the built-in sprite rather than
+        // leaving the runtime waiting for a list that will never arrive.
+        if (!cancelled) setLibraryReady(true)
+      })
     return () => {
       cancelled = true
     }
@@ -188,9 +199,15 @@ export default function VfxEditorPage() {
   // loadVfxTextures and loadVfxMeshes alike. Built from the images alone, every
   // mesh asset resolved to null and the mesh renderer silently had nothing to
   // draw.
+  //
+  // NULL UNTIL THE LIBRARY HAS ARRIVED, which is the other half of that fix.
+  // The runtime skips loading while this is null, so it waits instead of
+  // burning a pass on a resolver that answers null for everything - and the
+  // difference between "no library yet" and "a library with nothing in it" is
+  // exactly what a bare empty array cannot express.
   const resolveUrl = useMemo(
-    () => makeAssetResolver([...libraryImages, ...libraryMeshes]),
-    [libraryImages, libraryMeshes],
+    () => (libraryReady ? makeAssetResolver([...libraryImages, ...libraryMeshes]) : null),
+    [libraryReady, libraryImages, libraryMeshes],
   )
 
   const compiled = useMemo(
@@ -773,6 +790,23 @@ export default function VfxEditorPage() {
               Save as new
             </button>
           )}
+          {/* SAVED EFFECTS ONLY. The bundle is built from the FILE on the
+              server, so there is nothing to export until the document has been
+              written - offering it on an unsaved effect would export the last
+              saved state and look like the button ignoring recent edits. */}
+          {assetId != null && (
+            <button
+              type="button"
+              className="is-quiet"
+              onClick={() => setExporting(true)}
+              disabled={status === 'saving' || dirty}
+              title={dirty
+                ? 'Save first - the bundle is built from the saved file, not from what is on screen.'
+                : 'Write an engine bundle: the graph, the compiled IR, the compatibility table and every texture and mesh this effect uses.'}
+            >
+              Export...
+            </button>
+          )}
           <span className={`vfx-page__status is-${dirty ? 'dirty' : status}`}>
             {status === 'loading' ? 'Opening...'
               : status === 'saving' ? 'Saving...'
@@ -1047,6 +1081,10 @@ export default function VfxEditorPage() {
         collapsed={timelineCollapsed}
         onToggleCollapsed={() => setTimelineCollapsed(current => !current)}
       />
+
+      {exporting && (
+        <VfxExportDialog assetId={assetId} name={name} onClose={() => setExporting(false)} />
+      )}
 
       {picker && (
         <AssetSelectorModal

@@ -250,7 +250,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     description: 'List tags. With assetId: the tags that one asset carries. Without it: the whole tag vocabulary in use with a usage count per tag — call this first to see which tags exist before tagging or searching, so you reuse an existing tag instead of coining a near-duplicate.',
     inputSchema: {
       assetId: z.number().int().optional().describe('Return only this asset\'s tags (root asset, image edit or mesh version).'),
-      type: z.enum(['image', 'mesh', 'brush']).optional().describe('Vocabulary only: count tags on this asset type alone.')
+      type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional().describe('Vocabulary only: count tags on this asset type alone.')
     },
     annotations: { readOnlyHint: true }
   }, toolHandler(async ({ assetId, type }) => {
@@ -298,7 +298,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     inputSchema: {
       tags: z.array(z.string().min(1)).min(1).describe('Tags to search for'),
       matchAll: z.boolean().default(true).describe('true = an asset must carry every tag; false = any one of them is enough.'),
-      type: z.enum(['image', 'mesh', 'brush']).optional().describe('Only assets of this type'),
+      type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional().describe('Only assets of this type'),
       projectId: z.number().int().optional().describe('Only assets linked to this project'),
       limit: z.number().int().min(1).max(500).default(200).describe('Maximum assets to return')
     },
@@ -327,7 +327,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     description: 'Import local files into the global (project-independent) asset library from absolute paths on this machine. The type is inferred per file from its extension unless assetType is set; brushes must be PNG. Imported files are NOT attached to any project — use link_asset with the returned filename to bring one into a project. To add a file straight to a project instead, use upload_asset.',
     inputSchema: {
       filePaths: z.array(z.string().min(1)).min(1).describe('Absolute local paths of the files to import'),
-      assetType: z.enum(['image', 'mesh', 'brush']).optional().describe('Force the asset type for every file (otherwise inferred from each extension)')
+      assetType: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional().describe('Force the asset type for every file (otherwise inferred from each extension)')
     }
   }, toolHandler(async ({ filePaths, assetType }) => {
     const form = new FormData();
@@ -349,7 +349,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     inputSchema: {
       kind: z.enum(['asset', 'edit']).default('asset').describe('"asset" = a root library asset, "edit" = an image edit'),
       name: z.string().min(1).describe('New display name'),
-      type: z.enum(['image', 'mesh', 'brush']).optional().describe('kind "asset" only: the asset type'),
+      type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional().describe('kind "asset" only: the asset type'),
       filename: z.string().min(1).optional().describe('kind "asset" only: the stored filename from list_library_assets'),
       filePath: z.string().min(1).optional().describe('kind "edit" only: the edit\'s stored filePath')
     }
@@ -372,7 +372,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
     inputSchema: {
       kind: z.enum(['asset', 'edit', 'version']).describe('What to delete'),
       confirm: z.boolean().describe('Must be true — confirms the permanent deletion'),
-      type: z.enum(['image', 'mesh', 'brush']).optional().describe('kind "asset" only: the asset type'),
+      type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional().describe('kind "asset" only: the asset type'),
       filename: z.string().min(1).optional().describe('kind "asset" only: the stored filename from list_library_assets'),
       filePath: z.string().min(1).optional().describe('kind "edit"/"version" only: the stored filePath'),
       force: z.boolean().default(false).describe('Delete even when the entry is linked to a project (kind "asset" and "version").')

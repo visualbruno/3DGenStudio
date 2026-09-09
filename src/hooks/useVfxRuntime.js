@@ -78,6 +78,22 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     for (const batch of batches) disposeBatch(batch)
   }, [batches])
 
+  // KEYED ON THE RESOLVER AS WELL AS THE DOCUMENT, and the second half of that
+  // is a bug fix.
+  //
+  // `resolveUrl` is built from the asset library, which the page fetches
+  // asynchronously - so on opening a SAVED effect there is a race, and the
+  // document usually wins. The effect then ran with a resolver that could not
+  // resolve anything, every asset came back null, `size === 0` took the early
+  // return, and nothing ever re-ran it: the library arriving changed
+  // `resolveUrl`, which was not a dependency. The effect drew with the built-in
+  // sprite until the author touched any property, which recompiled the graph,
+  // changed the hash and ran this again - by which time the library was there.
+  // "Change a value and it appears" was the symptom.
+  //
+  // `ir` stays out on purpose: it is a NEW object on every recompile, including
+  // ones the hash deliberately ignores (moving a node, editing a note), and
+  // keying on it would reload every texture when the board was tidied.
   useEffect(() => {
     if (!ir || !resolveUrl) return undefined
     let cancelled = false
@@ -91,7 +107,7 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash])
+  }, [hash, resolveUrl])
 
   // Meshes, in their own effect rather than awaited alongside the textures.
   //
@@ -128,8 +144,11 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     return () => {
       cancelled = true
     }
+    // Same three dependencies as the textures above, for the same reason -
+    // plus `runtime`, because this effect installs the samplers INTO it and a
+    // sampler handed to the previous runtime is a sampler nothing will read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hash])
+  }, [hash, resolveUrl, runtime])
 
   useEffect(() => () => {
     if (meshes !== NO_MESHES) disposeVfxMeshes(meshes)

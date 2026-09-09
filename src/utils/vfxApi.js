@@ -28,7 +28,7 @@
 
 import { API_BASE, assetUrl } from '../config.js'
 import { indexLibraryAssets, vfxAssetId } from './vfx/library.js'
-import { normalizeVfxDoc, serializeVfxDoc } from '../../vfx/doc.js'
+import { normalizeVfxDoc, serializeVfxDoc, vfxAssetDigest } from '../../vfx/doc.js'
 
 export const VFX_ASSET_TYPE = 'vfx'
 
@@ -137,26 +137,8 @@ export async function loadVfxAsset(target, options = {}) {
 // Read by project export and import, by GET /api/assets/record and by MCP -
 // but NOT by the Assets grid, because listLibraryAssetsByType does not project
 // the metadata column. Do not build UI that expects it in a listing row.
-function metadataFor(doc, refs, source) {
-  const blockCount = doc.systems.reduce((total, system) => total + system.contexts.reduce(
-    (sum, context) => sum + context.blocks.length,
-    0,
-  ), 0)
-  return {
-    source,
-    kind: 'vfx-graph',
-    format: doc.format,
-    duration: doc.effect.duration,
-    looping: doc.effect.loop,
-    systemCount: doc.systems.length,
-    blockCount,
-    // 'asset:<id>' STRINGS in ARRAYS. See the header of vfx/doc.js: this is the
-    // shape storage.js's export walker finds and its import walker renumbers,
-    // and it is why a VFX effect's textures travel in a .3dgp with no new code.
-    textureRefs: refs.textureRefs,
-    meshRefs: refs.meshRefs,
-  }
-}
+// Moved into vfx/doc.js as vfxAssetDigest, because the MCP save path writes the
+// same digest and the two must not drift - see the note there.
 
 /**
  * Save an effect. Creates a new asset, or replaces an existing one in place.
@@ -175,8 +157,8 @@ function metadataFor(doc, refs, source) {
  */
 export async function saveVfxAsset({ name, doc, thumbnail = null, assetId = null }) {
   const safeName = String(name || 'Effect').trim() || 'Effect'
-  const { doc: document, refs } = serializeVfxDoc(doc, { name: safeName })
-  const metadata = metadataFor(document, refs, 'VFX EDITOR')
+  const { doc: document } = serializeVfxDoc(doc, { name: safeName })
+  const metadata = vfxAssetDigest(document, { source: 'VFX EDITOR' })
 
   const file = new File(
     [JSON.stringify(document, null, 2)],
@@ -222,6 +204,32 @@ export async function saveVfxAsset({ name, doc, thumbnail = null, assetId = null
       })(),
     }).catch(() => null)
   }
+  return payload
+}
+
+/**
+ * Write an engine export bundle to a folder on the machine running the server.
+ *
+ * THE SERVER WRITES IT, NOT THE BROWSER, and that is not a shortcut: a bundle is
+ * a folder of files, and a browser can offer one download at a time. The same
+ * split as project export - and the route is deliberately kept off the
+ * gateway's forward list, because in remote mode the folder is on the user's
+ * machine and not the shared server's.
+ *
+ * @param {number|string} assetId a saved Vfx asset
+ * @param {{folder: string, name?: string, engineTarget?: string|null}} options
+ * @returns {Promise<{folder: string, name: string, fileCount: number, warnings: Array<Object>}>}
+ */
+export async function exportVfxBundle(assetId, { folder, name = '', engineTarget = null }) {
+  const id = vfxAssetId(assetId)
+  if (id == null) throw new Error(`"${assetId}" is not a valid asset id.`)
+  const response = await fetch(`${API_BASE}/assets/${id}/vfx-export`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder, name, engineTarget }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not export the effect')
   return payload
 }
 

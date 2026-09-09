@@ -692,6 +692,45 @@ export function vfxSignature(doc) {
 }
 
 /**
+ * The metadata digest mirrored into the asset row alongside the graph file.
+ *
+ * DEFINED ONCE, HERE, BECAUSE TWO CALLERS WRITE IT AND THEY MUST AGREE. The
+ * editor saves through src/utils/vfxApi.js and an agent saves through
+ * mcp/tools/vfx.js; a digest that differed between them would mean an effect's
+ * textures travelled inside a .3dgp when a human saved it and not when an agent
+ * did - which is the kind of bug that only shows up in a second installation.
+ *
+ * THE REFS ARE `asset:<id>` STRINGS IN ARRAYS, and that is the whole trick. It
+ * is the exact shape storage.js's collectAssetIdsFromValue already matches and
+ * remapReferencesDeep already rewrites, so a VFX effect's dependencies travel
+ * through project export and get renumbered on import with NO changes to either
+ * walker. Tree presets store bare numbers and therefore ship broken across
+ * installations - that is the cautionary tale, not the model.
+ *
+ * @param {VfxDoc} doc a NORMALISED document
+ * @param {{source?: string}} [options] who wrote it, for support questions
+ * @returns {Object} a plain, JSON-safe digest
+ */
+export function vfxAssetDigest(doc, options = {}) {
+  const refs = collectVfxAssetRefs(doc);
+  const blockCount = doc.systems.reduce((total, system) => total + system.contexts.reduce(
+    (sum, context) => sum + context.blocks.length,
+    0,
+  ), 0);
+  return {
+    source: options.source || 'VFX',
+    kind: 'vfx-graph',
+    format: doc.format,
+    duration: doc.effect.duration,
+    looping: doc.effect.loop,
+    systemCount: doc.systems.length,
+    blockCount,
+    textureRefs: refs.textureRefs,
+    meshRefs: refs.meshRefs,
+  };
+}
+
+/**
  * Serialise for saving. Bumps savedAt and refreshes the reference digest so the
  * file and the metadata mirror can never be written out of step.
  *

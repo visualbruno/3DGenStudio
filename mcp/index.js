@@ -27,6 +27,7 @@ import { registerMeshToolTools } from './tools/meshTools.js';
 import { registerAssetTools } from './tools/assets.js';
 import { registerSettingsTools } from './tools/settings.js';
 import { registerTreeTools } from './tools/tree.js';
+import { registerVfxTools } from './tools/vfx.js';
 
 function readAppVersion() {
   try {
@@ -50,6 +51,7 @@ const TOOL_GROUPS = {
   actions: { register: registerActionTools, cost: 19385 },
   mesh: { register: registerMeshToolTools, cost: 31972 },
   tree: { register: registerTreeTools, cost: 6200 },
+  vfx: { register: registerVfxTools, cost: 5400 },
   assets: { register: registerAssetTools, cost: 12542 },
   settings: { register: registerSettingsTools, cost: 1684 }
 };
@@ -168,6 +170,10 @@ const INSTRUCTION_BLOCKS = [
   {
     groups: ['assets'],
     text: '- Seeing results: use view_asset to LOOK at a generated image (returns the actual image; for meshes it returns the thumbnail when available). Use download_asset to save any asset file to a local folder. Assets also carry direct download URLs in every response.'
+  },
+  {
+    groups: ['vfx'],
+    text: '- Particle effects: the loop is get_vfx_graph -> patch the document -> compile_vfx_graph to check it -> save_vfx_graph. THE GRAPH IS THE ASSET (a JSON file, not rows): systems hold contexts (Event -> Spawn -> Initialize -> Update -> Output), each holding an ordered stack of blocks. Blocks reference textures and meshes by SLOT KEY (e.g. "tex_spark") resolved through the graph\'s `references` table - NEVER write an asset id into a block property. Effects are library-global, so there is no projectId anywhere. compile_vfx_graph is pure and fast and reports exactly what the editor shows an author (capacity overflow with the arithmetic, a missing Output, a value varying faster than its stage allows) - run it before saving. save_vfx_graph does NOT render a thumbnail, because that needs a GPU: an effect saved this way shows a placeholder card until someone opens and saves it in the editor. export_vfx_bundle produces the Unity/Unreal bundle; importer plugins read its IR, not its graph.'
   },
   {
     groups: ['tree'],
