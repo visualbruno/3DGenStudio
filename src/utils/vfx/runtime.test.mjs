@@ -33,6 +33,7 @@ import { OPERATOR_OPS } from '../../../vfx/compile.js';
 import { templateById } from './templates.js';
 import { addEdge, addOperator, setOperatorProp } from './edits.js';
 import { buildMeshSampler, pickTriangle } from './meshSample.js';
+import { createBatches, disposeBatch, writeBatch } from './batch.js';
 import * as fixtures from '../../../vfx/fixtures.mjs';
 import {
   advance,
@@ -659,6 +660,46 @@ const inertInit = () => [
   const bMuted = runtime.emitters[1].pool.count;
   for (let i = 0; i < 20; i += 1) step(runtime);
   check('mute stops one system', runtime.emitters[1].pool.count <= bMuted);
+
+  // AND IT STOPS DRAWING IMMEDIATELY, which is a different claim from "stops
+  // spawning" and the one the author actually judges the button by.
+  //
+  // Stopping spawns alone means a system with a four-second lifetime takes four
+  // seconds to look muted - so the author clicks, watches the fire carry on
+  // burning, and concludes the button is broken. That is exactly what was
+  // reported.
+  {
+    const batches = createBatches(ir, runtime.emitters, {});
+    const batch = batches.find((b) => b.sources.length > 0);
+    check('  the fixture produced a batch to draw', Boolean(batch),
+      `${batches.length} batches`);
+
+    // Unmuted first, so the drop below is measured against a real number
+    // rather than assumed.
+    setSystemState(runtime, 'sysA', { muted: false });
+    setSystemState(runtime, 'sysB', { muted: false });
+    const drawn = writeBatch(batch, [0, 0, 1]);
+    const alive = batch.sources.reduce((sum, e) => sum + e.pool.count, 0);
+    check('  every live particle is written while nothing is muted',
+      drawn === alive, `${drawn} of ${alive}`);
+
+    // Mute the FIRST source and expect exactly its particles to disappear from
+    // the write - not "fewer", which a sort bug would also satisfy.
+    const silenced = batch.sources[0];
+    setSystemState(runtime, silenced.id, { muted: true });
+    const after = writeBatch(batch, [0, 0, 1]);
+    check('  and a muted system draws nothing AT ONCE',
+      after === alive - silenced.pool.count,
+      `${after}, expected ${alive - silenced.pool.count}`);
+    check('    while its particles are still simulating',
+      silenced.pool.count > 0, String(silenced.pool.count));
+
+    // Reversible, because mute is a toggle an author flicks back and forth.
+    setSystemState(runtime, silenced.id, { muted: false });
+    check('  and unmuting brings them straight back',
+      writeBatch(batch, [0, 0, 1]) === alive);
+    for (const b of batches) disposeBatch(b);
+  }
 }
 
 {

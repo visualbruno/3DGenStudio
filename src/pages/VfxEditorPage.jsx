@@ -62,6 +62,7 @@ import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
 import {
   autoLayout,
   clearLayout,
+  systemIdForSelection,
   indexDiagnostics,
   setNodePosition,
 } from '../utils/vfx/flow.js'
@@ -138,6 +139,9 @@ export default function VfxEditorPage() {
   const [preview, setPreview] = useState({})
   const [picker, setPicker] = useState(null)
   const [exporting, setExporting] = useState(false)
+  // The system the board is showing. See activeSystemId below for why this is
+  // a LAST CHOICE rather than the answer.
+  const [pinnedSystemId, setPinnedSystemId] = useState(null)
   const [timelineCollapsed, setTimelineCollapsed] = useState(false)
   // Bumped to force CameraRig to re-frame. Combined with the graph hash rather
   // than replacing it, so an edit still re-frames on a new effect and "Frame
@@ -162,7 +166,10 @@ export default function VfxEditorPage() {
   }, [addNotification])
 
   const urlAssetId = searchParams.get('vfxAssetId')
-  const returnTo = searchParams.get('returnTo') || '/assets'
+  // NO `returnTo` LINK IN THE TOOLBAR. The deep link from the Assets page still
+  // carries the parameter, but the app Header already has an Assets nav item -
+  // and a second one sitting between the Detail and Target dropdowns read as
+  // another panel toggle rather than as a way back.
 
   const {
     doc, commit, undo, redo, canUndo, canRedo, undoLabel, redoLabel,
@@ -225,6 +232,25 @@ export default function VfxEditorPage() {
   useEffect(() => {
     runtimeRef.current = runtime
   }, [runtime])
+
+  // WHICH SYSTEM THE BOARD SHOWS, in priority order: what is selected, then
+  // what was last chosen, then the first one.
+  //
+  // The SELECTION wins because clicking a timeline track and clicking a stage
+  // on the board have to agree about what is being edited - a separate "current
+  // system" the author sets by hand would let the two disagree. The pin exists
+  // for the case the selection cannot answer: an operator, a note, or nothing
+  // at all belongs to no system, and the board must not blank.
+  //
+  // Clamped to a system that still EXISTS, or deleting the one being viewed
+  // would leave an empty board with no way back.
+  const activeSystemId = useMemo(() => {
+    const ids = doc.systems.map(system => system.id)
+    const fromSelection = systemIdForSelection(doc, selection)
+    if (fromSelection) return fromSelection
+    if (pinnedSystemId && ids.includes(pinnedSystemId)) return pinnedSystemId
+    return ids[0] || null
+  }, [doc, selection, pinnedSystemId])
 
   const diagnosticIndex = useMemo(
     () => indexDiagnostics(compiled.diagnostics),
@@ -290,6 +316,10 @@ export default function VfxEditorPage() {
     return {
       // selection
       select: blockId => setSelection(blockId ? { kind: 'block', id: blockId } : null),
+      // `{kind: 'effect'}` matches nothing in the document on purpose:
+      // VfxParamsPanel falls back to EffectParams for a selection it cannot
+      // resolve, which is where duration, loop, capacity, seed and bounds live.
+      selectEffect: () => setSelection({ kind: 'effect', id: 'effect' }),
       selectContext: contextId => setSelection({ kind: 'context', id: contextId }),
       selectSystem: systemId => setSelection({ kind: 'system', id: systemId }),
       selectOperator: nodeId => setSelection({ kind: 'operator', id: nodeId }),
@@ -443,6 +473,15 @@ export default function VfxEditorPage() {
       tidy: measure => edit(
         d => (measure ? autoLayout(d, measure) : clearLayout(d)),
         'Tidy layout',
+      ),
+      // setEffectSettings with a COALESCE KEY, which is the whole difference:
+      // the panel's own duration field goes through edit() and earns an undo
+      // entry per keystroke, which is right for a field you visit once. The
+      // timeline total is typed and retyped while judging the length, so it
+      // folds into one entry.
+      setEffectDuration: seconds => commit(
+        d => edits.setEffectSettings(d, { duration: Math.min(600, Math.max(0.05, seconds)) }),
+        { label: 'Change duration', coalesceKey: 'effect:duration' },
       ),
       addNote: position => edit(
         d => edits.addNote(d, { x: position?.x ?? 0, y: position?.y ?? 0 }),
@@ -718,6 +757,13 @@ export default function VfxEditorPage() {
   )).length
 
   const saveLabel = status === 'saving' ? 'Saving...' : assetId == null ? 'Save to library' : 'Save'
+  // `{kind: 'effect'}` resolves to nothing in the document, and VfxParamsPanel
+  // falls back to EffectParams for exactly that case - which is how duration,
+  // looping, capacity, the seed and the bounds are edited.
+  //
+  // IT USED TO BE UNREACHABLE. The panel renders only when something is
+  // selected and nothing could select the effect, so every one of those fields
+  // was dead UI - which is why the timeline appeared to be stuck at 3 seconds.
   const paramsOpen = selection != null
   const selectionDiagnostics = selection
     ? (diagnosticIndex.get(selection.id) || [])
@@ -852,7 +898,6 @@ export default function VfxEditorPage() {
             <option value="unity">Target: Unity</option>
             <option value="unreal">Target: Unreal</option>
           </select>
-          <a className="vfx-page__back" href={returnTo}>Assets</a>
         </div>
       </div>
 
@@ -952,6 +997,8 @@ export default function VfxEditorPage() {
               selectedBlockId={selection?.kind === 'block' ? selection.id : null}
               selectedContextId={selection?.kind === 'context' ? selection.id : null}
               selectedOperatorId={selection?.kind === 'operator' ? selection.id : null}
+              systemId={activeSystemId}
+              onSystemChange={setPinnedSystemId}
               engineTarget={engineTarget || null}
               level={level}
               onInit={instance => { flowRef.current = instance }}
@@ -1077,6 +1124,7 @@ export default function VfxEditorPage() {
         getTime={getTime}
         timescale={timescale}
         onTimescale={setTimescale}
+        preview={preview}
         selectedSystemId={selection?.kind === 'system' ? selection.id : null}
         collapsed={timelineCollapsed}
         onToggleCollapsed={() => setTimelineCollapsed(current => !current)}

@@ -28,7 +28,7 @@
 // moving a node is cosmetic - `layout` is the one part of the document the
 // compiler never reads.
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   Controls,
@@ -70,6 +70,8 @@ const WIRABLE = new Set([PROP_TYPE.FLOAT, PROP_TYPE.INT, PROP_TYPE.VEC3, PROP_TY
  * @param {string|null} props.selectedBlockId
  * @param {string|null} props.selectedContextId
  * @param {string|null} [props.selectedOperatorId]
+ * @param {string|null} [props.systemId] the only system whose stages are shown
+ * @param {(systemId: string) => void} [props.onSystemChange]
  * @param {string|null} props.engineTarget
  * @param {string} props.level disclosure level
  * @param {(instance: Object) => void} [props.onInit]
@@ -83,13 +85,15 @@ export default function VfxBoard({
   selectedBlockId,
   selectedContextId,
   selectedOperatorId,
+  systemId = null,
+  onSystemChange = null,
   engineTarget,
   level,
   onInit = null,
 }) {
   // getInternalNode, not getNode: the measured size is on the INTERNAL node.
   // See the Tidy button for why that distinction is load-bearing.
-  const { screenToFlowPosition, getInternalNode } = useReactFlow()
+  const { screenToFlowPosition, getInternalNode, fitView } = useReactFlow()
   const pointer = useRef({ x: 0, y: 0 })
   const [chooser, setChooser] = useState(null)
   // BOARD-LOCAL, and deliberately not document selection: a note is edited in
@@ -187,8 +191,9 @@ export default function VfxBoard({
     selectedNoteId,
     engineTarget,
     level,
+    systemId,
   }), [
-    diagnosticIndex, doc, engineTarget, level,
+    diagnosticIndex, doc, engineTarget, level, systemId,
     selectedBlockId, selectedContextId, selectedNoteId, selectedOperatorId,
   ])
 
@@ -210,7 +215,24 @@ export default function VfxBoard({
     })
   }, [dragPositions, flowNodes, getInternalNode])
 
-  const edges = useMemo(() => toFlowEdges(doc), [doc])
+  // The SAME systemId, or React Flow logs a warning for every edge whose
+  // endpoints it cannot find - see the note in toFlowEdges.
+  const edges = useMemo(() => toFlowEdges(doc, { systemId }), [doc, systemId])
+
+  // FIT THE VIEW WHEN THE SYSTEM CHANGES, because the derived layout puts each
+  // system on its own ROW: showing only the fourth one would otherwise leave
+  // the author staring at empty canvas a thousand pixels above it, with no clue
+  // that anything had been drawn at all. fitView acts on what is currently
+  // rendered, which after the filter is exactly one system.
+  useEffect(() => {
+    if (!systemId) return undefined
+    // One frame late on purpose: the nodes for the new system have to be
+    // measured before there is anything to fit to.
+    const raf = window.requestAnimationFrame(() => {
+      fitView({ padding: 0.15, duration: 220 })
+    })
+    return () => window.cancelAnimationFrame(raf)
+  }, [systemId, fitView])
 
   // The whole bundle in one memo, so a node's useVfxBoard() does not see a new
   // object on every render of this component.
@@ -371,6 +393,22 @@ export default function VfxBoard({
           <Controls showInteractive={false} position="bottom-right" />
 
           <Panel position="top-left" className="vfx-board__panel">
+            {/* WHICH SYSTEM AM I EDITING. Mandatory once the board shows one at
+                a time: without it the answer is only visible in the timeline
+                dock, which the author may have collapsed. Rendered even for a
+                single-system effect, because then it is the label. */}
+            {doc.systems.length > 0 && (
+              <select
+                className="vfx-board__system"
+                value={systemId || ''}
+                onChange={event => onSystemChange?.(event.target.value)}
+                title="The board shows one system at a time. Clicking a track in the timeline switches it too."
+              >
+                {doc.systems.map(system => (
+                  <option key={system.id} value={system.id}>{system.name}</option>
+                ))}
+              </select>
+            )}
             <button
               type="button"
               onClick={() => actions.addSystem()}

@@ -118,9 +118,33 @@ export default function VfxParamsPanel({
   getCurvePlayhead = null,
   onClose,
 }) {
-  // `full` opens Advanced by default - an author who chose the most detailed
-  // level should not then have to open every section by hand.
-  const [advanced, setAdvanced] = useState(level === 'full')
+  // `full` opens Advanced - an author who chose the most detailed level should
+  // not then have to open every section by hand.
+  //
+  // KEYED ON `level`, NOT SEEDED BY IT. As a plain useState initialiser this
+  // only ever applied on the panel's FIRST mount, so switching Detail to full
+  // with a node already selected did nothing visible - which is most of why the
+  // dropdown looked inert. Resetting it on every change of `level` also means
+  // switching back to standard re-hides Advanced, which is what "less detail"
+  // has to mean if the control is to be worth having.
+  // DERIVED FROM `level`, WITH AN OVERRIDE THAT REMEMBERS WHICH LEVEL IT WAS
+  // MADE AT. Two things had to be true at once and a plain boolean gives only
+  // one of them:
+  //
+  //   - Changing Detail has to change what is shown. As a bare
+  //     `useState(level === 'full')` this applied on the panel's FIRST mount
+  //     and never again, so switching to full with a node already selected did
+  //     nothing - most of why the dropdown looked inert.
+  //   - Clicking Advanced has to stick, and not be undone by the next render.
+  //
+  // Storing the level alongside the choice satisfies both without an effect and
+  // without writing a ref during render: a new level simply does not match the
+  // stored one, so the override lapses and the level's own default takes over.
+  const [advancedOverride, setAdvancedOverride] = useState(null)
+  const advanced = advancedOverride?.level === level
+    ? advancedOverride.value
+    : level === 'full'
+  const setAdvanced = value => setAdvancedOverride({ level, value })
   // ONE editor open at a time, keyed by property name. Two curve canvases in a
   // panel this narrow would each be too short to edit, and both would run their
   // own playhead loop.

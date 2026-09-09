@@ -48,6 +48,10 @@ const RULER_TARGET_SPACING = 64
 // How far a press has to travel before it is a drag rather than a click.
 const DRAG_SLOP_PX = 3
 const CLIP_SIZES = { burstWidth: BURST_WIDTH_PX, minWidth: MIN_CLIP_PX }
+// Shared empties, so a system with no preview state gets a STABLE identity
+// rather than a fresh object per render.
+const EMPTY_PREVIEW = Object.freeze({})
+const EMPTY_STATE = Object.freeze({})
 
 
 
@@ -74,6 +78,9 @@ const formatTime = seconds => `${seconds.toFixed(2)}s`
  * @param {() => number} props.getTime current sim time, read per frame
  * @param {number} props.timescale
  * @param {(next: number) => void} props.onTimescale
+ * @param {Object<string, {muted?: boolean, solo?: boolean}>} [props.preview]
+ *   mute and solo, which are preview state rather than document state - see
+ *   the note where they are rendered
  * @param {string|null} props.selectedSystemId
  * @param {boolean} props.collapsed
  * @param {() => void} props.onToggleCollapsed
@@ -89,6 +96,7 @@ export default function VfxTimeline({
   getTime,
   timescale = 1,
   onTimescale,
+  preview = EMPTY_PREVIEW,
   selectedSystemId = null,
   collapsed = false,
   onToggleCollapsed,
@@ -294,7 +302,15 @@ export default function VfxTimeline({
   const ticks = []
   for (let t = 0; t <= duration + 1e-6; t += tickStep) ticks.push(Number(t.toFixed(4)))
 
-  const anySolo = doc.systems.some(system => system.solo)
+  // FROM THE PREVIEW MAP, NOT THE DOCUMENT, and that was the bug: the buttons
+  // below wrote mute and solo into `preview` (they must never reach the
+  // document - the compiler drops a disabled system from the IR, so writing
+  // them would RESTART the effect, which is the opposite of what muting one
+  // system is for) while everything that renders them read `system.enabled`
+  // and `system.solo`, document fields nothing ever writes. So the icons never
+  // changed and the whole control looked dead.
+  const stateOf = system => preview[system.id] || EMPTY_STATE
+  const anySolo = doc.systems.some(system => stateOf(system).solo)
 
   return (
     <section className={`vfx-timeline${collapsed ? ' is-collapsed' : ''}`} aria-label="Timeline">
@@ -328,8 +344,43 @@ export default function VfxTimeline({
         <span className="vfx-timeline__time">
           <strong ref={readoutRef}>0.00s</strong>
           {' / '}
-          {formatTime(duration)}
+          {/* THE TOTAL IS EDITABLE HERE, and it had to become so somewhere: the
+              effect's duration lives in EffectParams, which was unreachable
+              because the panel only opens for a SELECTED node and nothing could
+              select the effect. So the timeline read as permanently three
+              seconds long.
+              This is also the right home for it regardless - the dock owns the
+              transport, and the length of the timeline is what this number IS.
+              onChange rather than a drag: it is typed rarely and a drag would
+              recompile the effect on every pixel. */}
+          <input
+            className="vfx-timeline__duration"
+            type="number"
+            min="0.05"
+            max="600"
+            step="0.1"
+            value={duration}
+            onChange={event => {
+              const next = Number(event.target.value)
+              if (Number.isFinite(next) && next > 0) actions.setEffectDuration(next)
+            }}
+            title="How long the effect runs, in seconds. Clips beyond the end never fire."
+            aria-label="Effect duration in seconds"
+          />
+          <span className="vfx-timeline__unit">s</span>
         </span>
+
+        {/* The rest of the effect's settings - looping, capacity, seed, bounds -
+            all of which were unreachable for the same reason the duration was. */}
+        <button
+          type="button"
+          className="vfx-timeline__effect"
+          onClick={() => actions.selectEffect()}
+          title="Loop, capacity, seed and bounds for the whole effect"
+        >
+          <span className="material-symbols-outlined">tune</span>
+          Effect
+        </button>
 
         <label className="vfx-timeline__speed" title="Slow the whole effect down to see what it is doing. Changes nothing in the document.">
           <span>Speed</span>
@@ -372,8 +423,8 @@ export default function VfxTimeline({
                 className={[
                   'vfx-timeline__track',
                   selectedSystemId === system.id ? 'is-selected' : '',
-                  system.enabled === false ? 'is-muted' : '',
-                  anySolo && !system.solo ? 'is-silenced' : '',
+                  stateOf(system).muted ? 'is-muted' : '',
+                  anySolo && !stateOf(system).solo ? 'is-silenced' : '',
                 ].filter(Boolean).join(' ')}
                 style={{ '--vfx-track-accent': `var(--vfx-accent-${index % 6})` }}
               >
@@ -388,22 +439,23 @@ export default function VfxTimeline({
                 </button>
                 <button
                   type="button"
-                  className={`vfx-timeline__flag${system.enabled === false ? ' is-on' : ''}`}
-                  onClick={() => actions.updateSystem(system.id, { enabled: system.enabled === false })}
-                  title={system.enabled === false ? 'Unmute' : 'Mute: stop this system emitting'}
+                  className={`vfx-timeline__flag${stateOf(system).muted ? ' is-on' : ''}`}
+                  onClick={() => actions.updateSystem(system.id, { enabled: Boolean(stateOf(system).muted) })}
+                  title={stateOf(system).muted ? 'Unmute' : 'Mute: hide this system and stop it emitting'}
                   aria-label="Mute"
+                  aria-pressed={Boolean(stateOf(system).muted)}
                 >
                   <span className="material-symbols-outlined">
-                    {system.enabled === false ? 'volume_off' : 'volume_up'}
+                    {stateOf(system).muted ? 'volume_off' : 'volume_up'}
                   </span>
                 </button>
                 <button
                   type="button"
-                  className={`vfx-timeline__flag${system.solo ? ' is-on' : ''}`}
-                  onClick={() => actions.updateSystem(system.id, { solo: !system.solo })}
+                  className={`vfx-timeline__flag${stateOf(system).solo ? ' is-on' : ''}`}
+                  onClick={() => actions.updateSystem(system.id, { solo: !stateOf(system).solo })}
                   title="Solo: silence every other system, to see what this one does"
                   aria-label="Solo"
-                  aria-pressed={Boolean(system.solo)}
+                  aria-pressed={Boolean(stateOf(system).solo)}
                 >
                   <span className="material-symbols-outlined">headphones</span>
                 </button>

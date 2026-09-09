@@ -261,6 +261,42 @@ console.log('\n--- Drag surfaces ---');
     && /@property --vfx-clip-dw \{[^}]*syntax: '<length>'[^}]*initial-value: 0px;/.test(css));
 }
 
+console.log('\n--- Mute and solo ---');
+{
+  // THEY ARE PREVIEW STATE, NOT DOCUMENT STATE, and everything that renders
+  // them has to agree about that.
+  //
+  // THE BUG: clicking Mute or Solo did nothing visible. The action writes into
+  // the page's `preview` map on purpose - mute and solo must NEVER reach the
+  // document, because the compiler drops a disabled system from the IR, so
+  // writing them would restart the whole effect, which is the opposite of what
+  // muting one system is for. But the timeline rendered from `system.enabled`
+  // and `system.solo`, document fields nothing ever writes. The runtime was
+  // being muted correctly the whole time; the icons just never moved.
+  const timeline = await readFile(
+    new URL('../../components/vfx/VfxTimeline.jsx', import.meta.url), 'utf8');
+  const code = timeline
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+  check('the timeline reads mute and solo from the preview map',
+    /const stateOf = system => preview\[system\.id\]/.test(code));
+  for (const field of ['system.enabled', 'system.solo']) {
+    check(`  and never from ${field}`, !code.includes(field), field);
+  }
+  const pageSource = await readFile(
+    new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+  check('  and the page actually hands it over',
+    /<VfxTimeline[\s\S]*?preview=\{preview\}/.test(pageSource));
+
+  // A muted emitter must stop DRAWING, not only spawning. Stopping spawns alone
+  // means a four-second lifetime takes four seconds to look muted, which is
+  // indistinguishable from a broken button.
+  const batchSource = await readFile(new URL('./batch.js', import.meta.url), 'utf8');
+  check('a muted emitter is skipped by the write loop',
+    /for \(const emitter of sources\) \{[\s\S]{0,900}?if \(emitter\.muted\) continue;/.test(batchSource));
+}
+
 console.log('\n--- React Flow board ---');
 {
   const board = await readFile(

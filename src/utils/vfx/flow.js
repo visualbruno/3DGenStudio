@@ -130,6 +130,8 @@ export function indexDiagnostics(diagnostics) {
  *   document state
  * @param {string|null} [options.engineTarget]
  * @param {string} [options.level] 'guided' | 'standard' | 'full'
+ * @param {string|null} [options.systemId] show only this system's contexts.
+ *   Operators and notes are effect-scoped and always shown.
  * @returns {Array<Object>} React Flow nodes
  */
 export function toFlowNodes(doc, options = {}) {
@@ -143,6 +145,14 @@ export function toFlowNodes(doc, options = {}) {
   const systemOptions = doc.systems.map(system => ({ value: system.id, label: system.name }))
 
   doc.systems.forEach((system, systemIndex) => {
+    // ONE SYSTEM AT A TIME. A four-system explosion is twenty context nodes,
+    // and an author works on one emitter at a time - the others are scenery
+    // that has to be panned past. Filtered here rather than by hiding the
+    // nodes, because React Flow still measures and lays out a hidden node.
+    //
+    // The index is computed BEFORE the filter, so a system's derived position
+    // does not shift when a different one is shown.
+    if (options.systemId && system.id !== options.systemId) return
     let outputOrdinal = 0
     // Sorted for layout only; the document's own order is untouched.
     const ordered = system.contexts.slice().sort((a, b) => stageIndex(a.kind) - stageIndex(b.kind))
@@ -249,16 +259,25 @@ export function toFlowNodes(doc, options = {}) {
 /**
  * Build the edge list.
  *
+ * @param {Object} doc
+ * @param {{systemId?: string|null}} [options] `systemId` limits the flow chain
+ *   and the data wires to one system, matching toFlowNodes.
+ *
  * FLOW EDGES ARE DERIVED FROM THE STAGE CHAIN, not from doc.edges. Within a
  * system the contexts ARE the chain - the document has no separate flow wiring
  * - which means an illegal ordering cannot be represented, let alone drawn.
  * doc.edges carries only the thin data wires from operators into block
  * properties.
  */
-export function toFlowEdges(doc) {
+export function toFlowEdges(doc, options = {}) {
   const edges = []
 
   for (const system of doc.systems) {
+    // FILTERED THE SAME WAY toFlowNodes IS, and it has to be: React Flow logs a
+    // warning for EVERY edge whose endpoints it cannot find, so a board showing
+    // one of four systems would log a dozen lines on every render - and a board
+    // that logs on every render is a board nobody will debug.
+    if (options.systemId && system.id !== options.systemId) continue
     const ordered = system.contexts.slice().sort((a, b) => stageIndex(a.kind) - stageIndex(b.kind))
     const outputs = ordered.filter(context => context.kind === CONTEXT_KIND.OUTPUT)
     const chain = ordered.filter(context => context.kind !== CONTEXT_KIND.OUTPUT)
@@ -295,6 +314,10 @@ export function toFlowEdges(doc) {
 
   for (const edge of doc.edges) {
     if (!edge.to.blockId || !edge.to.prop) continue
+    // Operators are effect-scoped and always shown, but the BLOCK they feed may
+    // belong to a system that is not - and then the wire has one endpoint.
+    const owner = contextIdForBlock(doc, edge.to.blockId)
+    if (options.systemId && systemIdForContext(doc, owner) !== options.systemId) continue
     edges.push({
       id: edge.id,
       source: edge.from.nodeId,
@@ -309,6 +332,14 @@ export function toFlowEdges(doc) {
   }
 
   return edges
+}
+
+function systemIdForContext(doc, contextId) {
+  if (!contextId) return null
+  for (const system of doc.systems) {
+    if (system.contexts.some(context => context.id === contextId)) return system.id
+  }
+  return null
 }
 
 function contextIdForBlock(doc, blockId) {
@@ -376,6 +407,38 @@ export function wiredPropsForContext(doc, contextId) {
   return doc.edges
     .filter(edge => edge.to.blockId && edge.to.prop && blockIds.has(edge.to.blockId))
     .map(edge => ({ blockId: edge.to.blockId, prop: edge.to.prop }))
+}
+
+/**
+ * Which system a selected node belongs to.
+ *
+ * THE BOARD SHOWS ONE SYSTEM AT A TIME, and this is how it decides which. The
+ * answer has to come from the selection rather than from a separate "current
+ * system" the author sets by hand, or clicking a track in the timeline and
+ * clicking a stage on the board would disagree about what is being edited.
+ *
+ * Returns null for a selection that belongs to no system - an operator, a note,
+ * the effect itself - which the caller reads as "leave the board where it is"
+ * rather than as "show nothing".
+ *
+ * @param {Object} doc
+ * @param {{kind: string, id: string}|null} selection
+ * @returns {string|null}
+ */
+export function systemIdForSelection(doc, selection) {
+  if (!selection?.id) return null;
+  if (selection.kind === 'system') {
+    return doc.systems.some(system => system.id === selection.id) ? selection.id : null;
+  }
+  for (const system of doc.systems) {
+    for (const context of system.contexts) {
+      if (context.id === selection.id) return system.id;
+      for (const block of context.blocks) {
+        if (block.id === selection.id) return system.id;
+      }
+    }
+  }
+  return null;
 }
 
 /**

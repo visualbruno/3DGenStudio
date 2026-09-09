@@ -65,6 +65,26 @@
   margin: 8px;
 }
 
+/* The system switcher, matched to the buttons beside it. Its own rule rather
+   than a shared selector: a <select> needs the arrow room and the flat
+   background that a button does not, and grouping them would mean overriding
+   half of each. */
+.vfx-board__system {
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px;
+  max-width: 160px;
+  cursor: pointer;
+}
+
+.vfx-board__system:hover {
+  border-color: #3a3f49;
+}
+
 .vfx-board__panel button {
   display: inline-flex;
   align-items: center;

@@ -186,6 +186,19 @@ export function writeBatch(batch, cameraDir) {
   let write = 0;
 
   for (const emitter of sources) {
+    // A MUTED EMITTER DRAWS NOTHING, IMMEDIATELY.
+    //
+    // Muting already stopped it SPAWNING (see spawnStep), but on its own that
+    // means a system with a four-second lifetime takes four seconds to look
+    // muted - and the author, having clicked a button and seen the fire carry
+    // on burning, reasonably concludes the button is broken. Skipping the write
+    // makes it instant and costs one branch per emitter per frame.
+    //
+    // The particles keep SIMULATING. Killing the pool instead would make
+    // unmuting restart the system rather than reveal it, and mute is a
+    // debugging toggle you flick back and forth - the whole point is to see
+    // what the others are doing meanwhile.
+    if (emitter.muted) continue;
     const pool = emitter.pool;
     const count = Math.min(pool.count, batch.instances - write);
     if (count <= 0) continue;

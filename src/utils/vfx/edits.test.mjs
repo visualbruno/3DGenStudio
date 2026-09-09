@@ -47,6 +47,7 @@ import {
 } from './timelineDrag.js';
 import {
   autoLayout,
+  systemIdForSelection,
   clearLayout,
   indexDiagnostics,
   setNodePosition,
@@ -546,6 +547,70 @@ section('The React Flow adapter');
     }
     check('  the fixture has more than one system', doc.systems.length > 1,
       `${doc.systems.length}`);
+  }
+
+  // THE BOARD SHOWS ONE SYSTEM AT A TIME.
+  //
+  // A four-system explosion is twenty context nodes, and an author works on one
+  // emitter at a time - the rest is scenery to pan past. The filter has to
+  // reach BOTH adapters: React Flow logs a warning for every edge whose
+  // endpoints it cannot find, so filtering the nodes alone would make a
+  // three-system effect log on every render.
+  {
+    const many = doc.systems.length;
+    check('the fixture has several systems to filter', many > 1, `${many}`);
+    const target = doc.systems[1];
+
+    const all = toFlowNodes(doc);
+    const one = toFlowNodes(doc, { systemId: target.id });
+    check('filtering shows fewer nodes', one.length < all.length,
+      `${one.length} of ${all.length}`);
+    check('  and exactly the contexts of that system',
+      one.filter((n) => n.type === 'vfxContext').length === target.contexts.length,
+      `${one.filter((n) => n.type === 'vfxContext').length} vs ${target.contexts.length}`);
+    check('  none of them from another system',
+      one.filter((n) => n.type === 'vfxContext')
+        .every((n) => target.contexts.some((c) => c.id === n.id)));
+
+    // EVERY EDGE MUST STILL HAVE BOTH ENDS. This is the check that would catch
+    // filtering one adapter and forgetting the other.
+    const visible = new Set(one.map((n) => n.id));
+    const dangling = toFlowEdges(doc, { systemId: target.id })
+      .filter((e) => !visible.has(e.source) || !visible.has(e.target));
+    check('  and no edge is left with a missing end', dangling.length === 0,
+      dangling.map((e) => e.id).join(' '));
+
+    // Unfiltered is unchanged, so the board can still show everything.
+    check('  while no filter still shows every system',
+      all.filter((n) => n.type === 'vfxContext').length
+      === doc.systems.reduce((sum, sys) => sum + sys.contexts.length, 0));
+  }
+
+  // WHICH SYSTEM THE SELECTION MEANS. The board and the timeline have to agree,
+  // so the answer comes from the selection rather than from a separate
+  // "current system" the author sets by hand.
+  {
+    const system = doc.systems[1];
+    const context = system.contexts[0];
+    const block = context.blocks[0];
+    check('the fixture has a block to select', Boolean(block), context.kind);
+
+    check('selecting a system names itself',
+      systemIdForSelection(doc, { kind: 'system', id: system.id }) === system.id);
+    check('selecting a context names its system',
+      systemIdForSelection(doc, { kind: 'context', id: context.id }) === system.id);
+    check('selecting a block names its system too',
+      systemIdForSelection(doc, { kind: 'block', id: block.id }) === system.id);
+
+    // null means "leave the board where it is", NOT "show nothing" - an
+    // operator and a note belong to no system, and the effect itself belongs to
+    // all of them.
+    check('an operator belongs to no system',
+      systemIdForSelection(doc, { kind: 'operator', id: 'op-whatever' }) === null);
+    check('  and so does the effect', systemIdForSelection(doc, { kind: 'effect', id: 'effect' }) === null);
+    check('  and nothing selected', systemIdForSelection(doc, null) === null);
+    check('a system id that no longer exists is null, not itself',
+      systemIdForSelection(doc, { kind: 'system', id: 'sys-deleted' }) === null);
   }
 
   // A stored position must win over the derived one, or dragging a node would

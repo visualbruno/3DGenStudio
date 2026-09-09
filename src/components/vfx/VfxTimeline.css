@@ -89,6 +89,54 @@
   font-weight: 700;
 }
 
+/* The editable total. Sized to its content and stripped of the spinner, so it
+   reads as part of the "0.00s / 3.0s" transport readout rather than as a form
+   field bolted onto it - the number is the length of the timeline, and it
+   should look like the number it replaced. */
+.vfx-timeline__duration {
+  width: 52px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  padding: 1px 2px;
+}
+
+.vfx-timeline__duration:hover,
+.vfx-timeline__duration:focus {
+  background: #14161b;
+  border-color: #2a2d34;
+  outline: none;
+}
+
+/* Chromium shows the spinner only on hover, which makes the field jump. */
+.vfx-timeline__duration::-webkit-inner-spin-button,
+.vfx-timeline__duration::-webkit-outer-spin-button {
+  opacity: 0;
+  margin: 0;
+}
+
+.vfx-timeline__duration:hover::-webkit-inner-spin-button,
+.vfx-timeline__duration:focus::-webkit-inner-spin-button {
+  opacity: 1;
+}
+
+.vfx-timeline__unit {
+  margin-left: 1px;
+}
+
+.vfx-timeline__effect {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vfx-timeline__effect .material-symbols-outlined {
+  font-size: 15px;
+}
+
 .vfx-timeline__speed,
 .vfx-timeline__loop {
   display: inline-flex;
