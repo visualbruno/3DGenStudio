@@ -58,7 +58,12 @@ import { VFX_TEMPLATES } from '../utils/vfx/templates.js'
 import { makeTextureResolver } from '../utils/vfxApi.js'
 import { createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
 import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
-import { indexDiagnostics, clearLayout, setNodePosition } from '../utils/vfx/flow.js'
+import {
+  autoLayout,
+  clearLayout,
+  indexDiagnostics,
+  setNodePosition,
+} from '../utils/vfx/flow.js'
 import { BLAME_ACTION } from '../utils/vfx/blame.js'
 import { readPaneSize } from '../utils/vfx/panes.js'
 import * as edits from '../utils/vfx/edits.js'
@@ -77,6 +82,23 @@ const PREVIEW_DEFAULT = 520
 // distinguishable from a filled bar - so sampling more would cost work to
 // produce less information.
 const PLAYHEAD_SAMPLES = 192
+
+// The starter library, grouped by category. Built once at module scope: the
+// grouping is a function of a frozen array, so recomputing it per render would
+// be pure waste. Insertion order is the catalog's order, which puts the
+// categories in the sequence the templates were authored in rather than
+// alphabetically - "Impacts & Hits" first, because that is what most people
+// come here to make.
+const TEMPLATE_GROUPS = (() => {
+  const byCategory = new Map()
+  for (const template of VFX_TEMPLATES) {
+    const key = template.category || 'Other'
+    const list = byCategory.get(key)
+    if (list) list.push(template)
+    else byCategory.set(key, [template])
+  }
+  return [...byCategory.entries()]
+})()
 
 const readLevel = () => {
   try {
@@ -169,7 +191,7 @@ export default function VfxEditorPage() {
     [doc, engineTarget],
   )
 
-  const { runtime, batches, textures } = useVfxRuntime({ ir: compiled.ir, resolveUrl, profile })
+  const { runtime, batches, textures, meshes } = useVfxRuntime({ ir: compiled.ir, resolveUrl, profile })
 
   // Mirrored into a ref in an effect rather than assigned during render.
   // The transport callbacks and the timeline's per-frame playhead read the
@@ -304,6 +326,10 @@ export default function VfxEditorPage() {
         d => edits.setContextParam(d, contextId, param, value),
         'Change stage setting',
       ),
+      addContext: (systemId, kind) => edit(
+        d => edits.addContext(d, systemId, kind),
+        'Add stage',
+      ),
       removeContext: contextId => {
         edit(d => edits.removeContext(d, contextId), 'Remove stage')
         setSelection(current => (current?.id === contextId ? null : current))
@@ -386,7 +412,25 @@ export default function VfxEditorPage() {
         d => setNodePosition(d, nodeId, position),
         { coalesceKey: `layout:${nodeId}` },
       ),
-      tidy: () => edit(d => clearLayout(d), 'Tidy layout'),
+      // The measurer comes from the board, which is the only place that knows
+      // how tall a node actually rendered. Without one it falls back to
+      // forgetting the stored positions, which returns the board to the tidy
+      // DERIVED layout - correct, just not packed.
+      tidy: measure => edit(
+        d => (measure ? autoLayout(d, measure) : clearLayout(d)),
+        'Tidy layout',
+      ),
+      addNote: position => edit(
+        d => edits.addNote(d, { x: position?.x ?? 0, y: position?.y ?? 0 }),
+        'Add note',
+      ),
+      // Coalesced on the note's id: typing a sentence is one undo entry, and so
+      // is one resize drag.
+      updateNote: (noteId, patch) => commit(
+        d => edits.updateNote(d, noteId, patch),
+        { label: 'Edit note', coalesceKey: `note:${noteId}` },
+      ),
+      removeNote: noteId => edit(d => edits.removeNote(d, noteId), 'Delete note'),
 
       // assets
       pickAsset: (blockId, prop, type) => setPicker({ blockId, prop, type }),
@@ -594,6 +638,7 @@ export default function VfxEditorPage() {
         runtime,
         camera: cameraRef.current,
         textures,
+        meshes,
       })
     } catch {
       // Always best-effort. Losing the save over a cosmetic render would be
@@ -739,25 +784,41 @@ export default function VfxEditorPage() {
       </div>
 
       {/* Templates are the on-ramp, not demo content: nobody learns a particle
-          system from an empty board. Phase 8 turns this row into the full
-          gallery with animated previews and a "what this teaches you" list. */}
+          system from an empty board.
+
+          GROUPED BY CATEGORY AND SCROLLABLE. Twelve of them in a flat flex row
+          overflowed the toolbar; grouping also makes the row answer "what kind
+          of effect am I making" before "which one", which is the order an
+          author actually decides in. The full-pane gallery with animated hover
+          previews is still ahead - it needs one shared offscreen canvas that
+          the hovered card portals into, because twelve live WebGL contexts is
+          how you crash the tab. */}
       <div className="vfx-page__templates">
         <span className="vfx-page__templates-label">Start from</span>
-        {VFX_TEMPLATES.map(template => (
-          <button
-            key={template.id}
-            type="button"
-            className="vfx-page__template"
-            onClick={() => {
-              loadTemplate(template)
-              setSelection(null)
-              setExpanded({})
-            }}
-            title={`${template.blurb}\n\nTeaches: ${template.teaches.join(', ')}`}
-          >
-            {template.name}
-          </button>
-        ))}
+        <div className="vfx-page__template-groups">
+          {TEMPLATE_GROUPS.map(([category, entries]) => (
+            <div className="vfx-page__template-group" key={category}>
+              <span className="vfx-page__template-category">{category}</span>
+              <div className="vfx-page__template-row">
+                {entries.map(template => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="vfx-page__template"
+                    onClick={() => {
+                      loadTemplate(template)
+                      setSelection(null)
+                      setExpanded({})
+                    }}
+                    title={`${template.blurb}\n\nTeaches:\n- ${template.teaches.join('\n- ')}`}
+                  >
+                    {template.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div
@@ -817,6 +878,7 @@ export default function VfxEditorPage() {
               fieldProps={fieldProps}
               selectedBlockId={selection?.kind === 'block' ? selection.id : null}
               selectedContextId={selection?.kind === 'context' ? selection.id : null}
+              selectedOperatorId={selection?.kind === 'operator' ? selection.id : null}
               engineTarget={engineTarget || null}
               level={level}
               onInit={instance => { flowRef.current = instance }}

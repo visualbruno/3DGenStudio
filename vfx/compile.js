@@ -26,7 +26,13 @@
 // phase 7's numbers. That ordering is the only reason the capacity warning can
 // print real arithmetic instead of "capacity may be exceeded".
 
-import { CATALOG, ENGINE_SUPPORT, PROP_TYPE, propChannels } from './catalog.js';
+import {
+  CATALOG,
+  ENGINE_SUPPORT,
+  EVENT_TRIGGERS,
+  PROP_TYPE,
+  propChannels,
+} from './catalog.js';
 import { CONTEXT_KIND, normalizeVfxDoc, parseAssetRef, vfxSignature } from './doc.js';
 import { createDiagnostics } from './diagnostics.js';
 import {
@@ -292,17 +298,211 @@ function lowerOperatorTree(rootId, ctx) {
     in: inputs,
     width: 1,
   };
+  // Per-particle-ness is INHERITED, not looked up. An operator is per-particle
+  // if it reads an attribute itself, or if anything upstream of it does - so
+  // `attribute -> multiply -> remap` is per-particle all the way down, and the
+  // binding that consumes it has to be read inside the particle loop rather
+  // than once per pass.
+  //
+  // Computed here rather than in a separate pass because the recursion has
+  // already visited every input and the answer is one boolean per op.
+  if (def.freq === 'perParticle'
+    || inputs.some((input) => input.kind === 'register' && ctx.perParticleRegs.has(input.index))) {
+    op.perParticle = true;
+    ctx.perParticleRegs.add(out);
+  }
   if (node.modes) op.modes = { ...node.modes };
+
   ctx.ops.push(op);
   registers.set(rootId, out);
   return out;
 }
 
+/**
+ * Read a constant out of an already-lowered IR binding.
+ *
+ * Used for render state that must be a literal - the atlas grid - where a
+ * wired or randomised value has no meaning because the whole batch shares one
+ * value. Anything that is not a plain constant falls back, which is the honest
+ * answer: the layout of an image cannot vary per particle.
+ */
+function readConstBinding(irBlock, prop, constants, fallback) {
+  const binding = irBlock.bindings.find((b) => b.prop === prop);
+  if (!binding || binding.src !== BINDING_SRC.CONST) return fallback;
+  const value = constants.at(binding.index);
+  return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
+}
+
+/** The deepest chain of sub-emitters allowed. See the note in resolveEventChannels. */
+const MAX_EVENT_DEPTH = 4;
+
+/**
+ * Work out which systems are sub-emitters, and which channel each listens on.
+ *
+ * A CHANNEL IS A (SOURCE SYSTEM, TRIGGER) PAIR, allocated once here so the
+ * runtime never has to look anything up by name. Two systems listening to the
+ * same source and trigger share one channel - one death sweep, two sets of
+ * children - which is what makes "a spark that becomes both a puff and a
+ * decal" cost the same detection work as one of them.
+ *
+ * THE DEPTH CAP IS ENFORCED HERE, at compile time, where it can be REPORTED.
+ * A -> B -> A is a fork bomb made of particles, and it is not hypothetical: the
+ * natural way to author a firework is "a shell that dies into sparks", and the
+ * natural mistake is to make the sparks die into more sparks. Catching it at
+ * runtime could only mean surviving it silently.
+ *
+ * @param {Object} doc
+ * @param {Object} diag
+ * @returns {{channels: Array<{sourceSystemId: string, trigger: string}>,
+ *   listeners: Map<string, {channel: number, trigger: string, probability: number}>}}
+ */
+function resolveEventChannels(doc, diag) {
+  const byId = new Map(doc.systems.map((system) => [system.id, system]));
+  const channels = [];
+  const channelIndex = new Map();
+  const listeners = new Map();
+  const parentOf = new Map();
+
+  for (const system of doc.systems) {
+    const eventContext = system.contexts.find((c) => c.kind === CONTEXT_KIND.EVENT);
+    if (!eventContext) continue;
+    const params = eventContext.params || {};
+    const trigger = params.trigger || 'onPlay';
+    const def = EVENT_TRIGGERS[trigger];
+    // An unknown trigger degrades to the timeline rather than failing the
+    // compile: a document from a newer build should still play.
+    if (!def || def.source !== 'system') continue;
+
+    const sourceId = String(params.source || '');
+    if (!sourceId || !byId.has(sourceId)) {
+      diag.report('E_EVENT_NO_SOURCE', { systemId: system.id, contextId: eventContext.id },
+        { systemName: system.name, trigger: def.label });
+      continue;
+    }
+    if (sourceId === system.id) {
+      // Its own deaths spawning itself is the fork bomb in its purest form,
+      // and it is one dropdown away from being chosen by accident.
+      diag.report('E_EVENT_SELF', { systemId: system.id, contextId: eventContext.id },
+        { systemName: system.name });
+      continue;
+    }
+
+    const key = `${sourceId}::${trigger}`;
+    let channel = channelIndex.get(key);
+    if (channel === undefined) {
+      channel = channels.length;
+      channels.push({ sourceSystemId: sourceId, trigger });
+      channelIndex.set(key, channel);
+    }
+    const probability = Number(params.probability);
+    listeners.set(system.id, {
+      channel,
+      trigger,
+      probability: Number.isFinite(probability) && probability > 0 && probability <= 1
+        ? probability
+        : 1,
+    });
+    parentOf.set(system.id, sourceId);
+  }
+
+  // Cycle and depth check, per listener. Walking up from each one is O(depth)
+  // and depth is capped, so this cannot itself run away on a malicious graph.
+  for (const [systemId] of listeners) {
+    const seen = new Set([systemId]);
+    let cursor = parentOf.get(systemId);
+    let depth = 1;
+    while (cursor) {
+      if (seen.has(cursor)) {
+        diag.report('E_EVENT_CYCLE', { systemId }, { systemName: byId.get(systemId)?.name || systemId });
+        listeners.delete(systemId);
+        break;
+      }
+      seen.add(cursor);
+      depth += 1;
+      if (depth > MAX_EVENT_DEPTH) {
+        diag.report('E_EVENT_TOO_DEEP', { systemId },
+          { systemName: byId.get(systemId)?.name || systemId, limit: MAX_EVENT_DEPTH });
+        listeners.delete(systemId);
+        break;
+      }
+      cursor = parentOf.get(cursor);
+    }
+  }
+
+  return { channels, listeners, parentOf };
+}
+
+/**
+ * Order systems so a parent always steps before its children.
+ *
+ * THIS IS WHAT MAKES A SUB-EMITTER FIRE ON THE SAME FRAME as the death that
+ * caused it. Each system drains its own event channel at the start of its own
+ * step, so a parent that records a death during its update is seen by a child
+ * later in the order within the same step. Without the ordering a chain three
+ * deep would lag the impact it belongs to by three frames - at 60Hz that is
+ * visible on a muzzle flash, and it reads as the sub-effects being badly timed
+ * rather than as a frame-order artefact.
+ *
+ * Kahn's algorithm over "listener depends on source". Cycles are already
+ * removed by resolveEventChannels, so anything left unplaced at the end is
+ * appended rather than dropped - a system that never emits is better than a
+ * system that vanished.
+ *
+ * @param {Array<Object>} systems
+ * @param {Map<string, string>} parentOf listener id -> source id
+ * @returns {Array<Object>} the same systems, reordered
+ */
+function orderSystemsByEvent(systems, parentOf) {
+  if (parentOf.size === 0) return systems;
+
+  const placed = new Set();
+  const order = [];
+  let progressed = true;
+  while (progressed && order.length < systems.length) {
+    progressed = false;
+    for (const system of systems) {
+      if (placed.has(system.id)) continue;
+      const parent = parentOf.get(system.id);
+      // Ready when it has no parent, or its parent is already placed.
+      if (parent && !placed.has(parent)) continue;
+      placed.add(system.id);
+      order.push(system);
+      progressed = true;
+    }
+  }
+  // Anything left is part of a cycle the resolver could not remove. Appended so
+  // the effect still contains it.
+  for (const system of systems) {
+    if (!placed.has(system.id)) order.push(system);
+  }
+  return order;
+}
+
 // Catalog operator id -> IR op name. Kept as a table rather than derived from
 // the id so renaming a catalog entry's label or grouping cannot change the IR.
-const OPERATOR_OPS = Object.freeze({
+//
+// EVERY NAME HERE MUST HAVE A RUNTIME EVALUATOR, and every evaluator must be
+// reachable from here. An op the runtime cannot evaluate reads as zero, which
+// is the failure mode that made wired operators do nothing at all before the
+// evaluator existed - so runtime.test.mjs compares this table against
+// implementedOps() in both directions.
+//
+// The INPUT ORDER of each op is the declaration order of its catalog props:
+// lowerOperatorTree walks Object.keys(def.props) and the evaluator reads
+// op.in[0], op.in[1], ... positionally. Reordering an operator's props
+// therefore changes what it computes, silently. The arity check in
+// runtime.test.mjs is the guard.
+export const OPERATOR_OPS = Object.freeze({
   'op.constant': 'const',
+  'op.add': 'add',
+  'op.subtract': 'sub',
   'op.multiply': 'mul',
+  'op.divide': 'div',
+  'op.lerp': 'lerp',
+  'op.clamp': 'clamp',
+  'op.remap': 'remap',
+  'op.sine': 'sin',
+  'op.random': 'random',
   'op.time': 'time',
   'op.getAttribute': 'attr',
 });
@@ -324,7 +524,32 @@ function lowerBinding(prop, propDef, value, block, ctx) {
   const wiredFrom = ctx.propEdge.get(`${block.id}::${prop}`);
   if (wiredFrom !== undefined) {
     const reg = lowerOperatorTree(wiredFrom, ctx);
-    if (reg !== null) return { ...base, src: BINDING_SRC.REGISTER, index: reg };
+    if (reg !== null) {
+      // HOW WIDE THE SOURCE IS, which is not the same as how wide the
+      // PROPERTY is. Every operator produces one scalar (`width: 1` in
+      // lowerOperatorTree), so wiring a Value node into a vec3 property gave a
+      // binding claiming width 3 that read registers 0, 1 and 2 - one real
+      // value and two belonging to whatever other operators happened to be on
+      // the board. Gravity wired from a 7 became (7, 0, 0).
+      //
+      // A scalar source broadcasts, which is both the intuitive reading of
+      // "wire a number into a vector" and what Unity and Niagara do with a
+      // float plugged into a vector input.
+      const binding = { ...base, src: BINDING_SRC.REGISTER, index: reg, srcWidth: 1 };
+      // The runtime reads a register once per pass unless told otherwise, and
+      // it has no way to work this out for itself - the ops are a flat list by
+      // then. Marking the binding is what moves the read inside the loop.
+      //
+      // The op list is attached as well. It is the SAME array the block carries
+      // in `pre`, not a copy: the IR is JSON so the two serialise separately,
+      // but in memory sharing it means one place to look and no chance of the
+      // binding re-running a stale chain.
+      if (ctx.perParticleRegs.has(reg)) {
+        binding.perParticle = true;
+        binding.ops = ctx.ops;
+      }
+      return binding;
+    }
   }
 
   switch (value.mode) {
@@ -503,8 +728,27 @@ export function compileVfxGraph(document, options = {}) {
   let totalPeak = 0;
   let totalPeakExact = true;
 
-  for (const system of doc.systems) {
-    if (!system.enabled) continue;
+  // Sub-emitters, resolved before any system is lowered: a system needs to know
+  // whether anything listens to its deaths before its age.advance kernel is
+  // emitted, and a listener needs its channel before its spawn path is built.
+  const events = resolveEventChannels(doc, diag);
+  // Which channels anything actually LISTENS to. A source system whose deaths
+  // nobody watches must not pay for the detection, so the channel is stamped
+  // onto its kernels only when a listener exists.
+  const watched = new Map();
+  for (const channel of events.channels) {
+    watched.set(`${channel.sourceSystemId}::${channel.trigger}`,
+      events.channels.indexOf(channel));
+  }
+
+  // Parents before children, so a death recorded during a parent's update is
+  // drained by its child in the SAME step - see orderSystemsByEvent.
+  const orderedSystems = orderSystemsByEvent(
+    doc.systems.filter((system) => system.enabled),
+    events.parentOf,
+  );
+
+  for (const system of orderedSystems) {
 
     // --- Phase 1: structure -------------------------------------------------
     const spawnContexts = contextsOfKind(system, CONTEXT_KIND.SPAWN);
@@ -576,6 +820,13 @@ export function compileVfxGraph(document, options = {}) {
           const ctx = {
             catalog, sorted, constants, tables, curves, gradients,
             propEdge, inputEdge, uniformIndex, registers, ops,
+            // Carried so lowerOperatorTree can name the block an operator feeds
+            // rather than reporting a node id nobody can find on the board.
+            diag,
+            consumer: { blockId: block.id, blockLabel: def.label },
+            // Which registers hold a value that differs per particle. Read by
+            // lowerOperatorTree to propagate per-particle-ness down a chain.
+            perParticleRegs: new Set(),
             nextRegister: () => { const r = nextReg; nextReg += 1; return r; },
           };
 
@@ -680,9 +931,46 @@ export function compileVfxGraph(document, options = {}) {
     // every force has accumulated. Neither is author-placeable, because a stack
     // the author can break by dragging is a footgun and neither engine exposes
     // the integrator as a module either.
+    //
+    // THE UPDATE STACK IS SPLIT AROUND THE INTEGRATOR. A block whose catalog
+    // entry declares `stage: 'afterIntegrate'` is emitted after it - collisions
+    // and speed clamps, which are meaningless before the position and velocity
+    // they inspect have been produced. The block's place in the AUTHOR'S stack
+    // still decides its order relative to its neighbours on the same side, so
+    // reordering two collisions behaves as the node says it does.
+    const before = [];
+    const after = [];
+    for (const entry of irUpdateBlocks) {
+      const def = catalog.block(entry.srcBlockType);
+      if (def?.stage === 'afterIntegrate') after.push(entry);
+      else before.push(entry);
+    }
+
+    // The channels this system's own particles raise, if anything is listening.
+    // -1 rather than absent, so the runtime's check is a comparison rather than
+    // a property lookup on a hot path.
+    const deathChannel = watched.has(`${system.id}::onDeath`)
+      ? watched.get(`${system.id}::onDeath`)
+      : -1;
+    const collideChannel = watched.has(`${system.id}::onCollide`)
+      ? watched.get(`${system.id}::onCollide`)
+      : -1;
+    for (const entry of after) {
+      if (entry.kernel.startsWith('collide.')) entry.collideChannel = collideChannel;
+    }
+
     const irUpdate = [
-      { kernel: 'age.advance', srcBlockId: '', srcBlockType: '', modes: {}, bindings: [], pre: [], attributes: ['age', 'lifetime'] },
-      ...irUpdateBlocks,
+      {
+        kernel: 'age.advance',
+        srcBlockId: '',
+        srcBlockType: '',
+        modes: {},
+        bindings: [],
+        pre: [],
+        attributes: ['age', 'lifetime'],
+        deathChannel,
+      },
+      ...before,
     ];
     if (systemAttrs.has('velocity')) {
       irUpdate.push({
@@ -691,6 +979,7 @@ export function compileVfxGraph(document, options = {}) {
         attributes: ['position', 'velocity'],
       });
     }
+    irUpdate.push(...after);
 
     // Lifetime is the one attribute whose absence is fatal rather than merely
     // odd: without it nothing dies, the pool fills, and emission stops.
@@ -759,19 +1048,76 @@ export function compileVfxGraph(document, options = {}) {
         attributes: systemAttrs,
         smoothing: params.smoothing !== false,
       });
+      // The sprite-sheet layout, read straight off its Output block rather
+      // than left as a binding: it is render state that decides a shader
+      // define and a uniform, and it is constant for the whole batch. Reading
+      // it per particle would be meaningless - every particle in one draw
+      // shares the same atlas.
+      const flipbookBlock = blocks.find((b) => b.kernel === 'output.flipbook');
+      const tiles = flipbookBlock
+        ? [
+          readConstBinding(flipbookBlock, 'columns', constants, 1),
+          readConstBinding(flipbookBlock, 'rows', constants, 1),
+        ]
+        : [1, 1];
+
+      // Trail is in the dropdown and has no renderer, so it silently drew
+      // billboards. Reported rather than removed from the options: the value
+      // survives into the export, where both engines DO have a trail renderer,
+      // so an author targeting Unity or Niagara is right to set it.
+      if (params.mode === 'trail') {
+        diag.report('I_TRAIL_UNSUPPORTED', {
+          contextId: context.id,
+          systemId: system.id,
+        }, { systemName: system.name });
+      }
+
+      // A Mesh output with no mesh block draws the built-in chip, which is
+      // fine, but a MESH BLOCK with a non-mesh mode is silently ignored - the
+      // author has chosen a model and is looking at billboards.
+      const meshBlock = blocks.find((b) => b.kernel === 'output.mesh');
+      if (meshBlock && params.mode !== 'mesh') {
+        diag.report('W_MESH_MODE_MISSING', {
+          contextId: context.id,
+          blockId: meshBlock.srcBlockId,
+          systemId: system.id,
+        }, { systemName: system.name, mode: params.mode });
+      }
+
+      // A sheet with no player advances nothing, so it would show frame 0 for
+      // ever - which looks like the texture is simply cropped, and is the
+      // hardest flipbook mistake to diagnose from the viewport.
+      if (flipbookBlock && (tiles[0] > 1 || tiles[1] > 1) && !systemAttrs.has('flipbookFrame')) {
+        diag.report('W_FLIPBOOK_NOT_PLAYED', {
+          contextId: context.id,
+          blockId: flipbookBlock.srcBlockId,
+          systemId: system.id,
+        }, { systemName: system.name, frames: tiles[0] * tiles[1] });
+      }
+
       return {
         contextId: context.id,
         mode: params.mode,
         blend: params.blend,
         sort: params.sort,
+        tiles,
         instanceLayout,
         blocks,
         // Outputs sharing this key can be drawn in one instanced call. The
         // criterion is material state plus render mode, which is the same
         // grouping three.quarks' BatchedRenderer.equals uses.
+        //
+        // The tile counts are part of it because they are a shader define and a
+        // uniform: two outputs with different atlas layouts cannot share a
+        // draw, and merging them would play one effect's sheet through the
+        // other's grid.
+        // EVERY asset slot, not just the texture. A mesh output's geometry is
+        // as much a part of its draw state as its texture, and two outputs
+        // drawing different models cannot share an instanced call - merging
+        // them would draw one model for all of them.
         batchKey: hashString(JSON.stringify([
-          params.mode, params.blend, params.sort,
-          blocks.map((b) => b.assetSlots?.texture ?? -1),
+          params.mode, params.blend, params.sort, tiles,
+          blocks.map((b) => b.assetSlots || {}),
         ])),
       };
     });
@@ -795,6 +1141,10 @@ export function compileVfxGraph(document, options = {}) {
       outputs,
       peakParticles: peak,
       peakExact,
+      // Present only on a sub-emitter. Its absence is what tells the runtime to
+      // spawn from the timeline instead, so it is omitted rather than nulled -
+      // the IR is JSON and an explicit null would have to be checked for.
+      ...(events.listeners.has(system.id) ? { listen: events.listeners.get(system.id) } : {}),
     });
   }
 
@@ -803,6 +1153,11 @@ export function compileVfxGraph(document, options = {}) {
   const ir = {
     irFormat: VFX_IR_FORMAT,
     graphHash: String(hashString(vfxSignature(doc))),
+    // One entry per (source system, trigger) pair anything listens to. The
+    // runtime allocates a queue channel per entry; two listeners on the same
+    // pair share one, so a spark that becomes both a puff and a decal costs one
+    // death sweep rather than two.
+    eventChannels: events.channels,
     effect: {
       seed: doc.effect.seed,
       duration: doc.effect.duration,

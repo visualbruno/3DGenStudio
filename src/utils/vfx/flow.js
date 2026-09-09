@@ -36,6 +36,10 @@ const STAGE_ORDER = [
 const COLUMN_WIDTH = 320
 const ROW_HEIGHT = 210
 const OPERATOR_COLUMN_GAP = 120
+// Gaps used by autoLayout, which packs by MEASURED size rather than by the
+// fixed grid the derived layout uses.
+const COLUMN_GAP = 40
+const ROW_GAP = 28
 
 function stageIndex(kind) {
   const at = STAGE_ORDER.indexOf(kind)
@@ -91,6 +95,10 @@ export function indexDiagnostics(diagnostics) {
  * @param {Object} [options]
  * @param {Map<string, Array<Object>>} [options.diagnostics] from indexDiagnostics
  * @param {string|null} [options.selectedBlockId]
+ * @param {string|null} [options.selectedOperatorId]
+ * @param {string|null} [options.selectedNoteId] board-local: a note is edited
+ *   in place rather than in the Parameters panel, so its selection is not
+ *   document state
  * @param {string|null} [options.engineTarget]
  * @param {string} [options.level] 'guided' | 'standard' | 'full'
  * @returns {Array<Object>} React Flow nodes
@@ -99,6 +107,11 @@ export function toFlowNodes(doc, options = {}) {
   const diagnostics = options.diagnostics || new Map()
   const nodes = []
   const wiredByContext = wiredPropsByContext(doc)
+  // The option list for a context param declared `optionsFrom: 'systems'` -
+  // the Event stage's "Watching". Built once and shared by every node, so a
+  // param whose choices are the effect's own systems stays generic over the
+  // catalog instead of the Event kind being special-cased in the node.
+  const systemOptions = doc.systems.map(system => ({ value: system.id, label: system.name }))
 
   doc.systems.forEach((system, systemIndex) => {
     let outputOrdinal = 0
@@ -139,6 +152,7 @@ export function toFlowNodes(doc, options = {}) {
           // scan doc.edges on every render, and so the handle set is part of
           // the node's data - which is what useUpdateNodeInternals keys on.
           wiredProps: wiredByContext.get(context.id) || EMPTY_WIRED,
+          systemOptions,
           selectedBlockId: options.selectedBlockId || null,
           engineTarget: options.engineTarget || null,
           level: options.level || 'standard',
@@ -148,6 +162,31 @@ export function toFlowNodes(doc, options = {}) {
     }
   })
 
+  // Notes first in the array, so they paint UNDERNEATH the real nodes. React
+  // Flow renders in array order, and a note dragged over a context node has to
+  // go behind it - a comment that covers the thing it comments on is worse than
+  // no comment.
+  for (const note of doc.layout?.notes || []) {
+    nodes.unshift({
+      id: note.id,
+      type: 'vfxNote',
+      position: { x: note.x, y: note.y },
+      // The note's own bar. The body is a textarea and must not drag the node.
+      dragHandle: '.vfx-node__drag-handle',
+      // NOTHING EVER SET THIS, AND THE RESIZER IS GATED ON IT. React Flow only
+      // fills `selected` in from its own selection state, which this board
+      // never applies (select changes are dropped - the document owns
+      // selection), so a note's NodeResizer had `isVisible={false}` for its
+      // whole life and notes could not be resized at all.
+      selected: options.selectedNoteId === note.id,
+      // React Flow needs the size on the node for the resizer's own maths;
+      // the document is still the source of truth.
+      width: note.width,
+      height: note.height,
+      data: { note },
+    })
+  }
+
   const operatorColumn = doc.systems.length * COLUMN_WIDTH + OPERATOR_COLUMN_GAP
   doc.operators.forEach((operator, index) => {
     nodes.push({
@@ -155,6 +194,10 @@ export function toFlowNodes(doc, options = {}) {
       type: 'vfxOperator',
       position: positionFor(doc, operator.id, { x: operatorColumn, y: index * 140 }),
       dragHandle: '.vfx-node__drag-handle',
+      // Same omission as the note above: clicking an operator opened its
+      // Parameters panel but drew no ring, so the board and the panel disagreed
+      // about what was selected.
+      selected: options.selectedOperatorId === operator.id,
       data: {
         operator,
         def: CATALOG.operator(operator.type),
@@ -300,11 +343,82 @@ export function wiredPropsForContext(doc, contextId) {
 
 /**
  * Reset every stored position, so the board returns to the tidy default.
+ *
+ * NOTES ARE KEPT. Their positions are their own content - a note is placed
+ * where it is because of what it says - and losing them to a Tidy would make
+ * the button destructive rather than cosmetic.
+ *
  * @param {Object} doc
  * @returns {Object}
  */
 export function clearLayout(doc) {
   return { ...doc, layout: { ...doc.layout, nodes: {} } }
+}
+
+/**
+ * Lay the board out from scratch, writing explicit positions.
+ *
+ * DIFFERENT FROM clearLayout, and both are worth having. Clearing falls back to
+ * the DERIVED layout, which is a function of (system index, stage) and takes no
+ * account of how tall any node actually is - a system with eight blocks in its
+ * Update stage overlaps the Output beneath it. Auto-layout measures the nodes
+ * as they are on screen and packs each column to fit, which is what an author
+ * means by "tidy this up" once the effect has grown.
+ *
+ * `measure` is injected rather than read from the DOM here, because this module
+ * is pure and testable and React Flow already knows every node's measured size.
+ *
+ * @param {Object} doc
+ * @param {(nodeId: string) => {width: number, height: number}|null} measure
+ * @returns {Object} a new document with explicit positions
+ */
+export function autoLayout(doc, measure) {
+  const size = id => {
+    const measured = measure?.(id)
+    return {
+      width: measured?.width || COLUMN_WIDTH - COLUMN_GAP,
+      height: measured?.height || 160,
+    }
+  }
+
+  const positions = {}
+  let x = 0
+
+  doc.systems.forEach(system => {
+    // Sorted by stage, as toFlowNodes does - the document's own order is not
+    // meaningful for layout and an author may have added stages in any order.
+    const ordered = system.contexts.slice().sort((a, b) => stageIndex(a.kind) - stageIndex(b.kind))
+    let y = 0
+    let columnWidth = 0
+    for (const context of ordered) {
+      const { width, height } = size(context.id)
+      positions[context.id] = { x, y }
+      // PACKED BY MEASURED HEIGHT, which is the entire difference from the
+      // derived layout: a fixed row height either wastes space under a
+      // one-block stage or overlaps an eight-block one, and which of those
+      // happens depends on the effect rather than on anything this function
+      // can know in advance.
+      y += height + ROW_GAP
+      if (width > columnWidth) columnWidth = width
+    }
+    x += Math.max(columnWidth, COLUMN_WIDTH - COLUMN_GAP) + COLUMN_GAP
+  })
+
+  // Operators in their own column to the right of every system, stacked. They
+  // are wired ACROSS the board, so putting them between systems would route
+  // every data edge through the stage chain.
+  let operatorY = 0
+  for (const operator of doc.operators) {
+    const { height } = size(operator.id)
+    positions[operator.id] = { x, y: operatorY }
+    operatorY += height + ROW_GAP
+  }
+
+  return {
+    ...doc,
+    // Notes keep their own positions - see clearLayout.
+    layout: { ...doc.layout, nodes: positions },
+  }
 }
 
 /**

@@ -171,12 +171,13 @@ function framedCamera(runtime, ir) {
  * @param {Object} runtime whose pools are read as they stand
  * @param {THREE.Camera} camera
  * @param {Map<number, THREE.Texture>} textures
+ * @param {Map<number, Object>} meshes
  * @param {number} size
  * @returns {Promise<Blob>}
  */
-async function renderRuntimeFrame(ir, runtime, camera, textures, size) {
+async function renderRuntimeFrame(ir, runtime, camera, textures, meshes, size) {
   // Fresh batches over the SAME pools - see the reparenting note in the header.
-  const batches = createBatches(ir, runtime.emitters, { textures })
+  const batches = createBatches(ir, runtime.emitters, { textures, meshes })
   const scene = new THREE.Scene()
   scene.background = new THREE.Color('#121316')
 
@@ -219,11 +220,15 @@ async function renderRuntimeFrame(ir, runtime, camera, textures, size) {
  *   would frame nothing.
  * @param {number} [options.captureTime] override for the simulated path
  * @param {Map<number, THREE.Texture>} [options.textures]
+ * @param {Map<number, Object>} [options.meshes] loaded particle meshes; without
+ *   them a mesh output falls back to the built-in chip, so a card would not
+ *   match the preview beside it
  * @returns {Promise<File>}
  */
 export async function createVfxThumbnailFile(ir, options = {}) {
   const size = options.size || THUMBNAIL_SIZE
   const textures = options.textures || new Map()
+  const meshes = options.meshes || new Map()
   const safeName = String(options.name || ir.effect?.name || 'effect').replace(/[^\w.-]+/g, '_')
   const toFile = blob => new File([blob], `${safeName}-thumbnail.png`, { type: 'image/png' })
 
@@ -239,6 +244,7 @@ export async function createVfxThumbnailFile(ir, options = {}) {
       options.runtime,
       squareCameraFrom(options.camera),
       textures,
+      meshes,
       size,
     ))
   }
@@ -263,6 +269,7 @@ export async function createVfxThumbnailFile(ir, options = {}) {
     runtime,
     framedCamera(runtime, ir),
     textures,
+    meshes,
     size,
   ))
 }

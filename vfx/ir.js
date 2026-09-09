@@ -241,6 +241,15 @@ export function createConstantPool() {
       return first;
     },
     values: () => values.slice(),
+    /**
+     * One constant, without copying the pool.
+     *
+     * `values()` returns a defensive copy, which is right for the caller that
+     * puts the pool into the IR and wrong for a compiler pass that wants to
+     * read back a single literal it just added - that one would copy the whole
+     * array per lookup.
+     */
+    at: (i) => values[i],
   };
 }
 

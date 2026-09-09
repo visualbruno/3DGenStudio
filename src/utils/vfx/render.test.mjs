@@ -434,5 +434,81 @@ function buildTemplate(id) {
     box.min.y <= lo + 1e-6 && box.max.y >= hi - 1e-6);
 }
 
+// ---------------------------------------------------------------------------
+// 9. The starter library
+// ---------------------------------------------------------------------------
+//
+// THE PHASE-8 SUCCESS CRITERION: every template opens with zero warnings. A
+// template that trips a diagnostic is a bug in the template, not a lesson - it
+// is the first thing an author ever sees, and one that arrives complaining
+// teaches them that the diagnostics strip is noise.
+{
+  const rows = [];
+  const dirty = [];
+  const empty = [];
+  const threw = [];
+
+  for (const template of VFX_TEMPLATES) {
+    let result;
+    try {
+      // No assetIndex: a template must be self-sufficient, because it opens
+      // before the author has chosen any textures. Anything referencing an
+      // asset id would report a dangling reference here.
+      result = compileVfxGraph(template.build(), { assetIndex: new Set() });
+    } catch (error) {
+      threw.push(`${template.id}: ${error.message}`);
+      continue;
+    }
+    const loud = result.diagnostics.filter((d) => d.severity !== 'info');
+    if (loud.length > 0) dirty.push(`${template.id}: ${loud.map((d) => d.code).join(',')}`);
+
+    // And it has to actually draw something - a clean compile of an effect that
+    // emits nothing would pass every check above.
+    const runtime = createVfxRuntime(result.ir);
+    // Long enough for the latest clip in the staged templates to have opened.
+    for (let i = 0; i < 45; i += 1) step(runtime);
+    const batches = createBatches(result.ir, runtime.emitters, {});
+    let drawn = 0;
+    for (const batch of batches) drawn += writeBatch(batch, { x: 0, y: 0, z: -1 });
+    if (drawn === 0) empty.push(template.id);
+    for (const batch of batches) disposeBatch(batch);
+    rows.push(`${template.id}:${drawn}`);
+  }
+
+  check('every template builds', threw.length === 0, threw.join('; '));
+  check('  with no errors and no warnings', dirty.length === 0, dirty.join('; '));
+  check('  and draws something within 45 steps', empty.length === 0, empty.join(', '));
+  // At least the twelve the plan names, and the count is REPORTED rather than
+  // asserted exactly - pinning it to a number means every new template is a
+  // test failure, which trains the next person to edit the assertion without
+  // reading it.
+  check(`  (${VFX_TEMPLATES.length} templates, instances drawn at step 45)`,
+    VFX_TEMPLATES.length >= 12, rows.join(' '));
+
+  // Each card claims to teach something. An empty `teaches` list, or a
+  // duplicate id, is the kind of thing that survives review and then shows up
+  // in the gallery.
+  const ids = new Set();
+  const flawed = [];
+  for (const template of VFX_TEMPLATES) {
+    if (ids.has(template.id)) flawed.push(`duplicate id ${template.id}`);
+    ids.add(template.id);
+    if (!template.name || !template.blurb) flawed.push(`${template.id}: missing name or blurb`);
+    if (!Array.isArray(template.teaches) || template.teaches.length === 0) {
+      flawed.push(`${template.id}: teaches nothing`);
+    }
+    if (!template.category) flawed.push(`${template.id}: no category`);
+  }
+  check('every card names itself and what it teaches', flawed.length === 0, flawed.join('; '));
+
+  // build() must return a FRESH document each call, or opening a template
+  // twice would share mutable state and editing one copy would change the
+  // other.
+  const first = templateById('explosion').build();
+  const second = templateById('explosion').build();
+  check('build() returns a fresh document each call', first !== second
+    && first.systems[0] !== second.systems[0]);
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

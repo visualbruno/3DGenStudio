@@ -6,7 +6,7 @@
 // each one names what it is for. Kept as a .mjs sibling of the tests rather
 // than in a test file, because the compiler tests and the runtime tests need
 // the same documents and duplicating them would let the two drift.
-import { CONTEXT_KIND, createEmptyVfxDoc, normalizeVfxDoc } from './doc.js';
+import { CONTEXT_KIND, createEmptyVfxDoc, nextVfxId, normalizeVfxDoc } from './doc.js';
 import { CURVE_PRESETS } from './curve.js';
 import { GRADIENT_PRESETS } from './gradient.js';
 import { constValue, curveValue, gradientValue, randomValue } from './value.js';
@@ -344,6 +344,297 @@ export function incompleteEffect() {
  * the frequency classification can catch, since there is no particle in scope
  * when the spawn stage runs.
  */
+// A minimal system that emits, lives briefly and dies - the parent every
+// sub-emitter fixture below watches.
+function dyingParent(name) {
+  return system({
+    name,
+    spawn: [block('spawn.burst', { count: constValue(8) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(0.2) }),
+      block('initialize.setSize', { size: constValue(0.1) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+    ],
+    update: [block('update.gravity', { gravity: constValue([0, -9.8, 0]) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+      blocks: [],
+    }],
+  });
+}
+
+// A sub-emitter: a system with an Event context watching something.
+function watcher(name, params) {
+  const built = system({
+    name,
+    spawn: [block('spawn.burst', { count: constValue(3) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(0.5) }),
+      block('initialize.setSize', { size: constValue(0.05) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      block('initialize.inheritVelocity', { scale: constValue(0.25) }),
+    ],
+    update: [block('update.drag', { drag: constValue(1) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+      blocks: [],
+    }],
+  });
+  built.contexts = [
+    { id: nextVfxId('ctx'), kind: CONTEXT_KIND.EVENT, blocks: [], params },
+    ...built.contexts,
+  ];
+  return built;
+}
+
+/**
+ * A working sub-emitter: sparks that die into puffs.
+ *
+ * The shape every impact effect is built from, and the one the whole event
+ * queue exists for.
+ *
+ * @returns {Object} a normalised document
+ */
+export function subEmitter() {
+  const doc = createEmptyVfxDoc({ name: 'Sub-emitter' });
+  const parent = dyingParent('Sparks');
+  doc.systems = [
+    parent,
+    watcher('Puffs', { trigger: 'onDeath', source: parent.id, probability: '1' }),
+  ];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A sub-emitter with no source chosen.
+ *
+ * One dropdown away from happening, and the effect it produces is a system that
+ * never emits at all with nothing on screen explaining why.
+ *
+ * @returns {Object} a normalised document
+ */
+export function eventNoSource() {
+  const doc = createEmptyVfxDoc({ name: 'Orphan Event' });
+  doc.systems = [
+    dyingParent('Sparks'),
+    watcher('Puffs', { trigger: 'onDeath', source: '', probability: '1' }),
+  ];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A system watching its own particles.
+ *
+ * The fork bomb in its purest form: every particle it emits would immediately
+ * emit more, without limit. Also one dropdown away.
+ *
+ * @returns {Object} a normalised document
+ */
+export function eventSelfWatch() {
+  const doc = createEmptyVfxDoc({ name: 'Self Watch' });
+  const self = watcher('Loop', { trigger: 'onDeath', source: '', probability: '1' });
+  self.contexts[0].params.source = self.id;
+  doc.systems = [dyingParent('Sparks'), self];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * Two sub-emitters watching each other.
+ *
+ * A -> B -> A. Harder to notice than the self-watch because neither system
+ * looks wrong on its own.
+ *
+ * @returns {Object} a normalised document
+ */
+export function eventCycle() {
+  const doc = createEmptyVfxDoc({ name: 'Event Cycle' });
+  const a = watcher('A', { trigger: 'onDeath', source: '', probability: '1' });
+  const b = watcher('B', { trigger: 'onDeath', source: a.id, probability: '1' });
+  a.contexts[0].params.source = b.id;
+  doc.systems = [a, b];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A chain of sub-emitters five deep.
+ *
+ * Each level multiplies the particle count, so the limit is a guard rather than
+ * a preference - and the natural way to author a firework walks straight into
+ * it.
+ *
+ * @returns {Object} a normalised document
+ */
+export function eventTooDeep() {
+  const doc = createEmptyVfxDoc({ name: 'Deep Chain' });
+  const root = dyingParent('Root');
+  const systems = [root];
+  let previous = root;
+  for (let i = 0; i < 5; i += 1) {
+    const next = watcher(`Level ${i + 1}`, {
+      trigger: 'onDeath',
+      source: previous.id,
+      probability: '1',
+    });
+    systems.push(next);
+    previous = next;
+  }
+  doc.systems = systems;
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * An output set to draw trails, which this preview cannot.
+ *
+ * Kept in the dropdown rather than removed, because the setting SURVIVES into
+ * the export and both Unity and Niagara do have a trail renderer - an author
+ * targeting either is right to set it. What would be wrong is drawing
+ * billboards and saying nothing, which is what happened before
+ * I_TRAIL_UNSUPPORTED existed.
+ *
+ * @returns {Object} a normalised document
+ */
+export function trailMode() {
+  const doc = createEmptyVfxDoc({ name: 'Trail Mode' });
+  doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' } };
+  doc.systems = [system({
+    name: 'Ribbon',
+    spawn: [block('spawn.rate', { rate: constValue(120) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(0.4) }),
+      block('initialize.setSize', { size: constValue(0.06) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+    ],
+    update: [block('update.drag', { drag: constValue(1) })],
+    outputs: [{
+      params: { mode: 'trail', blend: 'additive', sort: 'none' },
+      blocks: [block('output.setMainTexture', { texture: constValue('tex') })],
+    }],
+  })];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A mesh chosen for an output that is not drawing meshes.
+ *
+ * Two settings have to agree - the block chooses WHICH model, the Output's
+ * "Render as" chooses whether a model is drawn at all - and when they disagree
+ * the model is silently ignored. The author has picked an asset and is looking
+ * at flat sprites, with nothing on screen connecting the two.
+ *
+ * @returns {Object} a normalised document
+ */
+export function meshModeMissing() {
+  const doc = createEmptyVfxDoc({ name: 'Unused Mesh' });
+  doc.references = {
+    tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' },
+    rock: { kind: 'mesh', ref: 'asset:119', name: 'rock.glb', colorSpace: 'srgb' },
+  };
+  doc.systems = [system({
+    name: 'Debris',
+    spawn: [block('spawn.burst', { count: constValue(20) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(2) }),
+      block('initialize.setSize', { size: constValue(0.2) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+    ],
+    update: [block('update.gravity', { gravity: constValue([0, -9.8, 0]) })],
+    outputs: [{
+      // Billboards, while a mesh sits chosen and unused.
+      params: { mode: 'billboard', blend: 'alpha', sort: 'none' },
+      blocks: [
+        block('output.setMainTexture', { texture: constValue('tex') }),
+        block('output.setMesh', { mesh: constValue('rock') }),
+      ],
+    }],
+  })];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A sprite sheet declared on the Output with nothing advancing through it.
+ *
+ * The failure this fixture exists for looks exactly like a texture that has
+ * been cropped: every particle shows frame 1 for its whole life, so the effect
+ * renders the top-left cell of the atlas and nothing about it suggests an
+ * animation was intended. Both halves are needed - the Output block sets the
+ * LAYOUT and a block in the Update stage steps through it - and the compiler
+ * has no way to know which one the author forgot except by noticing that one
+ * is present without the other.
+ *
+ * @returns {Object} a normalised document
+ */
+export function flipbookNotPlayed() {
+  const doc = createEmptyVfxDoc({ name: 'Unplayed Sheet' });
+  doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 'sheet.png', colorSpace: 'srgb' } };
+  doc.systems = [system({
+    name: 'Sheet',
+    spawn: [block('spawn.rate', { rate: constValue(30) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(1) }),
+      block('initialize.setSize', { size: constValue(0.4) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+    ],
+    update: [block('update.drag', { drag: constValue(0.5) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'alpha', sort: 'none' },
+      blocks: [
+        block('output.setMainTexture', { texture: constValue('tex') }),
+        // The layout, with no Play Sprite Sheet block anywhere.
+        block('output.setFlipbook', { columns: constValue(4), rows: constValue(4) }),
+      ],
+    }],
+  })];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * A per-particle operator wired into a property that is legitimately
+ * per-particle.
+ *
+ * DIFFERENT FROM frequencyMismatch, and both are needed. That one wires a
+ * particle attribute into a SPAWN RATE, which is an ERROR - a rate is a
+ * property of the emitter and there is no particle whose age it could read.
+ * This one wires it into Set Size, which is legal and now fully supported: the
+ * compiler marks the chain per-particle and the runtime re-evaluates it inside
+ * the particle loop.
+ *
+ * It stays as a fixture because it is the only one that exercises the
+ * per-particle register path end to end through the compiler, and because that
+ * path used to be a warning - a regression would silently go back to giving
+ * every particle the same value, which no shape check would notice.
+ *
+ * @returns {Object} a normalised document
+ */
+export function perParticleOperator() {
+  const doc = createEmptyVfxDoc({ name: 'Per-Particle Operator' });
+  doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' } };
+  const sizeBlock = block('initialize.setSize', { size: constValue(0.2) });
+  doc.systems = [system({
+    name: 'Wired Size',
+    spawn: [block('spawn.rate', { rate: constValue(50) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(1) }),
+      sizeBlock,
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+    ],
+    update: [block('update.drag', { drag: constValue(1) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+      blocks: [block('output.setMainTexture', { texture: constValue('tex') })],
+    }],
+  })];
+  doc.operators = [{
+    id: 'op-attr-size',
+    type: 'op.getAttribute',
+    props: {},
+    modes: { attribute: 'normalizedAge' },
+  }];
+  doc.edges = [
+    { id: 'e1', from: { nodeId: 'op-attr-size', port: 'out' }, to: { blockId: sizeBlock.id, prop: 'size' } },
+  ];
+  return normalizeVfxDoc(doc);
+}
+
 export function frequencyMismatch() {
   const doc = createEmptyVfxDoc({ name: 'Freq Mismatch' });
   doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' } };

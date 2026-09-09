@@ -105,7 +105,11 @@ function record(result) {
   // null and then a silent zero on the far side of a language boundary.
   const problems = [];
   for (const [name, make] of Object.entries(fixtures)) {
-    const { ir } = compile(make(), { engineTarget: 'unreal' });
+    // record(), so every fixture contributes to the diagnostic-coverage set at
+    // the bottom of this file. Compiling here without recording is how a newly
+    // added fixture can exercise a new diagnostic and still have that
+    // diagnostic reported as unreachable.
+    const { ir } = record(compile(make(), { engineTarget: 'unreal' }));
     for (const problem of validateIrSerializable(ir)) problems.push(`${name}: ${problem}`);
   }
   check('every IR is plain JSON', problems.length === 0, problems.slice(0, 2).join('; ') || 'clean');

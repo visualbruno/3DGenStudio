@@ -60,6 +60,18 @@ export default function VfxPreviewHud({ statsRef, showKernels = false }) {
         <span className="vfx-hud__label">dropped</span>
         <span className="vfx-hud__value">{number(stats.dropped)}</span>
       </div>
+      {/* Sub-emitter events lost to a full channel. Shown only when the effect
+          HAS sub-emitters, unlike `dropped` which is always visible: a zero
+          here on an effect with no events teaches nothing, whereas the capacity
+          lesson applies to everything. Red the moment it is non-zero, because a
+          sub-emitter that quietly stops firing at high counts is otherwise
+          indistinguishable from one that is working. */}
+      {stats.eventsDropped !== undefined && stats.eventsDropped > 0 && (
+        <div className="vfx-hud__row is-bad">
+          <span className="vfx-hud__label">events lost</span>
+          <span className="vfx-hud__value">{number(stats.eventsDropped)}</span>
+        </div>
+      )}
 
       <div className="vfx-hud__rule" />
 

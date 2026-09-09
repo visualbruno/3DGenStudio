@@ -282,10 +282,48 @@
 
 /* --- clips ---------------------------------------------------------------- */
 
+/* A CLIP'S GEOMETRY IS TWO PROPERTIES REACT OWNS PLUS TWO THE DRAG OWNS, and
+   that split is a bug fix, not a style.
+
+   THE BUG: a clip dragged sideways collapsed to a ~24px stub the moment the
+   mouse was released - two 8px handles, a 6px minimum body and a hairline, i.e.
+   an element with NO WIDTH AT ALL. The drag previewed itself by writing
+   `element.style.left/width` directly and then cleared both back to '' at
+   pointer-up so React's render would "own the geometry again". React does not
+   work that way. It diffs the style props it rendered LAST against the ones it
+   is rendering NOW - not against the DOM - so after a move (which changes `at`
+   and not `duration`) the width string was identical, React skipped it, and the
+   `''` we had just written survived. The clip then had no width until some
+   unrelated render happened to change the width string, which is why it
+   sometimes appeared to heal itself a second later.
+
+   THE RULE THAT PREVENTS IT: the drag never writes a property React writes.
+   React sets --vfx-clip-at and --vfx-clip-w from the document; the drag adds
+   --vfx-clip-dx and --vfx-clip-dw, which React has never heard of, so clearing
+   them at pointer-up cannot be skipped by a diff - there is no diff. The two
+   writers compose through calc() instead of fighting over one property.
+
+   The deltas are registered with @property so an unset one is a real 0px rather
+   than an unresolved var(), and `inherits: false` keeps the handles and the body
+   from picking up their parent clip's offset. */
+@property --vfx-clip-dx {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --vfx-clip-dw {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 .vfx-timeline__clip {
   position: absolute;
   top: 3px;
   bottom: 3px;
+  left: calc(var(--vfx-clip-at, 0px) + var(--vfx-clip-dx));
+  width: calc(var(--vfx-clip-w, 8px) + var(--vfx-clip-dw));
   display: flex;
   align-items: stretch;
   border-radius: 3px;
@@ -318,23 +356,81 @@
 .vfx-timeline__clip-body {
   flex: 1 1 auto;
   cursor: grab;
-  min-width: 0;
+  /* Never below a grabbable size. Combined with hiding the handles on a narrow
+     clip (HANDLE_MIN_CLIP_PX) this guarantees there is always something to
+     drag - the previous layout could leave a 10px clip with a zero-width body,
+     which made it impossible to move at all. */
+  min-width: 6px;
 }
 
 .vfx-timeline__clip-body:active {
   cursor: grabbing;
 }
 
+/* THE TRIM HANDLES ARE 8px, NOT 5px, AND THEY SHOW A GRIP.
+
+   At 5px they were below the ~9px a mouse can hit reliably, and nothing marked
+   them - so pressing the left edge of a bar to DRAG it landed on the start-trim
+   handle instead, which moves the start and shortens the clip. The bar appeared
+   to truncate itself, which is what it was reported as.
+
+   The grip is two hairlines, visible at rest rather than only on hover: an
+   affordance you have to discover by hovering is one you discover by getting it
+   wrong first. */
 .vfx-timeline__handle {
+  position: relative;
   flex: 0 0 auto;
-  width: 5px;
+  width: 8px;
   cursor: ew-resize;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.32);
   touch-action: none;
 }
 
+.vfx-timeline__handle::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 10px;
+  background: repeating-linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.7) 0 1px,
+    transparent 1px 3px
+  );
+}
+
+/* The hit area reaches 3px past the handle on the OUTSIDE only, so it never
+   eats into the body's own target - the same padded-pseudo-element trick
+   VfxSplitter uses for its 6px track. */
+.vfx-timeline__handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.vfx-timeline__handle.is-start::after {
+  left: -3px;
+  right: 0;
+}
+
+.vfx-timeline__handle.is-end::after {
+  left: 0;
+  right: -3px;
+}
+
 .vfx-timeline__handle:hover {
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.vfx-timeline__handle:hover::before {
+  background: repeating-linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.75) 0 1px,
+    transparent 1px 3px
+  );
 }
 
 .vfx-timeline__clip-tools {

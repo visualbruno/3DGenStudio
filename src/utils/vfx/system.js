@@ -24,6 +24,7 @@
 
 import { computeSpawnCount, createEmitter, resetEmitter, spawnStep } from './emitter.js';
 import { poolBytes } from './pool.js';
+import { clearEvents, createEventQueue, resetEventQueue } from './events.js';
 import { createStats } from './stats.js';
 import { pcgHash2 } from '../../../vfx/random.js';
 
@@ -73,6 +74,14 @@ export function createVfxRuntime(ir, options = {}) {
     stepIndex: 0,
     frameSeed: 0,
     spawnEventSeed: 0,
+    // One channel per (source system, trigger) pair anything listens to. Sized
+    // from the effect's own capacity rather than a fixed number: a parent
+    // holding 60k particles can raise 60k deaths in the frame it ends, and a
+    // channel a tenth that size would drop most of them.
+    events: createEventQueue({
+      channels: Math.max(1, (ir.eventChannels || []).length),
+      capacity: Math.max(256, Math.min(16384, ir.effect.capacity || 1024)),
+    }),
   };
 
   const emitters = ir.systems.map((irSystem) => createEmitter(irSystem, ir, env));
@@ -128,6 +137,10 @@ export function reset(runtime) {
   runtime.env.time = 0;
   runtime.env.stepIndex = 0;
   runtime.snapshots.clear();
+  // The dropped tally goes too, not just the counts: it is a report about this
+  // run of the effect, and carrying it across a restart would leave the HUD
+  // blaming the current playthrough for a previous one's overflow.
+  resetEventQueue(runtime.env.events);
 
   // Prewarm: simulate before frame zero, so a looping effect opens mid-flow
   // rather than visibly filling up. Runs after the reset so it is part of the
@@ -201,6 +214,15 @@ export function step(runtime) {
   env.spawnEventSeed = pcgHash2(env.effectSeed ^ 0x2b1d3c77, runtime.stepIndex);
 
   stats.beginFrame();
+
+  // Cleared at the START of the step, not the end.
+  //
+  // The emitters are ordered parents-before-children by the compiler and each
+  // drains its channel during its own spawn, so a death recorded by a parent's
+  // update is consumed by its child later in this same loop. Clearing first is
+  // what makes it impossible for a record to survive into a second step and
+  // spawn twice.
+  clearEvents(env.events);
 
   for (const emitter of runtime.emitters) {
     const pool = emitter.pool;
@@ -405,6 +427,11 @@ export function runtimeStats(runtime) {
     capacity,
     spawned,
     dropped: droppedCount(runtime),
+    // Events lost to a full channel. Reported next to the dropped particles for
+    // the same reason: dropping visibly beats hitching invisibly, and a
+    // sub-emitter that quietly stops firing at high counts is otherwise
+    // indistinguishable from one that is working.
+    eventsDropped: runtime.env.events.dropped,
     finished: runtime.finished,
   };
 }

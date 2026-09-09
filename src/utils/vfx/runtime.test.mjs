@@ -28,6 +28,11 @@ import { constValue, curveValue, gradientValue, randomValue } from '../../../vfx
 import { pcgFloatAt } from '../../../vfx/random.js';
 import { implementedKernels, particleSeed } from './kernels.js';
 import { poolChecksum } from './pool.js';
+import { implementedOps } from './kernels.js';
+import { OPERATOR_OPS } from '../../../vfx/compile.js';
+import { templateById } from './templates.js';
+import { addEdge, addOperator, setOperatorProp } from './edits.js';
+import * as fixtures from '../../../vfx/fixtures.mjs';
 import {
   advance,
   createVfxRuntime,
@@ -685,6 +690,637 @@ const inertInit = () => [
   step(runtime);
   check('  and the sim reads it', near(runtime.emitters[0].pool.planes.size[0], 3.25, 1e-5),
     String(runtime.emitters[0].pool.planes.size[0]));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Operator nodes actually compute something ---');
+// ---------------------------------------------------------------------------
+//
+// THE BUG THIS SECTION EXISTS FOR. The compiler lowered an operator subtree
+// into `irBlock.pre` and bindings read `src: 'register'` - and nothing ever
+// executed that list. `env.regs` stayed all zeros, so wiring a Value node of 5
+// into Set Size produced a size of ZERO. Every visible signal said it was
+// working: the node was on the board, the wire was drawn, the compile was
+// clean, `compile.test.mjs` was green because it checks the IR's SHAPE. Only
+// running the simulation and reading the pool catches it, which is what these
+// checks do.
+{
+  // --- coverage, in both directions --------------------------------------
+  const compilerOps = new Set(Object.values(OPERATOR_OPS));
+  const runtimeOps = new Set(implementedOps());
+  const unevaluated = [...compilerOps].filter((op) => !runtimeOps.has(op));
+  const unreachable = [...runtimeOps].filter((op) => !compilerOps.has(op));
+  // An op the compiler emits and the runtime cannot evaluate reads as zero -
+  // exactly the original bug, one operator at a time.
+  check('every op the compiler emits has a runtime evaluator',
+    unevaluated.length === 0, unevaluated.join(', '));
+  check('  and every evaluator is reachable from the catalog',
+    unreachable.length === 0, unreachable.join(', '));
+
+  // ARITY. lowerOperatorTree pushes one input per catalog prop in DECLARATION
+  // ORDER, and each evaluator reads op.in[0], op.in[1], ... positionally. So
+  // an operator with fewer props than its evaluator reads is a silent zero in
+  // the middle of an expression.
+  const arity = { const: 1, add: 2, sub: 2, mul: 2, div: 2, lerp: 3, clamp: 3, remap: 5, sin: 1, random: 2, time: 0, attr: 0 };
+  const wrongArity = [];
+  for (const def of CATALOG.operators) {
+    const op = OPERATOR_OPS[def.id];
+    const props = Object.keys(def.props || {}).length;
+    if (arity[op] !== undefined && arity[op] !== props) {
+      wrongArity.push(`${def.id}: ${props} props, evaluator reads ${arity[op]}`);
+    }
+  }
+  check('  and every operator declares as many props as its evaluator reads',
+    wrongArity.length === 0, wrongArity.join('; '));
+
+  // --- the three paths that read a register ------------------------------
+  const smoke = normalizeVfxDoc(templateById('smoke').build());
+  const blocksOf = (d) => d.systems.flatMap((sys) => sys.contexts.flatMap((c) => c.blocks));
+  const sizeBlock = blocksOf(smoke).find((b) => b.type === 'initialize.setSize');
+  const rateBlock = blocksOf(smoke).find((b) => b.type === 'spawn.rate');
+
+  const wire = (doc, ops, blockId, prop) => {
+    let next = doc;
+    for (const [type, props] of ops) {
+      next = addOperator(next, type);
+      const id = next.operators.at(-1).id;
+      for (const [key, value] of Object.entries(props)) {
+        next = setOperatorProp(next, id, key, value);
+      }
+    }
+    return addEdge(next, { fromNodeId: next.operators.at(-1).id, blockId, prop });
+  };
+
+  const runFor = (doc, steps) => {
+    const { ir } = compileVfxGraph(doc);
+    const runtime = createVfxRuntime(ir);
+    for (let i = 0; i < steps; i += 1) step(runtime);
+    return runtime;
+  };
+
+  // 1. An INIT kernel. Checked against startSize, the birth value, because the
+  //    live size has already been through Size Over Life.
+  const sized = wire(smoke, [['op.constant', { value: 5 }]], sizeBlock.id, 'size');
+  const sizedRuntime = runFor(sized, 10);
+  check('a wired Value reaches an initialize kernel',
+    near(sizedRuntime.emitters[0].pool.planes.startSize[0], 5, 1e-6),
+    String(sizedRuntime.emitters[0].pool.planes.startSize[0]));
+
+  // Changing the operator changes the result - which distinguishes "the wire
+  // works" from "the default happened to look right".
+  const resized = setOperatorProp(sized, sized.operators[0].id, 'value', 0.25);
+  check('  and follows the operator when it changes',
+    near(runFor(resized, 10).emitters[0].pool.planes.startSize[0], 0.25, 1e-6));
+
+  // 2. The SPAWN RATE path, which does not go through buildKernel at all and
+  //    needed its own runOps call.
+  const baseline = runFor(smoke, 60).emitters[0].pool.spawnCursor;
+  const rated = wire(smoke, [['op.constant', { value: 200 }]], rateBlock.id, 'rate');
+  const ratedCount = runFor(rated, 60).emitters[0].pool.spawnCursor;
+  check('a wired Value reaches a spawn rate',
+    ratedCount > baseline * 3 && ratedCount >= 195 && ratedCount <= 205,
+    `${baseline} -> ${ratedCount} in one second`);
+
+  // 3. The BURST path, likewise.
+  const sparks = normalizeVfxDoc(templateById('sparks').build());
+  const burstBlock = sparks.systems.flatMap((sys) => sys.contexts.flatMap((c) => c.blocks))
+    .find((b) => b.type === 'spawn.burst');
+  const bursted = wire(sparks, [['op.constant', { value: 7 }]], burstBlock.id, 'count');
+  check('a wired Value reaches a burst count',
+    runFor(bursted, 10).emitters[0].pool.spawnCursor === 7,
+    String(runFor(bursted, 10).emitters[0].pool.spawnCursor));
+
+  // --- a CHAIN, which is what registers are for -------------------------
+  // Value(3) -> Multiply(b = 4) -> size. This is the case a single-op test
+  // cannot cover: the second op has to read the register the first one wrote,
+  // in the order the compiler's topological sort put them.
+  let chained = addOperator(smoke, 'op.constant');
+  const valueId = chained.operators.at(-1).id;
+  chained = setOperatorProp(chained, valueId, 'value', 3);
+  chained = addOperator(chained, 'op.multiply');
+  const mulId = chained.operators.at(-1).id;
+  chained = setOperatorProp(chained, mulId, 'b', 4);
+  chained = normalizeVfxDoc({
+    ...chained,
+    edges: [...chained.edges, { from: { nodeId: valueId, port: 'out' }, to: { nodeId: mulId, port: 'a' } }],
+  });
+  chained = addEdge(chained, { fromNodeId: mulId, blockId: sizeBlock.id, prop: 'size' });
+  check('a chain of operators evaluates in order',
+    near(runFor(chained, 10).emitters[0].pool.planes.startSize[0], 12, 1e-6),
+    String(runFor(chained, 10).emitters[0].pool.planes.startSize[0]));
+
+  // --- the arithmetic ----------------------------------------------------
+  // Each operator checked against a known answer rather than against itself.
+  const cases = [
+    ['op.add', { a: 2, b: 3 }, 5],
+    ['op.subtract', { a: 7, b: 2 }, 5],
+    ['op.multiply', { a: 2.5, b: 4 }, 10],
+    ['op.divide', { a: 9, b: 3 }, 3],
+    // Zero rather than Infinity: an infinity in a particle position turns the
+    // system to NaN a frame later, which is far harder to diagnose.
+    ['op.divide', { a: 9, b: 0 }, 0],
+    ['op.lerp', { a: 10, b: 20, t: 0.25 }, 12.5],
+    ['op.clamp', { value: 50, min: 0, max: 8 }, 8],
+    ['op.clamp', { value: -50, min: 0, max: 8 }, 0],
+    ['op.remap', { value: 0.5, inMin: 0, inMax: 1, outMin: 100, outMax: 200 }, 150],
+    // A collapsed input range maps to the low end rather than dividing by zero.
+    ['op.remap', { value: 0.5, inMin: 1, inMax: 1, outMin: 100, outMax: 200 }, 100],
+    ['op.sine', { phase: 0.25 }, 1],
+  ];
+  const wrong = [];
+  for (const [type, props, expected] of cases) {
+    const doc = wire(smoke, [[type, props]], sizeBlock.id, 'size');
+    const got = runFor(doc, 10).emitters[0].pool.planes.startSize[0];
+    if (!near(got, expected, 1e-5)) {
+      wrong.push(`${type}(${JSON.stringify(props)}) = ${got}, want ${expected}`);
+    }
+  }
+  check('every operator computes the right answer', wrong.length === 0, wrong.join('; '));
+
+  // op.random is deterministic for a given seed - the whole premise of
+  // vfx/random.js - so the same effect run twice draws the same number.
+  const randomDoc = wire(smoke, [['op.random', { min: 10, max: 20 }]], sizeBlock.id, 'size');
+  const a = runFor(randomDoc, 10).emitters[0].pool.planes.startSize[0];
+  const b = runFor(randomDoc, 10).emitters[0].pool.planes.startSize[0];
+  check('op.random is reproducible', near(a, b, 1e-9), `${a} vs ${b}`);
+  check('  and inside its range', a >= 10 && a <= 20, String(a));
+
+  // op.time changes between frames, which is the case that rules out hoisting
+  // the ops to build time.
+  //
+  // Read as the SPREAD of birth times across the pool, not as particle 0's.
+  // Particle 0 was born in the first frame, so its birth time is ~0.017 however
+  // long the simulation runs - the first version of this check compared 0.017
+  // against 0.017 and called it a failure of the operator rather than of the
+  // measurement.
+  const timeDoc = wire(smoke, [['op.time', {}]], sizeBlock.id, 'size');
+  const timed = runFor(timeDoc, 55).emitters[0].pool;
+  let earliest = Infinity;
+  let latest = -Infinity;
+  for (let i = 0; i < timed.count; i += 1) {
+    const born = timed.planes.startSize[i];
+    if (born < earliest) earliest = born;
+    if (born > latest) latest = born;
+  }
+  check('op.time advances with the simulation', latest > earliest + 0.5,
+    `birth times span ${earliest.toFixed(3)} to ${latest.toFixed(3)} over ${timed.count} particles`);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The phase-8 kernels, against closed-form answers ---');
+// ---------------------------------------------------------------------------
+//
+// Each of these is checked against arithmetic done by hand, never against the
+// kernel's own output. A kernel that is self-consistently wrong - a spread that
+// concentrates down its axis, a bounce that sinks - passes any test written by
+// running it and recording what happened.
+{
+  const burstOf = (count) => [blk('spawn.burst', { count: constValue(count) })];
+  const runSteps = (spec, steps) => {
+    const { runtime } = build(spec);
+    for (let i = 0; i < steps; i += 1) step(runtime);
+    return runtime.emitters[0].pool;
+  };
+
+  // --- shape.position.box -------------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(400),
+      init: [...inertInit(), blk('initialize.positionBox', { size: constValue([4, 2, 6]) })],
+    }, 1);
+    let outside = 0;
+    let sumX = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const o = i * 3;
+      const x = pool.planes.position[o];
+      const y = pool.planes.position[o + 1];
+      const z = pool.planes.position[o + 2];
+      if (Math.abs(x) > 2 + 1e-6 || Math.abs(y) > 1 + 1e-6 || Math.abs(z) > 3 + 1e-6) outside += 1;
+      sumX += x;
+    }
+    check('box emission stays inside the box', outside === 0, `${outside} of ${pool.count} outside`);
+    // CENTRED, not corner-anchored: resizing a box emitter must not also move
+    // the effect. With 400 samples the mean is within ~0.15 of zero.
+    check('  and is centred on the origin', Math.abs(sumX / pool.count) < 0.2,
+      `mean x ${(sumX / pool.count).toFixed(4)}`);
+  }
+
+  // --- shape.position.circle ---------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(300),
+      init: [...inertInit(), blk('initialize.positionCircle', {
+        radius: constValue(2),
+        thickness: constValue(0.5),
+      })],
+    }, 1);
+    let bad = 0;
+    let offPlane = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const o = i * 3;
+      const r = Math.hypot(pool.planes.position[o], pool.planes.position[o + 2]);
+      if (r < 1.5 - 1e-5 || r > 2 + 1e-5) bad += 1;
+      if (Math.abs(pool.planes.position[o + 1]) > 1e-9) offPlane += 1;
+    }
+    check('ring emission stays within the band', bad === 0, `${bad} of ${pool.count} outside 1.5..2`);
+    // XZ, because Y is up everywhere else in this runtime and a ring emitter is
+    // nearly always flat on the ground.
+    check('  and lies flat in the XZ plane', offPlane === 0, `${offPlane} off plane`);
+  }
+
+  // --- vel.radial ---------------------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(200),
+      init: [
+        ...inertInit(),
+        blk('initialize.positionSphere', { radius: constValue(1) }, { fill: 'surface' }),
+        blk('initialize.velocityRadial', { speed: constValue(3) }),
+      ],
+    }, 1);
+    let wrongSpeed = 0;
+    let notParallel = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const o = i * 3;
+      const px = pool.planes.position[o];
+      const py = pool.planes.position[o + 1];
+      const pz = pool.planes.position[o + 2];
+      const vx = pool.planes.velocity[o];
+      const vy = pool.planes.velocity[o + 1];
+      const vz = pool.planes.velocity[o + 2];
+      if (!near(Math.hypot(vx, vy, vz), 3, 1e-4)) wrongSpeed += 1;
+      // Parallel to the offset from the origin: the cross product vanishes.
+      const cross = Math.hypot(py * vz - pz * vy, pz * vx - px * vz, px * vy - py * vx);
+      if (cross > 1e-4) notParallel += 1;
+    }
+    check('outward velocity has the requested speed', wrongSpeed === 0, `${wrongSpeed} wrong`);
+    check('  and points directly away from the origin', notParallel === 0, `${notParallel} not parallel`);
+
+    // A particle AT the origin has no direction to derive, and must not end up
+    // motionless - a burst from a point emitter would otherwise sit still.
+    const atOrigin = runSteps({
+      spawn: burstOf(50),
+      init: [...inertInit(), blk('initialize.velocityRadial', { speed: constValue(3) })],
+    }, 1);
+    let still = 0;
+    for (let i = 0; i < atOrigin.count; i += 1) {
+      const o = i * 3;
+      if (Math.hypot(atOrigin.planes.velocity[o], atOrigin.planes.velocity[o + 1],
+        atOrigin.planes.velocity[o + 2]) < 1e-6) still += 1;
+    }
+    check('  and a particle at the origin still gets a direction', still === 0,
+      `${still} of ${atOrigin.count} motionless`);
+  }
+
+  // --- vel.direction ------------------------------------------------------
+  {
+    // Spread 0 is exact: direction times speed, no randomness at all.
+    const exact = runSteps({
+      spawn: burstOf(20),
+      init: [...inertInit(), blk('initialize.velocityDirection', {
+        direction: constValue([0, -1, 0]),
+        speed: constValue(8),
+        spread: constValue(0),
+      })],
+    }, 1);
+    check('a zero spread gives exactly direction times speed',
+      near(exact.planes.velocity[0], 0, 1e-6)
+      && near(exact.planes.velocity[1], -8, 1e-6)
+      && near(exact.planes.velocity[2], 0, 1e-6),
+      Array.from(exact.planes.velocity.slice(0, 3)).map((v) => v.toFixed(4)).join(','));
+
+    // A 20-degree spread must keep every particle inside 20 degrees, AND must
+    // actually use the cone rather than collapsing onto the axis. The second
+    // half is the one that catches an even-in-angle draw, which concentrates
+    // particles down the axis and makes a wide spread look narrow.
+    const spread = runSteps({
+      spawn: burstOf(400),
+      init: [...inertInit(), blk('initialize.velocityDirection', {
+        direction: constValue([0, -1, 0]),
+        speed: constValue(8),
+        spread: constValue(20),
+      })],
+    }, 1);
+    let outsideCone = 0;
+    let sumAngle = 0;
+    for (let i = 0; i < spread.count; i += 1) {
+      const o = i * 3;
+      const vx = spread.planes.velocity[o];
+      const vy = spread.planes.velocity[o + 1];
+      const vz = spread.planes.velocity[o + 2];
+      const length = Math.hypot(vx, vy, vz) || 1;
+      // Angle from the -Y axis.
+      const angle = Math.acos(Math.min(1, Math.max(-1, -vy / length))) * (180 / Math.PI);
+      if (angle > 20 + 1e-3) outsideCone += 1;
+      sumAngle += angle;
+    }
+    check('every particle stays inside the spread cone', outsideCone === 0,
+      `${outsideCone} of ${spread.count} outside 20 degrees`);
+    // Even over the SOLID angle puts the mean at about 2/3 of the half-angle
+    // (13.3 for 20). Even over the angle itself would put it at half (10).
+    const meanAngle = sumAngle / spread.count;
+    check('  spread evenly over the cone, not over the angle',
+      meanAngle > 11.5 && meanAngle < 15, `mean angle ${meanAngle.toFixed(2)} deg, want ~13.3`);
+  }
+
+  // --- force.attract ------------------------------------------------------
+  {
+    // One particle at the origin, an attractor 2m up. It has to move UP.
+    const pulled = runSteps({
+      spawn: burstOf(1),
+      init: inertInit(),
+      update: [blk('update.attractor', {
+        position: constValue([0, 2, 0]),
+        strength: constValue(10),
+        radius: constValue(10),
+      })],
+    }, 30);
+    check('an attractor pulls towards its point', pulled.planes.position[1] > 0.05,
+      `y ${pulled.planes.position[1].toFixed(4)}`);
+    // Negative strength pushes - stated in the block's hint, so it has to be true.
+    const pushed = runSteps({
+      spawn: burstOf(1),
+      init: inertInit(),
+      update: [blk('update.attractor', {
+        position: constValue([0, 2, 0]),
+        strength: constValue(-10),
+        radius: constValue(10),
+      })],
+    }, 30);
+    check('  and a negative strength pushes away', pushed.planes.position[1] < -0.05,
+      `y ${pushed.planes.position[1].toFixed(4)}`);
+  }
+
+  // --- force.vortex -------------------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(1),
+      init: [...inertInit(), blk('initialize.positionCircle', {
+        radius: constValue(2),
+        thickness: constValue(0),
+      })],
+      update: [blk('update.vortex', {
+        position: constValue([0, 0, 0]),
+        axis: constValue([0, 1, 0]),
+        strength: constValue(3),
+        inward: constValue(2),
+      })],
+    }, 30);
+    const x = pool.planes.position[0];
+    const z = pool.planes.position[2];
+    // The inward pull is the half that makes a vortex read as one rather than
+    // as a widening spiral, so the radius must SHRINK.
+    check('a vortex pulls its particles inward', Math.hypot(x, z) < 2,
+      `radius ${Math.hypot(x, z).toFixed(4)} from 2`);
+    // And it has to be rotating: the velocity is not purely radial.
+    const vx = pool.planes.velocity[0];
+    const vz = pool.planes.velocity[2];
+    const radial = (x * vx + z * vz) / (Math.hypot(x, z) || 1);
+    const tangential = Math.abs(x * vz - z * vx) / (Math.hypot(x, z) || 1);
+    check('  while also swirling around the axis', tangential > Math.abs(radial) * 0.2,
+      `tangential ${tangential.toFixed(3)} vs radial ${radial.toFixed(3)}`);
+  }
+
+  // --- vel.limit ----------------------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(30),
+      init: [...inertInit(), blk('initialize.velocityDirection', {
+        direction: constValue([0, -1, 0]),
+        speed: constValue(50),
+        spread: constValue(0),
+      })],
+      update: [
+        blk('update.gravity', { gravity: constValue([0, -100, 0]) }),
+        blk('update.speedLimit', { speed: constValue(4) }),
+      ],
+    }, 30);
+    let over = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const o = i * 3;
+      if (Math.hypot(pool.planes.velocity[o], pool.planes.velocity[o + 1],
+        pool.planes.velocity[o + 2]) > 4 + 1e-3) over += 1;
+    }
+    check('a speed limit holds against stacked forces', over === 0,
+      `${over} of ${pool.count} over the cap`);
+  }
+
+  // --- rot.spin -----------------------------------------------------------
+  {
+    // 90 deg/s for 60 steps of 1/60s is exactly a quarter turn.
+    const pool = runSteps({
+      spawn: burstOf(1),
+      init: [...inertInit(), blk('initialize.setRotation', { rotation: constValue(0) })],
+      update: [blk('update.spin', { speed: constValue(90) })],
+    }, 60);
+    check('spin turns at the rate it says',
+      near(pool.planes.rotation[0], Math.PI / 2, 2e-2),
+      `${pool.planes.rotation[0].toFixed(4)} rad, want ${(Math.PI / 2).toFixed(4)}`);
+  }
+
+  // --- collide.plane ------------------------------------------------------
+  {
+    const dropped = (bounce) => runSteps({
+      spawn: burstOf(1),
+      init: [
+        ...inertInit(),
+        blk('initialize.positionBox', { size: constValue([0, 0, 0]) }),
+        blk('initialize.velocityDirection', {
+          direction: constValue([0, -1, 0]),
+          speed: constValue(5),
+          spread: constValue(0),
+        }),
+      ],
+      update: [
+        blk('update.gravity', { gravity: constValue([0, -9.81, 0]) }),
+        blk('update.collidePlane', {
+          height: constValue(0),
+          bounce: constValue(bounce),
+          friction: constValue(0),
+        }),
+      ],
+    }, 120);
+
+    // Bounce 0: it settles on the floor and stays there. THE FAILURE THIS
+    // CATCHES is correcting only the velocity - the particle then spends every
+    // frame below the plane, never climbs out, and sinks while jittering.
+    const stuck = dropped(0);
+    check('a zero bounce settles the particle on the floor',
+      near(stuck.planes.position[1], 0, 1e-3) && Math.abs(stuck.planes.velocity[1]) < 1e-3,
+      `y ${stuck.planes.position[1].toExponential(2)}, vy ${stuck.planes.velocity[1].toExponential(2)}`);
+    // And it must never end up BELOW the plane, which is the sinking failure.
+    check('  and never below it', stuck.planes.position[1] >= -1e-6,
+      String(stuck.planes.position[1]));
+
+    // Bounce 1 keeps it moving: a lossless bounce against gravity is a
+    // particle that is still going after two seconds.
+    const bouncy = dropped(1);
+    check('a full bounce keeps the particle moving',
+      Math.abs(bouncy.planes.velocity[1]) > 1,
+      `vy ${bouncy.planes.velocity[1].toFixed(3)}`);
+  }
+
+  // --- kill.bounds --------------------------------------------------------
+  {
+    const pool = runSteps({
+      spawn: burstOf(20),
+      init: [
+        ...inertInit(),
+        blk('initialize.velocityDirection', {
+          direction: constValue([0, -1, 0]),
+          speed: constValue(20),
+          spread: constValue(0),
+        }),
+      ],
+      update: [blk('update.killOnBounds', { size: constValue([4, 4, 4]) })],
+    }, 60);
+    // At 20 m/s downward they leave a 2m half-height box in a tenth of a
+    // second, so after a full second none can be left - even though their
+    // lifetime is 10s.
+    check('particles leaving the box are collected', pool.count === 0,
+      `${pool.count} still alive after a second`);
+
+    // And a particle that stays inside is NOT killed, or the block would be a
+    // way to delete an effect rather than to bound it.
+    const inside = runSteps({
+      spawn: burstOf(20),
+      init: inertInit(),
+      update: [blk('update.killOnBounds', { size: constValue([4, 4, 4]) })],
+    }, 60);
+    check('  while the ones inside are left alone', inside.count === 20,
+      `${inside.count} of 20`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Sub-emitters and the event queue ---');
+// ---------------------------------------------------------------------------
+//
+// A spark that dies becomes a puff of smoke. Checked against counted
+// arithmetic rather than against the queue's own output, because a queue that
+// drops half its records, or spawns from the previous frame, or reads a payload
+// after the pool has been compacted, is self-consistent in all three cases.
+{
+  const runFor = (doc, steps) => {
+    const { ir, diagnostics } = compileVfxGraph(doc, { assetIndex: new Set([118, 119]) });
+    const errors = diagnostics.filter((d) => d.severity === 'error');
+    if (errors.length) throw new Error(errors.map((d) => d.code).join(' '));
+    const runtime = createVfxRuntime(ir);
+    for (let i = 0; i < steps; i += 1) step(runtime);
+    return { ir, runtime };
+  };
+  const poolFor = (runtime, name) => runtime.emitters.find((e) => e.name === name).pool;
+
+  // The parent bursts 8 with a 0.2s lifetime (12 steps); the child spawns 3 per
+  // death. So after 20 steps every parent has died and exactly 24 children
+  // exist - a number that is wrong if any record is dropped, double-counted, or
+  // consumed on a later frame.
+  const { runtime } = runFor(fixtures.subEmitter(), 20);
+  const parent = poolFor(runtime, 'Sparks');
+  const child = poolFor(runtime, 'Puffs');
+  check('every parent particle has died', parent.count === 0, String(parent.count));
+  check('  and each death spawned exactly the burst count',
+    child.spawnCursor === 24, `${child.spawnCursor}, want 8 x 3`);
+  check('  with none dropped', runtimeStats(runtime).eventsDropped === 0);
+
+  // WHERE, not just how many. A child at the origin means the payload was read
+  // after swapRemove had already overwritten the slot - the single most likely
+  // way to get this wrong, and one that looks like the events are firing in the
+  // wrong place rather than being read at the wrong moment.
+  let atOrigin = 0;
+  for (let i = 0; i < child.count; i += 1) {
+    const o = i * 3;
+    if (Math.hypot(child.planes.position[o], child.planes.position[o + 1],
+      child.planes.position[o + 2]) < 1e-6) atOrigin += 1;
+  }
+  check('children appear where their parent died, not at the origin',
+    atOrigin === 0, `${atOrigin} of ${child.count} at the origin`);
+
+  // SAME-FRAME, not next-frame. The compiler orders parents before children and
+  // each drains its channel during its own spawn, so a death recorded in step N
+  // produces a child in step N. A one-frame lag would be invisible here but
+  // compounds down a chain - three levels would lag an impact by three frames.
+  const fresh = compileVfxGraph(fixtures.subEmitter(), { assetIndex: new Set([118, 119]) });
+  const single = createVfxRuntime(fresh.ir);
+  let firstDeathStep = -1;
+  let firstChildStep = -1;
+  for (let i = 0; i < 20; i += 1) {
+    const before = poolFor(single, 'Sparks').count;
+    step(single);
+    const after = poolFor(single, 'Sparks').count;
+    if (firstDeathStep < 0 && after < before) firstDeathStep = i;
+    if (firstChildStep < 0 && poolFor(single, 'Puffs').spawnCursor > 0) firstChildStep = i;
+  }
+  check('a child is born on the same step its parent died',
+    firstDeathStep >= 0 && firstChildStep === firstDeathStep,
+    `death on step ${firstDeathStep}, child on step ${firstChildStep}`);
+
+  // The queue must not spawn twice from one record.
+  const twice = compileVfxGraph(fixtures.subEmitter(), { assetIndex: new Set([118, 119]) });
+  const twiceRuntime = createVfxRuntime(twice.ir);
+  for (let i = 0; i < 40; i += 1) step(twiceRuntime);
+  check('  and never twice from one death',
+    poolFor(twiceRuntime, 'Puffs').spawnCursor === 24,
+    String(poolFor(twiceRuntime, 'Puffs').spawnCursor));
+
+  // Determinism, which the whole seeding scheme exists for: a child's randoms
+  // are hashed from its PARENT'S seed, so a replay reproduces the sub-emitter
+  // as well as the emitter.
+  const a = runFor(fixtures.subEmitter(), 20);
+  const b = runFor(fixtures.subEmitter(), 20);
+  check('a sub-emitter replays identically',
+    poolChecksum(poolFor(a.runtime, 'Puffs')) === poolChecksum(poolFor(b.runtime, 'Puffs')));
+
+  // Inherit Velocity is what makes a sub-emitter look attached. At 0.25 the
+  // children must be moving, and slower than the parents were.
+  let maxChildSpeed = 0;
+  for (let i = 0; i < child.count; i += 1) {
+    const o = i * 3;
+    const speed = Math.hypot(child.planes.velocity[o], child.planes.velocity[o + 1],
+      child.planes.velocity[o + 2]);
+    if (speed > maxChildSpeed) maxChildSpeed = speed;
+  }
+  check('inherited velocity is present and scaled down',
+    maxChildSpeed > 0.01 && maxChildSpeed < 3,
+    `fastest child ${maxChildSpeed.toFixed(3)} m/s`);
+
+  // A sub-emitter must NOT also fire its own clips. Doing both is the "why is
+  // there a puff of smoke at the world origin" bug, and it is invisible in an
+  // effect whose parent happens to start at the origin too.
+  const clipped = fixtures.subEmitter();
+  clipped.systems[1].schedule = { clips: [{ id: 'c', at: 0, duration: 0, loop: false }] };
+  const { runtime: clippedRuntime } = runFor(clipped, 3);
+  check('a sub-emitter ignores its own timeline clips',
+    poolFor(clippedRuntime, 'Puffs').spawnCursor === 0,
+    `${poolFor(clippedRuntime, 'Puffs').spawnCursor} spawned before any parent died`);
+
+  // Collision events, the other trigger. A parent bouncing off the floor should
+  // raise them.
+  const collideDoc = fixtures.subEmitter();
+  collideDoc.systems[0].contexts.find((c) => c.kind === CONTEXT_KIND.UPDATE).blocks.push({
+    id: 'floor', type: 'update.collidePlane', enabled: true,
+    props: { height: constValue(-0.05), bounce: constValue(0.4), friction: constValue(0.1) },
+  });
+  collideDoc.systems[0].contexts.find((c) => c.kind === CONTEXT_KIND.INITIALIZE).blocks
+    .find((b) => b.type === 'initialize.setLifetime').props.lifetime = constValue(5);
+  collideDoc.systems[1].contexts[0].params.trigger = 'onCollide';
+  const { runtime: collideRuntime } = runFor(normalizeVfxDoc(collideDoc), 40);
+  check('a collision raises events too',
+    poolFor(collideRuntime, 'Puffs').spawnCursor > 0,
+    `${poolFor(collideRuntime, 'Puffs').spawnCursor} children from floor hits`);
+
+  // Probability thins the events rather than the children: "a quarter of the
+  // sparks make a puff" is what an author means.
+  const thinned = fixtures.subEmitter();
+  thinned.systems[1].contexts[0].params.probability = '0.5';
+  const { runtime: thinnedRuntime } = runFor(normalizeVfxDoc(thinned), 20);
+  const thinnedCount = poolFor(thinnedRuntime, 'Puffs').spawnCursor;
+  // Every child of one event is spawned or none is, so the total must be a
+  // multiple of the burst count - which is what distinguishes rolling per event
+  // from rolling per child.
+  check('probability is rolled per event, not per particle',
+    thinnedCount % 3 === 0 && thinnedCount < 24 && thinnedCount > 0,
+    `${thinnedCount} children, a multiple of the burst count 3`);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

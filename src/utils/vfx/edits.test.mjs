@@ -34,9 +34,18 @@ import { CONTEXT_KIND, createEmptyVfxDoc, normalizeVfxDoc, vfxSignature } from '
 import { compileVfxGraph } from '../../../vfx/compile.js';
 import { VALUE_MODE } from '../../../vfx/value.js';
 import { CURVE_PRESETS } from '../../../vfx/curve.js';
-import { VFX_TEMPLATES } from './templates.js';
+import { VFX_TEMPLATES, templateById } from './templates.js';
 import * as edits from './edits.js';
 import {
+  HANDLE_WIDTH_PX,
+  MIN_BODY_PX,
+  clipHandles,
+  clipWidth,
+  resolveClipDrag,
+  snapToStep,
+} from './timelineDrag.js';
+import {
+  autoLayout,
   clearLayout,
   indexDiagnostics,
   setNodePosition,
@@ -54,6 +63,7 @@ function check(label, ok, detail = '') {
 }
 
 const clone = (doc) => JSON.parse(JSON.stringify(doc));
+const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 const blocksOf = (doc) => doc.systems.flatMap((s) => s.contexts.flatMap((c) => c.blocks));
 const countBlocks = (doc) => blocksOf(doc).length;
 
@@ -383,6 +393,17 @@ section('Layout is cosmetic');
   check('setNodePosition stores a rounded position',
     moved.layout.nodes[contextId].x === 12 && moved.layout.nodes[contextId].y === 89);
 
+  // A stored position must not disturb the ones already there, or moving one
+  // node would erase the layout of everything the author had placed by hand.
+  const stages = doc.systems[0].contexts;
+  const secondId = stages[1].id;
+  check('the fixture has a second stage to leave alone',
+    Boolean(secondId) && secondId !== contextId);
+  const seeded = setNodePosition(doc, secondId, { x: 500, y: 500 });
+  const after = setNodePosition(seeded, contextId, { x: 1, y: 2 });
+  check('  other stored positions are untouched',
+    after.layout.nodes[secondId]?.x === 500, JSON.stringify(after.layout.nodes[secondId]));
+
   // THE REASON layout is a separate branch of the document: vfxSignature is the
   // recompile trigger, and dragging a node must not recompile the effect or the
   // simulation would restart every time the board was tidied.
@@ -437,6 +458,47 @@ section('The React Flow adapter');
   const again = toFlowNodes(doc);
   check('the adapter is deterministic',
     JSON.stringify(nodes.map((x) => [x.id, x.position])) === JSON.stringify(again.map((x) => [x.id, x.position])));
+
+  // EVERY SELECTABLE NODE KIND MUST BE ABLE TO REPORT ITSELF SELECTED.
+  //
+  // Only contexts ever did. React Flow fills `selected` in from its own
+  // selection state, which this board never applies - select changes are
+  // dropped on purpose, because the document owns selection - so a field the
+  // adapter does not write is a field that is permanently false. That was not a
+  // cosmetic gap: a note's NodeResizer is gated on `selected`, so notes could
+  // not be resized at all, and a selected operator drew no ring while its
+  // Parameters panel was open, so the board and the panel disagreed about what
+  // the author was editing.
+  //
+  // Checked as a SET rather than one kind at a time, so a node type added later
+  // fails here rather than shipping with the same omission.
+  {
+    let noted = edits.addNote(doc, { x: 10, y: 20 });
+    noted = edits.addOperator(noted, 'op.constant', { x: 0, y: 0 });
+    const noteId = noted.layout.notes[0].id;
+    const operatorId = noted.operators[noted.operators.length - 1].id;
+    const contextId2 = noted.systems[0].contexts[0].id;
+    check('the fixture has one node of each selectable kind',
+      Boolean(noteId && operatorId && contextId2));
+
+    const kinds = [
+      ['context', contextId2, { selectedContextId: contextId2 }],
+      ['operator', operatorId, { selectedOperatorId: operatorId }],
+      ['note', noteId, { selectedNoteId: noteId }],
+    ];
+    for (const [label, id, options] of kinds) {
+      const built = toFlowNodes(noted, options);
+      const target = built.find((x) => x.id === id);
+      check(`a selected ${label} reports selected`, target?.selected === true,
+        String(target?.selected));
+      // And exactly one node does, or clicking one thing would ring several.
+      check(`  and it is the only one`,
+        built.filter((x) => x.selected).length === 1,
+        String(built.filter((x) => x.selected).length));
+    }
+    check('with nothing selected, no node is',
+      toFlowNodes(noted).every((x) => !x.selected));
+  }
 
   // A stored position must win over the derived one, or dragging a node would
   // appear to do nothing after the next render.
@@ -638,6 +700,269 @@ section('Every template still compiles after a round of editing');
       check(`${template.name}: edited and still compiles`, false, error.message);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+section('Notes and auto-layout');
+// ---------------------------------------------------------------------------
+{
+  const doc = normalizeVfxDoc(templateById('explosion').build());
+
+  // NOTES MUST NOT RECOMPILE THE EFFECT. They live in `doc.layout`, which
+  // vfxSignature excludes - so typing a sentence about an explosion cannot
+  // restart the explosion. That is the whole reason for the placement, and it
+  // is invisible until you watch the preview reset on every keystroke.
+  const before = vfxSignature(doc);
+  const noted = pure('addNote', doc, (d) => edits.addNote(d, { text: 'here', x: 40, y: 200 }));
+  check('addNote adds one', noted.layout.notes.length === 1);
+  check('  positioned where it was dropped',
+    noted.layout.notes[0].x === 40 && noted.layout.notes[0].y === 200);
+  check('  and does NOT change the recompile signature',
+    vfxSignature(noted) === before);
+
+  const noteId = noted.layout.notes[0].id;
+  const edited = pure('updateNote', noted,
+    (d) => edits.updateNote(d, noteId, { text: 'the debris lands here', width: 320 }));
+  check('updateNote patches text and size',
+    edited.layout.notes[0].text === 'the debris lands here'
+    && edited.layout.notes[0].width === 320);
+  check('  still without changing the signature', vfxSignature(edited) === before);
+  check('updateNote on a missing id is identity',
+    edits.updateNote(noted, 'note_nope', { text: 'x' }) === noted);
+
+  // A note that vanished on reload would be worse than no notes, so `layout` is
+  // saved even though it is not part of the identity.
+  const reloaded = normalizeVfxDoc(JSON.parse(JSON.stringify(edited)));
+  check('notes survive a save and reload',
+    reloaded.layout.notes.length === 1
+    && reloaded.layout.notes[0].text === 'the debris lands here');
+
+  check('removeNote removes one', edits.removeNote(edited, noteId).layout.notes.length === 0);
+  check('  and a missing id is identity', edits.removeNote(edited, 'note_nope') === edited);
+
+  // Tidy must not be destructive. A note's position is its own content - it is
+  // placed where it is because of what it says.
+  check('clearLayout forgets node positions but KEEPS notes',
+    Object.keys(clearLayout(edited).layout.nodes).length === 0
+    && clearLayout(edited).layout.notes.length === 1);
+
+  // --- autoLayout ---------------------------------------------------------
+  //
+  // THE DIFFERENCE FROM THE DERIVED LAYOUT is that this one measures. The
+  // derived positions are a function of (system index, stage) with a fixed row
+  // height, so a system with eight blocks in its Update stage overlaps the
+  // Output beneath it. Checked with a measurer that reports a very tall Update.
+  const tall = (id) => ({ width: 288, height: id.includes('update') ? 520 : 150 });
+  const packed = pure('autoLayout', edited, (d) => autoLayout(d, tall));
+
+  const contexts = edited.systems.flatMap((system) => system.contexts.map((c) => c.id));
+  check('autoLayout positions every context',
+    contexts.every((id) => packed.layout.nodes[id]),
+    `${Object.keys(packed.layout.nodes).length} of ${contexts.length}`);
+
+  // No two stages in one column may overlap, which is the property the derived
+  // layout cannot promise.
+  const columns = new Map();
+  for (const id of contexts) {
+    const at = packed.layout.nodes[id];
+    const list = columns.get(at.x) || [];
+    list.push({ id, y: at.y, height: tall(id).height });
+    columns.set(at.x, list);
+  }
+  let overlaps = 0;
+  for (const list of columns.values()) {
+    list.sort((a, b) => a.y - b.y);
+    for (let i = 1; i < list.length; i += 1) {
+      if (list[i].y < list[i - 1].y + list[i - 1].height) overlaps += 1;
+    }
+  }
+  check('  packing each column by measured height, with no overlaps',
+    overlaps === 0, `${overlaps} overlapping pairs across ${columns.size} columns`);
+  check('  one column per system', columns.size === edited.systems.length);
+  check('  and notes keep their own positions',
+    packed.layout.notes[0].x === 40 && packed.layout.notes[0].y === 200);
+  // Cosmetic, like every other layout write.
+  check('  without changing the recompile signature', vfxSignature(packed) === before);
+
+  // With no measurer it must still do something sensible rather than stacking
+  // everything at zero.
+  const unmeasured = autoLayout(edited, null);
+  check('  and a missing measurer falls back to a fixed size',
+    contexts.every((id) => Number.isFinite(unmeasured.layout.nodes[id].y))
+    && new Set(contexts.map((id) => unmeasured.layout.nodes[id].y)).size > 1);
+
+  // Notes render FIRST so they paint underneath the real nodes - a comment that
+  // covers the thing it comments on is worse than no comment.
+  const flow = toFlowNodes(edited);
+  check('a note is emitted before every other node',
+    flow[0].type === 'vfxNote' && flow.filter((n) => n.type === 'vfxNote').length === 1);
+  check('  carrying its size, which the resizer needs',
+    flow[0].width === 320 && flow[0].height === edited.layout.notes[0].height);
+}
+
+// ---------------------------------------------------------------------------
+section('Dragging a timeline clip');
+// ---------------------------------------------------------------------------
+//
+// THE BUG THIS SECTION EXISTS FOR: dragging a clip sideways truncated it to a
+// sliver. The cause was that every mode committed `{at, duration}` - so a MOVE
+// wrote back a duration taken from its own preview state, and the preview
+// re-derived the clip's width from that same number. Sliding a clip cannot
+// change how long it is, so the patch a move produces must not mention
+// duration at all.
+//
+// None of that is visible in a screenshot, which is why the arithmetic was
+// pulled out of the component.
+{
+  const drag = (mode, extra = {}) => ({
+    mode,
+    baseAt: 0.5,
+    baseDuration: 0.65,
+    duration: 3,
+    step: 1 / 60,
+    ...extra,
+  });
+
+  // --- move: `at` only ----------------------------------------------------
+  const moved = resolveClipDrag(drag('move'), 0.3);
+  check('a move keeps the duration', near(moved.duration, 0.65, 1e-9),
+    String(moved.duration));
+  // THE ACTUAL FIX. A patch that cannot mention duration cannot truncate.
+  check('  and its patch does NOT mention duration',
+    Object.keys(moved.patch).join(',') === 'at', Object.keys(moved.patch).join(','));
+  check('  moving it by the delta', near(moved.at, 0.8, 1e-6), String(moved.at));
+
+  // Backwards, and clamped at the start rather than going negative.
+  check('a move cannot go below zero',
+    resolveClipDrag(drag('move'), -5).at === 0);
+  check('  and still keeps its duration',
+    near(resolveClipDrag(drag('move'), -5).duration, 0.65, 1e-9));
+
+  // The clip's END may not leave the effect, so the far limit accounts for its
+  // length rather than being the effect's duration.
+  const far = resolveClipDrag(drag('move'), 99);
+  check('a move stops when the clip END reaches the effect end',
+    near(far.at, 3 - 0.65, 1e-6), String(far.at));
+  // A burst has no length, so it may sit at the very end.
+  check('  while a burst may sit at the very end',
+    near(resolveClipDrag(drag('move', { baseDuration: 0 }), 99).at, 3, 1e-6));
+
+  // A BURST dragged sideways must stay a burst. This is the reported symptom
+  // in its worst form: a move that turned a clip into a zero-length marker.
+  const burst = resolveClipDrag(drag('move', { baseAt: 0, baseDuration: 0 }), 0.55);
+  check('moving a burst leaves it a burst', burst.duration === 0
+    && Object.keys(burst.patch).join(',') === 'at');
+
+  // --- end: `duration` only -----------------------------------------------
+  const stretched = resolveClipDrag(drag('end'), 0.35);
+  check('an end-trim changes the duration', near(stretched.duration, 1, 1e-6),
+    String(stretched.duration));
+  check('  and its patch does NOT mention at',
+    Object.keys(stretched.patch).join(',') === 'duration',
+    Object.keys(stretched.patch).join(','));
+  check('  leaving the start where it was', near(stretched.at, 0.5, 1e-9));
+  // Dragged past the start, it becomes a burst rather than a negative clip.
+  check('an end-trim past the start gives a zero length',
+    resolveClipDrag(drag('end'), -5).duration === 0);
+
+  // --- start: both, together ----------------------------------------------
+  // Trimming the front must leave the END where it is. Dragging the left edge
+  // and watching the right edge move is the classic timeline annoyance.
+  const trimmed = resolveClipDrag(drag('start'), 0.2);
+  check('a start-trim moves the start', near(trimmed.at, 0.7, 1e-6), String(trimmed.at));
+  check('  keeping the END fixed',
+    near(trimmed.at + trimmed.duration, 0.5 + 0.65, 1e-6),
+    String(trimmed.at + trimmed.duration));
+  check('  and patches both fields',
+    Object.keys(trimmed.patch).sort().join(',') === 'at,duration');
+  // Past its own end it collapses rather than inverting - a negative duration
+  // would render the clip backwards.
+  const collapsed = resolveClipDrag(drag('start'), 5);
+  check('a start-trim past the end collapses rather than inverting',
+    collapsed.duration === 0 && near(collapsed.at, 1.15, 1e-6),
+    `${collapsed.at} + ${collapsed.duration}`);
+
+  // --- snapping ------------------------------------------------------------
+  // The number the author sees has to be the number that runs, so the drag
+  // snaps to the same grid the compiler does.
+  const snapped = resolveClipDrag(drag('move', { baseAt: 0 }), 0.333);
+  check('a drag snaps to the simulation step',
+    Math.abs(snapped.at / (1 / 60) - Math.round(snapped.at / (1 / 60))) < 1e-9,
+    String(snapped.at));
+  // Shift is the fine modifier everywhere in this editor.
+  const free = resolveClipDrag(drag('move', { baseAt: 0 }), 0.333, { free: true });
+  check('  unless Shift is held', near(free.at, 0.333, 1e-9), String(free.at));
+  check('snapToStep tolerates a zero step', snapToStep(0.4, 0) === 0.4);
+  check('  and never returns a negative', snapToStep(-3, 1 / 60) === 0);
+
+  // --- the shared width helper --------------------------------------------
+  // The render and the drag preview both call it, so they cannot disagree about
+  // how wide a clip is - a preview that computed its own width is how a clip
+  // appears to change size during a gesture that does not change its size.
+  const sizes = { burstWidth: 8, minWidth: 10 };
+  check('a burst is a fixed marker', clipWidth(0, 500, sizes) === 8);
+  check('  and so is a negative duration', clipWidth(-1, 500, sizes) === 8);
+  check('a short clip gets a minimum width', clipWidth(0.001, 500, sizes) === 10);
+  check('a normal clip is its real width', clipWidth(0.65, 500, sizes) === 325);
+
+  // --- and there is ALWAYS something to grab -------------------------------
+  //
+  // THE OTHER HALF OF THE REPORTED BUG. The trim handles were 5px each against
+  // a 10px minimum clip width, so a minimum-width clip had a body of exactly
+  // ZERO: every press landed on a trim handle, and the clip could be reshaped
+  // but never moved. On a wide clip the same 5px strips sat unmarked at the
+  // edges, so reaching for the bar to drag it hit the start-trim handle - which
+  // moves the start and shortens the clip, exactly the truncation that was
+  // reported.
+  const narrow = clipHandles(0.001, clipWidth(0.001, 500, sizes));
+  check('a minimum-width clip has NO trim handles',
+    narrow.start === false && narrow.end === false);
+  check('  so its whole width is draggable', narrow.bodyPx >= MIN_BODY_PX,
+    String(narrow.bodyPx));
+
+  const wide = clipHandles(0.65, 325);
+  check('a wide clip can be trimmed at both ends', wide.start && wide.end);
+  check('  and still has most of its width as a drag target',
+    wide.bodyPx === 325 - 2 * HANDLE_WIDTH_PX, String(wide.bodyPx));
+
+  // A burst keeps its end handle whatever its width: dragging it out to a
+  // length is the only way to turn a burst into a window.
+  const burstHandles = clipHandles(0, 8);
+  check('a burst keeps an end handle so it can become a window',
+    burstHandles.end === true && burstHandles.start === false);
+
+  // The threshold has to leave room for both handles AND something between
+  // them, or the fix reintroduces the bug at a different width.
+  let unusable = [];
+  for (let px = 8; px <= 200; px += 1) {
+    const parts = clipHandles(0.5, px);
+    const consumed = (parts.start ? HANDLE_WIDTH_PX : 0) + (parts.end ? HANDLE_WIDTH_PX : 0);
+    if (px - consumed < MIN_BODY_PX && parts.start) unusable.push(px);
+  }
+  check('no clip width leaves the handles eating the whole clip',
+    unusable.length === 0, unusable.slice(0, 5).join(', '));
+
+  // --- and the whole gesture, through the document ------------------------
+  // The unit above proves the patch is right; this proves the patch reaching
+  // updateClip leaves the clip intact, which is what the author sees.
+  let doc = normalizeVfxDoc(templateById('fire').build());
+  const systemId = doc.systems[0].id;
+  doc = edits.updateClip(doc, systemId, doc.systems[0].schedule.clips[0].id,
+    { at: 0, duration: 0.65 });
+  const clip = doc.systems[0].schedule.clips[0];
+  const resolved = resolveClipDrag({
+    mode: 'move',
+    baseAt: clip.at,
+    baseDuration: clip.duration,
+    duration: doc.effect.duration,
+    step: doc.effect.fixedDt,
+  }, 0.55);
+  const after = edits.updateClip(doc, systemId, clip.id, resolved.patch)
+    .systems[0].schedule.clips[0];
+  check('dragging a clip sideways preserves its duration',
+    near(after.duration, 0.65, 1e-9),
+    `${clip.at}..${clip.at + clip.duration} -> ${after.at}..${after.at + after.duration}`);
+  check('  and moves it', after.at > clip.at);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

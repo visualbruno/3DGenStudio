@@ -33,18 +33,23 @@
 // affordance in a five-system effect and costs one boolean.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  clipHandles,
+  clipWidth,
+  resolveClipDrag,
+  snapToStep,
+} from '../../utils/vfx/timelineDrag.js'
 import './VfxTimeline.css'
 
 const TRACK_HEIGHT = 26
 const MIN_CLIP_PX = 10
 const BURST_WIDTH_PX = 8
 const RULER_TARGET_SPACING = 64
+// How far a press has to travel before it is a drag rather than a click.
+const DRAG_SLOP_PX = 3
+const CLIP_SIZES = { burstWidth: BURST_WIDTH_PX, minWidth: MIN_CLIP_PX }
 
-/** Round to a multiple of the simulation step, which is what the compiler does. */
-function snap(seconds, step) {
-  if (!(step > 0)) return Math.max(0, seconds)
-  return Math.max(0, Math.round(seconds / step) * step)
-}
+
 
 /** Tick spacing that gives roughly RULER_TARGET_SPACING pixels per label. */
 function chooseTickStep(duration, width) {
@@ -141,15 +146,26 @@ export default function VfxTimeline({
 
   // --- clip dragging -------------------------------------------------------
 
+  // THE DRAG PREVIEW IS AN OFFSET, NOT A POSITION, and it is written to two
+  // custom properties REACT NEVER TOUCHES - see the long comment on
+  // `.vfx-timeline__clip` in the stylesheet for the bug this shape exists to
+  // make impossible. In short: `element.style.width = ''` at the end of a drag
+  // is not "handing the geometry back to React", because React diffs its own
+  // previous props rather than the DOM and will skip a width string that has
+  // not changed. Clearing a property React has never written cannot be skipped.
+  //
+  // A MOVE THEREFORE CANNOT CHANGE THE WIDTH as a matter of arithmetic rather
+  // than as a special case: the width delta is derived from the duration, and a
+  // move does not change the duration, so it comes out zero on its own.
   const flush = useCallback(() => {
     frame.current = 0
     const current = drag.current
     if (!current) return
     const { element, at, length } = current.preview
-    element.style.left = `${at * pps}px`
-    if (current.mode !== 'move' || length > 0) {
-      element.style.width = `${Math.max(length * pps, length > 0 ? MIN_CLIP_PX : BURST_WIDTH_PX)}px`
-    }
+    element.style.setProperty('--vfx-clip-dx', `${(at - current.baseAt) * pps}px`)
+    element.style.setProperty('--vfx-clip-dw', `${
+      clipWidth(length, pps, CLIP_SIZES) - clipWidth(current.baseDuration, pps, CLIP_SIZES)
+    }px`)
   }, [pps])
 
   const handleMove = useCallback(event => {
@@ -159,31 +175,28 @@ export default function VfxTimeline({
     // viewport, so there is no zoom division here - unlike the block-row drag,
     // which lives inside React Flow's transform.
     const delta = (event.clientX - current.startX) / pps
+
+    // A real slop threshold, rather than treating every press as a drag. It was
+    // unconditional, so a plain CLICK on a clip committed a retime - one undo
+    // entry, for a gesture that changed nothing.
+    if (!current.moved) {
+      if (Math.abs(event.clientX - current.startX) < DRAG_SLOP_PX) return
+      current.moved = true
+    }
+
     // Shift is the fine modifier everywhere in this editor; here it means
     // "ignore the step grid" so a clip can sit between two simulation frames
     // even though the compiler will round it.
-    const quantize = value => (event.shiftKey ? Math.max(0, value) : snap(value, step))
+    const resolved = resolveClipDrag(current, delta, { free: event.shiftKey })
+    current.preview.at = resolved.at
+    current.preview.length = resolved.duration
+    // The patch carries only the fields this gesture owns - see the header of
+    // timelineDrag.js. Stored rather than rebuilt at pointer-up so the commit
+    // cannot disagree with what the preview showed.
+    current.patch = resolved.patch
 
-    if (current.mode === 'move') {
-      current.preview.at = Math.min(
-        Math.max(0, quantize(current.baseAt + delta)),
-        Math.max(0, duration - current.baseDuration),
-      )
-    } else if (current.mode === 'end') {
-      current.preview.length = Math.max(0, quantize(current.baseDuration + delta))
-    } else {
-      // Trimming the start moves `at` and shortens `duration` by the same
-      // amount, so the clip's END stays where it is. Dragging the left edge and
-      // watching the right edge move is the classic timeline annoyance.
-      const nextAt = Math.min(
-        Math.max(0, quantize(current.baseAt + delta)),
-        current.baseAt + current.baseDuration,
-      )
-      current.preview.at = nextAt
-      current.preview.length = current.baseAt + current.baseDuration - nextAt
-    }
     if (!frame.current) frame.current = window.requestAnimationFrame(flush)
-  }, [duration, flush, pps, step])
+  }, [flush, pps])
 
   // The listeners are torn down through a ref rather than by naming endDrag
   // inside itself: a useCallback cannot reference its own identity, and the
@@ -200,15 +213,21 @@ export default function VfxTimeline({
       window.cancelAnimationFrame(frame.current)
       frame.current = 0
     }
-    if (!current || !current.moved) return
-    // The inline styles are cleared so React's render owns the geometry again.
+    // The preview offsets are dropped so the document's geometry stands alone,
+    // whether or not anything is about to be committed - a press that did not
+    // travel far enough to count as a drag must still leave nothing behind.
     // Done BEFORE the commit so there is no frame where both apply.
-    current.preview.element.style.left = ''
-    current.preview.element.style.width = ''
-    actions.updateClip(current.systemId, current.clipId, {
-      at: current.preview.at,
-      duration: current.preview.length,
-    })
+    //
+    // Removing these is safe precisely because React does not write them: an
+    // unset --vfx-clip-dx falls back to the @property initial value of 0px
+    // immediately, with no render involved. Clearing `left` and `width` here is
+    // what used to leave a clip with no width at all.
+    if (current) {
+      current.preview.element.style.removeProperty('--vfx-clip-dx')
+      current.preview.element.style.removeProperty('--vfx-clip-dw')
+    }
+    if (!current || !current.moved || !current.patch) return
+    actions.updateClip(current.systemId, current.clipId, current.patch)
   }, [actions])
 
   const startClipDrag = useCallback((event, systemId, clip, mode) => {
@@ -224,12 +243,15 @@ export default function VfxTimeline({
       startX: event.clientX,
       baseAt: clip.at,
       baseDuration: clip.duration,
+      // Read once at pointer-down and never re-read. A prop change mid-drag -
+      // an undo, a duration edit - must not move the origin under the author's
+      // hand, which is the same rule the splitter and the block-row drag follow.
+      duration,
+      step,
       moved: false,
+      patch: null,
       preview: { element, at: clip.at, length: clip.duration },
     }
-    // Set immediately rather than after a slop threshold: a click on a clip
-    // also selects its system, and there is no competing gesture to protect.
-    drag.current.moved = true
     document.body.classList.add('is-col-resizing')
     window.addEventListener('pointermove', handleMove)
     window.addEventListener('pointerup', endDrag)
@@ -239,7 +261,7 @@ export default function VfxTimeline({
       window.removeEventListener('pointerup', endDrag)
       window.removeEventListener('pointercancel', endDrag)
     }
-  }, [endDrag, handleMove])
+  }, [duration, endDrag, handleMove, step])
 
   useEffect(() => () => {
     detach.current()
@@ -253,7 +275,7 @@ export default function VfxTimeline({
     if (!lanes) return
     const rect = lanes.getBoundingClientRect()
     const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
-    onSeek?.(snap(ratio * duration, step))
+    onSeek?.(snapToStep(ratio * duration, step))
   }, [duration, onSeek, step])
 
   const handleRulerDown = useCallback(event => {
@@ -429,13 +451,17 @@ export default function VfxTimeline({
                   }}
                   onDoubleClick={event => {
                     const rect = event.currentTarget.getBoundingClientRect()
-                    const at = snap(((event.clientX - rect.left) / rect.width) * duration, step)
+                    const at = snapToStep(((event.clientX - rect.left) / rect.width) * duration, step)
                     actions.addClip(system.id, { at, duration: 0 })
                   }}
                   title="Double-click to add a burst here"
                 >
                   {system.schedule.clips.map(clip => {
                     const burst = clip.duration <= 0
+                    const width = clipWidth(clip.duration, pps, CLIP_SIZES)
+                    // See HANDLE_MIN_CLIP_PX: a clip too narrow to hold both
+                    // handles and a grabbable middle is all body.
+                    const { start: canTrimStart, end: canTrimEnd } = clipHandles(clip.duration, width)
                     return (
                       <div
                         key={clip.id}
@@ -446,31 +472,46 @@ export default function VfxTimeline({
                           clip.loop ? 'is-loop' : '',
                         ].filter(Boolean).join(' ')}
                         style={{
-                          left: `${clip.at * pps}px`,
-                          width: burst
-                            ? BURST_WIDTH_PX
-                            : `${Math.max(clip.duration * pps, MIN_CLIP_PX)}px`,
+                          // The document's geometry, which the stylesheet adds
+                          // the drag's offsets to. The width comes from the same
+                          // helper the drag preview uses, so the two cannot
+                          // disagree about how wide a clip is.
+                          '--vfx-clip-at': `${clip.at * pps}px`,
+                          '--vfx-clip-w': `${width}px`,
                         }}
                         title={burst
                           ? `Burst at ${formatTime(clip.at)}. Drag the right edge to turn it into a window.`
                           : `${formatTime(clip.at)} to ${formatTime(clip.at + clip.duration)}${clip.loop ? ', repeating' : ''}`}
                       >
-                        {!burst && (
+                        {canTrimStart && (
                           <span
                             className="vfx-timeline__handle is-start"
                             onPointerDown={event => startClipDrag(event, system.id, clip, 'start')}
+                            title="Drag to trim the start. The end stays where it is."
                             aria-hidden="true"
                           />
                         )}
                         <span
                           className="vfx-timeline__clip-body"
                           onPointerDown={event => startClipDrag(event, system.id, clip, 'move')}
+                          title={burst
+                            ? 'Drag to move this burst'
+                            : 'Drag to move. The edges trim it.'}
                         />
-                        <span
-                          className="vfx-timeline__handle is-end"
-                          onPointerDown={event => startClipDrag(event, system.id, clip, 'end')}
-                          aria-hidden="true"
-                        />
+                        {/* A burst keeps its end handle whatever its width -
+                            dragging it to a length is the only way to turn a
+                            burst into a window, so removing it would make that
+                            a one-way change. */}
+                        {canTrimEnd && (
+                          <span
+                            className="vfx-timeline__handle is-end"
+                            onPointerDown={event => startClipDrag(event, system.id, clip, 'end')}
+                            title={burst
+                              ? 'Drag right to turn this burst into a window'
+                              : 'Drag to trim the end'}
+                            aria-hidden="true"
+                          />
+                        )}
                         <span className="vfx-timeline__clip-tools">
                           <button
                             type="button"

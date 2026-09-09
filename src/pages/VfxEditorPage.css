@@ -50,13 +50,10 @@
   border-bottom: 1px solid var(--outline-variant);
 }
 
-.vfx-page__templates {
-  display: flex;
-  gap: 0.4rem;
-}
-
 .vfx-page__template {
-  padding: 0.35rem 0.85rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 0.25rem 0.7rem;
   border: 1px solid var(--outline-variant);
   border-radius: var(--radius-full);
   background: transparent;
@@ -536,20 +533,60 @@
 .vfx-page__templates {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.45rem 1.5rem;
+  gap: 0.75rem;
+  padding: 0.4rem 1.5rem;
   background: var(--surface-container);
   border-bottom: 1px solid var(--outline-variant);
+  /* The row is the only thing on the page allowed to scroll horizontally.
+     Twelve templates in five categories do not fit at 1280px, and wrapping
+     them would push the board down by a whole row on every window. */
+  min-width: 0;
+}
+
+.vfx-page__template-groups {
+  display: flex;
+  align-items: stretch;
+  gap: 0.9rem;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Room for the scrollbar, so it never sits on top of the buttons. */
+  padding-bottom: 2px;
+}
+
+.vfx-page__template-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  flex: 0 0 auto;
+}
+
+/* The category, above its buttons rather than beside them: the row answers
+   "what kind of effect" before "which one", which is the order an author
+   decides in. */
+.vfx-page__template-category {
+  font-family: var(--font-label);
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--on-surface-variant);
+  opacity: 0.55;
+  white-space: nowrap;
+}
+
+.vfx-page__template-row {
+  display: flex;
+  gap: 0.3rem;
 }
 
 .vfx-page__templates-label {
+  flex: 0 0 auto;
   font-family: var(--font-label);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--on-surface-variant);
   opacity: 0.7;
-  margin-right: 0.3rem;
 }
 
 /* --- Undo / redo ---------------------------------------------------------- */

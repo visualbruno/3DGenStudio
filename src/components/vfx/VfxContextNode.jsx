@@ -40,7 +40,9 @@ import './VfxContextNode.css'
 const BADGE_ZOOM = 0.7
 
 export default function VfxContextNode({ id, data, selected }) {
-  const { context, system, def, blocks, diagnostics, wiredProps, systemIndex } = data
+  const {
+    context, system, def, blocks, diagnostics, wiredProps, systemIndex, systemOptions,
+  } = data
   const { actions, expanded, fieldProps, engineTarget, level } = useVfxBoard()
   const listRef = useRef(null)
   const [adding, setAdding] = useState(false)
@@ -181,19 +183,32 @@ export default function VfxContextNode({ id, data, selected }) {
           how VFX Graph splits an Output's render state from its blocks. */}
       {Object.keys(def.params || {}).length > 0 && (
         <div className="vfx-node__params nodrag">
-          {Object.entries(def.params).map(([param, paramDef]) => (
-            <label className="vfx-node__param" key={param} title={paramDef.hint || ''}>
-              <span>{paramDef.label}</span>
-              <select
-                value={context.params?.[param] ?? paramDef.default}
-                onChange={event => actions.setContextParam(id, param, event.target.value)}
-              >
-                {paramDef.options.map(option => (
-                  <option key={option} value={option}>{option}</option>
-                ))}
-              </select>
-            </label>
-          ))}
+          {Object.entries(def.params).map(([param, paramDef]) => {
+            // A param whose choices are the effect's own systems cannot list
+            // them in the catalog. `optionsFrom` is the one indirection, and it
+            // is read the same way here and in the parameters panel - so the
+            // Event stage needs no bespoke component.
+            const options = paramDef.optionsFrom === 'systems'
+              ? (systemOptions || []).filter(entry => entry.value !== system.id)
+              : paramDef.options.map(value => ({ value, label: value }))
+            return (
+              <label className="vfx-node__param" key={param} title={paramDef.hint || ''}>
+                <span>{paramDef.label}</span>
+                <select
+                  value={context.params?.[param] ?? paramDef.default}
+                  onChange={event => actions.setContextParam(id, param, event.target.value)}
+                >
+                  {/* A sub-emitter with nothing chosen is an error the compiler
+                      reports, so the empty option has to exist and has to say
+                      what it means rather than being blank. */}
+                  {paramDef.optionsFrom === 'systems' && <option value="">Choose a system…</option>}
+                  {options.map(option => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+            )
+          })}
         </div>
       )}
 

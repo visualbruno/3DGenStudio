@@ -32,7 +32,7 @@ import {
   InterleavedBufferAttribute,
   Mesh,
 } from 'three';
-import { getDefaultSprite } from './assets.js';
+import { getDefaultParticleMesh, getDefaultSprite } from './assets.js';
 import { createParticleMaterial, updateParticleMaterial } from './materials.js';
 import { sortIndicesByDepth } from './sort.js';
 
@@ -78,14 +78,35 @@ function getSharedQuad() {
  * @returns {VfxBatch}
  */
 export function createBatch(spec) {
-  const { output, sources, capacity, texture = null, intensity = 1, toneMapped = true } = spec;
+  const {
+    output, sources, capacity, texture = null, intensity = 1, toneMapped = true,
+  } = spec;
   const layout = output.instanceLayout;
 
-  const quad = getSharedQuad();
   const geometry = new InstancedBufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(quad.position, 3));
-  geometry.setAttribute('uv', new BufferAttribute(quad.uv, 2));
-  geometry.setIndex(new BufferAttribute(quad.index, 1));
+  if (spec.meshGeometry) {
+    // A MESH OUTPUT, with the source attributes CLONED rather than referenced.
+    //
+    // Referencing them would be cheaper and would make ownership ambiguous:
+    // `geometry.dispose()` tells three to release the GPU buffer for every
+    // attribute it holds, so tearing down one batch would drop the buffers
+    // behind an asset that other batches are still drawing. They would silently
+    // re-upload on the next frame, so the symptom is a stall rather than an
+    // error - the hardest kind of shared-resource bug to attribute.
+    //
+    // A particle mesh is small by definition (its own teach line says so), so
+    // a copy per batch is a few kilobytes in exchange for disposeBatch being
+    // unconditionally correct.
+    for (const [name, attribute] of Object.entries(spec.meshGeometry.attributes)) {
+      geometry.setAttribute(name, attribute.clone());
+    }
+    if (spec.meshGeometry.index) geometry.setIndex(spec.meshGeometry.index.clone());
+  } else {
+    const quad = getSharedQuad();
+    geometry.setAttribute('position', new BufferAttribute(quad.position, 3));
+    geometry.setAttribute('uv', new BufferAttribute(quad.uv, 2));
+    geometry.setIndex(new BufferAttribute(quad.index, 1));
+  }
 
   // Allocated once at the effect's total capacity and never grown. Growing
   // means recreating a GPU buffer mid-frame, at exactly the moment the effect
@@ -117,6 +138,10 @@ export function createBatch(spec) {
     texture,
     intensity,
     toneMapped,
+    // The atlas grid. Part of the batch key too, so every source in this batch
+    // agrees about it - two outputs with different layouts cannot share a draw
+    // without one of them playing its sheet through the other's grid.
+    tiles: output.tiles || null,
   });
 
   const mesh = new Mesh(geometry, material);
@@ -244,11 +269,13 @@ export function disposeBatch(batch) {
  *
  * @param {Object} ir
  * @param {Array<Object>} emitters
- * @param {{textures?: Map<number, import('three').Texture>, toneMapped?: boolean}} [options]
+ * @param {{textures?: Map<number, import('three').Texture>,
+ *          meshes?: Map<number, Object>, toneMapped?: boolean}} [options]
  * @returns {VfxBatch[]}
  */
 export function createBatches(ir, emitters, options = {}) {
   const textures = options.textures || new Map();
+  const meshes = options.meshes || new Map();
   const groups = new Map();
 
   ir.systems.forEach((irSystem, index) => {
@@ -280,11 +307,25 @@ export function createBatches(ir, emitters, options = {}) {
     // see the header of assets.js for why that is a product decision and not a
     // convenience.
     const texture = (asset && textures.get(asset.assetId)) || getDefaultSprite();
+
+    // The model, for a mesh output. As with the texture there is ALWAYS one -
+    // an author who switches the mode before choosing an asset sees a chip of
+    // debris rather than nothing, which is the same argument the built-in
+    // sprite makes.
+    let meshGeometry = null;
+    if (group.output.mode === 'mesh') {
+      const meshBlock = group.output.blocks.find((b) => b.kernel === 'output.mesh');
+      const meshSlot = meshBlock?.assetSlots?.mesh ?? -1;
+      const meshAsset = meshSlot >= 0 ? ir.assets[meshSlot] : null;
+      meshGeometry = (meshAsset && meshes.get(meshAsset.assetId)) || getDefaultParticleMesh();
+    }
+
     return createBatch({
       output: group.output,
       sources: group.sources,
       capacity: group.capacity,
       texture,
+      meshGeometry,
       toneMapped: options.toneMapped !== false,
     });
   });

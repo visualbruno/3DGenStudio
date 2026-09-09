@@ -313,6 +313,37 @@ function normalizeOperator(input = {}) {
   return operator;
 }
 
+/**
+ * Cosmetic board state: node positions, and the author's own notes.
+ *
+ * NOTES LIVE HERE, NOT AT THE TOP LEVEL, and that placement is the whole
+ * design. `layout` is excluded from vfxSignature (invariant 2), so writing a
+ * note - or dragging one, or resizing one - cannot recompile the effect or
+ * restart the simulation. A note at the top level would be part of the
+ * document's identity, and typing in one would rebuild the runtime on every
+ * keystroke.
+ *
+ * They are still SAVED, because `layout` is part of the file even though it is
+ * not part of the signature. A note that vanished on reload would be worse than
+ * no notes at all.
+ */
+function normalizeLayout(input) {
+  const raw = input && typeof input === 'object' ? input : {};
+  const nodes = raw.nodes && typeof raw.nodes === 'object' ? { ...raw.nodes } : {};
+  const notes = (Array.isArray(raw.notes) ? raw.notes : []).map((note) => ({
+    id: asString(note?.id) || nextVfxId('note'),
+    text: asString(note?.text),
+    x: asNumber(note?.x, 0),
+    y: asNumber(note?.y, 0),
+    width: Math.max(120, asNumber(note?.width, 240)),
+    height: Math.max(60, asNumber(note?.height, 120)),
+    // Six accents, matching the system swatches, so a note can be visually
+    // tied to the systems it is about.
+    accent: Math.max(0, Math.min(5, Math.round(asNumber(note?.accent, 0)))),
+  }));
+  return { nodes, notes };
+}
+
 function normalizeEvent(input = {}) {
   const triggers = ['start', 'stop', 'custom', 'particleDeath', 'particleOverTime', 'particleCollide'];
   return {
@@ -425,7 +456,7 @@ export function createEmptyVfxDoc(options = {}) {
     edges: [],
     exposed: [],
     references: {},
-    layout: { nodes: {} },
+    layout: { nodes: {}, notes: [] },
   };
   return normalizeVfxDoc(doc);
 }
@@ -537,7 +568,7 @@ export function normalizeVfxDoc(input) {
     edges: (Array.isArray(raw.edges) ? raw.edges : []).map(normalizeEdge),
     exposed: (Array.isArray(raw.exposed) ? raw.exposed : []).map(normalizeExposed),
     references: normalizeReferences(raw.references),
-    layout: raw.layout && typeof raw.layout === 'object' ? raw.layout : { nodes: {} },
+    layout: normalizeLayout(raw.layout),
   };
 
   pruneEdges(doc);

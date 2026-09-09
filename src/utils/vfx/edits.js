@@ -20,7 +20,12 @@
 // of the ordinary edits above, so clicking a fix produces exactly one undo
 // entry, indistinguishable from doing it by hand.
 
-import { CATALOG, defaultModes, defaultProps } from '../../../vfx/catalog.js'
+import {
+  CATALOG,
+  defaultContextParams,
+  defaultModes,
+  defaultProps,
+} from '../../../vfx/catalog.js'
 import {
   CONTEXT_KIND,
   createClip,
@@ -431,10 +436,25 @@ export function setContextParam(doc, contextId, param, value) {
 
 /** Add a stage to a system. */
 export function addContext(doc, systemId, kind) {
-  return withSystem(doc, systemId, system => ({
-    ...system,
-    contexts: [...system.contexts, { id: nextVfxId('ctx'), kind, blocks: [], params: {} }],
-  }))
+  if (!Object.values(CONTEXT_KIND).includes(kind)) return doc
+  return withSystem(doc, systemId, system => {
+    // ONE OF EACH STAGE, except Output. A second Spawn or Update context is
+    // E_DUPLICATE_CONTEXT - the compiler reports it and lowers only one - so
+    // letting the UI create one would be offering an action whose only effect
+    // is an error. Outputs are the exception because an effect legitimately
+    // draws its particles more than once: a core and a glow, additive and
+    // alpha, from one simulation.
+    if (kind !== CONTEXT_KIND.OUTPUT && system.contexts.some(c => c.kind === kind)) {
+      return system
+    }
+    return {
+      ...system,
+      contexts: [
+        ...system.contexts,
+        { id: nextVfxId('ctx'), kind, blocks: [], params: defaultContextParams(kind) },
+      ],
+    }
+  })
 }
 
 /** Remove a stage, and everything in it. */
@@ -702,6 +722,56 @@ export function unwireProp(doc, blockId, prop) {
   const kept = doc.edges.filter(edge => !(edge.to.blockId === blockId && edge.to.prop === prop))
   if (kept.length === doc.edges.length) return doc
   return normalizeVfxDoc({ ...doc, edges: kept })
+}
+
+// ---------------------------------------------------------------------------
+// Notes
+// ---------------------------------------------------------------------------
+//
+// Comment groups, in the plan's language. They live in `doc.layout`, which
+// vfxSignature excludes - so writing, moving or resizing a note cannot
+// recompile the effect. That is not an optimisation: a note at the top level
+// would be part of the document's identity, and typing in one would rebuild the
+// runtime on every keystroke.
+
+/** Add a note at a board position. */
+export function addNote(doc, spec = {}) {
+  const note = {
+    id: nextVfxId('note'),
+    text: typeof spec.text === 'string' ? spec.text : '',
+    x: Number.isFinite(spec.x) ? Math.round(spec.x) : 0,
+    y: Number.isFinite(spec.y) ? Math.round(spec.y) : 0,
+    width: Number.isFinite(spec.width) ? Math.max(120, spec.width) : 240,
+    height: Number.isFinite(spec.height) ? Math.max(60, spec.height) : 120,
+    accent: Number.isInteger(spec.accent) ? spec.accent : 0,
+  }
+  return {
+    ...doc,
+    layout: { ...doc.layout, notes: [...(doc.layout?.notes || []), note] },
+  }
+}
+
+/** Patch a note's text, position, size or accent. */
+export function updateNote(doc, noteId, patch) {
+  const notes = doc.layout?.notes || []
+  if (!notes.some(note => note.id === noteId)) return doc
+  return {
+    ...doc,
+    layout: {
+      ...doc.layout,
+      notes: notes.map(note => (note.id === noteId ? { ...note, ...patch } : note)),
+    },
+  }
+}
+
+/** Remove a note. */
+export function removeNote(doc, noteId) {
+  const notes = doc.layout?.notes || []
+  if (!notes.some(note => note.id === noteId)) return doc
+  return {
+    ...doc,
+    layout: { ...doc.layout, notes: notes.filter(note => note.id !== noteId) },
+  }
 }
 
 // ---------------------------------------------------------------------------

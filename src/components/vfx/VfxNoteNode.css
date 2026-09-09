@@ -1,0 +1,117 @@
+/* A note is the one node that is deliberately NOT a card: no strong border, a
+   translucent-looking fill built from a flat colour, and it sits behind the
+   real nodes. It should read as annotation on the board rather than as another
+   thing in the graph. */
+
+.vfx-note {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  min-height: 70px;
+  border-radius: 8px;
+  /* Flat, not rgba over a blur: nothing near the React Flow viewport uses a
+     backdrop-filter. The colour is a dark mix of the accent, mixed here rather
+     than at runtime. */
+  background: #1a1d24;
+  border: 1px solid var(--vfx-note-accent, #4f8cf5);
+  box-shadow: inset 3px 0 0 var(--vfx-note-accent, #4f8cf5);
+  overflow: hidden;
+}
+
+.vfx-note.is-selected {
+  box-shadow: inset 3px 0 0 var(--vfx-note-accent, #4f8cf5), 0 0 0 1px #ffffff40;
+}
+
+.vfx-note__bar {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 5px 3px 8px;
+  background: #20232a;
+  cursor: grab;
+}
+
+.vfx-note__bar:active {
+  cursor: grabbing;
+}
+
+.vfx-note__bar > .material-symbols-outlined {
+  font-size: 14px;
+  color: var(--vfx-note-accent, #4f8cf5);
+}
+
+.vfx-note__accents {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.vfx-note__accent {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #101216;
+  border-radius: 2px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.55;
+}
+
+.vfx-note__accent:hover,
+.vfx-note__accent.is-active {
+  opacity: 1;
+  box-shadow: 0 0 0 1px #ffffff80;
+}
+
+.vfx-note__remove {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 3px;
+}
+
+.vfx-note__remove:hover {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}
+
+.vfx-note__remove .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.vfx-note__text {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  background: none;
+  border: none;
+  resize: none;
+  color: #dce3ef;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.vfx-note__text::placeholder {
+  color: #5f6673;
+}
+
+/* React Flow's resizer handles. Toned down to match the rest of the board -
+   its defaults are a bright blue that fights every accent. */
+.vfx-note .react-flow__resize-control.handle {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--vfx-note-accent, #4f8cf5);
+  border: 1px solid #101216;
+}
+
+.vfx-note .react-flow__resize-control.line {
+  border-color: var(--vfx-note-accent, #4f8cf5);
+  border-width: 1px;
+}

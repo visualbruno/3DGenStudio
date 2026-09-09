@@ -24,10 +24,18 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createBatches, disposeBatch } from '../utils/vfx/batch.js'
-import { disposeVfxTextures, loadVfxTextures } from '../utils/vfx/assets.js'
+import {
+  disposeVfxMeshes,
+  disposeVfxTextures,
+  loadVfxMeshes,
+  loadVfxTextures,
+} from '../utils/vfx/assets.js'
 import { createVfxRuntime } from '../utils/vfx/system.js'
 
+// Shared empties, so an effect with no assets keeps a STABLE identity and the
+// batches memo below does not rebuild every render.
 const NO_TEXTURES = new Map()
+const NO_MESHES = new Map()
 
 /**
  * @param {Object} options
@@ -35,10 +43,12 @@ const NO_TEXTURES = new Map()
  * @param {(asset: Object) => string|null} [options.resolveUrl] asset id -> URL
  * @param {boolean} [options.profile] per-kernel timing
  * @param {boolean} [options.toneMapped]
- * @returns {{runtime: Object|null, batches: Array<Object>}}
+ * @returns {{runtime: Object|null, batches: Array<Object>,
+ *   textures: Map<number, Object>, meshes: Map<number, Object>}}
  */
 export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, toneMapped = true }) {
   const [textures, setTextures] = useState(NO_TEXTURES)
+  const [meshes, setMeshes] = useState(NO_MESHES)
 
   // The graph hash, not the IR object: the compiler is pure, so recompiling an
   // unchanged document yields a new object with the same hash. Keying on
@@ -53,9 +63,11 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
   )
 
   const batches = useMemo(
-    () => (runtime && ir ? createBatches(ir, runtime.emitters, { textures, toneMapped }) : []),
+    () => (runtime && ir
+      ? createBatches(ir, runtime.emitters, { textures, meshes, toneMapped })
+      : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [runtime, textures, toneMapped],
+    [runtime, textures, meshes, toneMapped],
   )
 
   // Batches own a geometry and a material each. Nothing in this repo relies on
@@ -80,6 +92,29 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hash])
 
+  // Meshes, in their own effect rather than awaited alongside the textures.
+  //
+  // A glTF is slower to fetch and parse than a PNG, and batching the two would
+  // hold the textures back until the model arrived - so an effect with both
+  // would show untextured quads for as long as the mesh took, rather than
+  // showing its sprites immediately and swapping in the model when it lands.
+  useEffect(() => {
+    if (!ir || !resolveUrl) return undefined
+    let cancelled = false
+    loadVfxMeshes(ir, { resolveUrl }).then(result => {
+      if (cancelled || result.meshes.size === 0) return
+      setMeshes(result.meshes)
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hash])
+
+  useEffect(() => () => {
+    if (meshes !== NO_MESHES) disposeVfxMeshes(meshes)
+  }, [meshes])
+
   // Released when they are replaced, and when the page goes away. The built-in
   // sprite is module-owned and disposeVfxTextures skips it - it outlives any
   // one effect, and disposing it would leave the next one untextured.
@@ -87,5 +122,5 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     if (textures !== NO_TEXTURES) disposeVfxTextures(textures)
   }, [textures])
 
-  return { runtime, batches, textures }
+  return { runtime, batches, textures, meshes }
 }

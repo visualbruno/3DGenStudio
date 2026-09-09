@@ -156,6 +156,73 @@ const DEFS = Object.freeze({
       args: { systemId: d.systemId, capacity: nextPow2(d.peak) },
     }),
   },
+  E_EVENT_NO_SOURCE: {
+    severity: SEVERITY.ERROR,
+    title: 'This sub-emitter is not watching anything',
+    message: (d) => (
+      `"${d.systemName}" is set to emit when ${d.trigger}, but no system has `
+      + 'been chosen to watch - so nothing will ever trigger it.'
+    ),
+    hint: () => 'Pick the system whose particles should raise the event, in the Event stage.',
+  },
+  E_EVENT_SELF: {
+    severity: SEVERITY.ERROR,
+    title: 'A system cannot watch itself',
+    message: (d) => (
+      `"${d.systemName}" is watching its own particles, so every particle it `
+      + 'emits would immediately emit more - without limit.'
+    ),
+    hint: () => 'Sub-emitters need a different system as their source. Duplicate this one and have the copy watch the original.',
+  },
+  E_EVENT_CYCLE: {
+    severity: SEVERITY.ERROR,
+    title: 'Sub-emitters form a loop',
+    message: (d) => (
+      `"${d.systemName}" is part of a chain that leads back to itself, so its `
+      + 'particles would spawn each other without limit.'
+    ),
+    hint: () => 'Follow the "Watching" setting on each Event stage: somewhere along the chain one of them points back at an earlier system.',
+  },
+  E_EVENT_TOO_DEEP: {
+    severity: SEVERITY.ERROR,
+    title: 'Sub-emitters are nested too deeply',
+    message: (d) => (
+      `"${d.systemName}" is at the end of a chain more than ${d.limit} systems `
+      + 'long. Each level multiplies the particle count, so the limit is a '
+      + 'guard rather than a preference.'
+    ),
+    hint: () => 'Three levels - a shell, its sparks, and their smoke - covers essentially every effect. Beyond that the count grows faster than any capacity can hold.',
+  },
+  W_MESH_MODE_MISSING: {
+    severity: SEVERITY.WARN,
+    title: 'The chosen mesh is not being used',
+    message: (d) => (
+      `"${d.systemName}" has a Particle Mesh block, but its Output is set to `
+      + `draw as "${d.mode}" - so the model is ignored and flat sprites are `
+      + 'drawn instead.'
+    ),
+    hint: () => 'Two settings have to agree: the block chooses WHICH model, and the Output\'s "Render as" chooses whether a model is drawn at all.',
+    fix: (d) => ({
+      label: 'Draw as Mesh',
+      action: 'setContextParam',
+      args: { contextId: d.contextId, param: 'mode', value: 'mesh' },
+    }),
+  },
+  W_FLIPBOOK_NOT_PLAYED: {
+    severity: SEVERITY.WARN,
+    title: 'The sprite sheet never advances',
+    message: (d) => (
+      `"${d.systemName}" declares a ${d.frames}-frame sprite sheet but has no `
+      + 'Play Sprite Sheet block, so every particle will show frame 1 for its '
+      + 'whole life.'
+    ),
+    hint: () => 'That looks exactly like a texture that has been cropped, which is why it is worth saying: the Output block sets the LAYOUT, and a block in the Update stage is what steps through it.',
+    fix: (d) => ({
+      label: 'Add Play Sprite Sheet',
+      action: 'addBlock',
+      args: { systemId: d.systemId, contextKind: 'update', blockType: 'update.flipbook' },
+    }),
+  },
   W_ZERO_SIZE: {
     severity: SEVERITY.WARN,
     title: 'Particles have no size',
@@ -269,6 +336,20 @@ const DEFS = Object.freeze({
     title: 'Particles do not move',
     message: (d) => `"${d.systemName}" has no Update stage, so particles stay where they are born and never change.`,
     hint: () => 'That is right for a static decal or a flash. Add an Update stage for motion, fading or growth.',
+  },
+  I_TRAIL_UNSUPPORTED: {
+    severity: SEVERITY.INFO,
+    title: 'Trails draw as billboards here',
+    message: (d) => (
+      `"${d.systemName}" is set to draw as a trail. The setting is carried into `
+      + 'the export, but this preview draws billboards instead.'
+    ),
+    hint: () => 'A trail needs a per-particle position history and a rebuilt strip, which is a different renderer rather than a setting. For a ribbon that previews correctly, use Stretched with a high spawn rate - the Trail template does exactly that.',
+    fix: (d) => ({
+      label: 'Draw as Stretched',
+      action: 'setContextParam',
+      args: { contextId: d.contextId, param: 'mode', value: 'stretched' },
+    }),
   },
   I_SOFT_UNSUPPORTED: {
     severity: SEVERITY.INFO,

@@ -21,6 +21,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CATALOG, CONTEXT_DEFS, defaultProps, ENGINE_SUPPORT } from '../../../vfx/catalog.js'
+import { CONTEXT_KIND } from '../../../vfx/doc.js'
 import { normalizeValue } from '../../../vfx/value.js'
 import VfxPropertyField from './VfxPropertyField'
 import './VfxParamsPanel.css'
@@ -177,7 +178,7 @@ export default function VfxParamsPanel({
             getCurvePlayhead={getCurvePlayhead}
           />
         )}
-        {kind === 'context' && <ContextParams found={found} actions={actions} />}
+        {kind === 'context' && <ContextParams found={found} actions={actions} doc={doc} />}
         {kind === 'system' && <SystemParams found={found} actions={actions} />}
         {kind === 'operator' && <OperatorParams found={found} actions={actions} />}
         {kind === 'effect' && <EffectParams doc={doc} actions={actions} />}
@@ -331,26 +332,36 @@ function BlockParams({
   )
 }
 
-function ContextParams({ found, actions }) {
+function ContextParams({ found, actions, doc }) {
   const { context, system } = found
   const def = CONTEXT_DEFS[context.kind] || {}
+  // As in VfxContextNode: a param whose choices are the effect's own systems.
+  const systemOptions = doc.systems
+    .filter(entry => entry.id !== system.id)
+    .map(entry => ({ value: entry.id, label: entry.name }))
   return (
     <>
       <p className="vfx-params__teach">{def.blurb} {def.flowNote}</p>
-      {Object.entries(def.params || {}).map(([param, paramDef]) => (
-        <label className="vfx-params__mode" key={param}>
-          <span className="vfx-params__mode-label">{paramDef.label}</span>
-          <select
-            value={context.params?.[param] ?? paramDef.default}
-            onChange={event => actions.setContextParam(context.id, param, event.target.value)}
-          >
-            {paramDef.options.map(option => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
-          {paramDef.hint && <p className="vfx-params__mode-hint">{paramDef.hint}</p>}
-        </label>
-      ))}
+      {Object.entries(def.params || {}).map(([param, paramDef]) => {
+        const options = paramDef.optionsFrom === 'systems'
+          ? systemOptions
+          : paramDef.options.map(value => ({ value, label: value }))
+        return (
+          <label className="vfx-params__mode" key={param}>
+            <span className="vfx-params__mode-label">{paramDef.label}</span>
+            <select
+              value={context.params?.[param] ?? paramDef.default}
+              onChange={event => actions.setContextParam(context.id, param, event.target.value)}
+            >
+              {paramDef.optionsFrom === 'systems' && <option value="">Choose a system…</option>}
+              {options.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            {paramDef.hint && <p className="vfx-params__mode-hint">{paramDef.hint}</p>}
+          </label>
+        )
+      })}
       <p className="vfx-params__note">
         {context.blocks.length} block{context.blocks.length === 1 ? '' : 's'}, in
         {' '}
@@ -372,6 +383,19 @@ function ContextParams({ found, actions }) {
 
 function SystemParams({ found, actions }) {
   const { system } = found
+  // Which stages this system does not have yet.
+  //
+  // THIS IS THE ONLY WAY TO REACH AN EVENT STAGE, and therefore the only way to
+  // make a sub-emitter. Without it the whole event system would be reachable
+  // from the compiler and the runtime but not from the editor - which is worse
+  // than not having built it, because the format would carry documents the UI
+  // could not produce.
+  //
+  // Output is always offerable; the others only when absent, matching what
+  // addContext will actually accept.
+  const missing = Object.entries(CONTEXT_DEFS).filter(([kind]) => (
+    kind === CONTEXT_KIND.OUTPUT || !system.contexts.some(c => c.kind === kind)
+  ))
   return (
     <>
       <label className="vfx-params__text">
@@ -397,6 +421,27 @@ function SystemParams({ found, actions }) {
           lifetime is what has to fit.
         </p>
       </label>
+      {missing.length > 0 && (
+        <div className="vfx-params__stages">
+          <span className="vfx-params__mode-label">Add a stage</span>
+          {missing.map(([kind, def]) => (
+            <button
+              key={kind}
+              type="button"
+              className="vfx-params__stage"
+              onClick={() => actions.addContext(system.id, kind)}
+              title={`${def.blurb}\n\n${def.flowNote}`}
+            >
+              <span className="material-symbols-outlined">{def.icon}</span>
+              <span>
+                <strong>{def.label}</strong>
+                {def.blurb}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="vfx-params__actions">
         <button type="button" onClick={() => actions.duplicateSystem(system.id)}>
           <span className="material-symbols-outlined">content_copy</span>

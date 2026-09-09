@@ -41,6 +41,7 @@ import { toFlowEdges, toFlowNodes } from '../../utils/vfx/flow.js'
 import { VfxBoardContext } from './VfxBoardContext'
 import VfxContextNode from './VfxContextNode'
 import VfxOperatorNode from './VfxOperatorNode'
+import VfxNoteNode from './VfxNoteNode'
 import VfxFlowEdge from './VfxFlowEdge'
 import VfxDataEdge from './VfxDataEdge'
 import './VfxBoard.css'
@@ -48,7 +49,11 @@ import './VfxBoard.css'
 // Declared at module scope. React Flow warns - loudly, and correctly - when
 // these objects change identity between renders, because it re-registers every
 // node type when they do.
-const NODE_TYPES = { vfxContext: VfxContextNode, vfxOperator: VfxOperatorNode }
+const NODE_TYPES = {
+  vfxContext: VfxContextNode,
+  vfxOperator: VfxOperatorNode,
+  vfxNote: VfxNoteNode,
+}
 const EDGE_TYPES = { vfxFlow: VfxFlowEdge, vfxData: VfxDataEdge }
 
 // Property types a numeric wire can drive. A texture or mesh slot names an
@@ -64,6 +69,7 @@ const WIRABLE = new Set([PROP_TYPE.FLOAT, PROP_TYPE.INT, PROP_TYPE.VEC3, PROP_TY
  * @param {Object} props.fieldProps blockId -> { propName -> extra field props }
  * @param {string|null} props.selectedBlockId
  * @param {string|null} props.selectedContextId
+ * @param {string|null} [props.selectedOperatorId]
  * @param {string|null} props.engineTarget
  * @param {string} props.level disclosure level
  * @param {(instance: Object) => void} [props.onInit]
@@ -76,21 +82,133 @@ export default function VfxBoard({
   fieldProps,
   selectedBlockId,
   selectedContextId,
+  selectedOperatorId,
   engineTarget,
   level,
   onInit = null,
 }) {
-  const { screenToFlowPosition } = useReactFlow()
+  // getInternalNode, not getNode: the measured size is on the INTERNAL node.
+  // See the Tidy button for why that distinction is load-bearing.
+  const { screenToFlowPosition, getInternalNode } = useReactFlow()
   const pointer = useRef({ x: 0, y: 0 })
   const [chooser, setChooser] = useState(null)
+  // BOARD-LOCAL, and deliberately not document selection: a note is edited in
+  // place - its text, its colour, its size are all on the node itself - so it
+  // has nothing to show in the Parameters panel. All this drives is the ring
+  // and the resize handles.
+  const [selectedNoteId, setSelectedNoteId] = useState(null)
 
-  const nodes = useMemo(() => toFlowNodes(doc, {
+  // POSITIONS OF NODES CURRENTLY UNDER THE POINTER, and nothing else.
+  //
+  // THE BUG: a dragged node did not follow the cursor - it stayed put until the
+  // mouse was released, then jumped to where it had been let go. React Flow
+  // applies a node change ITSELF only when it owns the array (`defaultNodes`);
+  // with a controlled `nodes` prop, `triggerNodeChanges` calls onNodesChange
+  // and applies nothing (see @xyflow/react's store). With no handler at all,
+  // every position change a drag produced went into the void, and the node's
+  // rendered position stayed whatever the document said until pointer-up
+  // committed the edit. The comment on <ReactFlow> below used to assert the
+  // opposite; it was a guess, and this is what the library actually does.
+  //
+  // Why a separate map rather than making the whole array stateful: the
+  // document remains the single source of truth for what this effect CONTAINS.
+  // This holds the one thing the document deliberately does not have - where a
+  // node is WHILE it is being dragged - and it is emptied the instant the
+  // gesture ends, in the same React batch as the real edit, so there is no
+  // frame where the two disagree and no second copy of the graph to keep in
+  // sync.
+  const [dragPositions, setDragPositions] = useState(null)
+
+  // A DRAG MOVES ONLY WHAT YOU GRABBED, and this ref is what enforces it.
+  //
+  // React Flow drags the node under the pointer TOGETHER WITH everything
+  // `selected` (getDragItems in @xyflow/system). That is right in an editor
+  // where selection is a deliberate multi-select; it is wrong here, because
+  // `selected` on this board means "the node open in the Parameters panel".
+  // Clicking Initialize to edit it and then dragging Update would move
+  // Initialize as well, for no reason the author could see. Filtering to the
+  // node the gesture started on is the whole prevention - and it is only needed
+  // now that a drag moves anything on screen at all.
+  const dragOrigin = useRef(null)
+
+  const handleNodeDragStart = useCallback((_event, node) => {
+    dragOrigin.current = node.id
+  }, [])
+
+  const handleNodesChange = useCallback(changes => {
+    // Position changes only, and only for the node under the pointer.
+    // Selection is ours (it comes from the document, via toFlowNodes) and
+    // dimensions live in React Flow's own lookup, so every other change is
+    // correctly a no-op here.
+    let moving = null
+    let settled = false
+    for (const change of changes) {
+      if (change.type !== 'position' || !change.position) continue
+      if (change.id !== dragOrigin.current) continue
+      if (change.dragging) {
+        if (!moving) moving = new Map()
+        moving.set(change.id, change.position)
+      } else {
+        // `dragging: false` is the release. onNodeDragStop fires from the same
+        // event, so clearing here and committing there land in one batch.
+        settled = true
+      }
+    }
+    if (moving) {
+      setDragPositions(previous => {
+        const next = new Map(previous)
+        for (const [id, position] of moving) next.set(id, position)
+        return next
+      })
+    } else if (settled) {
+      setDragPositions(null)
+    }
+  }, [])
+
+  // TWO MEMOS, NOT ONE, AND THE SPLIT IS LOAD-BEARING.
+  //
+  // React Flow re-derives its internal node whenever the user node's IDENTITY
+  // changes, and it reads `measured` and the handle bounds from the user node -
+  // which ours never carry, because the document has no idea how tall anything
+  // rendered. So a new object means a node that is briefly unmeasured with no
+  // handle bounds, until the ResizeObserver reports it again a frame later.
+  //
+  // One memo over both dependencies would rebuild EVERY node on every pointer
+  // move of a drag, so the whole board would re-measure itself sixty times a
+  // second and every edge would be re-routed from missing handle bounds. Split,
+  // the document's array stays identical for the length of a gesture and only
+  // the node actually being dragged gets a new object - which is exactly what
+  // React Flow's own applyNodeChanges does.
+  const flowNodes = useMemo(() => toFlowNodes(doc, {
     diagnostics: diagnosticIndex,
     selectedBlockId,
     selectedContextId,
+    selectedOperatorId,
+    selectedNoteId,
     engineTarget,
     level,
-  }), [diagnosticIndex, doc, engineTarget, level, selectedBlockId, selectedContextId])
+  }), [
+    diagnosticIndex, doc, engineTarget, level,
+    selectedBlockId, selectedContextId, selectedNoteId, selectedOperatorId,
+  ])
+
+  const nodes = useMemo(() => {
+    if (!dragPositions || dragPositions.size === 0) return flowNodes
+    return flowNodes.map(node => {
+      const position = dragPositions.get(node.id)
+      if (!position) return node
+      // The measured size is carried forward for the one node that does get a
+      // new object, so even it does not re-measure mid-drag. React Flow's own
+      // controlled pattern gets this for free because applyNodeChanges writes
+      // `measured` onto the user node from a dimensions change; we ignore
+      // dimensions changes (React Flow's lookup is their home), so this is
+      // where that value comes back from.
+      const measured = getInternalNode(node.id)?.measured
+      return measured?.width && measured?.height
+        ? { ...node, position, measured }
+        : { ...node, position }
+    })
+  }, [dragPositions, flowNodes, getInternalNode])
 
   const edges = useMemo(() => toFlowEdges(doc), [doc])
 
@@ -101,8 +219,17 @@ export default function VfxBoard({
     [actions, engineTarget, expanded, fieldProps, level],
   )
 
+  // Only the node the gesture STARTED on - see dragOrigin.
   const handleNodeDragStop = useCallback((_event, node) => {
-    actions.moveNode(node.id, node.position)
+    dragOrigin.current = null
+    // A note's position is its own content rather than layout state, so it goes
+    // to updateNote - clearLayout deliberately does not reset notes, and
+    // routing them through moveNode would put them in the map Tidy clears.
+    if (node.type === 'vfxNote') actions.updateNote(node.id, {
+      x: Math.round(node.position.x),
+      y: Math.round(node.position.y),
+    })
+    else actions.moveNode(node.id, node.position)
   }, [actions])
 
   const handleConnect = useCallback(connection => {
@@ -160,6 +287,7 @@ export default function VfxBoard({
 
   const handlePaneClick = useCallback(() => {
     setChooser(null)
+    setSelectedNoteId(null)
     actions.select(null)
   }, [actions])
 
@@ -169,7 +297,13 @@ export default function VfxBoard({
   // immediately be overwritten by selecting its context.
   const handleNodeClick = useCallback((event, node) => {
     if (event.target instanceof Element && event.target.closest('.vfx-block')) return
-    if (node.type === 'vfxOperator') actions.selectOperator(node.id)
+    setSelectedNoteId(node.type === 'vfxNote' ? node.id : null)
+    // A note has no Parameters panel of its own, so selecting one CLEARS the
+    // document selection rather than setting it. It used to fall through to
+    // selectContext, which pointed the panel at a context id that does not
+    // exist.
+    if (node.type === 'vfxNote') actions.select(null)
+    else if (node.type === 'vfxOperator') actions.selectOperator(node.id)
     else actions.selectContext(node.id)
   }, [actions])
 
@@ -206,18 +340,18 @@ export default function VfxBoard({
           onConnect={handleConnect}
           isValidConnection={isValidConnection}
           onEdgesDelete={handleEdgesDelete}
+          onNodeDragStart={handleNodeDragStart}
           onNodeDragStop={handleNodeDragStop}
           onNodeClick={handleNodeClick}
           onPaneClick={handlePaneClick}
-          // NO onNodesChange, AND THAT IS DELIBERATE. The document is the
-          // single source of truth for what this effect contains, so React
-          // Flow's copy is a projection of it and never the other way round.
-          // Two consequences, both checked against the library's behaviour:
-          // a node still moves smoothly during a drag (the position lives in
-          // React Flow's internal nodeLookup for the duration, and we commit it
-          // in onNodeDragStop), and node selection is OURS - `selected` comes
-          // from toFlowNodes, so a select change with nowhere to go is exactly
-          // right.
+          onNodesChange={handleNodesChange}
+          // onNodesChange HANDLES ONE CHANGE TYPE - a position while dragging -
+          // and ignores the rest on purpose: the document is the single source
+          // of truth for what this effect contains, so React Flow's copy is a
+          // projection of it and never the other way round. Selection is ours
+          // (`selected` comes from toFlowNodes), dimensions are React Flow's,
+          // and the committed position is written by onNodeDragStop. See
+          // handleNodesChange for why the drag needs the handler at all.
           nodesConnectable
           nodesDraggable
           elementsSelectable
@@ -261,8 +395,47 @@ export default function VfxBoard({
             </button>
             <button
               type="button"
-              onClick={() => actions.tidy()}
-              title="Forget every node position and lay the board out again"
+              onClick={() => {
+                const position = screenToFlowPosition({
+                  x: pointer.current.x,
+                  y: pointer.current.y + 40,
+                })
+                actions.addNote(position)
+              }}
+              title="Leave a note on the board - for yourself, or for whoever opens this next"
+            >
+              <span className="material-symbols-outlined">sticky_note_2</span>
+              Note
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                // MEASURED, not derived: autoLayout packs each column by the
+                // real height of each node, which is what an author means by
+                // "tidy" once a stage has eight blocks in it.
+                //
+                // THE MEASUREMENTS ARE NOT ON THE NODES WE PASS IN. Tidy used
+                // to read `node.measured` off the array `toFlowNodes` builds,
+                // where that field has never existed - so every node measured
+                // zero, autoLayout fell back to a uniform 160px row for all of
+                // them, and a stage with eight blocks overlapped the one below
+                // it. Which is the bug Tidy exists to fix, reported as Tidy
+                // causing it.
+                //
+                // React Flow writes measured sizes into its own nodeLookup
+                // (`updateNodeInternals` sets `measured` on the INTERNAL node,
+                // never on the user node), so getInternalNode is the only
+                // source. A node that has not been measured yet - one just
+                // added, or hidden - returns null and autoLayout uses its
+                // fallback for that one node rather than for all of them.
+                actions.tidy(id => {
+                  const measured = getInternalNode(id)?.measured
+                  return measured?.width && measured?.height
+                    ? { width: measured.width, height: measured.height }
+                    : null
+                })
+              }}
+              title="Lay the board out again, packing each system to fit its own blocks"
             >
               <span className="material-symbols-outlined">account_tree</span>
               Tidy

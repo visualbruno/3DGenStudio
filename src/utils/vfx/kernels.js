@@ -40,6 +40,7 @@
 // profiler exists and can prove the win.
 
 import { pcgFloatAt, pcgHash2 } from '../../../vfx/random.js';
+import { pushEvent } from './events.js';
 import { curl3 } from '../../../vfx/noise.js';
 import { BINDING_SRC } from '../../../vfx/ir.js';
 
@@ -99,14 +100,33 @@ export function prepareBinding(binding, env) {
     prep.slot = (binding.slot >>> 0) || 0x5bf03635;
   } else if (kind === B_REGISTER) {
     prep.offset = binding.index;
+    // A source narrower than the property broadcasts - see the note in
+    // lowerBinding. Defaulted to the full width so a hand-written IR without
+    // srcWidth behaves as it reads.
+    prep.srcWidth = Number.isFinite(binding.srcWidth) ? binding.srcWidth : width;
+    // A per-particle chain is re-evaluated inside the loop, so the prep carries
+    // the op list and the env it needs. Without the ops here, readChannel would
+    // have nothing to re-run and the binding would read whatever the last
+    // particle left in the register.
+    if (binding.perParticle) {
+      prep.perParticle = true;
+      prep.ops = binding.ops || null;
+      prep.env = env;
+    }
   }
   return prep;
 }
 
 // True when a binding's value is the same for every particle in a pass, so the
 // kernel can read it once before the loop.
+//
+// A per-particle REGISTER is the exception, and getting this wrong is invisible:
+// the kernel would hoist the read out of the loop and every particle would
+// silently share one value - which is exactly the behaviour the per-particle
+// support exists to remove.
 function isFixed(prep) {
-  return prep.kind === B_CONST || prep.kind === B_UNIFORM || prep.kind === B_REGISTER;
+  if (prep.kind === B_REGISTER) return !prep.perParticle;
+  return prep.kind === B_CONST || prep.kind === B_UNIFORM;
 }
 
 // The fixed value of such a binding, into out.
@@ -116,7 +136,13 @@ function readFixed(prep, env, out) {
   } else if (prep.kind === B_UNIFORM) {
     for (let c = 0; c < prep.width; c += 1) out[c] = env.uniforms[prep.offset + c];
   } else {
-    for (let c = 0; c < prep.width; c += 1) out[c] = env.regs[prep.offset + c];
+    // Broadcast when the source is narrower: one operator output feeding all
+    // three channels of a vec3, rather than reading two registers that belong
+    // to other operators.
+    const span = prep.srcWidth || prep.width;
+    for (let c = 0; c < prep.width; c += 1) {
+      out[c] = env.regs[prep.offset + (c < span ? c : span - 1)];
+    }
   }
   return out;
 }
@@ -202,7 +228,9 @@ function readChannel(prep, pool, i, env, c) {
   }
   if (prep.kind === B_CONST) return prep.fixed[c];
   if (prep.kind === B_UNIFORM) return env.uniforms[prep.offset + c];
-  return env.regs[prep.offset + c];
+  if (prep.perParticle && prep.ops) runOpsForParticle(prep.ops, env, pool, i);
+  const span = prep.srcWidth || prep.width;
+  return env.regs[prep.offset + (c < span ? c : span - 1)];
 }
 
 // ---------------------------------------------------------------------------
@@ -219,21 +247,35 @@ const KERNELS = {
    * relies on: nothing after this point can touch a dead particle, and the
    * accumulator starts every step at zero so forces add rather than compound.
    */
-  'age.advance': () => function ageAdvance(pool, i0, i1, dt) {
-    const age = pool.planes.age;
-    const lifetime = pool.planes.lifetime;
-    for (let i = i0; i < i1; i += 1) age[i] += dt;
+  'age.advance': (block, env) => {
+    // Which event channel this system's deaths feed, or -1 for none. Resolved
+    // once at build: the overwhelming majority of systems have no death
+    // listener, and those pay one comparison per frame rather than per
+    // particle.
+    const channel = Number.isInteger(block.deathChannel) ? block.deathChannel : -1;
+    return function ageAdvance(pool, i0, i1, dt) {
+      const age = pool.planes.age;
+      const lifetime = pool.planes.lifetime;
+      for (let i = i0; i < i1; i += 1) age[i] += dt;
 
-    // Sweep for deaths. swapRemove moves the last live particle into i, so i
-    // must be re-tested rather than advanced past - the incoming particle has
-    // not been examined yet and may itself be dead.
-    let i = i0;
-    while (i < pool.count) {
-      if (age[i] >= lifetime[i]) swapRemoveInline(pool, i);
-      else i += 1;
-    }
+      // Sweep for deaths. swapRemove moves the last live particle into i, so i
+      // must be re-tested rather than advanced past - the incoming particle has
+      // not been examined yet and may itself be dead.
+      let i = i0;
+      while (i < pool.count) {
+        if (age[i] >= lifetime[i]) {
+          // RECORDED BEFORE THE REMOVAL, because swapRemove overwrites slot i
+          // with the last live particle - reading the payload afterwards would
+          // give a child the position of a completely unrelated particle, which
+          // is the kind of bug that looks like the events are firing in the
+          // wrong place rather than being read at the wrong moment.
+          if (channel >= 0) pushEvent(env.events, channel, pool, i);
+          swapRemoveInline(pool, i);
+        } else i += 1;
+      }
 
-    pool.accel.fill(0, 0, pool.count * 3);
+      pool.accel.fill(0, 0, pool.count * 3);
+    };
   },
 
   /**
@@ -363,6 +405,625 @@ const KERNELS = {
         velocity[o] = v0 * sinPhi * Math.cos(dTheta);
         velocity[o + 1] = v0 * cosPhi;
         velocity[o + 2] = v0 * sinPhi * Math.sin(dTheta);
+      }
+    };
+  },
+
+  /** Place particles inside a box. */
+  'shape.position.box': (block, env) => {
+    const size = prepareBinding(block.bindings.find((b) => b.prop === 'size'), env);
+    const slot = 0x1d3a77b1;
+    return function shapePositionBox(pool, i0, i1) {
+      const position = pool.planes.position;
+      const seeds = pool.planes.seed;
+      const fixed = size.kind === B_CONST;
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+        const o = i * 3;
+        for (let c = 0; c < 3; c += 1) {
+          const extent = fixed ? size.fixed[c] : readChannel(size, pool, i, env, c);
+          // Centred on the origin, so a box emitter grows symmetrically when
+          // its size changes. Growing from one corner would make resizing it
+          // also move the effect.
+          position[o + c] = (pcgFloatAt(seed, slot + c) - 0.5) * extent;
+        }
+      }
+    };
+  },
+
+  /**
+   * Place particles on or inside a circle in the XZ plane.
+   *
+   * XZ rather than XY because Y is up everywhere else in this runtime, and a
+   * circle emitter is nearly always a ring on the ground or a portal mouth.
+   */
+  'shape.position.circle': (block, env) => {
+    const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
+    const thickness = prepareBinding(block.bindings.find((b) => b.prop === 'thickness'), env);
+    const slot = 0x63c9a8f3;
+    return function shapePositionCircle(pool, i0, i1) {
+      const position = pool.planes.position;
+      const seeds = pool.planes.seed;
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+        const r0 = radius.kind === B_CONST ? radius.fixed[0] : readChannel(radius, pool, i, env, 0);
+        const band = thickness.kind === B_CONST
+          ? thickness.fixed[0]
+          : readChannel(thickness, pool, i, env, 0);
+        const theta = pcgFloatAt(seed, slot) * TAU;
+        // Square root inside the band, so a filled disc does not crowd its
+        // centre - the same correction as the cone's mouth.
+        const inner = Math.max(0, r0 - band);
+        const t = pcgFloatAt(seed, slot + 1);
+        const r = Math.sqrt(inner * inner + t * (r0 * r0 - inner * inner));
+        const o = i * 3;
+        position[o] = r * Math.cos(theta);
+        position[o + 1] = 0;
+        position[o + 2] = r * Math.sin(theta);
+      }
+    };
+  },
+
+  /**
+   * Velocity pointing away from the origin - what an explosion is made of.
+   *
+   * Reads the position the shape block already set, so it must run AFTER one.
+   * A particle exactly at the origin has no direction to move in, so it gets a
+   * deterministic one from its own seed rather than a zero velocity: a burst
+   * from a point emitter would otherwise leave every particle sitting still.
+   */
+  'vel.radial': (block, env) => {
+    const speed = prepareBinding(block.bindings.find((b) => b.prop === 'speed'), env);
+    const slot = 0x3ba71e05;
+    return function velRadial(pool, i0, i1) {
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      const seeds = pool.planes.seed;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const v0 = speed.kind === B_CONST ? speed.fixed[0] : readChannel(speed, pool, i, env, 0);
+        let x = position[o];
+        let y = position[o + 1];
+        let z = position[o + 2];
+        let length = Math.sqrt(x * x + y * y + z * z);
+        if (length < 1e-6) {
+          const seed = seeds[i];
+          const u = pcgFloatAt(seed, slot) * 2 - 1;
+          const theta = pcgFloatAt(seed, slot + 1) * TAU;
+          const ring = Math.sqrt(Math.max(0, 1 - u * u));
+          x = ring * Math.cos(theta);
+          y = ring * Math.sin(theta);
+          z = u;
+          length = 1;
+        }
+        const scale = v0 / length;
+        velocity[o] = x * scale;
+        velocity[o + 1] = y * scale;
+        velocity[o + 2] = z * scale;
+      }
+    };
+  },
+
+  /**
+   * Velocity along a direction, with a cone of spread around it.
+   *
+   * Rain, snow and jets. The spread is drawn evenly over the cone's SOLID
+   * angle, the same correction as shape.cone - spreading the angle itself
+   * concentrates particles down the axis and makes a wide spread look like a
+   * narrow one with strays.
+   */
+  'vel.direction': (block, env) => {
+    const direction = prepareBinding(block.bindings.find((b) => b.prop === 'direction'), env);
+    const speed = prepareBinding(block.bindings.find((b) => b.prop === 'speed'), env);
+    const spread = prepareBinding(block.bindings.find((b) => b.prop === 'spread'), env);
+    const slot = 0x4e17c2d9;
+    return function velDirection(pool, i0, i1) {
+      const velocity = pool.planes.velocity;
+      const seeds = pool.planes.seed;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const dx = direction.kind === B_CONST ? direction.fixed[0] : readChannel(direction, pool, i, env, 0);
+        const dy = direction.kind === B_CONST ? direction.fixed[1] : readChannel(direction, pool, i, env, 1);
+        const dz = direction.kind === B_CONST ? direction.fixed[2] : readChannel(direction, pool, i, env, 2);
+        const v0 = speed.kind === B_CONST ? speed.fixed[0] : readChannel(speed, pool, i, env, 0);
+        const half = (spread.kind === B_CONST ? spread.fixed[0] : readChannel(spread, pool, i, env, 0)) * DEG;
+
+        let length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        // A zero direction falls back to down, which is what rain and snow
+        // want and is at least a direction - a zero velocity would look like
+        // the block was doing nothing.
+        let ax = 0;
+        let ay = -1;
+        let az = 0;
+        if (length > 1e-6) {
+          ax = dx / length;
+          ay = dy / length;
+          az = dz / length;
+        }
+
+        if (half <= 1e-6) {
+          velocity[o] = ax * v0;
+          velocity[o + 1] = ay * v0;
+          velocity[o + 2] = az * v0;
+          continue;
+        }
+
+        const seed = seeds[i];
+        const cosMax = Math.cos(half);
+        const cosPhi = 1 - pcgFloatAt(seed, slot) * (1 - cosMax);
+        const sinPhi = Math.sqrt(Math.max(0, 1 - cosPhi * cosPhi));
+        const theta = pcgFloatAt(seed, slot + 1) * TAU;
+
+        // An orthonormal basis around the axis. The tangent is built from
+        // whichever cardinal is least parallel to the axis, because crossing
+        // with a fixed one degenerates when the axis happens to match it -
+        // which for a downward rain direction is exactly the common case.
+        let tx = 0;
+        let ty = 0;
+        let tz = 0;
+        if (Math.abs(ay) < 0.9) {
+          tx = -az;
+          ty = 0;
+          tz = ax;
+        } else {
+          tx = ay;
+          ty = -ax;
+          tz = 0;
+        }
+        length = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
+        tx /= length;
+        ty /= length;
+        tz /= length;
+        const bx = ay * tz - az * ty;
+        const by = az * tx - ax * tz;
+        const bz = ax * ty - ay * tx;
+
+        const cosTheta = Math.cos(theta) * sinPhi;
+        const sinTheta = Math.sin(theta) * sinPhi;
+        velocity[o] = (ax * cosPhi + tx * cosTheta + bx * sinTheta) * v0;
+        velocity[o + 1] = (ay * cosPhi + ty * cosTheta + by * sinTheta) * v0;
+        velocity[o + 2] = (az * cosPhi + tz * cosTheta + bz * sinTheta) * v0;
+      }
+    };
+  },
+
+  /**
+   * Pull towards, or push away from, a point.
+   *
+   * The falloff is 1/(1 + d^2/radius^2) rather than the physical 1/d^2, which
+   * would be infinite at the centre and put a particle at NaN the moment one
+   * arrived. This form is finite everywhere, tends to the same shape far away,
+   * and is what both engines' point-force modules use.
+   */
+  'force.attract': (block, env) => {
+    const centre = prepareBinding(block.bindings.find((b) => b.prop === 'position'), env);
+    const strength = prepareBinding(block.bindings.find((b) => b.prop === 'strength'), env);
+    const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
+    return function forceAttract(pool, i0, i1) {
+      const position = pool.planes.position;
+      const accel = pool.accel;
+      const fixedCentre = centre.kind === B_CONST;
+      const cx = fixedCentre ? centre.fixed[0] : 0;
+      const cy = fixedCentre ? centre.fixed[1] : 0;
+      const cz = fixedCentre ? centre.fixed[2] : 0;
+      const fixedStrength = strength.kind === B_CONST ? strength.fixed[0] : null;
+      const fixedRadius = radius.kind === B_CONST ? radius.fixed[0] : null;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const px = fixedCentre ? cx : readChannel(centre, pool, i, env, 0);
+        const py = fixedCentre ? cy : readChannel(centre, pool, i, env, 1);
+        const pz = fixedCentre ? cz : readChannel(centre, pool, i, env, 2);
+        const g = fixedStrength !== null ? fixedStrength : readChannel(strength, pool, i, env, 0);
+        const r = fixedRadius !== null ? fixedRadius : readChannel(radius, pool, i, env, 0);
+
+        const dx = px - position[o];
+        const dy = py - position[o + 1];
+        const dz = pz - position[o + 2];
+        const distanceSq = dx * dx + dy * dy + dz * dz;
+        const distance = Math.sqrt(distanceSq);
+        if (distance < 1e-6) continue;
+        const scale = r > 1e-6 ? 1 / (1 + distanceSq / (r * r)) : 1;
+        const a = (g * scale) / distance;
+        accel[o] += dx * a;
+        accel[o + 1] += dy * a;
+        accel[o + 2] += dz * a;
+      }
+    };
+  },
+
+  /**
+   * Swirl around an axis through a point - a portal, a tornado, a drain.
+   *
+   * Two components, because one alone does not read as a vortex: a tangential
+   * push produces the rotation, and an inward pull is what stops the particles
+   * spiralling out of the effect within a second. Niagara's vortex force and
+   * Unity's Vortex block are both this pair.
+   */
+  'force.vortex': (block, env) => {
+    const centre = prepareBinding(block.bindings.find((b) => b.prop === 'position'), env);
+    const axisBinding = prepareBinding(block.bindings.find((b) => b.prop === 'axis'), env);
+    const strength = prepareBinding(block.bindings.find((b) => b.prop === 'strength'), env);
+    const inward = prepareBinding(block.bindings.find((b) => b.prop === 'inward'), env);
+    return function forceVortex(pool, i0, i1) {
+      const position = pool.planes.position;
+      const accel = pool.accel;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const cx = centre.kind === B_CONST ? centre.fixed[0] : readChannel(centre, pool, i, env, 0);
+        const cy = centre.kind === B_CONST ? centre.fixed[1] : readChannel(centre, pool, i, env, 1);
+        const cz = centre.kind === B_CONST ? centre.fixed[2] : readChannel(centre, pool, i, env, 2);
+        let axX = axisBinding.kind === B_CONST ? axisBinding.fixed[0] : readChannel(axisBinding, pool, i, env, 0);
+        let axY = axisBinding.kind === B_CONST ? axisBinding.fixed[1] : readChannel(axisBinding, pool, i, env, 1);
+        let axZ = axisBinding.kind === B_CONST ? axisBinding.fixed[2] : readChannel(axisBinding, pool, i, env, 2);
+        const g = strength.kind === B_CONST ? strength.fixed[0] : readChannel(strength, pool, i, env, 0);
+        const pull = inward.kind === B_CONST ? inward.fixed[0] : readChannel(inward, pool, i, env, 0);
+
+        let axisLength = Math.sqrt(axX * axX + axY * axY + axZ * axZ);
+        if (axisLength < 1e-6) {
+          axX = 0;
+          axY = 1;
+          axZ = 0;
+          axisLength = 1;
+        }
+        axX /= axisLength;
+        axY /= axisLength;
+        axZ /= axisLength;
+
+        const dx = position[o] - cx;
+        const dy = position[o + 1] - cy;
+        const dz = position[o + 2] - cz;
+        // The component of the offset perpendicular to the axis. Using the raw
+        // offset instead would make a particle above the centre swirl around a
+        // point it is not level with, which reads as a wobble rather than a
+        // rotation.
+        const along = dx * axX + dy * axY + dz * axZ;
+        const rx = dx - axX * along;
+        const ry = dy - axY * along;
+        const rz = dz - axZ * along;
+        const r = Math.sqrt(rx * rx + ry * ry + rz * rz);
+        if (r < 1e-6) continue;
+
+        // Tangential: axis x radial.
+        accel[o] += (axY * rz - axZ * ry) * g - (rx / r) * pull;
+        accel[o + 1] += (axZ * rx - axX * rz) * g - (ry / r) * pull;
+        accel[o + 2] += (axX * ry - axY * rx) * g - (rz / r) * pull;
+      }
+    };
+  },
+
+  /** Cap the speed, without changing the direction. */
+  'vel.limit': (block, env) => {
+    const limit = prepareBinding(block.bindings.find((b) => b.prop === 'speed'), env);
+    return function velLimit(pool, i0, i1) {
+      const velocity = pool.planes.velocity;
+      const fixed = limit.kind === B_CONST ? limit.fixed[0] : null;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const max = fixed !== null ? fixed : readChannel(limit, pool, i, env, 0);
+        if (!(max > 0)) continue;
+        const vx = velocity[o];
+        const vy = velocity[o + 1];
+        const vz = velocity[o + 2];
+        const speedSq = vx * vx + vy * vy + vz * vz;
+        // Compared as squares, so the square root is only paid by the
+        // particles that are actually over the limit.
+        if (speedSq <= max * max) continue;
+        const scale = max / Math.sqrt(speedSq);
+        velocity[o] = vx * scale;
+        velocity[o + 1] = vy * scale;
+        velocity[o + 2] = vz * scale;
+      }
+    };
+  },
+
+  /**
+   * Spin a particle, in degrees per second.
+   *
+   * A separate kernel rather than part of the integrator, because rotation is
+   * only allocated when something asks for it - and an integrator that touched
+   * a plane which might not exist would have to branch per particle.
+   */
+  'rot.spin': (block, env) => {
+    const rate = prepareBinding(block.bindings.find((b) => b.prop === 'speed'), env);
+    return function rotSpin(pool, i0, i1, dt) {
+      const rotation = pool.planes.rotation;
+      if (!rotation) return;
+      const fixed = rate.kind === B_CONST ? rate.fixed[0] * DEG * dt : null;
+      for (let i = i0; i < i1; i += 1) {
+        rotation[i] += fixed !== null ? fixed : readChannel(rate, pool, i, env, 0) * DEG * dt;
+      }
+    };
+  },
+
+  /**
+   * Bounce off an infinite horizontal plane.
+   *
+   * The one collision shape worth having before a full collision system: a
+   * floor is what debris, blood and sparks need, and it costs one comparison
+   * per particle with no acceleration structure at all.
+   *
+   * It corrects the POSITION as well as the velocity. Reflecting the velocity
+   * alone leaves the particle below the plane for a frame, and with a low
+   * bounce it never climbs back out - so it sinks, jittering, which reads as
+   * the collision being broken rather than as inelastic.
+   */
+  'collide.plane': (block, env) => {
+    const height = prepareBinding(block.bindings.find((b) => b.prop === 'height'), env);
+    const bounce = prepareBinding(block.bindings.find((b) => b.prop === 'bounce'), env);
+    const friction = prepareBinding(block.bindings.find((b) => b.prop === 'friction'), env);
+    const channel = Number.isInteger(block.collideChannel) ? block.collideChannel : -1;
+    return function collidePlane(pool, i0, i1) {
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const y = height.kind === B_CONST ? height.fixed[0] : readChannel(height, pool, i, env, 0);
+        if (position[o + 1] >= y) continue;
+        const restitution = bounce.kind === B_CONST ? bounce.fixed[0] : readChannel(bounce, pool, i, env, 0);
+        const drag = friction.kind === B_CONST ? friction.fixed[0] : readChannel(friction, pool, i, env, 0);
+        // Reflected about the plane, so a particle that overshot by 0.1 ends up
+        // 0.1 above it rather than exactly on it - which is what keeps a
+        // bouncing particle's arc smooth instead of clipping to the floor.
+        // Recorded BEFORE the correction, so the payload is the point of
+        // contact rather than where the particle ended up after bouncing -
+        // which is where a spark's impact puff belongs.
+        if (channel >= 0) pushEvent(env.events, channel, pool, i);
+        position[o + 1] = y + (y - position[o + 1]) * restitution;
+        if (velocity[o + 1] < 0) velocity[o + 1] = -velocity[o + 1] * restitution;
+        const keep = 1 - (drag > 1 ? 1 : drag < 0 ? 0 : drag);
+        velocity[o] *= keep;
+        velocity[o + 2] *= keep;
+      }
+    };
+  },
+
+  /**
+   * Advance the flipbook frame over the particle's life.
+   *
+   * Frames are a FLOAT, and the shader floors it. Keeping the fraction lets an
+   * author drive the frame from a curve without the value snapping, and costs
+   * nothing - the alternative is rounding here and losing the ability to ease
+   * through a sheet.
+   *
+   * `mode: 'life'` plays the whole sheet exactly once over the lifetime, which
+   * is what an explosion or a puff sheet is authored for. `'rate'` plays at a
+   * fixed frames-per-second and wraps, for a looping animation like a torch.
+   */
+  'flipbook.advance': (block, env) => {
+    const frames = prepareBinding(block.bindings.find((b) => b.prop === 'frames'), env);
+    const rate = prepareBinding(block.bindings.find((b) => b.prop === 'rate'), env);
+    const overLife = block.modes?.timing !== 'rate';
+    return function flipbookAdvance(pool, i0, i1, dt) {
+      const tile = pool.planes.flipbookFrame;
+      if (!tile) return;
+      const age = pool.planes.age;
+      const lifetime = pool.planes.lifetime;
+      for (let i = i0; i < i1; i += 1) {
+        const count = frames.kind === B_CONST ? frames.fixed[0] : readChannel(frames, pool, i, env, 0);
+        if (!(count > 0)) continue;
+        if (overLife) {
+          const life = lifetime[i];
+          const t = life > 1e-6 ? age[i] / life : 0;
+          // Clamped just below the last frame rather than at it: a t of exactly
+          // 1 would land on frame `count`, which wraps to frame 0 in the shader
+          // and makes every sheet flash back to its first frame as it dies.
+          tile[i] = Math.min(count - 1e-4, t * count);
+        } else {
+          const fps = rate.kind === B_CONST ? rate.fixed[0] : readChannel(rate, pool, i, env, 0);
+          tile[i] = (tile[i] + fps * dt) % count;
+        }
+      }
+    };
+  },
+
+  /**
+   * Bounce off a sphere - an obstacle, or a container.
+   *
+   * `side: 'outside'` keeps particles out of the sphere (a rock, a shield);
+   * `'inside'` keeps them in (a snow globe, a contained explosion). One kernel
+   * for both, because the maths is the same comparison with the sense flipped,
+   * and two kernels would be two places to get the position correction wrong.
+   *
+   * As collide.plane, this runs AFTER integration and corrects the POSITION as
+   * well as the velocity. Reflecting the velocity alone leaves the particle
+   * inside the surface for a frame, and with a low bounce it never gets out.
+   */
+  'collide.sphere': (block, env) => {
+    const centre = prepareBinding(block.bindings.find((b) => b.prop === 'position'), env);
+    const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
+    const bounce = prepareBinding(block.bindings.find((b) => b.prop === 'bounce'), env);
+    const friction = prepareBinding(block.bindings.find((b) => b.prop === 'friction'), env);
+    const inside = block.modes?.side === 'inside';
+    const channel = Number.isInteger(block.collideChannel) ? block.collideChannel : -1;
+    return function collideSphere(pool, i0, i1) {
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const cx = centre.kind === B_CONST ? centre.fixed[0] : readChannel(centre, pool, i, env, 0);
+        const cy = centre.kind === B_CONST ? centre.fixed[1] : readChannel(centre, pool, i, env, 1);
+        const cz = centre.kind === B_CONST ? centre.fixed[2] : readChannel(centre, pool, i, env, 2);
+        const r = radius.kind === B_CONST ? radius.fixed[0] : readChannel(radius, pool, i, env, 0);
+        if (!(r > 0)) continue;
+
+        const dx = position[o] - cx;
+        const dy = position[o + 1] - cy;
+        const dz = position[o + 2] - cz;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        // A particle exactly at the centre has no normal to reflect about, and
+        // normalising a zero vector gives NaN - which would spread to the
+        // position and take the particle out of the world entirely.
+        if (distance < 1e-6) continue;
+        const penetrating = inside ? distance > r : distance < r;
+        if (!penetrating) continue;
+
+        if (channel >= 0) pushEvent(env.events, channel, pool, i);
+        const restitution = bounce.kind === B_CONST ? bounce.fixed[0] : readChannel(bounce, pool, i, env, 0);
+        const drag = friction.kind === B_CONST ? friction.fixed[0] : readChannel(friction, pool, i, env, 0);
+        // The outward normal of the surface the particle hit. For a container
+        // it points inward, which is the only difference between the two modes.
+        const sign = inside ? -1 : 1;
+        const nx = (dx / distance) * sign;
+        const ny = (dy / distance) * sign;
+        const nz = (dz / distance) * sign;
+
+        // Pushed back to the surface, then out by the depth it went in times
+        // the bounce - the same reflection collide.plane does, which is what
+        // keeps a bouncing arc smooth rather than clipping to the surface.
+        const depth = (inside ? distance - r : r - distance);
+        const push = depth * (1 + restitution);
+        position[o] += nx * push;
+        position[o + 1] += ny * push;
+        position[o + 2] += nz * push;
+
+        const into = velocity[o] * nx + velocity[o + 1] * ny + velocity[o + 2] * nz;
+        if (into < 0) {
+          // Split into normal and tangential parts: the normal part bounces,
+          // the tangential part is what friction slows. Scaling the whole
+          // velocity instead would make a grazing hit lose as much speed as a
+          // head-on one.
+          const keep = 1 - (drag > 1 ? 1 : drag < 0 ? 0 : drag);
+          const tx = velocity[o] - nx * into;
+          const ty = velocity[o + 1] - ny * into;
+          const tz = velocity[o + 2] - nz * into;
+          velocity[o] = tx * keep - nx * into * restitution;
+          velocity[o + 1] = ty * keep - ny * into * restitution;
+          velocity[o + 2] = tz * keep - nz * into * restitution;
+        }
+      }
+    };
+  },
+
+  /**
+   * Bounce off an axis-aligned box, from the outside or the inside.
+   *
+   * The contact normal is the axis of LEAST penetration, which is what makes a
+   * particle arriving near an edge leave along the face it actually crossed
+   * rather than along whichever axis the code happened to test first.
+   */
+  'collide.box': (block, env) => {
+    const centre = prepareBinding(block.bindings.find((b) => b.prop === 'position'), env);
+    const size = prepareBinding(block.bindings.find((b) => b.prop === 'size'), env);
+    const bounce = prepareBinding(block.bindings.find((b) => b.prop === 'bounce'), env);
+    const friction = prepareBinding(block.bindings.find((b) => b.prop === 'friction'), env);
+    const inside = block.modes?.side === 'inside';
+    const channel = Number.isInteger(block.collideChannel) ? block.collideChannel : -1;
+    return function collideBox(pool, i0, i1) {
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const cx = centre.kind === B_CONST ? centre.fixed[0] : readChannel(centre, pool, i, env, 0);
+        const cy = centre.kind === B_CONST ? centre.fixed[1] : readChannel(centre, pool, i, env, 1);
+        const cz = centre.kind === B_CONST ? centre.fixed[2] : readChannel(centre, pool, i, env, 2);
+        const hx = (size.kind === B_CONST ? size.fixed[0] : readChannel(size, pool, i, env, 0)) * 0.5;
+        const hy = (size.kind === B_CONST ? size.fixed[1] : readChannel(size, pool, i, env, 1)) * 0.5;
+        const hz = (size.kind === B_CONST ? size.fixed[2] : readChannel(size, pool, i, env, 2)) * 0.5;
+        if (!(hx > 0 && hy > 0 && hz > 0)) continue;
+
+        const dx = position[o] - cx;
+        const dy = position[o + 1] - cy;
+        const dz = position[o + 2] - cz;
+        const withinX = Math.abs(dx) < hx;
+        const withinY = Math.abs(dy) < hy;
+        const withinZ = Math.abs(dz) < hz;
+        const within = withinX && withinY && withinZ;
+        if (inside ? within : !within) continue;
+
+        if (channel >= 0) pushEvent(env.events, channel, pool, i);
+        const restitution = bounce.kind === B_CONST ? bounce.fixed[0] : readChannel(bounce, pool, i, env, 0);
+        const drag = friction.kind === B_CONST ? friction.fixed[0] : readChannel(friction, pool, i, env, 0);
+
+        let axis = 0;
+        let depth = 0;
+        let normal = 1;
+        if (inside) {
+          // Inside a container: the nearest face is the one it is about to pass
+          // through, so the smallest remaining gap wins.
+          const gapX = hx - Math.abs(dx);
+          const gapY = hy - Math.abs(dy);
+          const gapZ = hz - Math.abs(dz);
+          if (gapX <= gapY && gapX <= gapZ) { axis = 0; depth = -gapX; normal = dx < 0 ? 1 : -1; }
+          else if (gapY <= gapZ) { axis = 1; depth = -gapY; normal = dy < 0 ? 1 : -1; }
+          else { axis = 2; depth = -gapZ; normal = dz < 0 ? 1 : -1; }
+        } else {
+          // Outside an obstacle: the axis it has penetrated LEAST is the face
+          // it came in through.
+          const overX = hx - Math.abs(dx);
+          const overY = hy - Math.abs(dy);
+          const overZ = hz - Math.abs(dz);
+          if (overX <= overY && overX <= overZ) { axis = 0; depth = overX; normal = dx < 0 ? -1 : 1; }
+          else if (overY <= overZ) { axis = 1; depth = overY; normal = dy < 0 ? -1 : 1; }
+          else { axis = 2; depth = overZ; normal = dz < 0 ? -1 : 1; }
+        }
+
+        const push = Math.abs(depth) * (1 + restitution) * normal;
+        position[o + axis] += push;
+
+        const into = velocity[o + axis] * normal;
+        if (into < 0) {
+          const keep = 1 - (drag > 1 ? 1 : drag < 0 ? 0 : drag);
+          velocity[o + axis] = -velocity[o + axis] * restitution;
+          // Friction on the two axes that are not the contact normal.
+          for (let c = 0; c < 3; c += 1) {
+            if (c !== axis) velocity[o + c] *= keep;
+          }
+        }
+      }
+    };
+  },
+
+  /**
+   * Kill particles that leave a box around the origin.
+   *
+   * Written as an age assignment rather than as a direct kill, so the one place
+   * that compacts the pool stays age.advance. Two kernels removing particles
+   * would each have to agree about how swap-remove interacts with the loop
+   * bounds they were handed, and they would not.
+   */
+  'kill.bounds': (block, env) => {
+    const size = prepareBinding(block.bindings.find((b) => b.prop === 'size'), env);
+    return function killBounds(pool, i0, i1) {
+      const position = pool.planes.position;
+      const age = pool.planes.age;
+      const lifetime = pool.planes.lifetime;
+      const fixed = size.kind === B_CONST;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const hx = (fixed ? size.fixed[0] : readChannel(size, pool, i, env, 0)) * 0.5;
+        const hy = (fixed ? size.fixed[1] : readChannel(size, pool, i, env, 1)) * 0.5;
+        const hz = (fixed ? size.fixed[2] : readChannel(size, pool, i, env, 2)) * 0.5;
+        const x = position[o];
+        const y = position[o + 1];
+        const z = position[o + 2];
+        if (x < -hx || x > hx || y < -hy || y > hy || z < -hz || z > hz) {
+          // Past its lifetime, so the next age.advance sweep collects it.
+          age[i] = lifetime[i] + 1;
+        }
+      }
+    };
+  },
+
+  /**
+   * Scale the velocity a sub-emitter's particle was born with.
+   *
+   * The event spawn has already written the parent's velocity into the pool, so
+   * this only has to scale it - which is why it is one multiply rather than a
+   * read of the event payload. That also means it does nothing at all in a
+   * system that is not a sub-emitter, which is honest: the block's teach line
+   * says as much.
+   */
+  'vel.inherit': (block, env) => {
+    const scale = prepareBinding(block.bindings.find((b) => b.prop === 'scale'), env);
+    return function velInherit(pool, i0, i1) {
+      const velocity = pool.planes.velocity;
+      const fixed = scale.kind === B_CONST ? scale.fixed[0] : null;
+      for (let i = i0; i < i1; i += 1) {
+        const o = i * 3;
+        const k = fixed !== null ? fixed : readChannel(scale, pool, i, env, 0);
+        velocity[o] *= k;
+        velocity[o + 1] *= k;
+        velocity[o + 2] *= k;
       }
     };
   },
@@ -585,7 +1246,14 @@ const KERNELS = {
 
   // Render state, not simulation. Returning null keeps it out of the chain
   // entirely rather than paying for a no-op pass over the pool.
+  // Output blocks are render STATE, not passes. They are listed here so the
+  // catalog-coverage check can see that every block names a kernel somebody
+  // wrote, and they return null so buildKernel leaves them out of the chain -
+  // the compiler reads their bindings directly when it builds the batch key
+  // and the material.
   'output.texture': () => null,
+  'output.flipbook': () => null,
+  'output.mesh': () => null,
 
   // Handled by the emitter, which needs the spawn bindings in a different shape
   // than a per-particle pass.
@@ -622,6 +1290,196 @@ function swapRemoveInline(pool, i) {
  * @returns {{name: string, fn: Function}|null} null when the block does no
  *   simulation work
  */
+// ---------------------------------------------------------------------------
+// Operator ops
+// ---------------------------------------------------------------------------
+//
+// THIS IS WHAT MAKES A WIRED OPERATOR ACTUALLY DO SOMETHING. The compiler
+// lowers an operator subtree into a list of register ops on the block that
+// consumes it (`irBlock.pre`), and a binding then reads `src: 'register'`. Up
+// to this point nothing executed that list, so `env.regs` stayed all zeros and
+// wiring a Value node of 5 into Set Size silently produced a size of ZERO -
+// the node was on the board, the wire was drawn, the compile was clean, and the
+// property read nothing. That is the worst possible failure mode: every visible
+// signal said it was working.
+//
+// THE OPS RUN PER KERNEL INVOCATION, not once at build. A `time` op changes
+// every frame and an exposed property can change between frames, so hoisting
+// them to factory time would freeze them at their first value. They are a
+// handful of scalar operations against a Float64Array, evaluated once per block
+// per pass - nothing next to a loop over tens of thousands of particles.
+//
+// ORDER IS THE COMPILER'S JOB. `pre` arrives in topological order (phase 3 of
+// compileVfxGraph), so an op can read a register an earlier op in the same list
+// wrote, and this evaluator never has to reason about dependencies.
+//
+// PER-PARTICLE OPERATORS ARE NOT SUPPORTED HERE, and are reported rather than
+// approximated. `op.getAttribute` produces a different value for every particle,
+// but a register is read once per pass - the kernel signature has no place to
+// put a per-particle register file. Wiring one is a `W_PER_PARTICLE_OP`
+// diagnostic at compile time; the runtime evaluates it as the attribute's
+// average-case default so the effect still plays, and the author is told the
+// value is not varying.
+
+const OP_EVALUATORS = {
+  /** A literal, or a pass-through of an upstream register. */
+  const: (op, env) => readOpInput(op.in[0], env),
+  add: (op, env) => readOpInput(op.in[0], env) + readOpInput(op.in[1], env),
+  sub: (op, env) => readOpInput(op.in[0], env) - readOpInput(op.in[1], env),
+  mul: (op, env) => readOpInput(op.in[0], env) * readOpInput(op.in[1], env),
+  div: (op, env) => {
+    const b = readOpInput(op.in[1], env);
+    // Zero rather than Infinity: an Infinity here would propagate into a
+    // particle position and put the whole system at NaN two frames later,
+    // which is far harder to diagnose than a property that reads zero.
+    return Math.abs(b) < 1e-9 ? 0 : readOpInput(op.in[0], env) / b;
+  },
+  lerp: (op, env) => {
+    const a = readOpInput(op.in[0], env);
+    const b = readOpInput(op.in[1], env);
+    const t = readOpInput(op.in[2], env);
+    return a + (b - a) * t;
+  },
+  clamp: (op, env) => {
+    const lo = readOpInput(op.in[1], env);
+    const hi = readOpInput(op.in[2], env);
+    const x = readOpInput(op.in[0], env);
+    return x < lo ? lo : x > hi ? hi : x;
+  },
+  remap: (op, env) => {
+    const x = readOpInput(op.in[0], env);
+    const inLo = readOpInput(op.in[1], env);
+    const inHi = readOpInput(op.in[2], env);
+    const outLo = readOpInput(op.in[3], env);
+    const outHi = readOpInput(op.in[4], env);
+    const span = inHi - inLo;
+    // A collapsed input range maps everything to the low end rather than
+    // dividing by zero.
+    if (Math.abs(span) < 1e-9) return outLo;
+    const t = (x - inLo) / span;
+    return outLo + (outHi - outLo) * (t < 0 ? 0 : t > 1 ? 1 : t);
+  },
+  sin: (op, env) => Math.sin(readOpInput(op.in[0], env) * TAU),
+  /** Seconds since the effect started. Changes every frame - see the header. */
+  time: (_op, env) => env.time,
+  /**
+   * A new number every frame, shared by every particle that frame. Drawn from
+   * the frame seed rather than from Math.random, so a replay of the same seed
+   * produces the same effect - the whole point of vfx/random.js.
+   */
+  random: (op, env) => {
+    const lo = readOpInput(op.in[0], env);
+    const hi = readOpInput(op.in[1], env);
+    return lo + (hi - lo) * pcgFloatAt(env.frameSeed, (op.out + 1) * 0x9e3779b9);
+  },
+  /**
+   * A particle attribute.
+   *
+   * env.particle is the pool and index the chain is being evaluated for, set by
+   * runOpsForParticle. It is absent when a per-particle chain somehow reaches
+   * the once-per-pass path - a compiler bug rather than an authoring one - and
+   * the fallback is mid-range so the effect stays visible while being wrong,
+   * rather than collapsing to zero and looking deleted.
+   */
+  attr: (op, env) => {
+    const which = op.modes?.attribute || 'normalizedAge';
+    const particle = env.particle;
+    if (!particle) return which === 'age' ? env.time : which === 'normalizedAge' ? 0.5 : 1;
+    const { pool, index } = particle;
+    const planes = pool.planes;
+    switch (which) {
+      case 'age':
+        return planes.age ? planes.age[index] : 0;
+      case 'lifetime':
+        return planes.lifetime ? planes.lifetime[index] : 1;
+      case 'size':
+        return planes.size ? planes.size[index] : 1;
+      case 'speed': {
+        if (!planes.velocity) return 0;
+        const o = index * 3;
+        return Math.hypot(planes.velocity[o], planes.velocity[o + 1], planes.velocity[o + 2]);
+      }
+      case 'normalizedAge':
+      default: {
+        if (!planes.age || !planes.lifetime) return 0;
+        const life = planes.lifetime[index];
+        return life > 1e-6 ? planes.age[index] / life : 0;
+      }
+    }
+  },
+};
+
+// One input of an op: either a literal from the constant pool or an upstream
+// register this list already wrote.
+function readOpInput(input, env) {
+  if (!input) return 0;
+  return input.kind === 'register' ? env.regs[input.index] : env.consts[input.index];
+}
+
+/**
+ * Run a block's operator ops, writing their results into env.regs.
+ *
+ * Evaluates the WHOLE list, including per-particle ops - which then read
+ * whatever env.particle happens to be. That is correct for the once-per-pass
+ * call because a per-particle op's own consumer is read inside the loop and
+ * re-evaluates the chain there; this pass just needs the non-particle registers
+ * to hold their values.
+ *
+ * @param {Array<Object>} ops from irBlock.pre, in topological order
+ * @param {Object} env the runtime environment
+ */
+export function runOps(ops, env) {
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i];
+    const evaluate = OP_EVALUATORS[op.op];
+    // An unknown op name is a compiler/runtime mismatch. Zero rather than a
+    // throw: this runs inside the frame loop, and taking the page down over one
+    // unrecognised operator is worse than one property reading zero while the
+    // diagnostics strip reports it.
+    env.regs[op.out] = evaluate ? evaluate(op, env) : 0;
+  }
+}
+
+/**
+ * Re-run only the per-particle ops of a chain, for one particle.
+ *
+ * THIS IS WHAT MAKES `size = normalizedAge * 2` WORK. A register is otherwise
+ * read once per pass, so a chain containing a particle attribute would give
+ * every particle the same number - which was a warning
+ * (`W_PER_PARTICLE_OP`) rather than a behaviour until this existed.
+ *
+ * Only the ops MARKED per-particle are re-run: the compiler propagates that
+ * flag down a chain, so `2 * exposedScale` in the middle of an otherwise
+ * per-particle expression is still evaluated once per frame by runOps and left
+ * alone here. At sixty thousand particles the difference between re-running two
+ * ops and re-running six is the whole reason the flag is per-op rather than
+ * per-chain.
+ *
+ * @param {Array<Object>} ops from irBlock.pre
+ * @param {Object} env
+ * @param {Object} pool
+ * @param {number} index
+ */
+export function runOpsForParticle(ops, env, pool, index) {
+  // Written onto env rather than threaded through every evaluator's signature:
+  // twelve evaluators would each grow two parameters they mostly ignore, and
+  // the object is reused rather than allocated per particle.
+  const scratch = env.particle || (env.particle = { pool: null, index: 0 });
+  scratch.pool = pool;
+  scratch.index = index;
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i];
+    if (!op.perParticle) continue;
+    const evaluate = OP_EVALUATORS[op.op];
+    env.regs[op.out] = evaluate ? evaluate(op, env) : 0;
+  }
+}
+
+/** Every op name the runtime can evaluate. The test compares it to the compiler's table. */
+export function implementedOps() {
+  return Object.keys(OP_EVALUATORS);
+}
+
 export function buildKernel(irBlock, env) {
   const builder = KERNELS[irBlock.kernel];
   if (!builder) {
@@ -632,7 +1490,26 @@ export function buildKernel(irBlock, env) {
     throw new Error(`VFX runtime: no kernel implements "${irBlock.kernel}"`);
   }
   const fn = builder(irBlock, env);
-  return fn ? { name: fn.name || irBlock.kernel, kernel: irBlock.kernel, fn } : null;
+  if (!fn) return null;
+
+  // Blocks with no wired properties - the overwhelming majority - get the bare
+  // kernel, so the common path pays nothing for a feature it does not use.
+  const ops = irBlock.pre;
+  if (!ops || ops.length === 0) {
+    return { name: fn.name || irBlock.kernel, kernel: irBlock.kernel, fn };
+  }
+
+  // Wrapped rather than folded into each kernel: forty kernels would otherwise
+  // each need to remember to evaluate their own operator inputs, and the one
+  // that forgot would read a stale register.
+  const wrapped = function withOperators(pool, i0, i1, dt) {
+    runOps(ops, env);
+    fn(pool, i0, i1, dt);
+  };
+  // The kernel's own name is kept for the profiler, or every wired block would
+  // show up in the flame chart as "withOperators".
+  Object.defineProperty(wrapped, 'name', { value: fn.name || irBlock.kernel });
+  return { name: fn.name || irBlock.kernel, kernel: irBlock.kernel, fn: wrapped };
 }
 
 /**

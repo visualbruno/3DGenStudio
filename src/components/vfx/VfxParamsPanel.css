@@ -272,6 +272,55 @@
   color: #f0b8b8;
 }
 
+/* --- add a stage ---------------------------------------------------------- */
+
+.vfx-params__stages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid #1e2027;
+}
+
+.vfx-params__stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  text-align: left;
+  background: #1c1f26;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.vfx-params__stage:hover {
+  background: #242832;
+  border-color: #3d6096;
+  color: #e6e8ec;
+}
+
+.vfx-params__stage .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 16px;
+  margin-top: 1px;
+}
+
+.vfx-params__stage strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 1px;
+}
+
+.vfx-params__stage span span,
+.vfx-params__stage > span:last-child {
+  font-size: 9px;
+  line-height: 1.4;
+  color: #767d8b;
+}
+
 /* --- links, raw, actions -------------------------------------------------- */
 
 .vfx-params__links {
