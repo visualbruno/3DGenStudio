@@ -35,6 +35,7 @@ import { compileVfxGraph } from '../../../vfx/compile.js';
 import { VALUE_MODE } from '../../../vfx/value.js';
 import { CURVE_PRESETS } from '../../../vfx/curve.js';
 import { VFX_TEMPLATES, templateById } from './templates.js';
+import { indexLibraryAssets, vfxAssetId } from './library.js';
 import * as edits from './edits.js';
 import {
   HANDLE_WIDTH_PX,
@@ -63,6 +64,12 @@ function check(label, ok, detail = '') {
 }
 
 const clone = (doc) => JSON.parse(JSON.stringify(doc));
+// The stage order the layout uses, restated here rather than exported: a test
+// that imported the module's own constant could not catch the order changing.
+const STAGE_ORDER = [
+  CONTEXT_KIND.EVENT, CONTEXT_KIND.SPAWN, CONTEXT_KIND.INITIALIZE,
+  CONTEXT_KIND.UPDATE, CONTEXT_KIND.OUTPUT,
+];
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 const blocksOf = (doc) => doc.systems.flatMap((s) => s.contexts.flatMap((c) => c.blocks));
 const countBlocks = (doc) => blocksOf(doc).length;
@@ -500,6 +507,47 @@ section('The React Flow adapter');
       toFlowNodes(noted).every((x) => !x.selected));
   }
 
+  // THE STAGE CHAIN RUNS LEFT TO RIGHT AND A SYSTEM IS A ROW.
+  //
+  // It used to run top to bottom, one column per system. The reason to
+  // transpose it is that a context node GROWS DOWNWARD as blocks are added, so
+  // a vertical chain put the flow direction and the growth direction on the
+  // same axis: every block added to Initialize pushed Update and Output further
+  // away. Across, they are perpendicular and adding a block moves nothing.
+  //
+  // Asserted on the DERIVED layout, which is what an author sees before they
+  // have dragged anything - and the thing a later refactor is most likely to
+  // rotate back without noticing.
+  {
+    const fresh = toFlowNodes(doc);
+    const byId = new Map(fresh.map((node) => [node.id, node]));
+    let checkedSystems = 0;
+    let sameRow = 0;
+    let increasing = 0;
+    for (const system of doc.systems) {
+      const ordered = system.contexts.slice()
+        .sort((a, b) => STAGE_ORDER.indexOf(a.kind) - STAGE_ORDER.indexOf(b.kind));
+      if (ordered.length < 2) continue;
+      checkedSystems += 1;
+      const ys = new Set(ordered.map((c) => byId.get(c.id).position.y));
+      if (ys.size === 1) sameRow += 1;
+      const xs = ordered.map((c) => byId.get(c.id).position.x);
+      if (xs.every((x, i) => i === 0 || x > xs[i - 1])) increasing += 1;
+    }
+    check('the fixture has a multi-stage system to check', checkedSystems > 0,
+      `${checkedSystems} systems`);
+    check('every stage of a system shares one row', sameRow === checkedSystems);
+    check('  and x increases along the stage order', increasing === checkedSystems);
+    // Two systems must not share a row, or they would draw on top of each other.
+    if (doc.systems.length > 1) {
+      const rowOf = (system) => byId.get(system.contexts[0].id).position.y;
+      check('  and each system gets its own row',
+        new Set(doc.systems.map(rowOf)).size === doc.systems.length);
+    }
+    check('  the fixture has more than one system', doc.systems.length > 1,
+      `${doc.systems.length}`);
+  }
+
   // A stored position must win over the derived one, or dragging a node would
   // appear to do nothing after the next render.
   const first = contexts[0].id;
@@ -646,6 +694,117 @@ section('Diagnostics: indexing and one-click fixes');
       after.map((d) => d.code).join(', '));
   }
 
+  // EVERY FIX A DIAGNOSTIC CAN EMIT MUST LEAD SOMEWHERE.
+  //
+  // THE BUG THIS EXISTS FOR: `pickAsset` was a fix action with no applier and
+  // no route to the picker either, and every surface decided whether to render
+  // a fix button by asking canApplyFix. So "Choose a sprite..." and "Pick a
+  // replacement..." were greyed out permanently - two diagnostics offering a
+  // one-click fix that could never be clicked, on every effect drawing with the
+  // built-in sprite, which is most of them.
+  //
+  // Swept across every template plus the broken fixture above, because a fix is
+  // a FUNCTION of the diagnostic's data: there is no way to enumerate the fixes
+  // without provoking the diagnostics that carry them.
+  {
+    const emitted = new Map();
+    const sweep = (candidate) => {
+      for (const diagnostic of compileVfxGraph(candidate).diagnostics) {
+        if (diagnostic.fix) emitted.set(`${diagnostic.code}:${diagnostic.fix.action}`, diagnostic);
+      }
+    };
+    sweep(doc);
+    for (const template of VFX_TEMPLATES) sweep(normalizeVfxDoc(template.build()));
+
+    // A DANGLING REFERENCE, built on purpose, because it is the OTHER fix that
+    // routes to the picker and the only one that identifies its target by SLOT
+    // rather than by block property - so without it the shape check below never
+    // sees the case it exists for. The templates cannot provide it: they all
+    // compile clean, which is the point of them.
+    {
+      const withRef = edits.setAssetReference(
+        normalizeVfxDoc(templateById('fire').build()),
+        'tex_dangling',
+        { kind: 'image', ref: 'asset:999777', name: 'deleted.png', colorSpace: 'srgb' },
+      );
+      // An assetIndex is required, or the compiler cannot know it is missing -
+      // an empty slot and a deleted asset are different things.
+      for (const diagnostic of compileVfxGraph(withRef, { assetIndex: new Map() }).diagnostics) {
+        if (diagnostic.fix) emitted.set(`${diagnostic.code}:${diagnostic.fix.action}`, diagnostic);
+      }
+      check('the dangling reference really was reported',
+        [...emitted.keys()].some((key) => key.startsWith('W_MISSING_ASSET')),
+        [...emitted.keys()].join(', '));
+    }
+
+    // Deliberately low: the 13 templates all compile with no errors and no
+    // warnings, so most of what this sweep can reach comes from the two docs
+    // broken on purpose above. The value is in the shape checks, not the count.
+    check('the sweep provoked a useful number of fixes', emitted.size >= 3,
+      [...emitted.keys()].join(', '));
+    const dead = [...emitted.values()].filter((d) => !edits.canOfferFix(d.fix));
+    check('  and every one of them leads somewhere', dead.length === 0,
+      dead.map((d) => `${d.code} -> ${d.fix.action}`).join(', '));
+
+    // A fix routed to the picker must carry enough to OPEN it: either the block
+    // property it fills, or the slot whose reference it repairs.
+    const underspecified = [...emitted.values()].filter((d) => {
+      if (!edits.fixNeedsInput(d.fix)) return false;
+      const args = d.fix.args || {};
+      return !(args.slot || (args.blockId && args.prop));
+    });
+    check('  and a picker fix names a block property or a slot',
+      underspecified.length === 0,
+      underspecified.map((d) => `${d.code} ${JSON.stringify(d.fix.args)}`).join(', '));
+  }
+
+  // I_DEFAULT_SPRITE HAS TWO STATES AND THEY NEED DIFFERENT FIXES. It fires
+  // both when the Output has no Sprite Texture BLOCK and when it has one whose
+  // slot is empty. Offering `pickAsset` for both meant that in the first case -
+  // which is every template drawing with the built-in blob - the fix pointed at
+  // `blockId: ''`. There was nothing to pick a texture FOR.
+  {
+    const spriteOf = (candidate) => compileVfxGraph(candidate).diagnostics
+      .find((d) => d.code === 'I_DEFAULT_SPRITE');
+
+    const blank = spriteOf(doc);
+    check('an Output with no texture block reports I_DEFAULT_SPRITE', Boolean(blank),
+      compileVfxGraph(doc).diagnostics.map((d) => d.code).join(', '));
+    check('  and its fix ADDS the block rather than opening a picker',
+      blank.fix.action === 'addBlock'
+      && blank.fix.args.blockType === 'output.setMainTexture',
+      `${blank.fix.action} ${JSON.stringify(blank.fix.args)}`);
+    check('  which is applicable with no further input',
+      edits.canApplyFix(blank.fix));
+
+    // One click, and the block is really there.
+    const added = edits.applyFix(doc, blank.fix);
+    const outputBlocks = added.systems[0].contexts
+      .find((c) => c.kind === CONTEXT_KIND.OUTPUT).blocks;
+    check('  applying it puts a Sprite Texture in the Output',
+      outputBlocks.some((b) => b.type === 'output.setMainTexture'),
+      outputBlocks.map((b) => b.type).join(', '));
+
+    // And now the SECOND state: the block exists, the slot is empty, so the
+    // next click has something to pick a texture for.
+    const second = spriteOf(added);
+    check('  the diagnostic then asks for the image itself',
+      second && second.fix.action === 'pickAsset',
+      second ? second.fix.action : 'gone');
+    check('    naming the block it belongs to',
+      second.fix.args.blockId === outputBlocks
+        .find((b) => b.type === 'output.setMainTexture').id
+      && second.fix.args.prop === 'texture',
+      JSON.stringify(second.fix.args));
+    check('    and that fix is offerable even though it needs a choice',
+      edits.canOfferFix(second.fix) && edits.fixNeedsInput(second.fix)
+      && !edits.canApplyFix(second.fix));
+  }
+
+  check('canOfferFix says no to an action nobody handles',
+    edits.canOfferFix({ action: 'teleportTheParticles' }) === false);
+  check('  and no to nothing at all', edits.canOfferFix(null) === false);
+
   check('canApplyFix says no to a fix that needs a choice',
     edits.canApplyFix({ action: 'pickAsset', label: 'Choose a texture' }) === false);
   check('applyFix on such a fix is identity',
@@ -753,36 +912,78 @@ section('Notes and auto-layout');
   // height, so a system with eight blocks in its Update stage overlaps the
   // Output beneath it. Checked with a measurer that reports a very tall Update.
   const tall = (id) => ({ width: 288, height: id.includes('update') ? 520 : 150 });
-  const packed = pure('autoLayout', edited, (d) => autoLayout(d, tall));
+  // An operator is ADDED to the fixture rather than assumed: the band check
+  // below is behind a length test, and a guard that never runs is the bug class
+  // this suite has already been caught by once.
+  const withOp = edits.addOperator(edited, 'op.constant', { x: 0, y: 0 });
+  check('the layout fixture has an operator to place', withOp.operators.length > 0);
+  const packed = pure('autoLayout', withOp, (d) => autoLayout(d, tall));
 
-  const contexts = edited.systems.flatMap((system) => system.contexts.map((c) => c.id));
+  const contexts = withOp.systems.flatMap((system) => system.contexts.map((c) => c.id));
   check('autoLayout positions every context',
     contexts.every((id) => packed.layout.nodes[id]),
-    `${Object.keys(packed.layout.nodes).length} of ${contexts.length}`);
+    `${contexts.filter((id) => packed.layout.nodes[id]).length} of ${contexts.length}`);
 
-  // No two stages in one column may overlap, which is the property the derived
-  // layout cannot promise.
-  const columns = new Map();
+  // No two ROWS may overlap, which is the property the derived layout cannot
+  // promise: a row is as tall as its tallest stage, and only a measurer knows
+  // that. The tall Update above is what makes this check bite.
+  const rows = new Map();
   for (const id of contexts) {
     const at = packed.layout.nodes[id];
-    const list = columns.get(at.x) || [];
-    list.push({ id, y: at.y, height: tall(id).height });
-    columns.set(at.x, list);
+    const list = rows.get(at.y) || [];
+    list.push({ id, height: tall(id).height });
+    rows.set(at.y, list);
   }
+  check('  one row per system', rows.size === withOp.systems.length,
+    `${rows.size} rows for ${withOp.systems.length} systems`);
+  const rowTops = [...rows.keys()].sort((a, b) => a - b);
   let overlaps = 0;
-  for (const list of columns.values()) {
-    list.sort((a, b) => a.y - b.y);
-    for (let i = 1; i < list.length; i += 1) {
-      if (list[i].y < list[i - 1].y + list[i - 1].height) overlaps += 1;
-    }
+  for (let i = 1; i < rowTops.length; i += 1) {
+    const tallest = Math.max(...rows.get(rowTops[i - 1]).map((entry) => entry.height));
+    if (rowTops[i] < rowTops[i - 1] + tallest) overlaps += 1;
   }
-  check('  packing each column by measured height, with no overlaps',
-    overlaps === 0, `${overlaps} overlapping pairs across ${columns.size} columns`);
-  check('  one column per system', columns.size === edited.systems.length);
+  check('  packed by the measured height of each row, with no overlaps',
+    overlaps === 0, `${overlaps} overlapping row pairs`);
+
+  // AND THE STAGE COLUMNS LINE UP ACROSS SYSTEMS. Packing each row on its own
+  // would stagger them wherever two nodes measured differently, and the board
+  // would stop reading as systems x stages - which is the point of the shape.
+  const byStage = new Map();
+  for (const system of withOp.systems) {
+    const ordered = system.contexts.slice()
+      .sort((a, b) => STAGE_ORDER.indexOf(a.kind) - STAGE_ORDER.indexOf(b.kind));
+    ordered.forEach((context, column) => {
+      const list = byStage.get(column) || [];
+      list.push(packed.layout.nodes[context.id].x);
+      byStage.set(column, list);
+    });
+  }
+  check('  with every stage column at one x across all systems',
+    [...byStage.values()].every((xs) => new Set(xs).size === 1),
+    [...byStage.entries()].map(([c, xs]) => `${c}:${[...new Set(xs)].join('/')}`).join(' '));
+  check('  and the columns run left to right',
+    [...byStage.keys()].sort((a, b) => a - b)
+      .every((column, i, all) => i === 0 || byStage.get(all[i - 1])[0] < byStage.get(column)[0]));
+
+  // Operators go in a band BELOW the last system row, not beyond the end of the
+  // chain: their output socket is on the right and every block socket is on its
+  // node's left, so sitting to the right of everything made each data edge
+  // leave rightwards and travel all the way back across the board.
+  if (withOp.operators.length) {
+    const lowestRow = Math.max(...rowTops);
+    check('  and operators sit below the last system row',
+      withOp.operators.every((op) => packed.layout.nodes[op.id].y > lowestRow),
+      `${withOp.operators.length} operators`);
+  }
   check('  and notes keep their own positions',
     packed.layout.notes[0].x === 40 && packed.layout.notes[0].y === 200);
-  // Cosmetic, like every other layout write.
-  check('  without changing the recompile signature', vfxSignature(packed) === before);
+  // Cosmetic, like every other layout write. Compared against the document it
+  // was laid out FROM, not against `before`: adding the operator above changes
+  // the signature on purpose, because an operator is content rather than layout.
+  check('  without changing the recompile signature',
+    vfxSignature(packed) === vfxSignature(withOp));
+  check('  though adding the operator itself DID change it',
+    vfxSignature(withOp) !== before);
 
   // With no measurer it must still do something sensible rather than stacking
   // everything at zero.
@@ -963,6 +1164,82 @@ section('Dragging a timeline clip');
     near(after.duration, 0.65, 1e-9),
     `${clip.at}..${clip.at + clip.duration} -> ${after.at}..${after.at + after.duration}`);
   check('  and moves it', after.at > clip.at);
+}
+
+// ---------------------------------------------------------------------------
+section('Reading a library listing');
+// ---------------------------------------------------------------------------
+//
+// THE BUG THIS SECTION EXISTS FOR: the asset picker could only select ROOT
+// images. A sprite is very often an edit rather than the original - the
+// generated image cropped, its background removed, its channels adjusted - and
+// none of those could be chosen. The picker fix was one prop, but the reason it
+// is worth a test is the shape underneath it: an edit is its own Assets row
+// with its own id and its own file, and its listing id is a BARE NUMBER while a
+// root's is the string `library:<n>`. Two call sites parsed that by hand.
+{
+  // --- id shapes ----------------------------------------------------------
+  check('a root id is read through its library: prefix',
+    vfxAssetId({ id: 'library:41' }) === 41);
+  check('an edit id is a bare number', vfxAssetId({ id: 77 }) === 77);
+  check('  and a bare numeric string too', vfxAssetId({ id: '77' }) === 77);
+  check('a plain number is itself', vfxAssetId(12) === 12);
+  check('a plain string is parsed', vfxAssetId('library:12') === 12);
+  // assetId is the FALLBACK, not the primary: the resolver indexes by whatever
+  // this returns, so the writer must agree with it or a picked asset is stored
+  // under an id nothing can look up.
+  check('id wins over assetId when both are present',
+    vfxAssetId({ id: 'library:5', assetId: 9 }) === 5);
+  check('  and assetId is used when there is no id',
+    vfxAssetId({ assetId: 9 }) === 9);
+  // Null rather than NaN, so callers can test with == null.
+  check('an unparseable id is null', vfxAssetId({ id: 'library:abc' }) === null);
+  check('  as is nothing at all', vfxAssetId(null) === null);
+  check('  and an empty object', vfxAssetId({}) === null);
+  check('NaN is not an id', vfxAssetId(Number.NaN) === null);
+
+  // --- the children descent, which is the actual bug ----------------------
+  const listing = [
+    {
+      id: 'library:10',
+      assetId: 10,
+      name: 'flare.png',
+      filename: 'images/flare.png',
+      children: [
+        { id: 11, name: 'flare (no bg)', filename: 'images/flare-edit1.png', isEdit: true },
+        { id: 12, name: 'flare (cropped)', filename: 'images/flare-edit2.png', isEdit: true },
+      ],
+    },
+    // `edits` is the server's alias for the same array, and a listing row
+    // carries both - so the index has to accept either name.
+    {
+      id: 'library:20',
+      name: 'smoke.png',
+      filename: 'images/smoke.png',
+      edits: [{ id: 21, name: 'smoke (soft)', filename: 'images/smoke-edit1.png' }],
+    },
+    { id: 'library:30', name: 'spark.png', filename: 'images/spark.png' },
+  ];
+
+  const byId = indexLibraryAssets(listing);
+  check('every root is indexed', [10, 20, 30].every((id) => byId.has(id)),
+    [...byId.keys()].join(', '));
+  check('AND every edit is indexed', [11, 12, 21].every((id) => byId.has(id)),
+    [...byId.keys()].join(', '));
+  check('  under `children` or `edits`, either name',
+    byId.get(12)?.name === 'flare (cropped)' && byId.get(21)?.name === 'smoke (soft)');
+  check('  and an edit maps to its OWN file, not its parent\'s',
+    byId.get(11).filename === 'images/flare-edit1.png'
+    && byId.get(11).filename !== byId.get(10).filename,
+    byId.get(11).filename);
+  check('nothing extra is indexed', byId.size === 6, String(byId.size));
+
+  // A root with no children at all must not throw or add a phantom entry.
+  check('a childless root is fine', indexLibraryAssets([{ id: 'library:1' }]).size === 1);
+  check('an empty listing gives an empty index', indexLibraryAssets([]).size === 0);
+  check('  and so does no listing', indexLibraryAssets(null).size === 0);
+  check('a row with an unreadable id is skipped rather than crashing',
+    indexLibraryAssets([{ id: 'nope', children: [{ id: 5 }] }]).size === 1);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

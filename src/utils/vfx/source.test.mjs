@@ -98,6 +98,41 @@ console.log('\n--- Render modes ---');
   }
 }
 
+console.log('\n--- Asset wiring ---');
+{
+  const page = await readFile(
+    new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+
+  // EDITS AND VERSIONS ARE SELECTABLE. AssetSelectorModal hides them unless
+  // asked, so the sprite picker offered only ROOT images - and a sprite is very
+  // often an edit rather than the original: the generated image cropped, its
+  // background removed, its channels adjusted.
+  check('the asset picker offers edits and versions',
+    /<AssetSelectorModal[\s\S]*?showEdits[\s\S]*?\/>/.test(page));
+
+  // ONE RESOLVER SERVES TEXTURES AND MESHES. useVfxRuntime hands the same
+  // function to loadVfxTextures and loadVfxMeshes, so a resolver built from the
+  // image listing alone made every mesh asset unresolvable - loadVfxMeshes put
+  // it straight into `failed` and the mesh renderer had nothing to draw, with
+  // no error reported anywhere.
+  check('the asset resolver is built from images AND meshes',
+    /makeAssetResolver\(\[\.\.\.libraryImages, \.\.\.libraryMeshes\]\)/.test(page));
+  const runtime = await readFile(
+    new URL('../../hooks/useVfxRuntime.js', import.meta.url), 'utf8');
+  check('  and it really is the one both loaders get',
+    /loadVfxTextures\(ir, \{ resolveUrl \}\)/.test(runtime)
+    && /loadVfxMeshes\(ir, \{ resolveUrl \}\)/.test(runtime));
+
+  // The writer and the resolver must derive an id the SAME way, or a picked
+  // asset is stored under an id nothing can look up again. A root's listing id
+  // is `library:<n>` and an edit's is a bare number.
+  check('the picked id comes from vfxAssetId, not hand-parsed',
+    /const numericId = vfxAssetId\(asset\)/.test(page)
+    && !/String\(asset\.id\)\.replace\('library:'/.test(page));
+  check('  and the label map is indexed the same way',
+    /indexLibraryAssets\(\[\.\.\.libraryImages, \.\.\.libraryMeshes\]\)/.test(page));
+}
+
 console.log('\n--- Drag surfaces ---');
 {
   // THE RULE: AN IMPERATIVE DRAG PREVIEW NEVER WRITES A PROPERTY REACT WRITES.
@@ -206,6 +241,35 @@ console.log('\n--- React Flow board ---');
     /getInternalNode\(id\)\?\.measured/.test(board));
   check('  and never reads measured off the derived nodes array',
     !/nodes\.map\(node => \[node\.id, node\]\)/.test(board));
+
+  // THE FLOW SOCKETS ARE ON THE SIDE EDGES, NOT THE TOP AND BOTTOM.
+  //
+  // A context node grows DOWNWARD as blocks are added. With the sockets on the
+  // top and bottom the chain ran along that same axis, so every block added to
+  // a stage pushed the next stage further away and the board had to be
+  // re-tidied to stay readable. Sideways, the two axes are perpendicular.
+  //
+  // Checked in the source because the failure is a rendered layout: the
+  // positions are two identifiers in a component and nothing else would notice
+  // them being changed back.
+  const contextNode = await readFile(
+    new URL('../../components/vfx/VfxContextNode.jsx', import.meta.url), 'utf8');
+  const flowHandles = [...contextNode.matchAll(
+    /position=\{Position\.(\w+)\}[\s\S]{0,120}?id="(flow-in|flow-out)"/g)];
+  check('both flow sockets were found', flowHandles.length === 2,
+    flowHandles.map((m) => `${m[2]}:${m[1]}`).join(' '));
+  check('  flow-in is on the left and flow-out on the right',
+    flowHandles.some((m) => m[2] === 'flow-in' && m[1] === 'Left')
+    && flowHandles.some((m) => m[2] === 'flow-out' && m[1] === 'Right'),
+    flowHandles.map((m) => `${m[2]}:${m[1]}`).join(' '));
+
+  // And they are pinned to the header. React Flow centres a left/right handle
+  // at 50% of the node's height, which on a six-block stage lands exactly on a
+  // block row's own property socket - those are on the left edge too.
+  const nodeCss = await readFile(
+    new URL('../../components/vfx/VfxContextNode.css', import.meta.url), 'utf8');
+  check('  and pinned to the header rather than centred on the node',
+    /\.vfx-node__flow\.react-flow__handle \{[^}]*top: \d+px;/.test(nodeCss));
 
   // A DRAG MOVES ONLY WHAT YOU GRABBED. React Flow drags the pointed node
   // together with anything `selected` (getDragItems in @xyflow/system), which

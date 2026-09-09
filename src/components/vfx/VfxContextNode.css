@@ -49,9 +49,11 @@
   gap: 7px;
   padding: 7px 8px;
   background: #20232a;
-  /* The accent bar identifies the system this stage belongs to. On the left
-     edge rather than the top, so a column of five stacked contexts reads as
-     one continuous stripe. */
+  /* The accent bar identifies the system this stage belongs to. It stays on the
+     left edge now that the stages run ACROSS rather than down - it no longer
+     joins into one continuous stripe, but it is still the thing that says which
+     of five systems a node belongs to at a glance, and moving it to the top
+     edge would collide with nothing and gain nothing. */
   border-left: 3px solid var(--vfx-system-accent, #4f8cf5);
   cursor: grab;
 }
@@ -120,13 +122,29 @@
 
 /* --- flow sockets --------------------------------------------------------- */
 
-/* Flat fills only, and no glow: see the note on box-shadow above. */
-.vfx-node__flow {
-  width: 12px;
-  height: 6px;
+/* Flat fills only, and no glow: see the note on box-shadow above.
+
+   A TALL NUB ON A SIDE EDGE, and pinned to the header rather than centred on
+   the node. React Flow's default puts a left/right handle at 50% of the node's
+   height, which on a stage with six blocks lands exactly on a block row's own
+   property socket - also on the left edge. The header is a fixed height (7px of
+   padding around two short lines), so a constant offset is right here and does
+   not depend on how many blocks the stage holds.
+
+   Two classes, so this beats @xyflow/react's own .react-flow__handle-left rule
+   on specificity rather than on which stylesheet the bundler emitted last. */
+.vfx-node__flow.react-flow__handle {
+  width: 6px;
+  height: 12px;
   border-radius: 3px;
   background: #4f8cf5;
   border: 1px solid #101216;
+  top: 21px;
+  transform: translate(-50%, -50%);
+}
+
+.vfx-node__flow.react-flow__handle-right {
+  transform: translate(50%, -50%);
 }
 
 /* --- the stack ------------------------------------------------------------ */

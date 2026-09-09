@@ -803,9 +803,34 @@ const FIX_APPLIERS = {
   setContextParam: (doc, args) => setContextParam(doc, args.contextId, args.param, args.value),
 }
 
+// FIXES THAT NEED THE AUTHOR TO CHOOSE SOMETHING, and therefore cannot be a
+// pure doc -> doc applier. They are dispatched by the page to the asset picker.
+//
+// THE BUG THIS EXISTS FOR: `pickAsset` was a fix action with no applier, and
+// every surface decided whether to render a fix button by asking
+// canApplyFix - so "Choose a sprite..." and "Pick a replacement..." were
+// permanently greyed out. Two diagnostics offered a one-click fix that could
+// never be clicked. Keeping canApplyFix honest (it means what its name says)
+// and adding a second question is what fixes that without making applyFix
+// return an unchanged document and burn an undo entry.
+const UI_FIX_ACTIONS = new Set(['pickAsset'])
+
 /** Whether a diagnostic's fix can be applied without further input. */
 export function canApplyFix(fix) {
   return Boolean(fix && FIX_APPLIERS[fix.action])
+}
+
+/** Whether a fix has to go through a chooser rather than straight to the doc. */
+export function fixNeedsInput(fix) {
+  return Boolean(fix && UI_FIX_ACTIONS.has(fix.action))
+}
+
+/**
+ * Whether a fix leads anywhere at all - the question the UI actually wants
+ * before it draws a button.
+ */
+export function canOfferFix(fix) {
+  return canApplyFix(fix) || fixNeedsInput(fix)
 }
 
 /**

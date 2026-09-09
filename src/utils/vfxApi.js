@@ -27,19 +27,19 @@
 // Getting them the wrong way round produces a 400 that says nothing useful.
 
 import { API_BASE, assetUrl } from '../config.js'
+import { indexLibraryAssets, vfxAssetId } from './vfx/library.js'
 import { normalizeVfxDoc, serializeVfxDoc } from '../../vfx/doc.js'
 
 export const VFX_ASSET_TYPE = 'vfx'
 
-/** The numeric id behind an asset, an id string, or a `library:<id>` handle. */
-export function vfxAssetId(asset) {
-  if (asset == null) return null
-  if (typeof asset === 'number') return Number.isFinite(asset) ? asset : null
-  if (typeof asset === 'object') return vfxAssetId(asset.id ?? asset.assetId ?? null)
-  const text = String(asset)
-  const match = /^(?:library:)?(\d+)$/.exec(text.trim())
-  return match ? Number(match[1]) : null
-}
+// Re-exported rather than defined here: this module imports src/config.js for
+// API_BASE, which reads import.meta.env and cannot be loaded by a node test.
+// The id and listing logic is the part with bugs in it, so it lives in a pure
+// module that a test CAN import - see the header of ./vfx/library.js.
+// A plain re-export, so the ~six existing importers of vfxApi keep working.
+// Imported above as well, because a re-export creates no LOCAL binding and
+// two functions in this file call vfxAssetId.
+export { indexLibraryAssets, vfxAssetId }
 
 /**
  * The URL an asset's bytes are served from.
@@ -232,21 +232,17 @@ export async function saveVfxAsset({ name, doc, thumbnail = null, assetId = null
  * header of src/utils/vfx/assets.js), so the mapping is supplied from here,
  * where the library listing is already in hand.
  *
- * @param {Array<Object>} libraryImages rows from /api/assets/library images
+ * TAKES EVERY TYPE THE GRAPH CAN REFERENCE, not just images. useVfxRuntime
+ * hands this one function to both loadVfxTextures AND loadVfxMeshes, so a
+ * resolver built from the image listing alone made every mesh asset unresolvable
+ * - `loadVfxMeshes` put it straight into `failed` and the mesh renderer had
+ * nothing to draw, with no error anywhere.
+ *
+ * @param {Array<Object>} rows library rows of any type
  * @returns {(asset: Object) => string|null}
  */
-export function makeTextureResolver(libraryImages) {
-  const byId = new Map()
-  for (const row of libraryImages || []) {
-    const id = vfxAssetId(row)
-    if (id != null) byId.set(id, row)
-    // Edits and versions are separate assets with their own ids, and a graph
-    // may reference either.
-    for (const child of row.children || row.edits || []) {
-      const childId = vfxAssetId(child)
-      if (childId != null) byId.set(childId, child)
-    }
-  }
+export function makeAssetResolver(rows) {
+  const byId = indexLibraryAssets(rows)
   return asset => {
     const row = byId.get(asset.assetId)
     return row ? vfxFileUrl(row) : null

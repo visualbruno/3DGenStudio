@@ -265,11 +265,24 @@ const DEFS = Object.freeze({
     // chosen (see src/utils/vfx/assets.js), so there is nothing broken here -
     // only something the author might want to improve on.
     hint: () => 'That is the right shape for most smoke, fire and glow. Pick your own for anything with character - a streak, a shard, a flipbook. With Additive blending the texture needs no alpha channel, because its black areas are already invisible.',
-    fix: (d) => ({
-      label: 'Choose a sprite...',
-      action: 'pickAsset',
-      args: { blockId: d.blockId, prop: 'texture', assetType: 'image' },
-    }),
+    // TWO STATES, TWO DIFFERENT FIXES, and conflating them made the button
+    // useless. This fires both when the Output has no Sprite Texture BLOCK and
+    // when it has one whose slot is empty; the fix used to be `pickAsset` for
+    // both, so in the first case - which is every template that draws with the
+    // built-in blob - it pointed at `blockId: ''`. There was nothing to pick a
+    // texture FOR. Now the first click adds the block and the second picks the
+    // image, and each button says which it does.
+    fix: (d) => (d.blockId
+      ? {
+        label: 'Choose a sprite...',
+        action: 'pickAsset',
+        args: { blockId: d.blockId, prop: 'texture', assetType: 'image' },
+      }
+      : {
+        label: 'Add a Sprite Texture',
+        action: 'addBlock',
+        args: { contextId: d.contextId, blockType: 'output.setMainTexture' },
+      }),
   },
   W_MISSING_ASSET: {
     severity: SEVERITY.WARN,

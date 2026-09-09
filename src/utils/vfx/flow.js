@@ -33,13 +33,40 @@ const STAGE_ORDER = [
   CONTEXT_KIND.OUTPUT,
 ]
 
-const COLUMN_WIDTH = 320
-const ROW_HEIGHT = 210
-const OPERATOR_COLUMN_GAP = 120
+// THE STAGE CHAIN RUNS LEFT TO RIGHT, AND A SYSTEM IS A ROW.
+//
+// It used to run top to bottom, one column per system, which is Unity VFX
+// Graph's shape. The reason to transpose it is that A CONTEXT NODE GROWS
+// DOWNWARD: adding a block makes the node taller, so with a vertical chain
+// every block added to Initialize pushed Update and Output further away and the
+// whole pipeline had to be re-tidied to stay readable. Across, growth is
+// perpendicular to the flow - adding a block moves nothing else at all.
+//
+// Two things fell out of it that are worth stating, because they are the reason
+// this is a better fit and not merely a rotation:
+//
+//   - THE FIXED-PITCH AXIS NOW MATCHES THE FIXED-SIZE AXIS. A node's width is
+//     constant and its height is not, so a grid with a fixed column pitch and a
+//     measured row height guesses about the one dimension that never varies.
+//     The old layout guessed about the one that always does.
+//   - A SYSTEM IS A ROW HERE AND A TRACK IN THE TIMELINE DOCK, so "one system,
+//     one row" is now true on both surfaces.
+//
+// The cost, paid knowingly: operator nodes wire into property sockets on a
+// node's LEFT edge, and with the stages spread across x there is no single
+// operator position that is a short hop from all five of them. They get a band
+// below the systems and the author drags one near what it feeds.
+const STAGE_COLUMN_WIDTH = 320
+// Deliberately generous: this is the pitch between systems in the DERIVED
+// layout, which cannot know how tall a stage rendered. autoLayout measures.
+const SYSTEM_ROW_HEIGHT = 380
+const OPERATOR_BAND_GAP = 120
 // Gaps used by autoLayout, which packs by MEASURED size rather than by the
 // fixed grid the derived layout uses.
 const COLUMN_GAP = 40
 const ROW_GAP = 28
+// The width autoLayout assumes for a node React Flow has not measured yet.
+const NODE_WIDTH_FALLBACK = STAGE_COLUMN_WIDTH - COLUMN_GAP
 
 function stageIndex(kind) {
   const at = STAGE_ORDER.indexOf(kind)
@@ -49,12 +76,14 @@ function stageIndex(kind) {
 /**
  * The tidy default position for a context node.
  *
- * Outputs stack below one another rather than sharing a row, because a system
- * may have several and overlapping them would hide all but the last.
+ * One row per system, one column per stage - see the header note. Extra Outputs
+ * continue RIGHTWARDS rather than sharing a column, because a system may have
+ * several and overlapping them would hide all but the last; going down instead
+ * would put them in the next system's row.
  */
 function defaultContextPosition(systemIndex, kind, outputOrdinal) {
-  const row = stageIndex(kind) + (kind === CONTEXT_KIND.OUTPUT ? outputOrdinal : 0)
-  return { x: systemIndex * COLUMN_WIDTH, y: row * ROW_HEIGHT }
+  const column = stageIndex(kind) + (kind === CONTEXT_KIND.OUTPUT ? outputOrdinal : 0)
+  return { x: column * STAGE_COLUMN_WIDTH, y: systemIndex * SYSTEM_ROW_HEIGHT }
 }
 
 function positionFor(doc, nodeId, fallback) {
@@ -187,12 +216,20 @@ export function toFlowNodes(doc, options = {}) {
     })
   }
 
-  const operatorColumn = doc.systems.length * COLUMN_WIDTH + OPERATOR_COLUMN_GAP
+  // A BAND BELOW THE SYSTEMS, not a column beside them. They used to sit to the
+  // right of every system while their output socket is on their right and every
+  // block socket is on its node's LEFT, so each data edge left the operator
+  // rightwards and then travelled all the way back across the board. Below the
+  // last system row, an edge runs up and forward into whatever it feeds.
+  const operatorRow = doc.systems.length * SYSTEM_ROW_HEIGHT + OPERATOR_BAND_GAP
   doc.operators.forEach((operator, index) => {
     nodes.push({
       id: operator.id,
       type: 'vfxOperator',
-      position: positionFor(doc, operator.id, { x: operatorColumn, y: index * 140 }),
+      position: positionFor(doc, operator.id, {
+        x: index * STAGE_COLUMN_WIDTH,
+        y: operatorRow,
+      }),
       dragHandle: '.vfx-node__drag-handle',
       // Same omission as the note above: clicking an operator opened its
       // Parameters panel but drew no ring, so the board and the panel disagreed
@@ -376,42 +413,62 @@ export function autoLayout(doc, measure) {
   const size = id => {
     const measured = measure?.(id)
     return {
-      width: measured?.width || COLUMN_WIDTH - COLUMN_GAP,
+      width: measured?.width || NODE_WIDTH_FALLBACK,
       height: measured?.height || 160,
     }
   }
 
-  const positions = {}
-  let x = 0
+  // Sorted by stage, as toFlowNodes does - the document's own order is not
+  // meaningful for layout and an author may have added stages in any order.
+  const rows = doc.systems.map(system => (
+    system.contexts.slice().sort((a, b) => stageIndex(a.kind) - stageIndex(b.kind))
+  ))
 
-  doc.systems.forEach(system => {
-    // Sorted by stage, as toFlowNodes does - the document's own order is not
-    // meaningful for layout and an author may have added stages in any order.
-    const ordered = system.contexts.slice().sort((a, b) => stageIndex(a.kind) - stageIndex(b.kind))
-    let y = 0
-    let columnWidth = 0
-    for (const context of ordered) {
-      const { width, height } = size(context.id)
-      positions[context.id] = { x, y }
-      // PACKED BY MEASURED HEIGHT, which is the entire difference from the
-      // derived layout: a fixed row height either wastes space under a
-      // one-block stage or overlaps an eight-block one, and which of those
-      // happens depends on the effect rather than on anything this function
-      // can know in advance.
-      y += height + ROW_GAP
-      if (width > columnWidth) columnWidth = width
-    }
-    x += Math.max(columnWidth, COLUMN_WIDTH - COLUMN_GAP) + COLUMN_GAP
+  // A REAL GRID, not row-by-row packing: each stage column is as wide as the
+  // widest node in it ACROSS ALL SYSTEMS, so Initialize sits at the same x in
+  // every row. Packing each row independently would stagger the columns by a
+  // few pixels wherever two nodes measured differently, and the board would
+  // stop reading as systems x stages - which is the whole point of the shape.
+  const columnWidths = []
+  for (const row of rows) {
+    row.forEach((context, column) => {
+      const { width } = size(context.id)
+      if (!(columnWidths[column] >= width)) columnWidths[column] = width
+    })
+  }
+  const columnX = []
+  let cursor = 0
+  for (let column = 0; column < columnWidths.length; column += 1) {
+    columnX[column] = cursor
+    cursor += columnWidths[column] + COLUMN_GAP
+  }
+
+  const positions = {}
+  let y = 0
+  rows.forEach(row => {
+    // PACKED BY MEASURED HEIGHT, which is the entire difference from the
+    // derived layout: a fixed row pitch either wastes space beneath a row of
+    // one-block stages or overlaps a row holding an eight-block one, and which
+    // of those happens depends on the effect rather than on anything this
+    // function can know in advance.
+    let rowHeight = 0
+    row.forEach((context, column) => {
+      const { height } = size(context.id)
+      positions[context.id] = { x: columnX[column], y }
+      if (height > rowHeight) rowHeight = height
+    })
+    y += rowHeight + ROW_GAP
   })
 
-  // Operators in their own column to the right of every system, stacked. They
-  // are wired ACROSS the board, so putting them between systems would route
-  // every data edge through the stage chain.
-  let operatorY = 0
+  // Operators in a band below every system, laid out across. See the note in
+  // toFlowNodes: their output socket is on the right and every block socket is
+  // on its node's left, so an operator has to sit below-and-left of what it
+  // feeds rather than beyond the end of the chain.
+  let operatorX = 0
   for (const operator of doc.operators) {
-    const { height } = size(operator.id)
-    positions[operator.id] = { x, y: operatorY }
-    operatorY += height + ROW_GAP
+    const { width } = size(operator.id)
+    positions[operator.id] = { x: operatorX, y: y + OPERATOR_BAND_GAP - ROW_GAP }
+    operatorX += width + COLUMN_GAP
   }
 
   return {

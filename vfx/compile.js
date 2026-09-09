@@ -1325,7 +1325,10 @@ function runSystemDiagnostics(args) {
     const slot = textureBlock ? normalizeValue(textureBlock.props.texture).v : '';
     if (!textureBlock || !slot || !doc.references[slot]) {
       diag.report('I_DEFAULT_SPRITE', { systemId: system.id, contextId: context.id },
-        { systemName: system.name, blockId: textureBlock?.id || '' });
+        // contextId is in the data as well as the target because the FIX needs
+        // it: with no texture block to point at, the fix is to add one to this
+        // context. Only the data reaches fix().
+        { systemName: system.name, contextId: context.id, blockId: textureBlock?.id || '' });
     }
 
     if (params.sort === 'depth' && peak > 20000) {

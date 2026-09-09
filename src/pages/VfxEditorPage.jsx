@@ -55,7 +55,7 @@ import { summarizeDiagnostics } from '../../vfx/diagnostics.js'
 import { PROP_TYPE } from '../../vfx/catalog.js'
 import { REF_KIND, formatAssetRef } from '../../vfx/doc.js'
 import { VFX_TEMPLATES } from '../utils/vfx/templates.js'
-import { makeTextureResolver } from '../utils/vfxApi.js'
+import { indexLibraryAssets, makeAssetResolver, vfxAssetId } from '../utils/vfxApi.js'
 import { createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
 import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
 import {
@@ -184,7 +184,14 @@ export default function VfxEditorPage() {
     }
   }, [getLibraryAssets])
 
-  const resolveUrl = useMemo(() => makeTextureResolver(libraryImages), [libraryImages])
+  // IMAGES AND MESHES BOTH, because useVfxRuntime hands this one resolver to
+  // loadVfxTextures and loadVfxMeshes alike. Built from the images alone, every
+  // mesh asset resolved to null and the mesh renderer silently had nothing to
+  // draw.
+  const resolveUrl = useMemo(
+    () => makeAssetResolver([...libraryImages, ...libraryMeshes]),
+    [libraryImages, libraryMeshes],
+  )
 
   const compiled = useMemo(
     () => compileVfxGraph(doc, { engineTarget: engineTarget || null }),
@@ -436,11 +443,29 @@ export default function VfxEditorPage() {
       pickAsset: (blockId, prop, type) => setPicker({ blockId, prop, type }),
 
       // diagnostics
-      canFix: fix => edits.canApplyFix(fix),
-      applyFix: diagnostic => edit(
-        d => edits.applyFix(d, diagnostic.fix),
-        diagnostic.fix?.label || 'Apply fix',
-      ),
+      //
+      // canOfferFix, not canApplyFix: a fix that opens the asset picker cannot
+      // be a pure doc -> doc applier, and asking the wrong question is what
+      // left "Choose a sprite..." greyed out on every effect using the built-in
+      // blob. The two kinds are dispatched apart below.
+      canFix: fix => edits.canOfferFix(fix),
+      applyFix: diagnostic => {
+        const fix = diagnostic?.fix
+        if (edits.fixNeedsInput(fix)) {
+          const args = fix.args || {}
+          setPicker({
+            blockId: args.blockId || null,
+            prop: args.prop || null,
+            // A missing-asset fix names the SLOT instead of a block property -
+            // the reference is what is broken, and the slot key has to survive
+            // so the block still points at it.
+            slot: args.slot || null,
+            type: args.assetType === 'mesh' ? PROP_TYPE.MESH : PROP_TYPE.TEXTURE,
+          })
+          return
+        }
+        edit(d => edits.applyFix(d, fix), fix?.label || 'Apply fix')
+      },
     }
   }, [commit])
 
@@ -448,15 +473,24 @@ export default function VfxEditorPage() {
 
   const handlePickAsset = useCallback(asset => {
     if (!picker || !asset) return
-    const numericId = Number(String(asset.id).replace('library:', ''))
-    if (!Number.isFinite(numericId)) return
+    // THE SAME FUNCTION THE RESOLVER USES, deliberately. A root's listing id is
+    // `library:<n>` and an EDIT's is a bare number, so hand-parsing here while
+    // the resolver indexed by vfxAssetId is how a picked asset could be written
+    // under an id nothing could look up again.
+    const numericId = vfxAssetId(asset)
+    if (numericId == null) return
 
     // The slot key is derived from the block and property rather than from the
     // asset, so re-picking replaces the reference instead of accumulating
     // slots - and the graph keeps pointing at a stable key. Blocks name slots,
     // never asset ids; one table resolves them, which is what makes project
     // import able to remap a whole effect in one place.
-    const slot = `${picker.type === PROP_TYPE.MESH ? 'mesh' : 'tex'}_${picker.blockId}_${picker.prop}`
+    // An EXISTING slot key is reused verbatim when the picker was opened to
+    // repair a dangling reference: the block already points at that key, so
+    // minting a new one would leave the block pointing at the broken slot and
+    // silently add a second, unused entry.
+    const slot = picker.slot
+      || `${picker.type === PROP_TYPE.MESH ? 'mesh' : 'tex'}_${picker.blockId}_${picker.prop}`
     const entry = {
       kind: picker.type === PROP_TYPE.MESH ? REF_KIND.MESH : REF_KIND.IMAGE,
       ref: formatAssetRef(numericId),
@@ -464,7 +498,12 @@ export default function VfxEditorPage() {
       colorSpace: 'srgb',
     }
     commit(
-      d => edits.setBlockAssetSlot(edits.setAssetReference(d, slot, entry), picker.blockId, picker.prop, slot),
+      d => {
+        const withRef = edits.setAssetReference(d, slot, entry)
+        return picker.slot
+          ? withRef
+          : edits.setBlockAssetSlot(withRef, picker.blockId, picker.prop, slot)
+      },
       { label: 'Choose asset' },
     )
     setPicker(null)
@@ -473,10 +512,10 @@ export default function VfxEditorPage() {
   // Resolved asset names, so a texture row reads "spark.png" rather than
   // "tex_blk3_texture". Built per document rather than per row.
   const fieldProps = useMemo(() => {
-    const byId = new Map()
-    for (const asset of [...libraryImages, ...libraryMeshes]) {
-      byId.set(Number(String(asset.id).replace('library:', '')), asset)
-    }
+    // Shared with the resolver, so a texture row cannot show a raw slot key for
+    // an asset the runtime found perfectly well - which is what happened for
+    // every image EDIT, since this map was built from roots only.
+    const byId = indexLibraryAssets([...libraryImages, ...libraryMeshes])
     const out = {}
     for (const system of doc.systems) {
       for (const context of system.contexts) {
@@ -929,10 +968,10 @@ export default function VfxEditorPage() {
                         type="button"
                         className="vfx-page__diagnostics-fix"
                         onClick={() => actions.applyFix(diagnostic)}
-                        disabled={!edits.canApplyFix(diagnostic.fix)}
-                        title={edits.canApplyFix(diagnostic.fix)
-                          ? 'Apply this fix. It becomes one undo step.'
-                          : 'This one needs a choice only you can make - open the block and set it.'}
+                        disabled={!edits.canOfferFix(diagnostic.fix)}
+                        title={edits.fixNeedsInput(diagnostic.fix)
+                          ? 'Opens a chooser. Your pick becomes one undo step.'
+                          : 'Apply this fix. It becomes one undo step.'}
                       >
                         {diagnostic.fix.label}
                       </button>
@@ -988,7 +1027,7 @@ export default function VfxEditorPage() {
             totalSystems={doc.systems.length}
             onAction={handleBlameAction}
             onFix={fix => actions.applyFix({ fix })}
-            canFix={edits.canApplyFix}
+            canFix={edits.canOfferFix}
           />
         </div>
       </div>
@@ -1013,6 +1052,13 @@ export default function VfxEditorPage() {
         <AssetSelectorModal
           assetType={picker.type === PROP_TYPE.MESH ? 'mesh' : 'image'}
           title={picker.type === PROP_TYPE.MESH ? 'Choose a mesh' : 'Choose a sprite texture'}
+          // EDITS AND VERSIONS ARE SELECTABLE. They default to hidden in the
+          // modal, so the picker offered only root images - and a sprite is very
+          // often an edit rather than the original: the generated image cropped,
+          // background removed, or channels adjusted. Each one is its own Assets
+          // row with its own id, so `asset:<id>` references it exactly like a
+          // root and project export/import carries it with no extra work.
+          showEdits
           onSelect={handlePickAsset}
           onClose={() => setPicker(null)}
         />

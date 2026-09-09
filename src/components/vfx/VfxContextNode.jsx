@@ -88,11 +88,22 @@ export default function VfxContextNode({ id, data, selected }) {
       {/* Flow sockets. Always mounted, exactly two, and NOT connectable: the
           stage chain is derived from the contexts a system has (see
           toFlowEdges), so it cannot be rewired into an illegal order - it can
-          only be changed by adding or removing a stage. */}
+          only be changed by adding or removing a stage.
+
+          LEFT AND RIGHT, NOT TOP AND BOTTOM. A context node grows DOWNWARD as
+          blocks are added, so a chain running top-to-bottom pushed the next
+          stage further away with every block - the flow direction and the
+          direction nodes grow in were the same axis. Sideways they are
+          perpendicular, and adding a block moves nothing else.
+
+          The stylesheet pins both sockets to the HEADER's height rather than
+          letting React Flow centre them on the node: a block row's property
+          socket is on this same left edge, and a node-centred flow socket lands
+          exactly on one of them on a tall stage. */}
       {context.kind !== CONTEXT_KIND.EVENT && (
         <Handle
           type="target"
-          position={Position.Top}
+          position={Position.Left}
           id="flow-in"
           className="vfx-node__flow"
           isConnectable={false}
@@ -101,7 +112,7 @@ export default function VfxContextNode({ id, data, selected }) {
       {context.kind !== CONTEXT_KIND.OUTPUT && (
         <Handle
           type="source"
-          position={Position.Bottom}
+          position={Position.Right}
           id="flow-out"
           className="vfx-node__flow"
           isConnectable={false}
