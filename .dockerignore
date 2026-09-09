@@ -34,6 +34,12 @@
 # /mcp route is not mounted in server mode.
 !mcp/
 
+# The VFX contract (schema, catalog, compiler, IR). Needed TWICE OVER: the
+# runtime stage imports it from server.js, and the builder stage's `COPY . .`
+# is filtered by this same allowlist - so without it the FRONTEND build fails
+# to resolve ../../vfx/*.js and the image build dies at vite.
+!vfx/
+
 # File-based wiki (resolved against the module dir, not cwd).
 !wiki/
 

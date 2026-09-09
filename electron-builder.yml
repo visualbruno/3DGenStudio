@@ -76,6 +76,12 @@ files:
   - db/**/*
   # MCP automation server (POST /mcp on the backend + stdio bridge).
   - mcp/**/*
+  # The VFX contract: document schema, block catalog, compiler and IR. server.js
+  # imports it to validate an imported .vfx.json and to build an export bundle,
+  # and src/ imports the same modules so the editor and the backend cannot
+  # disagree about the format. Same rule as db/ and mcp/: the whole directory
+  # ships, because a name-by-name list would look complete and still miss one.
+  - vfx/**/*
   - version.json
   - package.json
   # Licences shown in-app. META-LLAMA-3-LICENSE is not documentation: the motion

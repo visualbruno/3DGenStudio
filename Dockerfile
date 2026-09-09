@@ -79,6 +79,7 @@ COPY --chown=node:node db ./db
 # loads it when running on PostgreSQL.
 COPY --chown=node:node tools/migrate-sqlite-to-postgres.mjs ./tools/
 COPY --chown=node:node mcp ./mcp
+COPY --chown=node:node vfx ./vfx
 COPY --chown=node:node wiki ./wiki
 
 # Run unprivileged. Ownership is set by --chown on each COPY above rather than a
