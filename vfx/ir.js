@@ -81,6 +81,19 @@ export const ATTRIBUTES = Object.freeze({
   mass: { width: 1, type: 'float32', default: [1] },
   /** Previous position, for stretched billboards and trails only. */
   prevPosition: { width: 3, type: 'float32', default: [0, 0, 0] },
+  /**
+   * Birth values, kept so an over-life block can MULTIPLY rather than
+   * accumulate.
+   *
+   * Size Over Life scales the size a particle was born with. Applying the
+   * curve to the live attribute instead would compound it every frame - a
+   * scale of 1.1 would grow the particle by 1.1x per frame rather than once -
+   * so the birth value has to survive. Allocated only when an over-life block
+   * actually targets that attribute, which is what makes it free for the
+   * effects that do not use one.
+   */
+  startSize: { width: 1, type: 'float32', default: [1] },
+  startColor: { width: 4, type: 'float32', default: [1, 1, 1, 1] },
   custom0: { width: 1, type: 'float32', default: [0] },
   custom1: { width: 1, type: 'float32', default: [0] },
 });

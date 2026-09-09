@@ -72,6 +72,18 @@ const MAX_FREQ_BY_CONTEXT = Object.freeze({
   [CONTEXT_KIND.OUTPUT]: FREQ.PER_PARTICLE,
 });
 
+// Which birth-value attribute an over-life kernel needs kept.
+//
+// The snapshot is a separate injected pass rather than something the setter
+// blocks do, because the author can order Initialize any way they like: Set
+// Size might run before or after whatever else touches size, and a setter that
+// also wrote the birth copy would capture the wrong moment. One pass at the end
+// of Initialize captures the finished state whatever the order.
+const START_ATTRIBUTE = Object.freeze({
+  size: 'startSize',
+  color: 'startColor',
+});
+
 const FREQ_BY_NAME = Object.freeze({
   const: FREQ.CONST,
   uniform: FREQ.UNIFORM,
@@ -631,6 +643,36 @@ export function compileVfxGraph(document, options = {}) {
       context,
       blocks: lowerContextBlocks([context]),
     }));
+
+    // Over-life blocks scale a BIRTH value, so that value has to be preserved.
+    // Requesting the attribute here - after the update stack is lowered, so we
+    // know which targets are actually driven - is what keeps an effect with no
+    // over-life block from paying for the copies.
+    const startPairs = [];
+    for (const block of irUpdateBlocks) {
+      if (block.kernel !== 'attr.overLife' && block.kernel !== 'color.overLife') continue;
+      const target = block.attributes[0];
+      const startName = START_ATTRIBUTE[target];
+      if (!startName || startPairs.some((p) => p[1] === startName)) continue;
+      startPairs.push([target, startName]);
+      systemAttrs.add(target);
+      systemAttrs.add(startName);
+    }
+    if (startPairs.length > 0) {
+      irInit.push({
+        kernel: 'init.snapshot',
+        srcBlockId: '',
+        srcBlockType: '',
+        modes: {},
+        bindings: [],
+        pre: [],
+        // Pairs of [live, birth]. An extra field on an IR block is fine - the
+        // IR is plain JSON - and it beats making the kernel infer the pairing
+        // from a flat attribute list.
+        snapshot: startPairs.map(([from, to]) => ({ from, to })),
+        attributes: startPairs.flat(),
+      });
+    }
 
     // Injected kernels - guarantee 3 in vfx/ir.js. Age advance plus the kill
     // sweep must run before anything touches a particle, and integration after

@@ -337,12 +337,12 @@ const BLOCK_LIST = [
   },
   {
     id: 'initialize.positionCone',
-    label: 'Position: Cone',
+    label: 'Cone Emitter',
     contexts: [CONTEXT_KIND.INITIALIZE],
     category: 'Shape',
     beginner: true,
-    blurb: 'Places particles in a cone, pointing up the Y axis.',
-    teach: 'A cone is the shape behind muzzle flashes, jets and sprays. Pair it with Velocity: Random so particles travel along the cone rather than sitting in it.',
+    blurb: 'Sprays particles out of a cone pointing up the Y axis.',
+    teach: 'A cone is the shape behind muzzle flashes, jets and sprays. This sets both where a particle starts AND which way it travels, so it replaces Velocity: Random rather than pairing with it - Spread is what makes the difference between a tight jet and a wide spray.',
     props: {
       angle: {
         type: PROP_TYPE.FLOAT,
@@ -356,6 +356,11 @@ const BLOCK_LIST = [
         basic: true,
         hot: true,
         hint: 'Half-angle of the cone. 0 is a straight line, 90 is a flat disc.',
+        presets: [
+          { label: 'Tight jet (5)', value: 5 },
+          { label: 'Muzzle flash (25)', value: 25 },
+          { label: 'Wide spray (60)', value: 60 },
+        ],
       },
       radius: {
         type: PROP_TYPE.FLOAT,
@@ -367,15 +372,29 @@ const BLOCK_LIST = [
         step: 0.01,
         modes: M.SCALAR_FIXED,
         basic: true,
+        hint: 'How wide the mouth of the cone is. 0 emits from a single point.',
+      },
+      speed: {
+        type: PROP_TYPE.FLOAT,
+        default: 3,
+        label: 'Speed',
+        unit: 'm/s',
+        min: 0,
+        max: 200,
+        step: 0.1,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hot: true,
+        hint: 'How fast particles leave the cone. Randomise it so they spread out along their path instead of moving as a sheet.',
       },
     },
-    kernel: 'shape.position.cone',
+    kernel: 'shape.cone',
     engines: {
       unity: ENGINE_SUPPORT.NATIVE,
       unreal: ENGINE_SUPPORT.NATIVE,
-      note: 'Unity: Position (Cone). Niagara: Cone Location.',
+      note: 'Unity: Position (Cone) plus Set Velocity from Direction. Niagara: Cone Location, which sets position and velocity in one module exactly as this does.',
     },
-    attributes: ['position'],
+    attributes: ['position', 'velocity'],
   },
   {
     id: 'initialize.velocityRandom',
@@ -561,7 +580,7 @@ const BLOCK_LIST = [
     category: 'Colour & Opacity',
     beginner: true,
     blurb: 'Changes colour and opacity as each particle ages.',
-    teach: 'This is where fading happens, and almost every effect needs it: a particle that vanishes at full opacity pops out of existence. End the alpha ramp at 0.',
+    teach: 'This is where fading happens, and almost every effect needs it: a particle that vanishes at full opacity pops out of existence. End the alpha ramp at 0. Like Size Over Life this MULTIPLIES the starting colour, so leaving Set Colour at white shows the ramp exactly as authored, and tinting it per particle gives each one its own version of the same ramp.',
     props: {
       color: {
         type: PROP_TYPE.COLOR,
