@@ -542,6 +542,57 @@ function record(result) {
 }
 
 {
+  // A DOCUMENT WRITTEN BY SOMETHING THAT IS NOT THE INSPECTOR.
+  //
+  // Until the MCP tools shipped, every document came from a UI that could only
+  // offer real properties and valid choices, so none of this could happen and
+  // nothing checked for it. An agent gets it wrong on the first attempt, and it
+  // used to compile CLEAN - a four-metre beam silently became a one-metre line
+  // at the origin.
+  const result = record(compile(fixtures.agentTypos()));
+  const byCode = (code) => result.diagnostics.filter((d) => d.code === code);
+
+  const props = byCode('W_UNKNOWN_PROP');
+  check('an unknown property is reported', props.length === 3,
+    props.map((d) => d.target.prop).join(' '));
+  check('  naming the property and the block',
+    props.every((d) => d.message.includes(d.target.prop) && d.message.includes('Position: Line')),
+    props[0]?.message);
+  // THE REPAIR SIGNAL. An agent cannot fix `from` without being told the real
+  // name is `start`, and a human cannot either.
+  check('  and listing the ones it DOES have',
+    props.every((d) => d.hint.includes('start') && d.hint.includes('end')
+      && d.hint.includes('thickness')),
+    props[0]?.hint);
+
+  const modes = byCode('W_UNKNOWN_MODE');
+  check('an unknown mode value is reported', modes.length === 1, String(modes.length));
+  check('  saying what it fell back to', modes[0]?.message.includes('random'), modes[0]?.message);
+  check('  and listing the valid choices',
+    ['random', 'even', 'spacing'].every((o) => modes[0]?.hint.includes(o)), modes[0]?.hint);
+
+  const params = byCode('W_UNKNOWN_PARAM');
+  check('invalid Output params are reported', params.length === 2,
+    params.map((d) => d.target.prop).join(' '));
+  check('  covering both mode and blend',
+    params.some((d) => d.target.prop === 'mode') && params.some((d) => d.target.prop === 'blend'));
+  check('  and listing the valid values',
+    params.find((d) => d.target.prop === 'blend')?.hint.includes('premultiplied'),
+    params.find((d) => d.target.prop === 'blend')?.hint);
+
+  // Warnings, not errors: an effect saved by a newer build must still run.
+  check('none of them is fatal',
+    [...props, ...modes, ...params].every((d) => d.severity === 'warn'));
+
+  // And every one carries a fix that leads somewhere - the sweep at the bottom
+  // of this file checks that in general, this checks it for the three that are
+  // new and were written together.
+  check('  and each offers a fix',
+    [...props, ...modes, ...params].every((d) => Boolean(d.fix)),
+    [...props, ...modes, ...params].map((d) => d.fix?.action).join(' '));
+}
+
+{
   // Coverage. A diagnostic that can never fire is dead code pretending to be a
   // safety net, so the un-fired ones have to be declared and justified rather
   // than merely absent.

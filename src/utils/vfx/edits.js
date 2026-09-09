@@ -415,6 +415,38 @@ export function setAssetReference(doc, slot, entry) {
 }
 
 /** Set one of a block's discrete mode switches. */
+/**
+ * Drop a property the catalog does not define.
+ *
+ * THE ONE MUTATOR THAT DELETES A PROP RATHER THAN SETTING ONE, and it exists
+ * only for W_UNKNOWN_PROP: a document written by hand or by an agent can carry
+ * `from`/`to` on a block whose properties are `start`/`end`, where they survive
+ * every save, do nothing, and are invisible in the inspector because the
+ * inspector renders the CATALOG's list.
+ *
+ * It refuses to remove a property the block really has - that would be a
+ * different operation with a different name, and a fix button that could delete
+ * a real value by mistyping is worse than no button.
+ */
+export function removeBlockProp(doc, blockId, prop) {
+  const found = findBlock(doc, blockId)
+  if (!found) return doc
+  if (!(prop in (found.block.props || {}))) return doc
+  // Refuses to remove a REAL property, so a mistyped fix cannot delete a value
+  // the author set. Only the unknown ones.
+  if (CATALOG.block(found.block.type)?.props?.[prop]) return doc
+
+  return withBlockContext(doc, blockId, context => ({
+    ...context,
+    blocks: context.blocks.map(block => {
+      if (block.id !== blockId) return block
+      const props = { ...block.props }
+      delete props[prop]
+      return { ...block, props }
+    }),
+  }))
+}
+
 export function setBlockMode(doc, blockId, mode, value) {
   return withBlockContext(doc, blockId, context => ({
     ...context,
@@ -801,6 +833,8 @@ const FIX_APPLIERS = {
   setProp: (doc, args) => setBlockProp(doc, args.blockId, args.prop, args.value),
   setGradientPreset: (doc, args) => setGradientPreset(doc, args.blockId, args.prop, args.preset),
   setContextParam: (doc, args) => setContextParam(doc, args.contextId, args.param, args.value),
+  setBlockMode: (doc, args) => setBlockMode(doc, args.blockId, args.mode, args.value),
+  removeProp: (doc, args) => removeBlockProp(doc, args.blockId, args.prop),
 }
 
 // FIXES THAT NEED THE AUTHOR TO CHOOSE SOMETHING, and therefore cannot be a

@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { toolHandler } from '../client.js';
 import { normalizeVfxDoc, vfxSignature, vfxAssetDigest } from '../../vfx/doc.js';
 import { compileVfxGraph } from '../../vfx/compile.js';
+import { CATALOG } from '../../vfx/catalog.js';
+import { VFX_IR_FORMAT } from '../../vfx/ir.js';
 
 // Particle effects: the /vfx editor's documents, reachable from an agent.
 //
@@ -87,6 +89,102 @@ async function loadGraph(api, assetId) {
 }
 
 export function registerVfxTools(server, { api, notifyMutation }) {
+  server.registerTool('describe_vfx_catalog', {
+    title: 'Describe the VFX catalog',
+    description: 'Every block, operator, context and property this build offers, with types, defaults, ranges, the value modes each property accepts and the per-engine export support. READ THIS BEFORE WRITING A GRAPH. Without it the only way to learn a block type is to read an effect that already uses one, so you can never reach a block no existing effect happens to use - and a block type, property name, mode value or Output setting that is not in this list is reported by compile_vfx_graph and then IGNORED at run time, which produces an effect that looks nearly right. A param carrying `optionsFrom` draws its values from the document instead of this list - `optionsFrom: "systems"` means the value is a system id from the graph you are writing.',
+    inputSchema: {
+      context: z.enum(['event', 'spawn', 'initialize', 'update', 'output']).optional()
+        .describe('Only blocks that run in this stage.'),
+      search: z.string().optional().describe('Case-insensitive substring of the id, label or blurb.'),
+      include: z.enum(['blocks', 'operators', 'contexts', 'all']).default('all')
+        .describe('Narrow the reply. The full catalog is large.'),
+      detail: z.enum(['summary', 'full']).default('full')
+        .describe('"summary" is id, label and blurb only - enough to choose a block, then ask again for that one.'),
+    },
+  }, toolHandler(({ context, search, include, detail }) => {
+    const needle = String(search || '').trim().toLowerCase();
+    const matches = (def) => !needle || [def.id, def.label, def.blurb]
+      .some((text) => String(text || '').toLowerCase().includes(needle));
+
+    const propOf = ([name, def]) => ({
+      name,
+      type: def.type,
+      default: def.default,
+      ...(def.unit ? { unit: def.unit } : {}),
+      ...(Number.isFinite(def.min) ? { min: def.min } : {}),
+      ...(Number.isFinite(def.max) ? { max: def.max } : {}),
+      // Which VfxValue modes this property accepts. Writing `{mode:'curve'}`
+      // into a property that only offers const and random is the other easy way
+      // to produce a document that does not do what it says.
+      modes: [...(def.modes || [])],
+      ...(def.hint ? { hint: def.hint } : {}),
+    });
+
+    const blockOf = (def) => (detail === 'summary'
+      ? { id: def.id, label: def.label, contexts: [...def.contexts], blurb: def.blurb }
+      : {
+        id: def.id,
+        label: def.label,
+        contexts: [...def.contexts],
+        category: def.category,
+        blurb: def.blurb,
+        teach: def.teach,
+        props: Object.entries(def.props).map(propOf),
+        // The block's enum choices, which live in `modes` on the BLOCK and are
+        // a different thing from a property's value modes above.
+        choices: Object.entries(def.modes || {}).map(([name, m]) => ({
+          name, options: [...m.options], default: m.default, hint: m.hint || '',
+        })),
+        attributes: [...(def.attributes || [])],
+        engines: { ...def.engines },
+      });
+
+    const blocks = CATALOG.blocks
+      .filter((def) => (!context || def.contexts.includes(context)) && matches(def))
+      .map(blockOf);
+    const operators = CATALOG.operators.filter(matches).map((def) => (detail === 'summary'
+      ? { id: def.id, label: def.label, blurb: def.blurb }
+      : {
+        id: def.id,
+        label: def.label,
+        blurb: def.blurb,
+        props: Object.entries(def.props || {}).map(propOf),
+        outputs: def.outputs,
+        freq: def.freq,
+        engines: { ...def.engines },
+      }));
+
+    const contexts = Object.entries(CATALOG.contexts).map(([kind, def]) => ({
+      kind,
+      label: def.label,
+      blurb: def.blurb,
+      // The Output stage's settings are the ones most often got wrong, because
+      // they are context PARAMS rather than blocks and are easy to miss.
+      params: Object.entries(def.params || {}).map(([name, p]) => ({
+        name,
+        options: [...(p.options || [])],
+        default: p.default,
+        label: p.label,
+        ...(p.hint ? { hint: p.hint } : {}),
+        // A param whose options come from the DOCUMENT rather than the catalog.
+        // The Event stage's `source` is the only one today, and it reports an
+        // empty option list - which reads as "no valid values" unless the
+        // caller is told where the values actually come from. That is precisely
+        // the sub-emitter wiring, so leaving it unexplained puts the whole
+        // feature out of an agent's reach.
+        ...(p.optionsFrom ? { optionsFrom: p.optionsFrom } : {}),
+      })),
+    }));
+
+    return {
+      irFormat: VFX_IR_FORMAT,
+      ...(include === 'all' || include === 'blocks' ? { blocks } : {}),
+      ...(include === 'all' || include === 'operators' ? { operators } : {}),
+      ...(include === 'all' || include === 'contexts' ? { contexts } : {}),
+      counts: { blocks: CATALOG.blocks.length, operators: CATALOG.operators.length },
+    };
+  }));
+
   server.registerTool('list_vfx_assets', {
     title: 'List VFX effects',
     description: 'List every particle effect in the global library, with its systems, duration and the asset slots it references. Effects are library-global rather than project-scoped, so there is no projectId: one effect routinely uses textures from several projects. Use get_vfx_graph for the full document of one of them.',

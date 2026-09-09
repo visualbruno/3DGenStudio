@@ -653,6 +653,50 @@ export function emitterShapes() {
 }
 
 /**
+ * A document written the way an AGENT writes one: right block, wrong names.
+ *
+ * THE FAILURE THIS FIXTURE EXISTS FOR IS SILENCE. A human cannot produce any of
+ * these - the inspector only offers properties the catalog declares and only
+ * offers valid choices - so until the MCP tools let something write JSON
+ * directly, none of it could happen. It compiled CLEAN: the unknown properties
+ * were never visited (the lowering walks the CATALOG's list), the unknown mode
+ * fell back at run time, and the invalid Output params fell back in the
+ * renderer. The result was a line emitter one metre long at the origin when a
+ * four-metre beam was asked for, and nothing said so.
+ *
+ * Every mistake here is one an agent actually made on the first attempt.
+ *
+ * @returns {Object} a normalised document
+ */
+export function agentTypos() {
+  const doc = createEmptyVfxDoc({ name: 'Agent Typos' });
+  doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' } };
+  doc.systems = [system({
+    name: 'Beam',
+    spawn: [block('spawn.rate', { rate: constValue(120) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(1.2) }),
+      block('initialize.setSize', { size: constValue(0.1) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      // `from`/`to`/`width` instead of start/end/thickness, and a placement
+      // that does not exist.
+      block('initialize.positionLine', {
+        from: constValue([-2, 0, 0]),
+        to: constValue([2, 0, 0]),
+        width: constValue(0.1),
+      }, { placement: 'sequential' }),
+    ],
+    update: [block('update.drag', { drag: constValue(0.5) })],
+    outputs: [{
+      // Neither value is in the list. Both used to be accepted in silence.
+      params: { mode: 'sparks', blend: 'add', sort: 'none' },
+      blocks: [block('output.setMainTexture', { texture: constValue('tex') })],
+    }],
+  })];
+  return normalizeVfxDoc(doc);
+}
+
+/**
  * A sprite sheet declared on the Output with nothing advancing through it.
  *
  * The failure this fixture exists for looks exactly like a texture that has

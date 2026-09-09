@@ -120,7 +120,7 @@ const DEFS = Object.freeze({
     severity: SEVERITY.ERROR,
     title: 'Unrecognised block',
     message: (d) => `This effect uses a block type this build does not know: "${d.blockType}".`,
-    hint: () => 'It was probably saved by a newer version of the app. Updating should restore it; removing the block will let the rest of the effect run.',
+    hint: () => 'Either it was saved by a newer version of the app - updating should restore it - or the name is wrong. Removing the block lets the rest of the effect run.',
     fix: (d) => ({ label: 'Remove the block', action: 'removeBlock', args: { blockId: d.blockId } }),
   },
   E_CYCLE: {
@@ -192,6 +192,51 @@ const DEFS = Object.freeze({
       + 'guard rather than a preference.'
     ),
     hint: () => 'Three levels - a shell, its sparks, and their smoke - covers essentially every effect. Beyond that the count grows faster than any capacity can hold.',
+  },
+  W_UNKNOWN_PROP: {
+    severity: SEVERITY.WARN,
+    title: 'A property this block does not have',
+    message: (d) => `"${d.blockLabel}" was given a property called "${d.prop}", which it does not have - so it is being ignored and the real one is using its default.`,
+    // A WARNING, NOT AN ERROR, for the same reason E_UNKNOWN_BLOCK is tolerant:
+    // an effect saved by a newer build should still run. But it MUST be
+    // reported, because the failure is otherwise invisible - the block keeps
+    // working, on defaults, and the value the author (or the agent) set does
+    // nothing at all.
+    //
+    // THIS EXISTS BECAUSE AGENTS WRITE DOCUMENTS NOW. A human using the editor
+    // cannot produce an unknown property: the inspector only offers the ones
+    // the catalog declares. Anything writing JSON directly - the MCP tools, a
+    // hand-edited file, a script - does it constantly, and used to get silence.
+    hint: (d) => (d.known?.length
+      ? `This block's properties are: ${d.known.join(', ')}.`
+      : 'This block has no properties.'),
+    fix: (d) => ({
+      label: `Remove "${d.prop}"`,
+      action: 'removeProp',
+      args: { blockId: d.blockId, prop: d.prop },
+    }),
+  },
+  W_UNKNOWN_MODE: {
+    severity: SEVERITY.WARN,
+    title: 'A choice this block does not offer',
+    message: (d) => `"${d.blockLabel}" has ${d.mode} set to "${d.value}", which is not one of its choices - it is running as "${d.fallback}" instead.`,
+    hint: (d) => `Valid values are: ${d.options.join(', ')}.`,
+    fix: (d) => ({
+      label: `Set to "${d.fallback}"`,
+      action: 'setBlockMode',
+      args: { blockId: d.blockId, mode: d.mode, value: d.fallback },
+    }),
+  },
+  W_UNKNOWN_PARAM: {
+    severity: SEVERITY.WARN,
+    title: 'A setting this stage does not offer',
+    message: (d) => `The ${d.contextLabel} stage in "${d.systemName}" has ${d.param} set to "${d.value}", which is not one of its choices - it is running as "${d.fallback}" instead.`,
+    hint: (d) => `Valid values are: ${d.options.join(', ')}.`,
+    fix: (d) => ({
+      label: `Set to "${d.fallback}"`,
+      action: 'setContextParam',
+      args: { contextId: d.contextId, param: d.param, value: d.fallback },
+    }),
   },
   W_MESH_EMITTER_NO_MESH: {
     severity: SEVERITY.WARN,

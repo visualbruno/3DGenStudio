@@ -830,6 +830,54 @@ export function compileVfxGraph(document, options = {}) {
             nextRegister: () => { const r = nextReg; nextReg += 1; return r; },
           };
 
+          // WHAT THE DOCUMENT HAS THAT THE CATALOG DOES NOT.
+          //
+          // The loop below walks the CATALOG's properties, so anything else in
+          // the document is simply never visited - it survives in the file,
+          // does nothing, and says nothing. A human cannot produce that (the
+          // inspector only offers real properties) but anything writing JSON
+          // directly can, and the MCP tools made that a routine case: a graph
+          // with `from`/`to` instead of `start`/`end` compiled CLEAN and drew a
+          // default-length line.
+          for (const prop of Object.keys(block.props || {})) {
+            if (def.props[prop]) continue;
+            diag.report('W_UNKNOWN_PROP', { systemId: system.id, blockId: block.id, prop }, {
+              blockLabel: def.label,
+              blockId: block.id,
+              prop,
+              known: Object.keys(def.props),
+            });
+          }
+
+          // Same for the block's enum choices. An unrecognised value falls back
+          // to the default at run time, which is a perfectly reasonable thing
+          // to DO and a terrible thing to do silently.
+          for (const [mode, value] of Object.entries(block.modes || {})) {
+            const modeDef = def.modes?.[mode];
+            if (!modeDef) {
+              diag.report('W_UNKNOWN_MODE', { systemId: system.id, blockId: block.id, prop: mode }, {
+                blockLabel: def.label,
+                blockId: block.id,
+                mode,
+                value: String(value),
+                fallback: '',
+                options: Object.keys(def.modes || {}).length
+                  ? [`(this block's choices are: ${Object.keys(def.modes).join(', ')})`]
+                  : ['(this block has no choices)'],
+              });
+              continue;
+            }
+            if (modeDef.options.includes(value)) continue;
+            diag.report('W_UNKNOWN_MODE', { systemId: system.id, blockId: block.id, prop: mode }, {
+              blockLabel: def.label,
+              blockId: block.id,
+              mode,
+              value: String(value),
+              fallback: modeDef.default,
+              options: [...modeDef.options],
+            });
+          }
+
           const bindings = [];
           const assetSlots = {};
           for (const [prop, propDef] of Object.entries(def.props)) {
@@ -1073,6 +1121,29 @@ export function compileVfxGraph(document, options = {}) {
     }));
 
     const outputs = irOutputBlocks.map(({ context, blocks }) => {
+      // A context param the catalog does not offer, or an offered one set to a
+      // value that is not among its choices. The spread below means an invalid
+      // value simply REPLACES the default and travels on into the IR, where the
+      // renderer falls back - silently. `blend: "add"` instead of "additive"
+      // drew additive anyway and said nothing, which is a good runtime and a
+      // terrible authoring experience for anything writing JSON directly.
+      const contextDef = catalog.contexts[CONTEXT_KIND.OUTPUT];
+      for (const [param, value] of Object.entries(context.params || {})) {
+        const paramDef = contextDef?.params?.[param];
+        if (!paramDef || !Array.isArray(paramDef.options)) continue;
+        if (paramDef.options.includes(value)) continue;
+        diag.report('W_UNKNOWN_PARAM',
+          { systemId: system.id, contextId: context.id, prop: param },
+          {
+            systemName: system.name,
+            contextId: context.id,
+            contextLabel: contextDef.label || 'Output',
+            param,
+            value: String(value),
+            fallback: paramDef.default,
+            options: [...paramDef.options],
+          });
+      }
       const params = { ...contextParamDefaults(catalog, CONTEXT_KIND.OUTPUT), ...context.params };
       capabilities.add(`output.${params.mode}`);
       capabilities.add(`blend.${params.blend}`);
