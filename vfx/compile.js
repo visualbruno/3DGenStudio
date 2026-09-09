@@ -981,6 +981,39 @@ export function compileVfxGraph(document, options = {}) {
     }
     irUpdate.push(...after);
 
+    // A mesh emitter with no mesh collapses the effect's whole shape to a
+    // point, so it is worth saying plainly rather than leaving the author to
+    // wonder why their statue is a spark. Checked on the LOWERED block, because
+    // that is where an unset or dangling slot has already become -1.
+    for (const block of irInit) {
+      if (block.kernel !== 'shape.position.mesh') continue;
+      const slot = block.assetSlots ? block.assetSlots.mesh : -1;
+      if (slot === undefined || slot < 0) {
+        diag.report('W_MESH_EMITTER_NO_MESH',
+          { systemId: system.id, blockId: block.srcBlockId },
+          { systemName: system.name, blockId: block.srcBlockId });
+        continue;
+      }
+      // Only worth mentioning once the mesh IS chosen - otherwise the author
+      // gets two rows for one unfinished block.
+      // Exactly zero and CONSTANT, so a random range that dips through zero -
+      // or a wired operator, which cannot be folded at all - raises nothing.
+      // bindingHigh returns a {value, exact} pair rather than a number, and
+      // treating it as one here would have made this fire for every mesh
+      // emitter ever authored.
+      const speedBinding = block.bindings.find((b) => b.prop === 'normalSpeed');
+      const speedIsZero = Boolean(speedBinding)
+        && speedBinding.src === BINDING_SRC.CONST
+        && (constants.at(speedBinding.index) || 0) === 0;
+      const writesVelocity = irInit.some((b) => b !== block
+        && (b.attributes || []).includes('velocity'));
+      if (speedIsZero && !writesVelocity) {
+        diag.report('W_MESH_EMITTER_FLAT',
+          { systemId: system.id, blockId: block.srcBlockId },
+          { systemName: system.name, blockId: block.srcBlockId });
+      }
+    }
+
     // Lifetime is the one attribute whose absence is fatal rather than merely
     // odd: without it nothing dies, the pool fills, and emission stops.
     const writesLifetime = irInit.some((b) => (b.attributes || []).includes('lifetime'));

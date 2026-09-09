@@ -67,6 +67,21 @@ export function createVfxRuntime(ir, options = {}) {
     consts: new Float64Array(ir.constants),
     uniforms,
     tables,
+    // The asset table, so a kernel can turn its own `assetSlots` index into the
+    // library id the browser layer keys its loaded data by. Everything else
+    // about an asset is the renderer's business; a mesh EMITTER is the one
+    // kernel that needs to reach outside the pool.
+    assets: ir.assets,
+    // MESH SAMPLERS ARRIVE LATE AND MUTATE THIS MAP IN PLACE.
+    //
+    // Geometry is fetched asynchronously by the browser layer, long after this
+    // runtime and its kernel chains were built. Rebuilding the runtime when a
+    // mesh lands would restart the effect - which is exactly what the author
+    // does not want while they are picking a mesh - so the bank is a mutable
+    // Map the kernels read per invocation instead. Until it is filled, a mesh
+    // emitter spawns at its offset: visibly wrong and actionable, rather than
+    // an effect that never appears at all.
+    meshSamplers: new Map(),
     regs: new Float64Array(Math.max(1, ir.registerCount * 4)),
     effectSeed: ir.effect.seed >>> 0,
     duration: ir.effect.duration,
@@ -453,6 +468,23 @@ export function setUniform(runtime, name, value) {
     runtime.env.uniforms[uniform.offset + c] = Number(values[c] ?? values[0]) || 0;
   }
   return true;
+}
+
+/**
+ * Install (or replace) the surface sampler for a mesh asset.
+ *
+ * Separate from setUniform because it is not a blackboard value: a host cannot
+ * set it, and it does not recompile anything. See `env.meshSamplers` for why it
+ * is installed after the fact rather than captured at build time.
+ *
+ * @param {Object} runtime
+ * @param {number} assetId the library id the IR references
+ * @param {Object|null} sampler from buildMeshSampler, or null to clear
+ */
+export function setMeshSampler(runtime, assetId, sampler) {
+  if (assetId == null) return;
+  if (sampler) runtime.env.meshSamplers.set(assetId, sampler);
+  else runtime.env.meshSamplers.delete(assetId);
 }
 
 /** Also used by computeSpawnCount's callers in tests. */

@@ -217,6 +217,60 @@ const M = Object.freeze({
  * @property {string[]} attributes particle attributes this block reads or writes
  */
 
+
+// ---------------------------------------------------------------------------
+// The shape transform
+// ---------------------------------------------------------------------------
+// WHERE A SHAPE IS AND WHICH WAY IT FACES, spread into every block whose shape
+// is defined by its SIZE rather than by explicit coordinates.
+//
+// It exists because every shape used to be pinned to the effect origin and
+// axis-aligned. Three things authors asked for turn out to be this one feature:
+// "spawn at a specific coordinate" is an offset, "a vertical circle" is a
+// rotation of the flat one, and "an angled jet" is a rotation of the cone. A
+// per-shape `vertical` flag would have been three more one-off booleans and
+// still not have covered the fourth request.
+//
+// It is also exactly Unity's model - every Position block there takes a
+// Transform - so it exports 1:1 instead of as an approximation, and Niagara's
+// location modules all take an offset and a rotation too.
+//
+// NOT ADDED TO Point OR Line, deliberately. Those are defined by coordinates
+// already: a point IS its offset, and two endpoints fix a line's position and
+// direction completely. A rotation control on either would be a knob that does
+// nothing, which is the `point` render mode's mistake repeated.
+const SHAPE_TRANSFORM_PROPS = Object.freeze({
+  offset: {
+    type: PROP_TYPE.VEC3,
+    default: [0, 0, 0],
+    label: 'Offset',
+    unit: 'm',
+    min: -1000,
+    max: 1000,
+    step: 0.01,
+    modes: M.VECTOR,
+    basic: false,
+    hint: 'Moves the shape away from the effect origin. This is how you spawn at a specific coordinate.',
+  },
+  rotation: {
+    type: PROP_TYPE.VEC3,
+    default: [0, 0, 0],
+    label: 'Rotation',
+    unit: 'deg',
+    min: -360,
+    max: 360,
+    step: 1,
+    modes: M.VECTOR,
+    basic: false,
+    hint: 'Euler XYZ, applied before the offset. Rotating a flat shape 90 degrees about X stands it up vertically.',
+    presets: [
+      { label: 'Flat (0, 0, 0)', value: [0, 0, 0] },
+      { label: 'Vertical, facing Z (90, 0, 0)', value: [90, 0, 0] },
+      { label: 'Vertical, facing X (0, 0, 90)', value: [0, 0, 90] },
+    ],
+  },
+})
+
 // ---------------------------------------------------------------------------
 // Blocks
 // ---------------------------------------------------------------------------
@@ -412,6 +466,7 @@ const BLOCK_LIST = [
         basic: true,
         hot: true,
       },
+      ...SHAPE_TRANSFORM_PROPS,
     },
     modes: {
       fill: {
@@ -481,6 +536,7 @@ const BLOCK_LIST = [
         hot: true,
         hint: 'How fast particles leave the cone. Randomise it so they spread out along their path instead of moving as a sheet.',
       },
+      ...SHAPE_TRANSFORM_PROPS,
     },
     kernel: 'shape.cone',
     engines: {
@@ -701,7 +757,7 @@ const BLOCK_LIST = [
     category: 'Shape',
     beginner: true,
     blurb: 'Scatters particles through a rectangular volume.',
-    teach: 'The workhorse for weather and atmosphere: a wide, flat box above the camera is rain or snow, and a room-sized one is dust. The box is centred on the effect, so changing its size does not move it.',
+    teach: 'The workhorse for weather and atmosphere: a wide, flat box above the camera is rain or snow, and a room-sized one is dust. The box is centred on the effect, so changing its size does not move it - use Offset to move it instead.',
     props: {
       size: {
         type: PROP_TYPE.VEC3,
@@ -716,6 +772,7 @@ const BLOCK_LIST = [
         hot: true,
         hint: 'The full width, height and depth - not the half-extents.',
       },
+      ...SHAPE_TRANSFORM_PROPS,
     },
     kernel: 'shape.position.box',
     engines: {
@@ -732,7 +789,7 @@ const BLOCK_LIST = [
     category: 'Shape',
     beginner: true,
     blurb: 'Scatters particles around a flat circle or ring.',
-    teach: 'A ring on the ground reads as a shockwave or a summoning circle; set the thickness to less than the radius for a ring, or to the radius for a filled disc. It lies in the XZ plane, so it is flat on the floor.',
+    teach: 'A ring on the ground reads as a shockwave or a summoning circle; set the thickness to less than the radius for a ring, or to the radius for a filled disc. It lies flat in the XZ plane by default - set Rotation to (90, 0, 0) to stand it up as a vertical ring, which is what a portal or a spell circle on a wall wants.',
     props: {
       radius: {
         type: PROP_TYPE.FLOAT,
@@ -758,6 +815,7 @@ const BLOCK_LIST = [
         basic: true,
         hint: 'How far inwards from the radius particles may sit. Set it to the radius for a filled disc.',
       },
+      ...SHAPE_TRANSFORM_PROPS,
     },
     kernel: 'shape.position.circle',
     engines: {
@@ -766,6 +824,196 @@ const BLOCK_LIST = [
       note: 'Unity: Position (Circle). Niagara: Cylinder/Ring Location.',
     },
     attributes: ['position'],
+  },
+  {
+    id: 'initialize.positionPoint',
+    label: 'Position: Point',
+    contexts: [CONTEXT_KIND.INITIALIZE],
+    category: 'Shape',
+    beginner: true,
+    blurb: 'Spawns every particle at one coordinate.',
+    teach: 'The simplest emitter there is, and the one to reach for when an effect has to start somewhere specific - the tip of a staff, a bullet hole, the end of a barrel. Jitter softens the point into a small ball, which stops a stream of particles from looking like a single line when they all set off from the same place.',
+    props: {
+      offset: {
+        type: PROP_TYPE.VEC3,
+        default: [0, 0, 0],
+        label: 'Position',
+        unit: 'm',
+        min: -1000,
+        max: 1000,
+        step: 0.01,
+        modes: M.VECTOR,
+        basic: true,
+        hot: true,
+        hint: 'Where particles are born, relative to the effect origin.',
+      },
+      jitter: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Jitter',
+        unit: 'm',
+        min: 0,
+        max: 100,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Radius of a small ball around the point. 0 is a true point.',
+      },
+    },
+    // NO ROTATION: a point has no orientation, and the jitter ball is
+    // isotropic, so a rotation control here would do literally nothing. See
+    // SHAPE_TRANSFORM_PROPS.
+    kernel: 'shape.position.point',
+    engines: {
+      unity: ENGINE_SUPPORT.NATIVE,
+      unreal: ENGINE_SUPPORT.NATIVE,
+      note: 'Unity: Set Position (plus Position (Sphere) for the jitter). Niagara: Add Position / Sphere Location with a small radius.',
+    },
+    attributes: ['position'],
+  },
+  {
+    id: 'initialize.positionLine',
+    label: 'Position: Line',
+    contexts: [CONTEXT_KIND.INITIALIZE],
+    category: 'Shape',
+    beginner: true,
+    blurb: 'Spreads particles along a straight line between two points.',
+    teach: 'The shape behind beams, laser trails, sparks along a wire and rain falling in a sheet. Placement is what makes it read correctly: Random scatters, which suits dust and fire; Even spreads one burst across the whole line, which suits a beam appearing all at once; Fixed spacing marches particles along at a set distance apart, which is what a dotted trail or a row of markers wants.',
+    props: {
+      start: {
+        type: PROP_TYPE.VEC3,
+        default: [-0.5, 0, 0],
+        label: 'Start',
+        unit: 'm',
+        min: -1000,
+        max: 1000,
+        step: 0.01,
+        modes: M.VECTOR,
+        basic: true,
+        hot: true,
+      },
+      end: {
+        type: PROP_TYPE.VEC3,
+        default: [0.5, 0, 0],
+        label: 'End',
+        unit: 'm',
+        min: -1000,
+        max: 1000,
+        step: 0.01,
+        modes: M.VECTOR,
+        basic: true,
+        hot: true,
+      },
+      thickness: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Thickness',
+        unit: 'm',
+        min: 0,
+        max: 100,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Radius around the line, so it reads as a rope rather than a hairline. 0 is exact.',
+      },
+      spacing: {
+        type: PROP_TYPE.FLOAT,
+        default: 0.25,
+        label: 'Spacing',
+        unit: 'm',
+        min: 0.001,
+        max: 100,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Distance between consecutive particles. Only used when Placement is "Fixed spacing" - the other two modes ignore it.',
+      },
+    },
+    // NO TRANSFORM: two endpoints already fix where the line is and which way
+    // it points. See SHAPE_TRANSFORM_PROPS.
+    modes: {
+      placement: {
+        options: ['random', 'even', 'spacing'],
+        default: 'random',
+        label: 'Placement',
+        hint: 'Random scatters along the line; Even spreads each spawn batch across all of it; Fixed spacing walks along at the Spacing distance.',
+      },
+    },
+    kernel: 'shape.position.line',
+    engines: {
+      unity: ENGINE_SUPPORT.NATIVE,
+      unreal: ENGINE_SUPPORT.APPROX,
+      note: 'Unity: Position (Line), which has the same Random/Sequential choice. Niagara has no dedicated line module - it imports as a lerp between two vectors on Position, which reproduces Random and Even but not Fixed spacing.',
+    },
+    // spawnIndex is what makes Fixed spacing possible: the particle has to know
+    // WHICH particle it is to sit a fixed distance along from the last one.
+    attributes: ['position', 'spawnIndex'],
+  },
+  {
+    id: 'initialize.positionMesh',
+    label: 'Position: Mesh',
+    contexts: [CONTEXT_KIND.INITIALIZE],
+    category: 'Shape',
+    beginner: false,
+    blurb: 'Spawns particles over the surface of a mesh from the library.',
+    teach: 'This is how an effect takes the shape of an object - a burning statue, a dissolving sword, frost creeping over armour. Set Normal speed above zero so particles leave along the surface they were born on: without it a mesh emitter reads as a cloud of noise that happens to be the right silhouette, because nothing tells the viewer which way the surface faced. The mesh is scaled to fit a one-metre box, so Scale means the same thing whatever units it was modelled in.',
+    props: {
+      mesh: {
+        type: PROP_TYPE.MESH,
+        default: '',
+        label: 'Mesh',
+        modes: M.ASSET,
+        basic: true,
+        hot: true,
+        hint: 'A mesh asset from the library. Its triangles are sampled by area, so large faces get proportionally more particles.',
+      },
+      scale: {
+        type: PROP_TYPE.FLOAT,
+        default: 1,
+        label: 'Scale',
+        unit: 'm',
+        min: 0,
+        max: 1000,
+        step: 0.01,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hot: true,
+        hint: 'The size of the emitting shape. The mesh is normalised to one metre first, so this is its real width.',
+      },
+      normalSpeed: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Normal speed',
+        unit: 'm/s',
+        min: -200,
+        max: 200,
+        step: 0.05,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Sends each particle out along the surface normal where it was born. Negative pulls inwards. 0 leaves velocity alone for another block to set.',
+        presets: [
+          { label: 'None (0)', value: 0 },
+          { label: 'Drifting off the surface (0.5)', value: 0.5 },
+          { label: 'Blasting off (4)', value: 4 },
+        ],
+      },
+      ...SHAPE_TRANSFORM_PROPS,
+    },
+    modes: {
+      sampling: {
+        options: ['surface', 'vertex'],
+        default: 'surface',
+        label: 'Sample',
+        hint: 'Surface spreads particles evenly over the triangles. Vertex snaps them to the model\'s corners, which on a low-poly model reads as points of light on its structure.',
+      },
+    },
+    kernel: 'shape.position.mesh',
+    engines: {
+      unity: ENGINE_SUPPORT.NATIVE,
+      unreal: ENGINE_SUPPORT.NATIVE,
+      note: 'Unity: Position (Mesh), which offers the same Surface/Vertex choice. Niagara: Static Mesh Location, which needs the mesh assigned on the emitter as well.',
+    },
+    attributes: ['position', 'velocity'],
   },
   {
     id: 'initialize.velocityRadial',

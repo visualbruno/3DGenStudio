@@ -193,6 +193,37 @@ const DEFS = Object.freeze({
     ),
     hint: () => 'Three levels - a shell, its sparks, and their smoke - covers essentially every effect. Beyond that the count grows faster than any capacity can hold.',
   },
+  W_MESH_EMITTER_NO_MESH: {
+    severity: SEVERITY.WARN,
+    title: 'The mesh emitter has no mesh',
+    message: (d) => `"${d.systemName}" spawns over a mesh, but no model has been chosen - so every particle is born at one point instead.`,
+    // A WARNING rather than an info, unlike the missing sprite. A missing
+    // texture still draws something reasonable (the built-in blob); a missing
+    // emitter mesh collapses the whole SHAPE of the effect to a single point,
+    // which is not a degraded version of what was asked for.
+    hint: () => 'Pick a mesh from the library, or swap the block for a shape that needs no asset - Sphere, Box and Line all describe themselves.',
+    fix: (d) => ({
+      label: 'Choose a mesh...',
+      action: 'pickAsset',
+      args: { blockId: d.blockId, prop: 'mesh', assetType: 'mesh' },
+    }),
+  },
+  W_MESH_EMITTER_FLAT: {
+    severity: SEVERITY.INFO,
+    title: 'Mesh emission has no direction',
+    message: (d) => `"${d.systemName}" spawns over a mesh with Normal speed at 0, so nothing carries the surface's direction.`,
+    // The single most common way a mesh emitter disappoints: the silhouette is
+    // right and the effect still reads as noise, because without the normals
+    // nothing tells the viewer which way the surface faced. Info rather than a
+    // warning, because pairing it with a separate velocity block is a perfectly
+    // good reason to leave it at zero.
+    hint: () => 'Raise Normal speed so particles leave along the surface they were born on. Skip this if another block already gives them a direction.',
+    fix: (d) => ({
+      label: 'Set Normal speed to 0.5',
+      action: 'setProp',
+      args: { blockId: d.blockId, prop: 'normalSpeed', value: 0.5 },
+    }),
+  },
   W_MESH_MODE_MISSING: {
     severity: SEVERITY.WARN,
     title: 'The chosen mesh is not being used',

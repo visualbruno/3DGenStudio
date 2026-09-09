@@ -49,7 +49,11 @@ function check(label, ok, detail = '') {
   console.log(`${label.padEnd(54)} ${ok ? 'ok  ' : '*** FAIL ***'} ${detail}`);
 }
 
-const ASSETS = new Set([118, 97]);
+// 121 is the statue the emitterShapes fixture spawns over, and it has to be
+// PRESENT: that fixture's whole claim is that the new shapes compile without a
+// word. 119 is deliberately absent - meshModeMissing uses it, and a dangling
+// mesh reference is how W_MISSING_ASSET gets its coverage.
+const ASSETS = new Set([118, 97, 121]);
 const compile = (doc, options = {}) => compileVfxGraph(doc, { assetIndex: ASSETS, ...options });
 const codesOf = (result) => result.diagnostics.map((d) => d.code);
 
@@ -488,6 +492,53 @@ function record(result) {
   check('worstEngineSupport takes the worst', worstEngineSupport(defs, 'unreal') === 'approx');
   check('  and short-circuits on none',
     worstEngineSupport([...defs, { engines: { unity: 'none', unreal: 'none' } }], 'unity') === 'none');
+}
+
+{
+  // THE NEW EMITTER SHAPES MUST COMPILE WITHOUT A WORD.
+  //
+  // A shape that warns about itself is a shape nobody will use, and the
+  // reachability sweep below only proves a diagnostic CAN fire - it says
+  // nothing about whether a perfectly ordinary effect trips one. Point, Line in
+  // its trickiest placement, a rotated circle and a fully configured mesh
+  // emitter, all in one document.
+  const result = record(compile(fixtures.emitterShapes(), { engineTarget: 'unity' }));
+  const noisy = result.diagnostics.filter((d) => d.severity !== 'info');
+  check('every new emitter shape compiles clean', noisy.length === 0,
+    noisy.map((d) => `${d.code}`).join(' ') || `${result.diagnostics.length} info only`);
+  check('  and the fixture really used all four', result.ir.systems.length === 4,
+    String(result.ir.systems.length));
+
+  // The transform reaches the IR as bindings rather than being folded away -
+  // the export bundle carries them, so an importer can rebuild the same shape.
+  const portal = result.ir.systems.find((sys) => sys.name === 'Portal');
+  const ring = portal.init.find((b) => b.kernel === 'shape.position.circle');
+  check('  and a rotated shape carries its rotation into the IR',
+    Boolean(ring?.bindings.find((b) => b.prop === 'rotation')),
+    (ring?.bindings || []).map((b) => b.prop).join(','));
+
+  // The mesh emitter's asset resolves to a real slot index, which is what the
+  // kernel turns into a library id at runtime.
+  const statue = result.ir.systems.find((sys) => sys.name === 'Statue');
+  const meshBlock = statue.init.find((b) => b.kernel === 'shape.position.mesh');
+  check('  and a mesh emitter resolves its asset slot',
+    meshBlock?.assetSlots?.mesh >= 0, JSON.stringify(meshBlock?.assetSlots));
+  check('    to a mesh in the asset table',
+    result.ir.assets[meshBlock.assetSlots.mesh]?.kind === 'mesh',
+    result.ir.assets[meshBlock.assetSlots.mesh]?.kind);
+
+  // The two mesh-emitter warnings are a PAIR and must not both land on one
+  // block: an unfinished emitter should say one thing, not two.
+  const pair = record(compile(fixtures.meshEmitter())).diagnostics;
+  const unchosen = pair.filter((d) => d.code === 'W_MESH_EMITTER_NO_MESH');
+  const flat = pair.filter((d) => d.code === 'W_MESH_EMITTER_FLAT');
+  check('a mesh emitter with no mesh warns once', unchosen.length === 1,
+    String(unchosen.length));
+  check('  and does NOT also complain about its direction', flat.length === 1
+    && flat[0].target.blockId !== unchosen[0].target.blockId,
+    `${flat.length} flat warnings`);
+  check('  while the one with a mesh gets the direction hint instead',
+    flat.length === 1, String(flat.length));
 }
 
 {

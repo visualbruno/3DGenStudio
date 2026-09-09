@@ -30,7 +30,8 @@ import {
   loadVfxMeshes,
   loadVfxTextures,
 } from '../utils/vfx/assets.js'
-import { createVfxRuntime } from '../utils/vfx/system.js'
+import { createVfxRuntime, setMeshSampler } from '../utils/vfx/system.js'
+import { buildMeshSampler } from '../utils/vfx/meshSample.js'
 
 // Shared empties, so an effect with no assets keeps a STABLE identity and the
 // batches memo below does not rebuild every render.
@@ -104,6 +105,25 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     loadVfxMeshes(ir, { resolveUrl }).then(result => {
       if (cancelled || result.meshes.size === 0) return
       setMeshes(result.meshes)
+      // THE SAME GEOMETRY SERVES BOTH JOBS. A mesh may be the particle's own
+      // model, the shape it spawns over, or both, and loadVfxMeshes has already
+      // centred and unit-scaled it - which is what makes the emitter's Scale
+      // property mean one metre regardless of how the model was authored.
+      // Installed into the live runtime rather than triggering a rebuild: a
+      // rebuild would restart the effect every time a mesh finished loading.
+      // `runtime` is memoised on the same `hash` this effect is keyed to, so
+      // the one in scope is the one these meshes belong to - a later document
+      // would have cancelled this callback.
+      if (!runtime) return
+      for (const [assetId, geometry] of result.meshes) {
+        const positions = geometry.attributes?.position?.array
+        if (!positions) continue
+        setMeshSampler(runtime, assetId, buildMeshSampler({
+          positions,
+          normals: geometry.attributes?.normal?.array || null,
+          index: geometry.index?.array || null,
+        }))
+      }
     })
     return () => {
       cancelled = true

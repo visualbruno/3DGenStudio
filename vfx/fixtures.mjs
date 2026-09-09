@@ -551,6 +551,108 @@ export function meshModeMissing() {
 }
 
 /**
+ * A mesh emitter with no mesh chosen, and one with a mesh but no direction.
+ *
+ * TWO SYSTEMS IN ONE FIXTURE because the two diagnostics are a pair and the
+ * interesting thing is that they do NOT both fire on the same block: an
+ * unfinished emitter should say one thing, not two. The first system has no
+ * mesh at all, so only W_MESH_EMITTER_NO_MESH applies; the second has a mesh
+ * and leaves Normal speed at zero, which is the "right silhouette, still reads
+ * as noise" case W_MESH_EMITTER_FLAT exists for.
+ *
+ * @returns {Object} a normalised document
+ */
+export function meshEmitter() {
+  const doc = createEmptyVfxDoc({ name: 'Mesh Emitters' });
+  doc.references = {
+    tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' },
+    statue: { kind: 'mesh', ref: 'asset:121', name: 'statue.glb', colorSpace: 'srgb' },
+  };
+  const base = (name, meshProps) => system({
+    name,
+    spawn: [block('spawn.rate', { rate: constValue(40) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(2) }),
+      block('initialize.setSize', { size: constValue(0.05) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      block('initialize.positionMesh', meshProps),
+    ],
+    update: [block('update.gravity', { gravity: constValue([0, -1, 0]) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+      blocks: [block('output.setMainTexture', { texture: constValue('tex') })],
+    }],
+  });
+  doc.systems = [
+    // Nothing chosen: every particle collapses to one point.
+    base('Unchosen', { scale: constValue(1), normalSpeed: constValue(0) }),
+    // Chosen, but nothing carries the surface's direction.
+    base('Directionless', {
+      mesh: constValue('statue'),
+      scale: constValue(1),
+      normalSpeed: constValue(0),
+    }),
+  ];
+  return normalizeVfxDoc(doc);
+}
+
+/**
+ * Every new emitter shape, all compiling clean.
+ *
+ * The point of this one is the ABSENCE of diagnostics: a Point, a Line in each
+ * of its three placements and a fully configured mesh emitter must all pass
+ * without a word, or the shapes ship warning about themselves.
+ *
+ * @returns {Object} a normalised document
+ */
+export function emitterShapes() {
+  const doc = createEmptyVfxDoc({ name: 'Shapes' });
+  doc.references = {
+    tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' },
+    statue: { kind: 'mesh', ref: 'asset:121', name: 'statue.glb', colorSpace: 'srgb' },
+  };
+  const shaped = (name, shapeBlock) => system({
+    name,
+    spawn: [block('spawn.rate', { rate: constValue(30) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(1.5) }),
+      block('initialize.setSize', { size: constValue(0.05) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      shapeBlock,
+    ],
+    update: [block('update.drag', { drag: constValue(0.5) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+      blocks: [block('output.setMainTexture', { texture: constValue('tex') })],
+    }],
+  });
+  doc.systems = [
+    shaped('Point', block('initialize.positionPoint', {
+      offset: constValue([0, 1, 0]), jitter: constValue(0.05),
+    })),
+    shaped('Beam', block('initialize.positionLine', {
+      start: constValue([-1, 0, 0]),
+      end: constValue([1, 0, 0]),
+      thickness: constValue(0.02),
+      spacing: constValue(0.1),
+    }, { placement: 'spacing' })),
+    // A vertical ring - the transform's headline case.
+    shaped('Portal', block('initialize.positionCircle', {
+      radius: constValue(1),
+      thickness: constValue(0.1),
+      rotation: constValue([90, 0, 0]),
+      offset: constValue([0, 1, 0]),
+    })),
+    shaped('Statue', block('initialize.positionMesh', {
+      mesh: constValue('statue'),
+      scale: constValue(2),
+      normalSpeed: constValue(0.4),
+    })),
+  ];
+  return normalizeVfxDoc(doc);
+}
+
+/**
  * A sprite sheet declared on the Output with nothing advancing through it.
  *
  * The failure this fixture exists for looks exactly like a texture that has

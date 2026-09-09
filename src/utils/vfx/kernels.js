@@ -40,6 +40,7 @@
 // profiler exists and can prove the win.
 
 import { pcgFloatAt, pcgHash2 } from '../../../vfx/random.js';
+import { sampleMeshSurface, sampleMeshVertex } from './meshSample.js';
 import { pushEvent } from './events.js';
 import { curl3 } from '../../../vfx/noise.js';
 import { BINDING_SRC } from '../../../vfx/ir.js';
@@ -239,6 +240,154 @@ function readChannel(prep, pool, i, env, c) {
 // Each builder returns a named closure, or null when the kernel has nothing to
 // do in the simulation (an output's texture, for instance, is render state).
 
+// ---------------------------------------------------------------------------
+// The shape transform
+// ---------------------------------------------------------------------------
+// EVERY SHAPE KERNEL ENDS BY CALLING placeShape, and it is one helper rather
+// than seven copies for the obvious reason: an offset applied in six kernels
+// and forgotten in the seventh is a shape that ignores a control the inspector
+// shows. See SHAPE_TRANSFORM_PROPS in vfx/catalog.js for why the feature exists.
+//
+// ROTATE THEN OFFSET, never the other way round. Offsetting first and rotating
+// after would swing the shape around the effect origin on an arc, so nudging
+// the rotation of an offset emitter would also MOVE it - and an author reads
+// those as two independent controls.
+//
+// THE CONSTANT CASE IS HOISTED, which is the whole reason this is a factory.
+// Offset and rotation are almost always plain numbers, so the 3x3 matrix is
+// built once per spawn batch instead of per particle; and when the rotation is
+// zero (the overwhelming majority) the matrix multiply is skipped entirely and
+// the transform costs three adds, or nothing at all when the offset is zero too.
+
+/** Prepare the two transform bindings. Absent props are treated as zero. */
+function prepareShapeTransform(block, env) {
+  const offsetBinding = block.bindings.find((b) => b.prop === 'offset');
+  const rotationBinding = block.bindings.find((b) => b.prop === 'rotation');
+  return {
+    offset: offsetBinding ? prepareBinding(offsetBinding, env) : null,
+    rotation: rotationBinding ? prepareBinding(rotationBinding, env) : null,
+    // Reused across every particle in a batch rather than allocated per
+    // particle: a Float64Array(9) per spawn at 60k spawns is 60k allocations
+    // the collector then has to walk.
+    matrix: new Float64Array(9),
+    vector: new Float64Array(3),
+  };
+}
+
+/**
+ * Read the transform for one particle and cache it on the state.
+ *
+ * Called once per particle, but reads nothing when both inputs are constant -
+ * in which case `state.ready` short-circuits every call after the first.
+ */
+function resolveShapeTransform(state, pool, i, env) {
+  const { offset, rotation } = state;
+  const constant = (!offset || offset.kind === B_CONST)
+    && (!rotation || rotation.kind === B_CONST);
+  if (constant && state.ready) return;
+
+  let ox = 0;
+  let oy = 0;
+  let oz = 0;
+  if (offset) {
+    if (offset.kind === B_CONST) {
+      ox = offset.fixed[0];
+      oy = offset.fixed[1];
+      oz = offset.fixed[2];
+    } else {
+      ox = readChannel(offset, pool, i, env, 0);
+      oy = readChannel(offset, pool, i, env, 1);
+      oz = readChannel(offset, pool, i, env, 2);
+    }
+  }
+  state.ox = ox;
+  state.oy = oy;
+  state.oz = oz;
+  state.hasOffset = ox !== 0 || oy !== 0 || oz !== 0;
+
+  let rx = 0;
+  let ry = 0;
+  let rz = 0;
+  if (rotation) {
+    if (rotation.kind === B_CONST) {
+      rx = rotation.fixed[0];
+      ry = rotation.fixed[1];
+      rz = rotation.fixed[2];
+    } else {
+      rx = readChannel(rotation, pool, i, env, 0);
+      ry = readChannel(rotation, pool, i, env, 1);
+      rz = readChannel(rotation, pool, i, env, 2);
+    }
+  }
+  state.hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
+  if (state.hasRotation) eulerMatrix(rx * DEG, ry * DEG, rz * DEG, state.matrix);
+  state.ready = constant;
+}
+
+/**
+ * Euler XYZ to a row-major 3x3, as R = Rz * Ry * Rx.
+ *
+ * XYZ INTRINSIC ORDER, matching three.js's default and therefore every other
+ * rotation the author sees in this app. Getting the order wrong is invisible
+ * for a single-axis rotation - which is the common case and so the one that
+ * would pass a casual check - and wrong for any combination.
+ */
+function eulerMatrix(x, y, z, m) {
+  const cx = Math.cos(x);
+  const sx = Math.sin(x);
+  const cy = Math.cos(y);
+  const sy = Math.sin(y);
+  const cz = Math.cos(z);
+  const sz = Math.sin(z);
+  m[0] = cy * cz;
+  m[1] = sx * sy * cz - cx * sz;
+  m[2] = cx * sy * cz + sx * sz;
+  m[3] = cy * sz;
+  m[4] = sx * sy * sz + cx * cz;
+  m[5] = cx * sy * sz - sx * cz;
+  m[6] = -sy;
+  m[7] = sx * cy;
+  m[8] = cx * cy;
+}
+
+/** Rotate xyz by the state's matrix and add its offset, writing into `plane`. */
+function placeShape(state, plane, o, x, y, z) {
+  if (state.hasRotation) {
+    const m = state.matrix;
+    const rx = m[0] * x + m[1] * y + m[2] * z;
+    const ry = m[3] * x + m[4] * y + m[5] * z;
+    const rz = m[6] * x + m[7] * y + m[8] * z;
+    plane[o] = rx + state.ox;
+    plane[o + 1] = ry + state.oy;
+    plane[o + 2] = rz + state.oz;
+    return;
+  }
+  plane[o] = x + state.ox;
+  plane[o + 1] = y + state.oy;
+  plane[o + 2] = z + state.oz;
+}
+
+/**
+ * Rotate a DIRECTION by the state's matrix - no offset.
+ *
+ * Separate from placeShape because a velocity is not a position: adding the
+ * emitter's offset to it would send every particle drifting towards the offset
+ * at a speed proportional to how far the shape was moved, which is a genuinely
+ * baffling bug to look at.
+ */
+function rotateDirection(state, plane, o, x, y, z) {
+  if (state.hasRotation) {
+    const m = state.matrix;
+    plane[o] = m[0] * x + m[1] * y + m[2] * z;
+    plane[o + 1] = m[3] * x + m[4] * y + m[5] * z;
+    plane[o + 2] = m[6] * x + m[7] * y + m[8] * z;
+    return;
+  }
+  plane[o] = x;
+  plane[o + 1] = y;
+  plane[o + 2] = z;
+}
+
 const KERNELS = {
   /**
    * Advance age, kill what has expired, and clear the force accumulator.
@@ -337,12 +486,15 @@ const KERNELS = {
   'shape.position.sphere': (block, env) => {
     const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
     const surface = block.modes?.fill === 'surface';
+    const transform = prepareShapeTransform(block, env);
     const slot = 0x51ed270b;
     return function shapePositionSphere(pool, i0, i1) {
       const position = pool.planes.position;
       const seeds = pool.planes.seed;
+      transform.ready = false;
       for (let i = i0; i < i1; i += 1) {
         const seed = seeds[i];
+        resolveShapeTransform(transform, pool, i, env);
         const r0 = radius.kind === B_CONST ? radius.fixed[0] : readChannel(radius, pool, i, env, 0);
         // Uniform on the sphere: z uniform in [-1,1] and the azimuth uniform.
         // Picking two angles uniformly instead clusters points at the poles,
@@ -353,10 +505,8 @@ const KERNELS = {
         // crowds the centre, because a shell's area grows as r squared.
         const r = surface ? r0 : r0 * Math.cbrt(pcgFloatAt(seed, slot + 2));
         const ring = Math.sqrt(Math.max(0, 1 - u * u));
-        const o = i * 3;
-        position[o] = r * ring * Math.cos(theta);
-        position[o + 1] = r * ring * Math.sin(theta);
-        position[o + 2] = r * u;
+        placeShape(transform, position, i * 3,
+          r * ring * Math.cos(theta), r * ring * Math.sin(theta), r * u);
       }
     };
   },
@@ -373,13 +523,16 @@ const KERNELS = {
     const angle = prepareBinding(block.bindings.find((b) => b.prop === 'angle'), env);
     const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
     const speed = prepareBinding(block.bindings.find((b) => b.prop === 'speed'), env);
+    const transform = prepareShapeTransform(block, env);
     const slot = 0x2f9a1c07;
     return function shapeCone(pool, i0, i1) {
       const position = pool.planes.position;
       const velocity = pool.planes.velocity;
       const seeds = pool.planes.seed;
+      transform.ready = false;
       for (let i = i0; i < i1; i += 1) {
         const seed = seeds[i];
+        resolveShapeTransform(transform, pool, i, env);
         const halfAngle = (angle.kind === B_CONST ? angle.fixed[0] : readChannel(angle, pool, i, env, 0)) * DEG;
         const r0 = radius.kind === B_CONST ? radius.fixed[0] : readChannel(radius, pool, i, env, 0);
         const v0 = speed.kind === B_CONST ? speed.fixed[0] : readChannel(speed, pool, i, env, 0);
@@ -390,9 +543,7 @@ const KERNELS = {
         const cosT = Math.cos(theta);
         const sinT = Math.sin(theta);
         const o = i * 3;
-        position[o] = rr * cosT;
-        position[o + 1] = 0;
-        position[o + 2] = rr * sinT;
+        placeShape(transform, position, o, rr * cosT, 0, rr * sinT);
 
         // Direction: a polar angle drawn so the distribution is even across the
         // cone's solid angle, not even in the angle itself - the latter
@@ -402,9 +553,12 @@ const KERNELS = {
         const cosPhi = 1 - pcgFloatAt(seed, slot + 2) * (1 - cosMax);
         const sinPhi = Math.sqrt(Math.max(0, 1 - cosPhi * cosPhi));
         const dTheta = pcgFloatAt(seed, slot + 3) * TAU;
-        velocity[o] = v0 * sinPhi * Math.cos(dTheta);
-        velocity[o + 1] = v0 * cosPhi;
-        velocity[o + 2] = v0 * sinPhi * Math.sin(dTheta);
+        // ROTATED, NOT PLACED: a velocity takes the shape's orientation but not
+        // its offset - see rotateDirection. This is what makes Rotation turn a
+        // cone into an angled jet rather than a cone that sprays up the Y axis
+        // from a moved position.
+        rotateDirection(transform, velocity, o,
+          v0 * sinPhi * Math.cos(dTheta), v0 * cosPhi, v0 * sinPhi * Math.sin(dTheta));
       }
     };
   },
@@ -412,21 +566,23 @@ const KERNELS = {
   /** Place particles inside a box. */
   'shape.position.box': (block, env) => {
     const size = prepareBinding(block.bindings.find((b) => b.prop === 'size'), env);
+    const transform = prepareShapeTransform(block, env);
     const slot = 0x1d3a77b1;
     return function shapePositionBox(pool, i0, i1) {
       const position = pool.planes.position;
       const seeds = pool.planes.seed;
       const fixed = size.kind === B_CONST;
+      transform.ready = false;
       for (let i = i0; i < i1; i += 1) {
         const seed = seeds[i];
-        const o = i * 3;
-        for (let c = 0; c < 3; c += 1) {
-          const extent = fixed ? size.fixed[c] : readChannel(size, pool, i, env, c);
-          // Centred on the origin, so a box emitter grows symmetrically when
-          // its size changes. Growing from one corner would make resizing it
-          // also move the effect.
-          position[o + c] = (pcgFloatAt(seed, slot + c) - 0.5) * extent;
-        }
+        resolveShapeTransform(transform, pool, i, env);
+        // Centred on the origin, so a box emitter grows symmetrically when its
+        // size changes. Growing from one corner would make resizing it also
+        // move the effect - Offset is for moving it.
+        const x = (pcgFloatAt(seed, slot) - 0.5) * (fixed ? size.fixed[0] : readChannel(size, pool, i, env, 0));
+        const y = (pcgFloatAt(seed, slot + 1) - 0.5) * (fixed ? size.fixed[1] : readChannel(size, pool, i, env, 1));
+        const z = (pcgFloatAt(seed, slot + 2) - 0.5) * (fixed ? size.fixed[2] : readChannel(size, pool, i, env, 2));
+        placeShape(transform, position, i * 3, x, y, z);
       }
     };
   },
@@ -440,12 +596,15 @@ const KERNELS = {
   'shape.position.circle': (block, env) => {
     const radius = prepareBinding(block.bindings.find((b) => b.prop === 'radius'), env);
     const thickness = prepareBinding(block.bindings.find((b) => b.prop === 'thickness'), env);
+    const transform = prepareShapeTransform(block, env);
     const slot = 0x63c9a8f3;
     return function shapePositionCircle(pool, i0, i1) {
       const position = pool.planes.position;
       const seeds = pool.planes.seed;
+      transform.ready = false;
       for (let i = i0; i < i1; i += 1) {
         const seed = seeds[i];
+        resolveShapeTransform(transform, pool, i, env);
         const r0 = radius.kind === B_CONST ? radius.fixed[0] : readChannel(radius, pool, i, env, 0);
         const band = thickness.kind === B_CONST
           ? thickness.fixed[0]
@@ -456,10 +615,226 @@ const KERNELS = {
         const inner = Math.max(0, r0 - band);
         const t = pcgFloatAt(seed, slot + 1);
         const r = Math.sqrt(inner * inner + t * (r0 * r0 - inner * inner));
+        // Flat in XZ, and Rotation is what stands it up: (90, 0, 0) turns the
+        // ring on the floor into a vertical one facing Z, which is what a
+        // portal or a spell circle on a wall wants.
+        placeShape(transform, position, i * 3, r * Math.cos(theta), 0, r * Math.sin(theta));
+      }
+    };
+  },
+
+  /**
+   * Every particle at one coordinate, optionally softened into a small ball.
+   *
+   * THE JITTER IS A CUBE-ROOTED RADIUS, not a uniform one, for the same reason
+   * the sphere's volume fill is: a uniform radius crowds the centre, so a
+   * jittered point emitter would read as a dense core with a faint halo rather
+   * than as a soft ball.
+   */
+  'shape.position.point': (block, env) => {
+    const offset = prepareBinding(block.bindings.find((b) => b.prop === 'offset'), env);
+    const jitter = prepareBinding(block.bindings.find((b) => b.prop === 'jitter'), env);
+    const slot = 0x7b1e4d95;
+    return function shapePositionPoint(pool, i0, i1) {
+      const position = pool.planes.position;
+      const seeds = pool.planes.seed;
+      const fixedOffset = offset.kind === B_CONST;
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+        const ox = fixedOffset ? offset.fixed[0] : readChannel(offset, pool, i, env, 0);
+        const oy = fixedOffset ? offset.fixed[1] : readChannel(offset, pool, i, env, 1);
+        const oz = fixedOffset ? offset.fixed[2] : readChannel(offset, pool, i, env, 2);
+        const j = jitter.kind === B_CONST ? jitter.fixed[0] : readChannel(jitter, pool, i, env, 0);
         const o = i * 3;
-        position[o] = r * Math.cos(theta);
-        position[o + 1] = 0;
-        position[o + 2] = r * Math.sin(theta);
+        if (!(j > 0)) {
+          position[o] = ox;
+          position[o + 1] = oy;
+          position[o + 2] = oz;
+          continue;
+        }
+        const u = pcgFloatAt(seed, slot) * 2 - 1;
+        const theta = pcgFloatAt(seed, slot + 1) * TAU;
+        const r = j * Math.cbrt(pcgFloatAt(seed, slot + 2));
+        const ring = Math.sqrt(Math.max(0, 1 - u * u));
+        position[o] = ox + r * ring * Math.cos(theta);
+        position[o + 1] = oy + r * ring * Math.sin(theta);
+        position[o + 2] = oz + r * u;
+      }
+    };
+  },
+
+  /**
+   * Spread particles along the segment from `start` to `end`.
+   *
+   * THREE PLACEMENTS, AND THEY ARE NOT INTERCHANGEABLE:
+   *
+   *   random  - t drawn per particle. Scatters. What dust, fire and sparks want.
+   *   even    - t spread across THIS SPAWN BATCH. A burst of 40 lands as 40
+   *             equally spaced particles covering the whole line, which is what
+   *             a beam appearing all at once looks like. Batch, not lifetime,
+   *             because the kernel is handed [i0, i1) and that IS the batch -
+   *             and for a rate emitter "even" then means each frame's handful
+   *             is spread over the line, which is the same reading.
+   *   spacing - t derived from the particle's GLOBAL SPAWN INDEX, so consecutive
+   *             particles sit a fixed number of metres apart and the pattern
+   *             marches along the line and wraps. This is the one that needs an
+   *             identity rather than a random number, and it is why the block
+   *             declares the spawnIndex attribute.
+   *
+   * The line's own endpoints carry its position and direction, so there is no
+   * shape transform here - see SHAPE_TRANSFORM_PROPS in the catalog.
+   */
+  'shape.position.line': (block, env) => {
+    const startB = prepareBinding(block.bindings.find((b) => b.prop === 'start'), env);
+    const endB = prepareBinding(block.bindings.find((b) => b.prop === 'end'), env);
+    const thickness = prepareBinding(block.bindings.find((b) => b.prop === 'thickness'), env);
+    const spacingB = prepareBinding(block.bindings.find((b) => b.prop === 'spacing'), env);
+    const placement = block.modes?.placement || 'random';
+    const slot = 0x3ac7f61d;
+    return function shapePositionLine(pool, i0, i1) {
+      const position = pool.planes.position;
+      const seeds = pool.planes.seed;
+      const spawnIndices = pool.planes.spawnIndex;
+      const fixedStart = startB.kind === B_CONST;
+      const fixedEnd = endB.kind === B_CONST;
+      // Hoisted: the batch size is what "even" divides by, and reading it once
+      // keeps the loop body free of the branch. A single-particle batch sits at
+      // the start rather than dividing by zero.
+      const span = Math.max(1, i1 - i0 - 1);
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+        const sx = fixedStart ? startB.fixed[0] : readChannel(startB, pool, i, env, 0);
+        const sy = fixedStart ? startB.fixed[1] : readChannel(startB, pool, i, env, 1);
+        const sz = fixedStart ? startB.fixed[2] : readChannel(startB, pool, i, env, 2);
+        const ex = fixedEnd ? endB.fixed[0] : readChannel(endB, pool, i, env, 0);
+        const ey = fixedEnd ? endB.fixed[1] : readChannel(endB, pool, i, env, 1);
+        const ez = fixedEnd ? endB.fixed[2] : readChannel(endB, pool, i, env, 2);
+
+        let t;
+        if (placement === 'even') {
+          t = (i - i0) / span;
+        } else if (placement === 'spacing') {
+          const dx = ex - sx;
+          const dy = ey - sy;
+          const dz = ez - sz;
+          const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          const step = spacingB.kind === B_CONST
+            ? spacingB.fixed[0]
+            : readChannel(spacingB, pool, i, env, 0);
+          // A zero-length line or a zero spacing collapses to the start rather
+          // than dividing by zero and writing NaN into the pool - one NaN
+          // position propagates through every force and kills the whole system.
+          if (!(length > 0) || !(step > 0)) t = 0;
+          else {
+            const index = spawnIndices ? spawnIndices[i] : (i - i0);
+            // Wrapped with a remainder, so the pattern repeats along the line
+            // instead of every particle after the first pass piling up at the
+            // far end.
+            t = ((index * step) % length) / length;
+          }
+        } else {
+          t = pcgFloatAt(seed, slot);
+        }
+
+        let x = sx + (ex - sx) * t;
+        let y = sy + (ey - sy) * t;
+        let z = sz + (ez - sz) * t;
+
+        const band = thickness.kind === B_CONST
+          ? thickness.fixed[0]
+          : readChannel(thickness, pool, i, env, 0);
+        if (band > 0) {
+          // A ball around the point rather than a disc perpendicular to the
+          // line: building the perpendicular frame costs a cross product and a
+          // normalise per particle, and at the thicknesses a line emitter is
+          // used at - a few centimetres, to stop it reading as a hairline - the
+          // two are indistinguishable.
+          const u = pcgFloatAt(seed, slot + 1) * 2 - 1;
+          const theta = pcgFloatAt(seed, slot + 2) * TAU;
+          const r = band * Math.cbrt(pcgFloatAt(seed, slot + 3));
+          const ring = Math.sqrt(Math.max(0, 1 - u * u));
+          x += r * ring * Math.cos(theta);
+          y += r * ring * Math.sin(theta);
+          z += r * u;
+        }
+
+        const o = i * 3;
+        position[o] = x;
+        position[o + 1] = y;
+        position[o + 2] = z;
+      }
+    };
+  },
+
+  /**
+   * Spawn over the surface (or the vertices) of a mesh asset.
+   *
+   * THE SAMPLER ARRIVES LATE, AND THAT IS THE INTERESTING PART. Geometry is
+   * loaded asynchronously by the browser layer, long after the kernel chain was
+   * built, so this reads `env.meshSamplers` on every invocation rather than
+   * capturing a sampler at build time. Until the mesh lands, every particle is
+   * born at the shape's offset - visibly wrong in a way the author can act on,
+   * rather than an effect that never appears. The lookup is one Map.get per
+   * spawn batch, hoisted out of the particle loop.
+   *
+   * NORMAL SPEED IS WHAT MAKES IT READ AS A SURFACE. Without it a mesh emitter
+   * is a cloud of points that happens to have the right silhouette, because
+   * nothing tells the viewer which way the surface faced. It is left at zero by
+   * default all the same, so the block composes with a separate velocity block
+   * rather than fighting it.
+   */
+  'shape.position.mesh': (block, env) => {
+    const scale = prepareBinding(block.bindings.find((b) => b.prop === 'scale'), env);
+    const normalSpeed = prepareBinding(block.bindings.find((b) => b.prop === 'normalSpeed'), env);
+    const transform = prepareShapeTransform(block, env);
+    const vertexMode = block.modes?.sampling === 'vertex';
+    const assetIndex = block.assetSlots ? block.assetSlots.mesh : -1;
+    const assetId = assetIndex >= 0 ? env.assets?.[assetIndex]?.assetId ?? null : null;
+    const slot = 0x5d8b23a7;
+    const point = new Float64Array(3);
+    const normal = new Float64Array(3);
+    return function shapePositionMesh(pool, i0, i1) {
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      const seeds = pool.planes.seed;
+      const sampler = assetId != null ? env.meshSamplers?.get(assetId) : null;
+      transform.ready = false;
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+        resolveShapeTransform(transform, pool, i, env);
+        const s0 = scale.kind === B_CONST ? scale.fixed[0] : readChannel(scale, pool, i, env, 0);
+        const o = i * 3;
+
+        if (!sampler) {
+          placeShape(transform, position, o, 0, 0, 0);
+          continue;
+        }
+
+        if (vertexMode) {
+          sampleMeshVertex(sampler, pcgFloatAt(seed, slot), point, normal);
+        } else {
+          sampleMeshSurface(
+            sampler,
+            pcgFloatAt(seed, slot),
+            pcgFloatAt(seed, slot + 1),
+            pcgFloatAt(seed, slot + 2),
+            point,
+            normal,
+          );
+        }
+
+        placeShape(transform, position, o, point[0] * s0, point[1] * s0, point[2] * s0);
+
+        const v0 = normalSpeed.kind === B_CONST
+          ? normalSpeed.fixed[0]
+          : readChannel(normalSpeed, pool, i, env, 0);
+        // Guarded, not written unconditionally: at zero this block must leave
+        // velocity for another block to set, and a plain write of zero would
+        // silently undo whatever ran before it in the stack.
+        if (v0 !== 0 && velocity) {
+          rotateDirection(transform, velocity, o,
+            normal[0] * v0, normal[1] * v0, normal[2] * v0);
+        }
       }
     };
   },

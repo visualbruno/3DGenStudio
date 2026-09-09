@@ -32,6 +32,7 @@ import { implementedOps } from './kernels.js';
 import { OPERATOR_OPS } from '../../../vfx/compile.js';
 import { templateById } from './templates.js';
 import { addEdge, addOperator, setOperatorProp } from './edits.js';
+import { buildMeshSampler, pickTriangle } from './meshSample.js';
 import * as fixtures from '../../../vfx/fixtures.mjs';
 import {
   advance,
@@ -40,6 +41,7 @@ import {
   reset,
   runtimeStats,
   seekTo,
+  setMeshSampler,
   setSystemState,
   setUniform,
   step,
@@ -68,12 +70,15 @@ const blk = (type, props = {}, modes) => {
  * blocks exist, and a shared fixture that grows a block breaks the arithmetic
  * the physics checks depend on.
  */
-function doc({ spawn, init, update, capacity = 1024, duration = 0, loop = false, clips, outputParams }) {
+function doc({ spawn, init, update, capacity = 1024, duration = 0, loop = false, clips, outputParams, references }) {
   const d = createEmptyVfxDoc({ name: 'Runtime test' });
   d.effect.duration = duration;
   d.effect.loop = loop;
   d.effect.capacity = capacity;
-  d.references = { tex: { kind: 'image', ref: 'asset:1', name: 't.png', colorSpace: 'srgb' } };
+  d.references = {
+    tex: { kind: 'image', ref: 'asset:1', name: 't.png', colorSpace: 'srgb' },
+    ...(references || {}),
+  };
   const s = d.systems[0];
   s.capacity = capacity;
   if (clips) s.schedule = { clips };
@@ -92,7 +97,9 @@ function doc({ spawn, init, update, capacity = 1024, duration = 0, loop = false,
 }
 
 function build(spec, options = {}) {
-  const { ir, diagnostics } = compileVfxGraph(doc(spec), { assetIndex: new Set([1]) });
+  const { ir, diagnostics } = compileVfxGraph(doc(spec), {
+    assetIndex: new Set(spec.assetIndex || [1]),
+  });
   const errors = diagnostics.filter((d) => d.severity === 'error');
   if (errors.length) throw new Error(`fixture has compile errors: ${errors.map((d) => d.code).join(' ')}`);
   return { ir, runtime: createVfxRuntime(ir, options) };
@@ -1321,6 +1328,443 @@ console.log('\n--- Sub-emitters and the event queue ---');
   check('probability is rolled per event, not per particle',
     thinnedCount % 3 === 0 && thinnedCount < 24 && thinnedCount > 0,
     `${thinnedCount} children, a multiple of the burst count 3`);
+}
+
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Emitter shapes: the transform, Point, Line and Mesh ---');
+// ---------------------------------------------------------------------------
+//
+// Checked against arithmetic done by hand. The rotation cases matter most,
+// because a rotation that is self-consistently wrong - the wrong axis order, or
+// applied after the offset instead of before - produces a shape that is plainly
+// SOMEWHERE and plainly ORIENTED, and looks entirely reasonable until it is
+// compared with a number.
+{
+  const burstOf = (count) => [blk('spawn.burst', { count: constValue(count) })];
+  const poolOf = (spec) => {
+    const { runtime } = build(spec);
+    step(runtime);
+    return runtime.emitters[0].pool;
+  };
+  const at = (pool, i) => [
+    pool.planes.position[i * 3],
+    pool.planes.position[i * 3 + 1],
+    pool.planes.position[i * 3 + 2],
+  ];
+
+  // --- the offset ---------------------------------------------------------
+  {
+    const pool = poolOf({
+      spawn: burstOf(200),
+      init: [...inertInit(), blk('initialize.positionCircle', {
+        radius: constValue(2),
+        thickness: constValue(0.5),
+        offset: constValue([10, 5, -3]),
+      })],
+    });
+    let bad = 0;
+    let offPlane = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const [x, y, z] = at(pool, i);
+      const r = Math.hypot(x - 10, z + 3);
+      if (r < 1.5 - 1e-5 || r > 2 + 1e-5) bad += 1;
+      if (Math.abs(y - 5) > 1e-9) offPlane += 1;
+    }
+    check('an offset moves the whole shape', bad === 0, `${bad} of ${pool.count} off the ring`);
+    check('  taking its plane with it', offPlane === 0, `${offPlane} not at y = 5`);
+    check('  and the fixture really spawned something', pool.count === 200, String(pool.count));
+  }
+
+  // --- the rotation: the user's vertical circle ---------------------------
+  {
+    // (90, 0, 0) maps (x, y, z) -> (x, -z, y). A ring at (r cos, 0, r sin)
+    // therefore becomes (r cos, -r sin, 0): every point at z = 0, and the ring
+    // now standing in the XY plane. That is the whole feature, in one line of
+    // arithmetic.
+    const pool = poolOf({
+      spawn: burstOf(200),
+      init: [...inertInit(), blk('initialize.positionCircle', {
+        radius: constValue(2),
+        thickness: constValue(0.5),
+        rotation: constValue([90, 0, 0]),
+      })],
+    });
+    let offPlane = 0;
+    let bad = 0;
+    let spread = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      const [x, y, z] = at(pool, i);
+      if (Math.abs(z) > 1e-6) offPlane += 1;
+      const r = Math.hypot(x, y);
+      if (r < 1.5 - 1e-5 || r > 2 + 1e-5) bad += 1;
+      if (Math.abs(y) > 0.5) spread += 1;
+    }
+    check('a 90-degree X rotation stands a flat ring up', offPlane === 0,
+      `${offPlane} of ${pool.count} off the XY plane`);
+    check('  keeping its radius', bad === 0, `${bad} outside 1.5..2`);
+    // Guards against the "rotation flattened it to a line" failure, which would
+    // also pass the z = 0 check.
+    check('  and it is a ring, not a line', spread > 20, `${spread} points with |y| > 0.5`);
+  }
+
+  // --- ROTATE THEN OFFSET, and the test that can tell the two apart -------
+  {
+    // (0, 0, 90) maps (x, y, z) -> (-y, x, z), so a flat ring becomes
+    // (0, r cos, r sin) - the x is ZERO. Offsetting by (5, 0, 0) AFTER that
+    // puts every point at x = 5. Had the offset been applied first, the
+    // rotation would have swung it onto the Y axis and x would be 0 instead.
+    const pool = poolOf({
+      spawn: burstOf(120),
+      init: [...inertInit(), blk('initialize.positionCircle', {
+        radius: constValue(2),
+        thickness: constValue(0.5),
+        rotation: constValue([0, 0, 90]),
+        offset: constValue([5, 0, 0]),
+      })],
+    });
+    let wrong = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      if (Math.abs(at(pool, i)[0] - 5) > 1e-6) wrong += 1;
+    }
+    check('the offset is applied AFTER the rotation', wrong === 0,
+      `${wrong} of ${pool.count} not at x = 5`);
+  }
+
+  // --- a cone's VELOCITY is rotated but not offset ------------------------
+  {
+    // The cone fires up +Y. Rotated by (0, 0, 90) that becomes -X, and the
+    // offset must not leak into it: a velocity carrying the emitter's offset
+    // would send every particle drifting towards it at a speed proportional to
+    // how far the shape was moved.
+    const pool = poolOf({
+      spawn: burstOf(200),
+      init: [...inertInit(), blk('initialize.positionCone', {
+        angle: constValue(0),
+        radius: constValue(0),
+        speed: constValue(3),
+        rotation: constValue([0, 0, 90]),
+        offset: constValue([5, 0, 0]),
+      })],
+    });
+    let sumX = 0;
+    let sumY = 0;
+    for (let i = 0; i < pool.count; i += 1) {
+      sumX += pool.planes.velocity[i * 3];
+      sumY += pool.planes.velocity[i * 3 + 1];
+    }
+    const meanX = sumX / pool.count;
+    const meanY = sumY / pool.count;
+    // Zero spread, so every particle's velocity is exactly (-3, 0, 0).
+    check('a rotation turns a cone into an angled jet', Math.abs(meanX + 3) < 1e-6,
+      `mean vx ${meanX.toFixed(6)}`);
+    check('  and the offset does NOT leak into the velocity', Math.abs(meanY) < 1e-6
+      && Math.abs(meanX + 3) < 1e-6, `mean v (${meanX.toFixed(4)}, ${meanY.toFixed(4)})`);
+    // The position DID take the offset, so the two paths are genuinely separate.
+    //
+    // Minus one integration step: step() runs a whole frame - spawn, initialize,
+    // update, integrate - so by the time the pool is readable the particle has
+    // already travelled at its brand-new velocity for one fixed tick. Reading
+    // 4.95 instead of 5 here is the integrator working, and asserting a bare 5
+    // would have been a test that only passed if the emitter were broken.
+    const dt = 1 / 60;
+    check('  while the position did take it',
+      Math.abs(at(pool, 0)[0] - (5 - 3 * dt)) < 1e-5, String(at(pool, 0)[0]));
+  }
+
+  // --- Point --------------------------------------------------------------
+  {
+    const exact = poolOf({
+      spawn: burstOf(50),
+      init: [...inertInit(), blk('initialize.positionPoint', {
+        offset: constValue([1, 2, 3]),
+        jitter: constValue(0),
+      })],
+    });
+    let wrong = 0;
+    for (let i = 0; i < exact.count; i += 1) {
+      const [x, y, z] = at(exact, i);
+      if (Math.abs(x - 1) > 1e-9 || Math.abs(y - 2) > 1e-9 || Math.abs(z - 3) > 1e-9) wrong += 1;
+    }
+    check('a point emitter with no jitter is exact', wrong === 0, `${wrong} of ${exact.count}`);
+
+    const jittered = poolOf({
+      spawn: burstOf(300),
+      init: [...inertInit(), blk('initialize.positionPoint', {
+        offset: constValue([1, 2, 3]),
+        jitter: constValue(0.5),
+      })],
+    });
+    let outside = 0;
+    let moved = 0;
+    for (let i = 0; i < jittered.count; i += 1) {
+      const [x, y, z] = at(jittered, i);
+      const d = Math.hypot(x - 1, y - 2, z - 3);
+      if (d > 0.5 + 1e-6) outside += 1;
+      if (d > 1e-6) moved += 1;
+    }
+    check('  and jitter stays inside its radius', outside === 0,
+      `${outside} of ${jittered.count} beyond 0.5 m`);
+    check('  while actually moving them', moved > jittered.count * 0.9, `${moved} moved`);
+  }
+
+  // --- Line ---------------------------------------------------------------
+  {
+    const START = [-2, 0, 0];
+    const END = [2, 0, 0];
+    const lineBlock = (props, modes) => blk('initialize.positionLine', {
+      start: constValue(START), end: constValue(END), thickness: constValue(0), ...props,
+    }, modes);
+
+    // Random: on the segment, and spread over it.
+    {
+      const pool = poolOf({ spawn: burstOf(300), init: [...inertInit(), lineBlock({})] });
+      let off = 0;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = 0; i < pool.count; i += 1) {
+        const [x, y, z] = at(pool, i);
+        if (Math.abs(y) > 1e-9 || Math.abs(z) > 1e-9) off += 1;
+        if (x < lo) lo = x;
+        if (x > hi) hi = x;
+      }
+      check('line emission lands on the segment', off === 0, `${off} off the line`);
+      check('  spanning it', lo < -1.7 && hi > 1.7, `${lo.toFixed(2)} to ${hi.toFixed(2)}`);
+      check('  and never past the ends', lo >= -2 - 1e-9 && hi <= 2 + 1e-9);
+    }
+
+    // Even: a burst of N lands as N equally spaced points covering the line.
+    {
+      const N = 21;
+      const pool = poolOf({
+        spawn: burstOf(N),
+        init: [...inertInit(), lineBlock({}, { placement: 'even' })],
+      });
+      const xs = [];
+      for (let i = 0; i < pool.count; i += 1) xs.push(at(pool, i)[0]);
+      xs.sort((a, b) => a - b);
+      check('even placement reaches both ends',
+        Math.abs(xs[0] + 2) < 1e-6 && Math.abs(xs[xs.length - 1] - 2) < 1e-6,
+        `${xs[0].toFixed(4)} .. ${xs[xs.length - 1].toFixed(4)}`);
+      // 21 points across 4 metres is a 0.2 m step, every gap identical.
+      let uneven = 0;
+      for (let i = 1; i < xs.length; i += 1) {
+        if (Math.abs((xs[i] - xs[i - 1]) - 0.2) > 1e-6) uneven += 1;
+      }
+      check('  with every gap the same 0.2 m', uneven === 0, `${uneven} irregular gaps`);
+    }
+
+    // Fixed spacing: 1 m along a 4 m line, so t cycles through 0, .25, .5, .75.
+    {
+      const pool = poolOf({
+        spawn: burstOf(40),
+        init: [...inertInit(), lineBlock({ spacing: constValue(1) }, { placement: 'spacing' })],
+      });
+      const seen = new Set();
+      for (let i = 0; i < pool.count; i += 1) seen.add(Math.round(at(pool, i)[0] * 1000) / 1000);
+      const sorted = [...seen].sort((a, b) => a - b);
+      check('fixed spacing repeats a 1 m pattern along the line',
+        sorted.length === 4 && sorted.join(',') === '-2,-1,0,1', sorted.join(','));
+      // The wrap is what stops every particle after the first pass piling up at
+      // the far end - 40 particles on a 4-slot pattern is ten times round.
+      check('  wrapping rather than running off the end',
+        Math.max(...sorted) <= 2 + 1e-9);
+    }
+
+    // AND IT REALLY IS THE GLOBAL SPAWN INDEX, not the position in the batch.
+    //
+    // The burst above could not tell the two apart: one batch starting at zero
+    // makes `i - i0` and spawnIndex the same number. A RATE emitter spawns one
+    // particle per frame, so each batch is a single particle at i0 = its own
+    // index - the fallback would collapse every particle to t = 0 and pile the
+    // whole beam up on the start point.
+    {
+      const { runtime } = build({
+        spawn: [blk('spawn.rate', { rate: constValue(60) })],
+        init: [...inertInit(), lineBlock({ spacing: constValue(1) }, { placement: 'spacing' })],
+      });
+      for (let i = 0; i < 8; i += 1) step(runtime);
+      const pool = runtime.emitters[0].pool;
+      check('  the fixture spawned across several frames', pool.count >= 7,
+        String(pool.count));
+      const seen = new Set();
+      for (let i = 0; i < pool.count; i += 1) seen.add(Math.round(at(pool, i)[0]));
+      check('  and spacing walks along per SPAWN, not per batch', seen.size === 4,
+        [...seen].sort((a, b) => a - b).join(','));
+    }
+
+    // A zero-length line must not write NaN: one NaN position propagates
+    // through every force and takes the whole system with it.
+    {
+      const pool = poolOf({
+        spawn: burstOf(20),
+        init: [...inertInit(), blk('initialize.positionLine', {
+          start: constValue([1, 1, 1]), end: constValue([1, 1, 1]),
+          thickness: constValue(0), spacing: constValue(1),
+        }, { placement: 'spacing' })],
+      });
+      let nan = 0;
+      for (let i = 0; i < pool.count; i += 1) {
+        if (at(pool, i).some((v) => !Number.isFinite(v))) nan += 1;
+      }
+      check('a zero-length line collapses instead of writing NaN', nan === 0, `${nan} NaN`);
+      check('  at its own start', Math.abs(at(pool, 0)[0] - 1) < 1e-9);
+    }
+  }
+
+  // --- Mesh ---------------------------------------------------------------
+  {
+    // A unit square in the XY plane, as two triangles, with +Z normals. Every
+    // sampled point must land inside it, and every normal must be +Z - both
+    // checkable exactly.
+    const positions = new Float32Array([
+      0, 0, 0, 1, 0, 0, 1, 1, 0,
+      0, 0, 0, 1, 1, 0, 0, 1, 0,
+    ]);
+    const normals = new Float32Array([
+      0, 0, 1, 0, 0, 1, 0, 0, 1,
+      0, 0, 1, 0, 0, 1, 0, 0, 1,
+    ]);
+    const sampler = buildMeshSampler({ positions, normals, index: null });
+    check('a mesh sampler is built from raw arrays', Boolean(sampler));
+    check('  with the right triangle count', sampler.triangleCount === 2,
+      String(sampler.triangleCount));
+    // Two right triangles of legs 1: half a unit square each, one unit total.
+    check('  and the true surface area', Math.abs(sampler.area - 1) < 1e-6,
+      String(sampler.area));
+
+    const meshSpec = (props, modes) => ({
+      spawn: burstOf(300),
+      init: [...inertInit(), blk('initialize.positionMesh', {
+        mesh: constValue('shape'), scale: constValue(1), normalSpeed: constValue(0), ...props,
+      }, modes)],
+      references: {
+        shape: { kind: 'mesh', ref: 'asset:42', name: 'square.glb', colorSpace: 'srgb' },
+      },
+      assetIndex: [1, 42],
+    });
+
+    // BEFORE the geometry arrives: the offset, not NaN and not the origin when
+    // an offset was given. This is the state an author sees for the first frame
+    // or two after picking a mesh, so it has to be defined.
+    {
+      const { runtime } = build(meshSpec({ offset: constValue([7, 0, 0]) }));
+      step(runtime);
+      const pool = runtime.emitters[0].pool;
+      let wrong = 0;
+      for (let i = 0; i < pool.count; i += 1) {
+        if (Math.abs(pool.planes.position[i * 3] - 7) > 1e-9) wrong += 1;
+      }
+      check('a mesh emitter with no geometry yet spawns at its offset', wrong === 0,
+        `${wrong} of ${pool.count}`);
+    }
+
+    // WITH the sampler installed. Normal speed is left at ZERO here so nothing
+    // moves: step() runs a whole frame including the integrator, so a particle
+    // launched along its normal is already off the surface by the time the pool
+    // is readable, and "did it spawn on the plane?" would be asking about the
+    // integrator instead. The velocity is checked separately below, where
+    // integration does not touch the answer.
+    {
+      const { runtime } = build(meshSpec({}));
+      setMeshSampler(runtime, 42, sampler);
+      step(runtime);
+      const pool = runtime.emitters[0].pool;
+      let outside = 0;
+      let offPlane = 0;
+      const distinct = new Set();
+      for (let i = 0; i < pool.count; i += 1) {
+        const [x, y, z] = at(pool, i);
+        if (x < -1e-6 || x > 1 + 1e-6 || y < -1e-6 || y > 1 + 1e-6) outside += 1;
+        if (Math.abs(z) > 1e-6) offPlane += 1;
+        distinct.add(Math.round(x * 100) / 100);
+      }
+      check('mesh emission lands inside the source triangles', outside === 0,
+        `${outside} of ${pool.count} outside the unit square`);
+      check('  and on its plane', offPlane === 0, `${offPlane} off z = 0`);
+      check('  spread over it rather than at one point', distinct.size > 30,
+        `${distinct.size} distinct x values`);
+      // Nothing moved it, so velocity really is untouched at Normal speed 0 -
+      // the block has to compose with a separate velocity block rather than
+      // overwrite it with zeros.
+      let moved = 0;
+      for (let i = 0; i < pool.count; i += 1) {
+        if (pool.planes.velocity[i * 3 + 2] !== 0) moved += 1;
+      }
+      check('  and Normal speed 0 leaves velocity alone', moved === 0, `${moved} written`);
+    }
+
+    // Normal speed, checked on the VELOCITY plane, which the integrator does
+    // not touch. Every normal on this square is +Z, so every particle must
+    // leave at exactly the speed asked for.
+    {
+      const { runtime } = build(meshSpec({ normalSpeed: constValue(2) }));
+      setMeshSampler(runtime, 42, sampler);
+      step(runtime);
+      const pool = runtime.emitters[0].pool;
+      let bad = 0;
+      for (let i = 0; i < pool.count; i += 1) {
+        const o = i * 3;
+        if (Math.abs(pool.planes.velocity[o + 2] - 2) > 1e-6
+          || Math.abs(pool.planes.velocity[o]) > 1e-6) bad += 1;
+      }
+      check('Normal speed drives velocity along the surface normal', bad === 0,
+        `${bad} of ${pool.count} not moving at 2 m/s along +Z`);
+    }
+
+    // Scale multiplies the normalised mesh, so the same sampler at scale 3
+    // covers a 3-metre square.
+    {
+      const { runtime } = build(meshSpec({ scale: constValue(3) }));
+      setMeshSampler(runtime, 42, sampler);
+      step(runtime);
+      const pool = runtime.emitters[0].pool;
+      let hi = -Infinity;
+      for (let i = 0; i < pool.count; i += 1) hi = Math.max(hi, at(pool, i)[0]);
+      check('Scale multiplies the sampled shape', hi > 2.5 && hi <= 3 + 1e-6, hi.toFixed(4));
+    }
+
+    // Vertex mode snaps to corners: a unit square has exactly four of them, and
+    // the shared diagonal means six vertices but only four distinct positions.
+    {
+      const { runtime } = build(meshSpec({}, { sampling: 'vertex' }));
+      setMeshSampler(runtime, 42, sampler);
+      step(runtime);
+      const pool = runtime.emitters[0].pool;
+      const corners = new Set();
+      for (let i = 0; i < pool.count; i += 1) {
+        const [x, y] = at(pool, i);
+        corners.add(`${Math.round(x)},${Math.round(y)}`);
+      }
+      check('vertex sampling snaps to the model\'s corners', corners.size === 4,
+        [...corners].sort().join(' '));
+    }
+
+    // AREA WEIGHTING, checked where uniform triangle picking would visibly
+    // differ: one triangle nine times the area of the other must receive about
+    // nine times the particles. A sampler that picked triangles uniformly would
+    // split them 50/50 and look perfectly reasonable on screen.
+    {
+      const lop = buildMeshSampler({
+        positions: new Float32Array([
+          0, 0, 0, 1, 0, 0, 0, 1, 0,
+          10, 0, 0, 13, 0, 0, 10, 3, 0,
+        ]),
+        normals: null,
+        index: null,
+      });
+      check('the lopsided fixture has the areas expected',
+        Math.abs(lop.area - 5) < 1e-6, String(lop.area));
+      let small = 0;
+      const N = 4000;
+      for (let i = 0; i < N; i += 1) {
+        if (pickTriangle(lop.cdf, (i + 0.5) / N) === 0) small += 1;
+      }
+      // 0.5 of 5.0 is a tenth, so the small triangle should take a tenth.
+      check('  and triangles are picked in proportion to their area',
+        Math.abs(small / N - 0.1) < 0.01, `${(small / N * 100).toFixed(1)}% went to the small one`);
+    }
+  }
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
