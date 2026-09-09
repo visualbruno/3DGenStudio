@@ -1727,6 +1727,22 @@ const BLOCK_LIST = [
         hot: true,
         hint: 'An image asset from the library. Leave empty to draw plain quads.',
       },
+      blackPoint: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Black point',
+        min: 0,
+        max: 0.5,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Pulls the darkest part of the sprite down to nothing. Additive blending ADDS every pixel, so a background that is nearly-but-not-quite black is invisible on one particle and a faint grey haze once sixty overlap. Raise this until the haze clears; too far and the sprite loses its dimmest edges. A sprite whose background is exactly black needs none of this.',
+        presets: [
+          { label: 'Off (0)', value: 0 },
+          { label: 'A generated sprite (0.02)', value: 0.02 },
+          { label: 'A noisy one (0.06)', value: 0.06 },
+        ],
+      },
     },
     kernel: 'output.texture',
     engines: {

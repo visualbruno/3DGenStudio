@@ -195,6 +195,52 @@
   border-color: #2f6feb;
 }
 
+/* The sprite sheet control. Three narrow number fields in a row, because
+   columns x rows x fps is read as one setting and stacking them would make it
+   look like three unrelated ones. */
+.vfx-params__sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 0;
+  border-top: 1px solid #23262d;
+}
+
+.vfx-params__sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.vfx-params__sheet-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.vfx-params__sheet-grid span {
+  font-size: 10px;
+  color: #8a93a4;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.vfx-params__sheet-grid input {
+  width: 100%;
+  min-width: 0;
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #e6e9f0;
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
+.vfx-params__sheet-grid input:disabled {
+  opacity: 0.45;
+}
+
 .vfx-params__mode-hint {
   margin: 0;
   font-size: 10px;

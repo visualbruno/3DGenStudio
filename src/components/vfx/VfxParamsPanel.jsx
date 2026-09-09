@@ -22,6 +22,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { CATALOG, CONTEXT_DEFS, defaultProps, ENGINE_SUPPORT } from '../../../vfx/catalog.js'
 import { CONTEXT_KIND } from '../../../vfx/doc.js'
+import { readSpriteSheet } from '../../utils/vfx/edits.js'
 import { normalizeValue } from '../../../vfx/value.js'
 import VfxPropertyField from './VfxPropertyField'
 import './VfxParamsPanel.css'
@@ -364,6 +365,69 @@ function BlockParams({
   )
 }
 
+/**
+ * The sprite sheet, as one control instead of three blocks in two stages.
+ *
+ * WHY IT IS NOT JUST THE TWO BLOCKS' OWN FIELDS. A sheet needs
+ * `output.setFlipbook` to say how the atlas is cut AND `update.flipbook` to step
+ * through it, and those live in DIFFERENT stages - so the natural way to set one
+ * up is to add the Output block, see nothing happen, and conclude the texture is
+ * cropped. It is the hardest flipbook mistake to diagnose from the viewport,
+ * which is why the compiler has a warning for it.
+ *
+ * The frame count is DERIVED from the grid rather than typed, so the player and
+ * the sheet cannot disagree - the other half-configured state the compiler has
+ * to warn about.
+ *
+ * Rendered on the OUTPUT stage because that is where the texture is chosen, and
+ * a sheet is a property of the texture rather than of the simulation.
+ */
+function SpriteSheetParams({ system, doc, actions }) {
+  const sheet = readSpriteSheet(doc, system.id)
+  const tiles = sheet.columns * sheet.rows
+  const set = (patch) => actions.setSpriteSheet(system.id, { ...sheet, ...patch })
+
+  return (
+    <div className="vfx-params__sheet">
+      <span className="vfx-params__mode-label">Sprite sheet</span>
+      <div className="vfx-params__sheet-grid">
+        <label>
+          <span>Columns</span>
+          <input
+            type="number" min="1" max="32" step="1" value={sheet.columns}
+            onChange={event => set({ columns: Number(event.target.value) })}
+          />
+        </label>
+        <label>
+          <span>Rows</span>
+          <input
+            type="number" min="1" max="32" step="1" value={sheet.rows}
+            onChange={event => set({ rows: Number(event.target.value) })}
+          />
+        </label>
+        <label>
+          <span>Frames/s</span>
+          <input
+            type="number" min="1" max="120" step="1" value={sheet.fps}
+            disabled={tiles <= 1}
+            onChange={event => set({ fps: Number(event.target.value) })}
+          />
+        </label>
+      </div>
+      <p className="vfx-params__mode-hint">
+        {tiles <= 1
+          ? 'One tile: the texture is a single sprite. Set columns and rows to cut it into an animation - the player block is added for you.'
+          : `${tiles} frames, ${(tiles / sheet.fps).toFixed(2)}s per loop. Rows count downward from the top left, the way sheets are laid out.`}
+      </p>
+      {tiles > 1 && (
+        <p className="vfx-params__mode-hint">
+          Give particles a lifetime of at least {(tiles / sheet.fps).toFixed(2)}s, or they die before the animation finishes.
+        </p>
+      )}
+    </div>
+  )
+}
+
 function ContextParams({ found, actions, doc }) {
   const { context, system } = found
   const def = CONTEXT_DEFS[context.kind] || {}
@@ -394,6 +458,11 @@ function ContextParams({ found, actions, doc }) {
           </label>
         )
       })}
+
+      {context.kind === CONTEXT_KIND.OUTPUT && (
+        <SpriteSheetParams system={system} doc={doc} actions={actions} />
+      )}
+
       <p className="vfx-params__note">
         {context.blocks.length} block{context.blocks.length === 1 ? '' : 's'}, in
         {' '}

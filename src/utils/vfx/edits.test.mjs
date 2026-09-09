@@ -1453,5 +1453,127 @@ section('Emitter gizmos');
     new Set(all.map((g) => g.systemId)).size === all.length);
 }
 
+// ---------------------------------------------------------------------------
+section('Sprite sheets, configured in one move');
+// ---------------------------------------------------------------------------
+//
+// A SHEET IS THREE BLOCKS IN TWO STAGES: `output.setFlipbook` cuts the atlas,
+// `update.flipbook` steps through it, and they live in different contexts. The
+// natural way to set one up is to add the Output block, see nothing happen, and
+// conclude the texture is cropped - which is why the compiler has a warning for
+// it. Setting them together is what makes that state unreachable from the UI.
+{
+  const base = () => normalizeVfxDoc(templateById('fire').build());
+  const sys = (doc) => doc.systems[0].id;
+  const blocksOf = (doc, kind) => doc.systems[0].contexts
+    .filter((c) => c.kind === kind)
+    .flatMap((c) => c.blocks.map((b) => b.type));
+
+  // --- it reaches BOTH stages ----------------------------------------------
+  {
+    const doc = base();
+    check('the fixture starts with no sheet',
+      edits.readSpriteSheet(doc, sys(doc)).playing === false);
+
+    const sheeted = pure('setSpriteSheet', doc,
+      (d) => edits.setSpriteSheet(d, sys(d), { columns: 6, rows: 5, fps: 30 }));
+    check('it adds the layout to the Output stage',
+      blocksOf(sheeted, CONTEXT_KIND.OUTPUT).includes('output.setFlipbook'),
+      blocksOf(sheeted, CONTEXT_KIND.OUTPUT).join(' '));
+    // THE HALF THAT GETS FORGOTTEN.
+    check('  AND the player to the Update stage',
+      blocksOf(sheeted, CONTEXT_KIND.UPDATE).includes('update.flipbook'),
+      blocksOf(sheeted, CONTEXT_KIND.UPDATE).join(' '));
+
+    const read = edits.readSpriteSheet(sheeted, sys(sheeted));
+    check('  reading back exactly what was set',
+      read.columns === 6 && read.rows === 5 && read.fps === 30 && read.playing,
+      JSON.stringify(read));
+
+    // THE FRAME COUNT IS DERIVED, NOT TYPED - which is what stops the player
+    // and the sheet disagreeing, the other half-configured state.
+    const player = sheeted.systems[0].contexts
+      .flatMap((c) => c.blocks).find((b) => b.type === 'update.flipbook');
+    check('  and the frame count is the grid, never a separate number',
+      player.props.frames.v === 30, String(player.props.frames.v));
+    check('  which compiles with no flipbook complaint',
+      compileVfxGraph(sheeted).diagnostics.every((d) => !d.code.startsWith('W_FLIPBOOK')),
+      compileVfxGraph(sheeted).diagnostics.map((d) => d.code).join(' '));
+  }
+
+  // --- changing it edits in place rather than stacking blocks --------------
+  {
+    // The id has to come from the doc being EDITED. base() mints fresh ids on
+    // every call, so `setSpriteSheet(base(), sys(base()), ...)` targets a
+    // system that is not in the document it is editing - identity, silently.
+    // The guard below caught exactly that.
+    const start = base();
+    const id = sys(start);
+    let doc = edits.setSpriteSheet(start, id, { columns: 4, rows: 4, fps: 24 });
+    check('  (the first grid really was applied)',
+      edits.readSpriteSheet(doc, id).columns === 4,
+      String(edits.readSpriteSheet(doc, id).columns));
+    doc = edits.setSpriteSheet(doc, id, { columns: 8, rows: 2, fps: 12 });
+    const sheets = doc.systems[0].contexts
+      .flatMap((c) => c.blocks).filter((b) => b.type === 'output.setFlipbook');
+    const players = doc.systems[0].contexts
+      .flatMap((c) => c.blocks).filter((b) => b.type === 'update.flipbook');
+    check('setting it twice edits rather than duplicating',
+      sheets.length === 1 && players.length === 1,
+      `${sheets.length} sheets, ${players.length} players`);
+    const read = edits.readSpriteSheet(doc, id);
+    check('  with the new grid', read.columns === 8 && read.rows === 2 && read.fps === 12,
+      JSON.stringify(read));
+    check('  and the frame count following it', players[0].props.frames.v === 16,
+      String(players[0].props.frames.v));
+  }
+
+  // --- one tile is not a sheet ---------------------------------------------
+  //
+  // The honest inverse. Leaving a 1x1 flipbook block behind would keep the
+  // shader's USE_FLIPBOOK define and its uniform for a sheet that has one cell.
+  {
+    const start = base();
+    const id = sys(start);
+    let doc = edits.setSpriteSheet(start, id, { columns: 4, rows: 4, fps: 24 });
+    check('  (the sheet really was there first)',
+      edits.readSpriteSheet(doc, id).playing === true);
+    doc = edits.setSpriteSheet(doc, id, { columns: 1, rows: 1 });
+    check('collapsing to one tile removes both blocks',
+      !blocksOf(doc, CONTEXT_KIND.OUTPUT).includes('output.setFlipbook')
+      && !blocksOf(doc, CONTEXT_KIND.UPDATE).includes('update.flipbook'),
+      `${blocksOf(doc, CONTEXT_KIND.OUTPUT).join(' ')} / ${blocksOf(doc, CONTEXT_KIND.UPDATE).join(' ')}`);
+  }
+
+  // --- a system with no Update stage still gets a player -------------------
+  //
+  // Legal (the compiler only reports it as an info) but a sheet cannot play
+  // without somewhere to put the player, so the stage is created rather than
+  // the request being silently half-honoured.
+  {
+    let doc = base();
+    const id = sys(doc);
+    for (const context of doc.systems[0].contexts.filter((c) => c.kind === CONTEXT_KIND.UPDATE)) {
+      doc = edits.removeContext(doc, context.id);
+    }
+    check('the fixture now has no Update stage',
+      !doc.systems[0].contexts.some((c) => c.kind === CONTEXT_KIND.UPDATE),
+      doc.systems[0].contexts.map((c) => c.kind).join(' '));
+    doc = edits.setSpriteSheet(doc, id, { columns: 3, rows: 3, fps: 15 });
+    check('  and the Update stage is created to hold the player',
+      blocksOf(doc, CONTEXT_KIND.UPDATE).includes('update.flipbook'),
+      doc.systems[0].contexts.map((c) => c.kind).join(' '));
+  }
+
+  // --- refusals -------------------------------------------------------------
+  const untouched = base();
+  check('an unknown system is identity',
+    edits.setSpriteSheet(untouched, 'sys-nope', { columns: 4, rows: 4 }) === untouched);
+  const forClamp = base();
+  const clamped = edits.setSpriteSheet(forClamp, sys(forClamp), { columns: 0, rows: -3, fps: 0 });
+  check('  and a nonsense grid collapses to no sheet rather than throwing',
+    edits.readSpriteSheet(clamped, sys(clamped)).playing === false);
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

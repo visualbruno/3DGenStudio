@@ -333,6 +333,26 @@ function readConstBinding(irBlock, prop, constants, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.round(value) : fallback;
 }
 
+/**
+ * A constant binding read as a REAL number.
+ *
+ * SEPARATE FROM readConstBinding, WHICH ROUNDS. That one was written for tile
+ * counts and frame counts, where a fraction is meaningless, so it does
+ * `Math.round` and treats anything <= 0 as absent - correct for a column count
+ * and silently wrong for anything else. A black point of 0.02 read through it
+ * comes back as 0, which is the value that means "off", so the feature was
+ * inert and said nothing.
+ *
+ * Zero and negatives are returned as-is here: they are legitimate values for a
+ * continuous property, and only the caller knows whether they mean anything.
+ */
+function readConstFloat(irBlock, prop, constants, fallback) {
+  const binding = irBlock.bindings.find((b) => b.prop === prop);
+  if (!binding || binding.src !== BINDING_SRC.CONST) return fallback;
+  const value = constants.at(binding.index);
+  return Number.isFinite(value) ? value : fallback;
+}
+
 /** The deepest chain of sub-emitters allowed. See the note in resolveEventChannels. */
 const MAX_EVENT_DEPTH = 4;
 
@@ -1157,6 +1177,14 @@ export function compileVfxGraph(document, options = {}) {
       // define and a uniform, and it is constant for the whole batch. Reading
       // it per particle would be meaningless - every particle in one draw
       // shares the same atlas.
+      // Render state, read straight off the Output block like `tiles`: it
+      // decides a uniform and is constant for the whole batch, so reading it
+      // per particle would be meaningless.
+      const textureBlockForBlack = blocks.find((b) => b.kernel === 'output.texture');
+      const blackPoint = textureBlockForBlack
+        ? readConstFloat(textureBlockForBlack, 'blackPoint', constants, 0)
+        : 0;
+
       const flipbookBlock = blocks.find((b) => b.kernel === 'output.flipbook');
       const tiles = flipbookBlock
         ? [
@@ -1188,6 +1216,28 @@ export function compileVfxGraph(document, options = {}) {
         }, { systemName: system.name, mode: params.mode });
       }
 
+      // A player whose frame count does not match the sheet. Checked before the
+      // no-player case below, because the two are mutually exclusive.
+      const playerBlock = irUpdateBlocks.find((b) => b.kernel === 'flipbook.advance');
+      if (flipbookBlock && playerBlock) {
+        const totalTiles = Math.max(1, tiles[0]) * Math.max(1, tiles[1]);
+        const declared = readConstBinding(playerBlock, 'frames', constants, 0);
+        if (declared > 0 && totalTiles > 1 && declared !== totalTiles) {
+          diag.report('W_FLIPBOOK_FRAME_COUNT', {
+            systemId: system.id,
+            blockId: playerBlock.srcBlockId,
+            contextId: context.id,
+          }, {
+            systemName: system.name,
+            columns: tiles[0],
+            rows: tiles[1],
+            tiles: totalTiles,
+            frames: declared,
+            blockId: playerBlock.srcBlockId,
+          });
+        }
+      }
+
       // A sheet with no player advances nothing, so it would show frame 0 for
       // ever - which looks like the texture is simply cropped, and is the
       // hardest flipbook mistake to diagnose from the viewport.
@@ -1205,6 +1255,7 @@ export function compileVfxGraph(document, options = {}) {
         blend: params.blend,
         sort: params.sort,
         tiles,
+        blackPoint,
         instanceLayout,
         blocks,
         // Outputs sharing this key can be drawn in one instanced call. The
@@ -1220,7 +1271,10 @@ export function compileVfxGraph(document, options = {}) {
         // drawing different models cannot share an instanced call - merging
         // them would draw one model for all of them.
         batchKey: hashString(JSON.stringify([
-          params.mode, params.blend, params.sort, tiles,
+          // blackPoint joins the key for the same reason tiles does: it is a
+          // uniform, so two outputs that differ only in it cannot share a draw
+          // - one of them would silently render with the other value.
+          params.mode, params.blend, params.sort, tiles, blackPoint,
           blocks.map((b) => b.assetSlots || {}),
         ])),
       };

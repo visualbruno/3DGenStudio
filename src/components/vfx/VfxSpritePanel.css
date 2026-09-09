@@ -1,0 +1,228 @@
+/* Opaque, like every overlay on this page: no backdrop-filter anywhere near the
+   live WebGL canvas. That is a measured Electron regression, not a preference -
+   see the note in AssemblyPage.css. */
+.vfx-sprite-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.vfx-sprite {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  color: #e6e9f0;
+}
+
+.vfx-sprite__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #23262d;
+}
+
+.vfx-sprite__header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.vfx-sprite__header button {
+  background: none;
+  border: none;
+  color: #8a93a4;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.vfx-sprite__header button:hover {
+  color: #e6e9f0;
+}
+
+.vfx-sprite__body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vfx-sprite__teach {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #9aa3b4;
+}
+
+.vfx-sprite__teach strong {
+  color: #cdd4e0;
+}
+
+.vfx-sprite__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.vfx-sprite__presets button {
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.vfx-sprite__presets button:hover {
+  border-color: #3a3f49;
+  color: #e6e9f0;
+}
+
+.vfx-sprite__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vfx-sprite__field > span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+}
+
+.vfx-sprite__field textarea,
+.vfx-sprite__field select {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.vfx-sprite__note {
+  margin: 0;
+  font-size: 11px;
+  color: #8a93a4;
+}
+
+.vfx-sprite__note strong {
+  color: #cdd4e0;
+}
+
+.vfx-sprite__message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  border-radius: 5px;
+  padding: 8px 10px;
+}
+
+.vfx-sprite__message img {
+  width: 44px;
+  height: 44px;
+  border-radius: 4px;
+  /* On the checkerboard-free dark panel a black-background sprite would vanish
+     into the message box, so it gets its own dark tile to sit on. */
+  background: #000;
+  object-fit: contain;
+}
+
+.vfx-sprite__message.is-error {
+  background: rgba(160, 60, 60, 0.16);
+  border: 1px solid rgba(200, 90, 90, 0.35);
+  color: #f0c8c8;
+}
+
+.vfx-sprite__message.is-success {
+  background: rgba(60, 140, 90, 0.14);
+  border: 1px solid rgba(90, 190, 130, 0.3);
+  color: #c8f0d8;
+}
+
+.vfx-sprite__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #23262d;
+}
+
+.vfx-sprite__actions button {
+  background: #1b1e24;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.vfx-sprite__actions button.is-primary {
+  background: #2f5fb0;
+  border-color: #3d6fc4;
+  color: #fff;
+}
+
+.vfx-sprite__actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The shared ComfyUI parameter field (WorkflowParameterField), reused verbatim
+ * from the image editor so enum dropdowns and the prompt-helper button come for
+ * free. Only the skin is local: its own stylesheet is sized for a side panel,
+ * and this is a compact dialog. */
+.vfx-sprite__params {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vfx-sprite__params .image-editor-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+  gap: 4px;
+}
+
+/* A checkbox reads as a sentence, not as a field label. */
+.vfx-sprite__params .image-editor-label--checkbox {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #e6e9f0;
+}
+
+.vfx-sprite__params .image-editor-input {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 8px;
+}
+
+.vfx-sprite__params .image-editor-input:focus-visible {
+  outline: 2px solid #6ea8ff;
+  outline-offset: 1px;
+}
+

@@ -261,6 +261,152 @@ console.log('\n--- Drag surfaces ---');
     && /@property --vfx-clip-dw \{[^}]*syntax: '<length>'[^}]*initial-value: 0px;/.test(css));
 }
 
+console.log('\n--- A newly created asset reaches the effect ---');
+{
+  // THE BUG: generating a sprite uploaded it, wired it into the Output, and
+  // changed nothing on screen. The asset LISTING is fetched when the page
+  // opens, so an asset created DURING the session is not in it - `resolveUrl`
+  // answered null, loadVfxTextures found nothing, and the batch fell back to
+  // the built-in sprite. Silently, because that fallback is the correct
+  // behaviour for a texture that genuinely is not there.
+  //
+  // Fixed by reacting to the DOCUMENT rather than to the generate button, so
+  // every route that can introduce a new reference is covered by one mechanism:
+  // the sprite panel, the asset picker, a template, an effect an agent saved in
+  // another window.
+  const pageSource = await readFile(
+    new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+
+  check('the page can reload the asset library',
+    /const reloadLibrary = useCallback/.test(pageSource));
+  check('  and notices ids the listing has never heard of',
+    /const missingAssetKey = useMemo/.test(pageSource)
+    && /!known\.has\(Number\(match\[1\]\)\)/.test(pageSource));
+  // KEYED ON THE MISSING SET, not on the document: a genuinely deleted asset
+  // stays missing after the reload, so an unchanged key means the effect does
+  // not run again. Keying on `doc` would reload on every keystroke for ever.
+  check('  reloading once per new unknown id, not once per render',
+    /\}, \[libraryReady, missingAssetKey, reloadLibrary\]\)/.test(pageSource));
+
+  // A LOAD FAILURE IS NOT A COMPILE DIAGNOSTIC. The compiler is pure and knows
+  // nothing about whether the bytes arrived, so the only place this can be
+  // reported is the page - and both loaders had always returned a `failed` list
+  // that nothing read.
+  const hook = await readFile(
+    new URL('../../hooks/useVfxRuntime.js', import.meta.url), 'utf8');
+  check('the runtime hook reports which assets failed to load',
+    /failedAssets/.test(hook) && /return \{ runtime, batches, textures, meshes, failedAssets \}/.test(hook));
+  check('  from both loaders, not just one',
+    (hook.match(/setFailed\('(texture|mesh)', result\.failed\)/g) || []).length === 2,
+    String((hook.match(/setFailed\('(texture|mesh)', result\.failed\)/g) || []).length));
+  check('  and the page shows them', /failedAssets\.length > 0 && \(/.test(pageSource));
+  check('    naming the asset rather than an id the author never sees',
+    /assetLabelFor\(doc, entry\.assetId\)/.test(pageSource));
+}
+
+console.log('\n--- The sprite panel workflow filter ---');
+{
+  // A WORKFLOW PARAMETER CARRIES `type` AND `valueType`; AN OUTPUT CARRIES ONLY
+  // `valueType`.
+  //
+  // THE BUG: the panel filtered on `output.type === 'image'`, which is a field
+  // outputs do not have. It matched nothing, the dropdown read "No image
+  // workflows in the library", and the library held six perfectly good
+  // text-to-image workflows. Guessing a field name is what caused it, so the
+  // fix is one reader that accepts either spelling - and this checks the panel
+  // uses that reader everywhere rather than reintroducing a bare `.type`.
+  const panel = await readFile(
+    new URL('../../components/vfx/VfxSpritePanel.jsx', import.meta.url), 'utf8');
+  const code = panel
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+  check('the panel reads a type through one helper',
+    /const typeOf = \(entry\) => entry\?\.valueType \|\| entry\?\.type/.test(code));
+  // No bare `.type ===` comparisons left anywhere, which is the shape that
+  // failed. `typeOf(...) === 'string'` is fine; `p.type === 'string'` is not.
+  const bare = [...code.matchAll(/\w+\.type\s*===/g)].map((m) => m[0]);
+  check('  and nowhere compares a bare .type', bare.length === 0, bare.join(' '));
+  check('  including the prompt parameter lookup',
+    /find\(p => typeOf\(p\) === 'string'\)/.test(code));
+  check('  and the output check', /typeOf\(output\) === 'image'/.test(code));
+
+  // An empty dropdown has to say WHICH empty it is. "No image workflows"
+  // reads as "your library has none" when the truth was "the filter is broken",
+  // and that ambiguity is what made the bug hard to report.
+
+  // EVERY PARAMETER IS AUTHORABLE, not just the prompt. A sprite workflow has a
+  // seed, a step count, a sampler and a resolution like any other, and offering
+  // only a prompt box meant every sprite came out of the same dice roll with no
+  // way to change it. The field is the one the image editor, graph and kanban
+  // panels use, so enum parameters arrive as dropdowns and there is no fourth
+  // implementation of "render a ComfyUI parameter" to keep in step.
+  check('the panel renders parameters with the shared field',
+    /import WorkflowParameterField from '\.\.\/imageEditor\/controls\/WorkflowParameterField'/
+      .test(code)
+    && /<WorkflowParameterField/.test(code));
+  check('  over the selected workflow’s whole parameter list',
+    /\(workflow\.parameters \|\| \[\]\)[\s\S]{0,400}\.map\(parameter =>/.test(code));
+
+  // AND THE RUN SENDS THEM. Rendering a seed field that the run then ignores is
+  // worse than not offering one, because the author watches the value change
+  // and the image not change. An untouched field resolves to the workflow's own
+  // saved default rather than to '' - an empty seed or step count is a failed
+  // run or a noise image, which is the trap ImageEditorPage already documents.
+  check('the run sends every parameter, not just the prompt',
+    /for \(const parameter of workflow\.parameters \|\| \[\]\)/.test(code)
+    && /inputs\[parameter\.id\] = values\[parameter\.id\] \?\? parameter\.defaultValue \?\? ''/
+      .test(code));
+  check('  while still appending the black background to the prompt',
+    /inputs\[promptParam\.id\] = `\$\{prompt\.trim\(\)\}, \$\{BLACK_BACKGROUND\}`/.test(code));
+
+  // Parameter ids are `<nodeId>.<inputKey>`, so "6.text" appears in most of
+  // these workflows meaning something different in each. Values must not carry
+  // across a change of workflow or one workflow's step count silently lands on
+  // another's sampler.
+  check('  and switching workflow drops the previous values',
+    /const selectWorkflow = \(id\) => \{[\s\S]{0,120}setValues\(\{\}\)/.test(code));
+
+  // SORTED BY NAME. The library returns them in insertion order, which tells
+  // the author nothing when the dropdown holds a dozen entries.
+  check('the workflow list is sorted by name',
+    /usable\.sort\(\(a, b\) => String\(a\.name \|\| ''\)\.localeCompare\(String\(b\.name \|\| ''\)\)\)/
+      .test(code));
+
+  check('an empty dropdown distinguishes an empty library from no match',
+    /No ComfyUI workflows in the library/.test(panel)
+    && /None of \$\{considered\} workflows is text-to-image/.test(panel));
+}
+
+console.log('\n--- The shortcuts sheet ---');
+{
+  // A SHEET THAT DOCUMENTS A KEY THE APP DOES NOT HANDLE IS WORSE THAN NO
+  // SHEET: the reader tries it, nothing happens, and they stop trusting the
+  // rest of the list. `Alt + arrow` was in the plan and had never been built -
+  // writing this file is what surfaced that, and it is now implemented rather
+  // than merely documented.
+  const sheet = await readFile(
+    new URL('../../components/vfx/VfxShortcuts.jsx', import.meta.url), 'utf8');
+  const page = await readFile(
+    new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+  const row = await readFile(
+    new URL('../../components/vfx/VfxBlockRow.jsx', import.meta.url), 'utf8');
+
+  const claims = (key) => sheet.includes(key);
+  check('the sheet claims the keys it should', ['Space', 'Ctrl / Cmd + Z', 'Escape', 'Alt']
+    .every(claims));
+
+  // Each claim, against the handler that has to honour it.
+  check('  Space is handled', /event\.code === 'Space'/.test(page));
+  check('  undo and redo are handled',
+    /toLowerCase\(\) === 'z'/.test(page) && /toLowerCase\(\) === 'y'/.test(page));
+  check('  Escape is handled', /event\.key === 'Escape'/.test(page));
+  // The one the sheet found missing.
+  check('  Alt + arrow really reorders a block',
+    /event\.altKey/.test(row) && /actions\.moveBlock\(block\.id, index \+ delta\)/.test(row));
+  check('  and the sheet itself opens on ?', /event\.key === '\?'/.test(page));
+}
+
 console.log('\n--- Mute and solo ---');
 {
   // THEY ARE PREVIEW STATE, NOT DOCUMENT STATE, and everything that renders
@@ -368,6 +514,117 @@ console.log('\n--- React Flow board ---');
     /onNodeDragStart=\{/.test(board)
     && /dragOrigin\.current = node\.id/.test(board)
     && /change\.id !== dragOrigin\.current/.test(board));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Shader uniforms are declared in the stage that reads them ---');
+// ---------------------------------------------------------------------------
+//
+// A UNIFORM READ IN A STAGE THAT DOES NOT DECLARE IT IS A COMPILE ERROR, and it
+// takes the WHOLE EFFECT down: the program never links, so nothing draws at all
+// - not the textured particles, not the untextured ones. The browser reports
+// only "Fragment shader is not compiled" and the viewport is empty.
+//
+// THE BUG: `uBlackPoint` was declared beside `uTiles`, which lives in the
+// VERTEX shader because the flipbook cell maths runs there. It is read in the
+// FRAGMENT shader.
+//
+// The test written for that property asserted the shader TEXT contained the
+// line, and that the line came before the colour multiply. Both were true the
+// whole time the shader was broken. Presence is not scope, so check scope.
+{
+  const stageOf = (name) => {
+    const opener = `const ${name} = /* glsl */${BACKTICK}`;
+    const at = materials.indexOf(opener);
+    if (at < 0) return null;
+    const start = at + opener.length;
+    const end = materials.indexOf(`${BACKTICK};`, start);
+    return materials.slice(start, end < 0 ? materials.length : end);
+  };
+
+  // The vertex program is the head and the body concatenated - see
+  // buildVertexShader - so a uniform declared in either is in scope for both.
+  const vertexHead = stageOf('VERTEX_HEAD');
+  const vertexBody = stageOf('VERTEX_BODY');
+  const fragment = stageOf('FRAGMENT');
+  check('both shader stages were found',
+    Boolean(vertexHead && vertexBody && fragment));
+  const vertex = `${vertexHead || ''}\n${vertexBody || ''}`;
+
+  // Comments come out first: these shaders explain their own uniforms by name
+  // in prose, and a mention is not a use.
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+
+  const DECLARATION = /uniform\s+\w+\s+(u\w+)\s*;/g;
+
+  const undeclared = (rawSource, label) => {
+    const source = stripComments(rawSource);
+    const declared = new Set([...source.matchAll(DECLARATION)].map((m) => m[1]));
+    // Every `uSomething` the stage still mentions once its own declarations are
+    // removed. Our uniforms are all named uXxx; three's injected ones are not.
+    const used = new Set(
+      [...source.replace(DECLARATION, ' ').matchAll(/\bu[A-Z]\w*/g)].map((m) => m[0]),
+    );
+    return [...used].filter((name) => !declared.has(name)).map((name) => `${label}:${name}`);
+  };
+
+  const missing = [...undeclared(vertex, 'vertex'), ...undeclared(fragment, 'fragment')];
+  check('every uniform is declared in the stage that reads it',
+    missing.length === 0, missing.join(' '));
+
+  // And the guard is not vacuous - it has to be finding real uniforms, and in
+  // particular the one that taught it the lesson.
+  const fragmentUniforms = [...stripComments(fragment || '').matchAll(DECLARATION)]
+    .map((m) => m[1]);
+  check('  the fragment stage really declares several',
+    fragmentUniforms.length >= 4, fragmentUniforms.join(' '));
+  check('  including the one this guard was written for',
+    fragmentUniforms.includes('uBlackPoint'), fragmentUniforms.join(' '));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The preview canvas is opaque ---');
+// ---------------------------------------------------------------------------
+//
+// ADDITIVE PARTICLES REQUIRE AN OPAQUE RENDER TARGET. A transparent canvas is
+// composited as PREMULTIPLIED alpha - a colour channel may not exceed the alpha
+// it is premultiplied by, and browsers clamp when it does - and no pair of
+// blend factors survives that:
+//
+//   alpha written by the preset (SrcAlpha, One)  ->  a sprite with no alpha
+//     channel drives the canvas alpha to 1 across the whole quad while adding
+//     no colour, so its black background becomes an opaque BLACK BOX that hides
+//     the page backdrop.
+//   alpha left alone (Zero, One)                 ->  alpha stays 0, the
+//     compositor clamps the glow to it, and particles appear ONLY where
+//     something else already wrote alpha. With the grid on, the effect drew as
+//     a crosshatch; with the grid off, nothing at all.
+//
+// Both were observed on one effect, hours apart, and each looked like a
+// different bug. The fix is the destination, so that is what is checked here.
+// This cannot be caught from the material: `createParticleMaterial` is correct
+// in both cases.
+{
+  const viewport = await readFile(
+    new URL('../../components/vfx/VfxViewport.jsx', import.meta.url), 'utf8');
+
+  check('the preview canvas asks for an opaque context',
+    /gl=\{\{[^}]*alpha:\s*false/.test(viewport));
+
+  // And having taken the page's CSS backdrop out of the picture, the scene has
+  // to paint one - or the viewport is plain black and the grid floats in a void
+  // that looks like a failed render.
+  check('  and the scene paints the ground the CSS used to',
+    /scene\.background\s*=\s*new THREE\.Color\(/.test(viewport));
+
+  // The thumbnail path renders offscreen with its own scene and never had this
+  // problem, which is why saved cards looked right while the live preview did
+  // not. Keep it that way: it is the same requirement, met independently.
+  const thumb = await readFile(new URL('../vfxThumbnail.js', import.meta.url), 'utf8');
+  check('  and the thumbnail renderer is opaque too',
+    /scene\.background\s*=\s*new THREE\.Color\(/.test(thumb));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

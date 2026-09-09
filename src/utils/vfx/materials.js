@@ -208,6 +208,11 @@ const FRAGMENT = /* glsl */`
 uniform sampler2D uMap;
 uniform float uIntensity;
 uniform float uAlphaCutoff;
+// DECLARED IN THE STAGE THAT USES IT. It was first written next to uTiles,
+// which lives in the VERTEX shader because the flipbook cell maths runs there -
+// so the fragment shader referenced an identifier it had never seen, failed to
+// compile, and the effect rendered NOTHING at all, with or without a texture.
+uniform float uBlackPoint;
 
 varying vec2 vUv;
 varying vec4 vColor;
@@ -217,6 +222,27 @@ void main() {
   #ifdef USE_MAP
     texel = texture2D(uMap, vUv);
   #endif
+
+  // THE BLACK POINT, and it is the difference between a usable additive sprite
+  // and a box of grey.
+  //
+  // Additive blending ADDS every pixel, so a sprite whose background is 0.3/255
+  // instead of 0 is invisible on its own and unmistakable once sixty of them
+  // overlap - which is the normal state of a fire. Some sprites are exactly
+  // black, though: one generated flame measured 87% pure #000000, and pure
+  // black adds precisely nothing.
+  //
+  // SO THIS IS NOT WHAT PUTS AN OPAQUE BLACK BOX around a particle. That is the
+  // alpha channel meeting a transparent canvas, and it is fixed in applyBlend.
+  // What this fixes is the softer version - a background sitting a few units
+  // above zero, which reads as a faint grey haze once enough quads overlap.
+  //
+  // Subtract-and-renormalise rather than a hard threshold: clamping to zero
+  // alone would leave a visible step at the cutoff, while rescaling keeps the
+  // bright parts where they were and only pulls the floor down.
+  if (uBlackPoint > 0.0) {
+    texel.rgb = max(texel.rgb - uBlackPoint, vec3(0.0)) / (1.0 - uBlackPoint);
+  }
 
   vec4 colour = texel * vColor;
   colour.rgb *= uIntensity;
@@ -278,6 +304,17 @@ function applyBlend(params, blend) {
       return false;
     case 'additive':
     default:
+      // ADDITIVE REQUIRES AN OPAQUE RENDER TARGET, and that requirement is met
+      // by the canvas, not here. A transparent canvas is composited as
+      // premultiplied alpha, and there is no pair of blend factors that makes
+      // additive work into one: write alpha and the sprite's black background
+      // becomes an opaque box over the page; leave alpha alone and the browser
+      // clamps the glow away, leaving particles visible only where something
+      // else had already written alpha. Both artefacts were observed.
+      //
+      // So the preset is correct and the fix belongs at the destination. See
+      // the comment on VfxViewport's <Canvas gl={{ alpha: false }}>, and
+      // vfxThumbnail.js, which has always rendered onto an opaque background.
       params.blending = AdditiveBlending;
       params.transparent = true;
       // Depth write off, depth TEST on: an additive particle should be hidden
@@ -317,6 +354,8 @@ export function createParticleMaterial(spec) {
     stretch = 0.08,
     smoothing = true,
     tiles = null,
+    // Sprites are never perfectly black - see the note in the fragment shader.
+    blackPoint = 0,
   } = spec;
 
   const has = new Set(layout.fields.map((f) => f.name));
@@ -351,6 +390,7 @@ export function createParticleMaterial(spec) {
       // author switching between them is not also re-picking every size.
       uPointScale: { value: 1 },
       uTiles: { value: new Vector2(columns, rows) },
+      uBlackPoint: { value: blackPoint },
     },
     depthTest: true,
     // Particles are flat quads with no meaningful facing, and a billboard

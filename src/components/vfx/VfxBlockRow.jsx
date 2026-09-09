@@ -132,10 +132,28 @@ export default function VfxBlockRow({
           <span className="material-symbols-outlined">drag_indicator</span>
         </span>
 
+        {/* ALT + UP/DOWN REORDERS FROM THE KEYBOARD.
+            Block order is semantic - blocks WRITE attributes in sequence, so
+            moving one changes what the effect does - and until this it could
+            only be changed by a pointer drag. That is not a convenience gap, it
+            is the feature being unreachable without a mouse.
+
+            On the title button because that is the row's focusable element, and
+            Alt because the bare arrows belong to the browser's own navigation. */}
         <button
           type="button"
           className="vfx-block__title nodrag"
           onClick={() => actions.select(block.id)}
+          onKeyDown={event => {
+            if (!event.altKey) return
+            const delta = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
+            if (!delta) return
+            event.preventDefault()
+            // Selected as well as moved, so the Parameters panel follows the
+            // block rather than the author losing track of what they just moved.
+            actions.select(block.id)
+            actions.moveBlock(block.id, index + delta)
+          }}
           title={def ? `${def.blurb}\n\n${def.teach}` : `Unknown block type "${block.type}"`}
         >
           <span className="vfx-block__name">{def?.label || block.type}</span>

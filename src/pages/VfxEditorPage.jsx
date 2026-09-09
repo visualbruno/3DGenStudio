@@ -40,6 +40,8 @@ import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import AssetSelectorModal from '../components/AssetSelectorModal'
 import VfxExportDialog from '../components/vfx/VfxExportDialog'
+import VfxSpritePanel from '../components/vfx/VfxSpritePanel'
+import VfxShortcuts from '../components/vfx/VfxShortcuts'
 import VfxViewport from '../components/vfx/VfxViewport'
 import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
 import VfxBoard from '../components/vfx/VfxBoard'
@@ -80,6 +82,14 @@ const LEVEL_KEY = 'vfx:level'
 // One shared empty, so turning the gizmos off does not hand the viewport a new
 // array on every render.
 const EMPTY_GIZMOS = Object.freeze([])
+
+// The name an author gave an asset, for a message about an id they never see.
+function assetLabelFor(doc, assetId) {
+  for (const entry of Object.values(doc.references || {})) {
+    if (entry?.ref === `asset:${assetId}`) return entry.name || `asset ${assetId}`
+  }
+  return `asset ${assetId}`
+}
 const PARAMS_DEFAULT = 300
 const PREVIEW_DEFAULT = 520
 
@@ -145,6 +155,8 @@ export default function VfxEditorPage() {
   const [preview, setPreview] = useState({})
   const [picker, setPicker] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [spriteOpen, setSpriteOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   // The system the board is showing. See activeSystemId below for why this is
   // a LAST CHOICE rather than the answer.
   const [pinnedSystemId, setPinnedSystemId] = useState(null)
@@ -186,6 +198,22 @@ export default function VfxEditorPage() {
   // The library, only so IR asset ids can be turned into URLs and the picker
   // has something to show. The runtime deliberately has no opinion about where
   // assets live - see the header of src/utils/vfx/assets.js.
+  //
+  // A CALLBACK RATHER THAN AN EFFECT BODY, because it has to run again: a
+  // sprite generated during this session is not in a listing fetched when the
+  // page opened, and the effect that references it would resolve to nothing.
+  const reloadLibrary = useCallback(() => (
+    getLibraryAssets?.()
+      .then(library => {
+        setLibraryImages(library?.images || [])
+        setLibraryMeshes(library?.meshes || [])
+      })
+      .catch(() => {
+        // An effect with no textures still plays, on the built-in sprite.
+      })
+      .finally(() => setLibraryReady(true))
+  ), [getLibraryAssets])
+
   useEffect(() => {
     let cancelled = false
     getLibraryAssets?.()
@@ -208,6 +236,37 @@ export default function VfxEditorPage() {
     }
   }, [getLibraryAssets])
 
+  // ASSET IDS THE DOCUMENT USES THAT THE LISTING HAS NEVER HEARD OF.
+  //
+  // THE BUG THIS FIXES: generating a sprite uploaded it, wired it in, and
+  // changed nothing on screen. The listing above is fetched when the page
+  // opens, so an asset created DURING the session is not in it - `resolveUrl`
+  // answered null, loadVfxTextures found nothing, and the batch fell back to
+  // the built-in blob. Silently, because falling back to the built-in sprite is
+  // the correct behaviour for a texture that genuinely is not there.
+  //
+  // Reacting to the DOCUMENT rather than to the generate button covers every
+  // way a new reference can appear - the sprite panel, the asset picker, an
+  // effect saved by an agent in another window, a template - with one
+  // mechanism instead of a call at each site, one of which would be forgotten.
+  const missingAssetKey = useMemo(() => {
+    const known = indexLibraryAssets([...libraryImages, ...libraryMeshes])
+    const missing = []
+    for (const entry of Object.values(doc.references || {})) {
+      const match = /^asset:(\d+)$/.exec(String(entry?.ref || ''))
+      if (match && !known.has(Number(match[1]))) missing.push(match[1])
+    }
+    return missing.sort().join(',')
+  }, [doc.references, libraryImages, libraryMeshes])
+
+  useEffect(() => {
+    if (!libraryReady || !missingAssetKey) return
+    // KEYED ON THE MISSING SET, so a genuinely deleted asset costs exactly ONE
+    // reload rather than one per render: after the reload the key is unchanged,
+    // and an unchanged dependency does not run the effect again.
+    reloadLibrary()
+  }, [libraryReady, missingAssetKey, reloadLibrary])
+
   // IMAGES AND MESHES BOTH, because useVfxRuntime hands this one resolver to
   // loadVfxTextures and loadVfxMeshes alike. Built from the images alone, every
   // mesh asset resolved to null and the mesh renderer silently had nothing to
@@ -228,7 +287,9 @@ export default function VfxEditorPage() {
     [doc, engineTarget],
   )
 
-  const { runtime, batches, textures, meshes } = useVfxRuntime({ ir: compiled.ir, resolveUrl, profile })
+  const { runtime, batches, textures, meshes, failedAssets } = useVfxRuntime({
+    ir: compiled.ir, resolveUrl, profile,
+  })
 
   // Mirrored into a ref in an effect rather than assigned during render.
   // The transport callbacks and the timeline's per-frame playhead read the
@@ -501,6 +562,16 @@ export default function VfxEditorPage() {
         d => edits.setEffectSettings(d, { duration: Math.min(600, Math.max(0.05, seconds)) }),
         { label: 'Change duration', coalesceKey: 'effect:duration' },
       ),
+      // ONE ENTRY FOR THE WHOLE SHEET. It touches up to three blocks across two
+      // stages, and an author setting a 4x4 grid performed one action, not five.
+      setSystemTexture: (systemId, asset) => edit(
+        d => edits.setSystemTexture(d, systemId, asset),
+        'Set sprite texture',
+      ),
+      setSpriteSheet: (systemId, spec) => edit(
+        d => edits.setSpriteSheet(d, systemId, spec),
+        'Set sprite sheet',
+      ),
       addNote: position => edit(
         d => edits.addNote(d, { x: position?.x ?? 0, y: position?.y ?? 0 }),
         'Add note',
@@ -717,7 +788,17 @@ export default function VfxEditorPage() {
         setPlaying(current => !current)
         return
       }
-      if (event.key === 'Escape') setSelection(null)
+      // `?` opens the sheet, Escape closes whatever is open. Checked before the
+      // selection clear so Escape does not do both at once.
+      if (event.key === '?') {
+        event.preventDefault()
+        setShortcutsOpen(current => !current)
+        return
+      }
+      if (event.key === 'Escape') {
+        setShortcutsOpen(false)
+        setSelection(null)
+      }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -871,6 +952,27 @@ export default function VfxEditorPage() {
               Export...
             </button>
           )}
+          {/* Generating a sprite needs a system to give it to, and the board
+              already tracks which one is being edited - so this follows the
+              board rather than asking again. */}
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={() => setSpriteOpen(true)}
+            disabled={!activeSystemId}
+            title="Generate a particle sprite with ComfyUI and wire it into this system"
+          >
+            Sprite...
+          </button>
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={() => setShortcutsOpen(true)}
+            title="Keyboard shortcuts (?)"
+            aria-label="Keyboard shortcuts"
+          >
+            <span className="material-symbols-outlined">keyboard</span>
+          </button>
           <span className={`vfx-page__status is-${dirty ? 'dirty' : status}`}>
             {status === 'loading' ? 'Opening...'
               : status === 'saving' ? 'Saving...'
@@ -1040,6 +1142,24 @@ export default function VfxEditorPage() {
               </span>
               {summary.text}
             </div>
+            {/* A LOAD failure, which no compile diagnostic can see: the
+                compiler is pure and knows nothing about whether the bytes
+                arrived. Reported here rather than left to the built-in sprite
+                fallback, which is correct behaviour and a terrible explanation. */}
+            {failedAssets.length > 0 && (
+              <ul className="vfx-page__diagnostics-list">
+                {failedAssets.map(entry => (
+                  <li key={`${entry.kind}-${entry.assetId}`} className="is-warn">
+                    <span className="material-symbols-outlined">broken_image</span>
+                    <span className="vfx-page__diagnostics-text">
+                      The {entry.kind} “{assetLabelFor(doc, entry.assetId)}” could not be loaded,
+                      so {entry.kind === 'mesh' ? 'that emitter is spawning at a point' : 'the built-in sprite is being drawn'} instead.
+                      It may have been deleted from the library.
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
             {compiled.diagnostics.length > 0 && (
               <ul className="vfx-page__diagnostics-list">
                 {compiled.diagnostics.map((diagnostic, index) => (
@@ -1158,6 +1278,17 @@ export default function VfxEditorPage() {
         collapsed={timelineCollapsed}
         onToggleCollapsed={() => setTimelineCollapsed(current => !current)}
       />
+
+      {shortcutsOpen && <VfxShortcuts onClose={() => setShortcutsOpen(false)} />}
+
+      {spriteOpen && (
+        <VfxSpritePanel
+          systemId={activeSystemId}
+          systemName={doc.systems.find(s => s.id === activeSystemId)?.name || ''}
+          onGenerated={asset => actions.setSystemTexture(activeSystemId, asset)}
+          onClose={() => setSpriteOpen(false)}
+        />
+      )}
 
       {exporting && (
         <VfxExportDialog assetId={assetId} name={name} onClose={() => setExporting(false)} />

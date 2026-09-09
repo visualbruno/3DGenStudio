@@ -142,6 +142,7 @@ export function createBatch(spec) {
     // agrees about it - two outputs with different layouts cannot share a draw
     // without one of them playing its sheet through the other's grid.
     tiles: output.tiles || null,
+    blackPoint: output.blackPoint || 0,
   });
 
   const mesh = new Mesh(geometry, material);

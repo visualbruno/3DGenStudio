@@ -1,0 +1,115 @@
+/* Opaque, like every overlay on this page - no backdrop-filter near the live
+   WebGL canvas. */
+.vfx-shortcuts-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 9, 12, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+.vfx-shortcuts {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  color: #e6e9f0;
+}
+
+.vfx-shortcuts__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #23262d;
+}
+
+.vfx-shortcuts__header h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.vfx-shortcuts__header button {
+  background: none;
+  border: none;
+  color: #8a93a4;
+  cursor: pointer;
+  display: inline-flex;
+}
+
+.vfx-shortcuts__header button:hover {
+  color: #e6e9f0;
+}
+
+.vfx-shortcuts__body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.vfx-shortcuts__body h4 {
+  margin: 0 0 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a93a4;
+}
+
+.vfx-shortcuts__body dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Each row is its own grid rather than one grid over the whole list: the key
+   column should size to the longest key IN ITS GROUP, not to the longest in the
+   dialog, or "Shift + drag on empty space" would push every other group's
+   description halfway across the panel. */
+.vfx-shortcuts__body dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+}
+
+.vfx-shortcuts__body dt {
+  margin: 0;
+}
+
+.vfx-shortcuts__body dd {
+  margin: 0;
+  font-size: 12px;
+  color: #b8c0cf;
+}
+
+.vfx-shortcuts__body kbd {
+  display: inline-block;
+  background: #1b1e24;
+  border: 1px solid #2f333b;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: #cdd4e0;
+  white-space: nowrap;
+}
+
+.vfx-shortcuts__note {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid #23262d;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #8a93a4;
+}

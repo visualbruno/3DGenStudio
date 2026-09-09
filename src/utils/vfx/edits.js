@@ -414,7 +414,50 @@ export function setAssetReference(doc, slot, entry) {
   })
 }
 
-/** Set one of a block's discrete mode switches. */
+/**
+ * Point a system's Output at an image asset, creating what it needs.
+ *
+ * THE "AND NOW WIRE IT UP" STEP, and it is three things rather than one: the
+ * Output needs a Sprite Texture block, the block needs a slot key, and the slot
+ * needs an entry in `references`. Doing them by hand is how a generated sprite
+ * ends up sitting in the library while the effect still draws the built-in blob.
+ *
+ * The slot key is derived from the BLOCK, not from the asset, so re-pointing the
+ * same block replaces the reference rather than accumulating slots - the same
+ * rule the asset picker follows.
+ *
+ * @param {Object} doc
+ * @param {string} systemId
+ * @param {{assetId: number, name?: string, kind?: string}} asset
+ * @returns {Object}
+ */
+export function setSystemTexture(doc, systemId, asset) {
+  const id = Number(asset?.assetId)
+  if (!Number.isFinite(id)) return doc
+  const system = doc.systems.find(entry => entry.id === systemId)
+  const output = system?.contexts.find(context => context.kind === CONTEXT_KIND.OUTPUT)
+  if (!output) return doc
+
+  let next = doc
+  let block = output.blocks.find(entry => entry.type === 'output.setMainTexture')
+  if (!block) {
+    next = addBlock(next, { contextId: output.id, blockType: 'output.setMainTexture' })
+    block = next.systems.find(entry => entry.id === systemId).contexts
+      .find(context => context.id === output.id).blocks
+      .filter(entry => entry.type === 'output.setMainTexture').pop()
+  }
+  if (!block) return doc
+
+  const slot = `tex_${block.id}_texture`
+  next = setAssetReference(next, slot, {
+    kind: asset.kind || 'image',
+    ref: `asset:${id}`,
+    name: asset.name || '',
+    colorSpace: 'srgb',
+  })
+  return setBlockAssetSlot(next, block.id, 'texture', slot)
+}
+
 /**
  * Drop a property the catalog does not define.
  *
@@ -823,6 +866,136 @@ export function removeNote(doc, noteId) {
  * to split. An applier that guessed at either would be worse than a button that
  * opens the right surface.
  */
+/**
+ * Configure a system's sprite sheet in one move.
+ *
+ * A SHEET IS THREE BLOCKS IN TWO STAGES, and that is the whole reason this
+ * exists. `output.setFlipbook` says how the atlas is cut, `update.flipbook`
+ * steps through it, and the two live in DIFFERENT contexts - so the natural way
+ * to set one up is to add the Output block, see nothing happen, and conclude
+ * the texture is simply cropped. That is the hardest flipbook mistake to
+ * diagnose from the viewport, and the compiler has a warning for it precisely
+ * because it kept happening.
+ *
+ * Setting them together also makes W_FLIPBOOK_FRAME_COUNT unreachable from the
+ * UI: the frame count is DERIVED from the grid rather than typed, so the player
+ * and the sheet cannot disagree.
+ *
+ * `columns * rows <= 1` REMOVES both, which is the honest inverse - a one-tile
+ * sheet is not a sheet, and leaving a 1x1 flipbook block behind would keep the
+ * shader's USE_FLIPBOOK define and its uniform for no reason.
+ *
+ * @param {Object} doc
+ * @param {string} systemId
+ * @param {{columns?: number, rows?: number, fps?: number}} spec
+ * @returns {Object}
+ */
+export function setSpriteSheet(doc, systemId, spec = {}) {
+  const system = doc.systems.find(entry => entry.id === systemId)
+  if (!system) return doc
+
+  const whole = (value, fallback) => {
+    const n = Math.round(Number(value))
+    return Number.isFinite(n) && n >= 1 ? n : fallback
+  }
+  const columns = whole(spec.columns, 1)
+  const rows = whole(spec.rows, 1)
+  const fps = Number.isFinite(Number(spec.fps)) && Number(spec.fps) > 0 ? Number(spec.fps) : 24
+  const tiles = columns * rows
+
+  const output = system.contexts.find(context => context.kind === CONTEXT_KIND.OUTPUT)
+  if (!output) return doc
+
+  const sheetBlock = output.blocks.find(block => block.type === 'output.setFlipbook')
+  const findPlayer = (d) => {
+    const sys = d.systems.find(entry => entry.id === systemId)
+    for (const context of sys?.contexts || []) {
+      const block = context.blocks.find(entry => entry.type === 'update.flipbook')
+      if (block) return block
+    }
+    return null
+  }
+
+  let next = doc
+
+  if (tiles <= 1) {
+    if (sheetBlock) next = removeBlock(next, sheetBlock.id)
+    const player = findPlayer(next)
+    if (player) next = removeBlock(next, player.id)
+    return next
+  }
+
+  if (sheetBlock) {
+    next = setBlockProp(next, sheetBlock.id, 'columns', columns)
+    next = setBlockProp(next, sheetBlock.id, 'rows', rows)
+  } else {
+    next = addBlock(next, { contextId: output.id, blockType: 'output.setFlipbook' })
+    const added = next.systems.find(entry => entry.id === systemId).contexts
+      .find(context => context.id === output.id).blocks
+      .filter(block => block.type === 'output.setFlipbook').pop()
+    if (added) {
+      next = setBlockProp(next, added.id, 'columns', columns)
+      next = setBlockProp(next, added.id, 'rows', rows)
+    }
+  }
+
+  // THE UPDATE STAGE MAY NOT EXIST. A system without one is legal - the
+  // compiler only reports it as an info - but a sheet cannot play without
+  // somewhere to put the player, so it is created rather than silently skipped.
+  let updateContext = next.systems.find(entry => entry.id === systemId).contexts
+    .find(context => context.kind === CONTEXT_KIND.UPDATE)
+  if (!updateContext) {
+    next = addContext(next, systemId, CONTEXT_KIND.UPDATE)
+    updateContext = next.systems.find(entry => entry.id === systemId).contexts
+      .find(context => context.kind === CONTEXT_KIND.UPDATE)
+  }
+  if (!updateContext) return next
+
+  let player = findPlayer(next)
+  if (!player) {
+    next = addBlock(next, { contextId: updateContext.id, blockType: 'update.flipbook' })
+    player = findPlayer(next)
+  }
+  if (player) {
+    // DERIVED, never typed: this is what keeps the player and the sheet in step.
+    next = setBlockProp(next, player.id, 'frames', tiles)
+    next = setBlockProp(next, player.id, 'rate', fps)
+  }
+  return next
+}
+
+/**
+ * The sheet a system is currently configured for.
+ *
+ * Read back by the inspector so the control shows what is really set rather
+ * than what was last typed into it.
+ *
+ * @param {Object} doc
+ * @param {string} systemId
+ * @returns {{columns: number, rows: number, fps: number, playing: boolean}}
+ */
+export function readSpriteSheet(doc, systemId) {
+  const system = doc.systems.find(entry => entry.id === systemId)
+  const literal = (block, prop, fallback) => {
+    const value = block?.props?.[prop]?.v
+    return Number.isFinite(value) ? value : fallback
+  }
+  let sheet = null
+  let player = null
+  for (const context of system?.contexts || []) {
+    for (const block of context.blocks) {
+      if (block.type === 'output.setFlipbook') sheet = block
+      if (block.type === 'update.flipbook') player = block
+    }
+  }
+  return {
+    columns: literal(sheet, 'columns', 1),
+    rows: literal(sheet, 'rows', 1),
+    fps: literal(player, 'rate', 24),
+    playing: Boolean(player),
+  }
+}
+
 const FIX_APPLIERS = {
   addBlock: (doc, args) => addBlock(doc, args),
   addContext: (doc, args) => addContext(doc, args.systemId, args.contextKind),

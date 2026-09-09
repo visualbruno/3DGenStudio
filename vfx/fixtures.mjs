@@ -734,6 +734,43 @@ export function flipbookNotPlayed() {
 }
 
 /**
+ * A sprite sheet whose player was added by the one-click fix and never adjusted.
+ *
+ * THE HALF-CONFIGURED STATE THE OTHER FIX LEAVES BEHIND. Adding Play Sprite
+ * Sheet through W_FLIPBOOK_NOT_PLAYED gives it the DEFAULT sixteen frames,
+ * which is right for a 4x4 sheet and wrong for every other size - and being
+ * wrong does not look like a wrong number, it looks like a broken animation.
+ * Too few frames and the last rows never appear; too many and it runs off the
+ * end of the sheet into whatever the atlas holds beyond it.
+ *
+ * @returns {Object} a normalised document
+ */
+export function flipbookFrameCount() {
+  const doc = createEmptyVfxDoc({ name: 'Miscounted Sheet' });
+  doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 'sheet.png', colorSpace: 'srgb' } };
+  doc.systems = [system({
+    name: 'Sheet',
+    spawn: [block('spawn.rate', { rate: constValue(20) })],
+    init: [
+      block('initialize.setLifetime', { lifetime: constValue(2) }),
+      block('initialize.setSize', { size: constValue(0.4) }),
+      block('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      block('initialize.setFlipbookFrame', { flipbookFrame: constValue(0) }),
+    ],
+    // Eight by eight is sixty-four tiles; the player still says sixteen.
+    update: [block('update.flipbook', { frames: constValue(16), rate: constValue(24) })],
+    outputs: [{
+      params: { mode: 'billboard', blend: 'alpha', sort: 'none' },
+      blocks: [
+        block('output.setMainTexture', { texture: constValue('tex') }),
+        block('output.setFlipbook', { columns: constValue(8), rows: constValue(8) }),
+      ],
+    }],
+  })];
+  return normalizeVfxDoc(doc);
+}
+
+/**
  * A per-particle operator wired into a property that is legitimately
  * per-particle.
  *

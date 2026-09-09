@@ -21,6 +21,8 @@
 import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
 import { compileVfxGraph } from '../../../vfx/compile.js';
+import { normalizeVfxDoc } from '../../../vfx/doc.js';
+import * as edits from './edits.js';
 import { buildInstanceLayout } from '../../../vfx/ir.js';
 import { VFX_TEMPLATES, templateById } from './templates.js';
 import { createBatch, createBatches, disposeBatch, writeBatch } from './batch.js';
@@ -151,6 +153,38 @@ function buildTemplate(id) {
   // Depth TEST stays on for additive: solid geometry in front should hide a
   // particle, even though the particle must not occlude the one behind it.
   check('  with depth test on throughout', [additive, alpha, premultiplied, opaque].every((m) => m.depthTest));
+
+
+  // ADDITIVE NEEDS AN OPAQUE DESTINATION, and the destination is the thing to
+  // check - not these factors.
+  //
+  // A transparent canvas is composited as PREMULTIPLIED alpha, where a colour
+  // channel may not exceed the alpha it is premultiplied by; browsers clamp
+  // when it does. There is no pair of blend factors that survives that. With
+  // the preset's (SrcAlpha, One) on the alpha channel, a sprite with no alpha
+  // channel drove the canvas alpha to 1 across the whole quad while adding no
+  // colour, so its black background became an opaque BLACK BOX over the page
+  // backdrop. Setting the alpha factors to (Zero, One) instead left alpha at 0,
+  // and the compositor clamped the glow away - the particles then showed up
+  // ONLY where a grid line had already written alpha, drawing the effect as a
+  // crosshatch.
+  //
+  // Both were observed on the same effect, which is what makes the pair of them
+  // the proof: the fix is an opaque render target, asserted in source.test.mjs
+  // against VfxViewport, and vfxThumbnail.js has always had one.
+  check('additive uses three’s preset, unmodified',
+    additive.blending === THREE.AdditiveBlending, String(additive.blending));
+  check('  with no hand-set alpha factors to go stale',
+    additive.blendSrcAlpha === null && additive.blendDstAlpha === null,
+    `${additive.blendSrcAlpha}/${additive.blendDstAlpha}`);
+
+  // The other modes own the alpha channel legitimately: alpha blending
+  // composites by coverage, and an opaque particle is opaque.
+  check('alpha blending still composites by coverage',
+    alpha.blending === THREE.NormalBlending);
+  check('  and premultiplied uses (One, 1-SrcAlpha)',
+    premultiplied.blendSrc === THREE.OneFactor
+    && premultiplied.blendDst === THREE.OneMinusSrcAlphaFactor);
 
   for (const material of [additive, alpha, premultiplied, opaque]) material.dispose();
 }
@@ -608,6 +642,78 @@ console.log('\n--- The emitter rotation is three.js Euler XYZ ---');
   const now = kernelMatrix(1.2, 0, 0);
   check('  while a single-axis rotation is identical in both, which is why it hid',
     Math.max(...single.map((v, k) => Math.abs(v - now[k]))) < 1e-12);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The sprite black point ---');
+// ---------------------------------------------------------------------------
+//
+// ADDITIVE BLENDING ADDS EVERY PIXEL, so a sprite whose background is 0.3/255
+// rather than 0 is invisible on one particle and an obvious grey box once sixty
+// overlap. A generated flame measured 96% pure #000 with the rest a faint ember
+// glow, and that remainder drew the outline of every quad.
+{
+  const withBlackPoint = (value) => {
+    let doc = normalizeVfxDoc(templateById('fire').build());
+    const system = doc.systems[0];
+    doc = edits.setSystemTexture(doc, system.id, { assetId: 99, name: 'f.png' });
+    const output = doc.systems[0].contexts.find((c) => c.kind === 'output');
+    const block = output.blocks.find((b) => b.type === 'output.setMainTexture');
+    doc = edits.setBlockProp(doc, block.id, 'blackPoint', value);
+    const { ir } = compileVfxGraph(doc, { assetIndex: new Set([99]) });
+    return ir;
+  };
+
+  // THE BUG THAT MADE IT INERT: readConstBinding rounds. It was written for
+  // tile and frame counts, where a fraction is meaningless, so 0.02 came back
+  // as 0 - which is the value that means "off". The feature did nothing and
+  // said nothing.
+  check('a fractional black point survives compilation',
+    withBlackPoint(0.02).systems[0].outputs[0].blackPoint === 0.02,
+    String(withBlackPoint(0.02).systems[0].outputs[0].blackPoint));
+  check('  and a small one is not rounded away',
+    withBlackPoint(0.005).systems[0].outputs[0].blackPoint === 0.005,
+    String(withBlackPoint(0.005).systems[0].outputs[0].blackPoint));
+  check('  while zero stays zero', withBlackPoint(0).systems[0].outputs[0].blackPoint === 0);
+
+  // A UNIFORM, SO IT MUST SPLIT THE BATCH. Two outputs sharing a texture but
+  // differing here cannot share a draw - one of them would silently render with
+  // the other's value, which is the same rule tiles follows.
+  const keys = [0, 0.02, 0.06].map((v) => withBlackPoint(v).systems[0].outputs[0].batchKey);
+  check('outputs with different black points do not share a draw',
+    new Set(keys).size === 3, `${new Set(keys).size} distinct of 3`);
+
+  // And it reaches the material.
+  const ir = withBlackPoint(0.02);
+  const runtime = createVfxRuntime(ir);
+  const batch = createBatches(ir, runtime.emitters, {
+    textures: new Map([[99, new THREE.Texture()]]),
+  })[0];
+  check('  and the material carries it', batch.material.uniforms.uBlackPoint.value === 0.02,
+    String(batch.material.uniforms.uBlackPoint.value));
+  disposeBatch(batch);
+
+  // The shader maths, evaluated here rather than on a GPU. SUBTRACT AND
+  // RENORMALISE, not a hard clamp: clamping alone leaves a visible step at the
+  // cutoff, while rescaling pulls the floor down and leaves the peak where it
+  // was. That second half is what stops the sprite dimming.
+  const apply = (v, bp) => (bp > 0 ? Math.max(v - bp, 0) / (1 - bp) : v);
+  check('the black point zeroes a near-black pixel',
+    apply(0.004, 0.02) === 0, String(apply(0.004, 0.02)));
+  check('  and leaves full white exactly where it was',
+    Math.abs(apply(1, 0.02) - 1) < 1e-12, String(apply(1, 0.02)));
+  check('  rescaling rather than only clamping',
+    // A hard clamp would give 0.48 here; renormalising gives more, which is the
+    // difference between a dimmed sprite and one that keeps its brightness.
+    apply(0.5, 0.02) > 0.48 + 1e-9, String(apply(0.5, 0.02)));
+  check('  and zero is a true no-op', apply(0.004, 0) === 0.004);
+
+  // The shader really contains it, since none of the above executes GLSL.
+  const source = await readFile(new URL('./materials.js', import.meta.url), 'utf8');
+  check('the fragment shader applies it before the colour multiply',
+    source.indexOf('texel.rgb = max(texel.rgb - uBlackPoint') > 0
+    && source.indexOf('texel.rgb = max(texel.rgb - uBlackPoint')
+      < source.indexOf('vec4 colour = texel * vColor'));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

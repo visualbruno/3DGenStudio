@@ -22,7 +22,7 @@
 // deriving it means React never has to re-render to catch up with itself.
 // Disposal is the part that belongs in an effect, keyed on the value it owns.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createBatches, disposeBatch } from '../utils/vfx/batch.js'
 import {
   disposeVfxMeshes,
@@ -36,6 +36,7 @@ import { buildMeshSampler } from '../utils/vfx/meshSample.js'
 // Shared empties, so an effect with no assets keeps a STABLE identity and the
 // batches memo below does not rebuild every render.
 const NO_TEXTURES = new Map()
+const NO_FAILURES = Object.freeze([])
 const NO_MESHES = new Map()
 
 /**
@@ -49,6 +50,27 @@ const NO_MESHES = new Map()
  */
 export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, toneMapped = true }) {
   const [textures, setTextures] = useState(NO_TEXTURES)
+  // ASSETS THAT DID NOT LOAD, which used to be computed and thrown away.
+  //
+  // Both loaders have always returned a `failed` list and nothing has ever read
+  // it, so a texture that 404s, fails to decode, or cannot be resolved fell
+  // back to the built-in sprite in complete silence. Falling back is the right
+  // BEHAVIOUR - an effect should still play - but doing it without a word is
+  // what made "I assigned a sprite and nothing changed" impossible to diagnose
+  // from the screen.
+  const [failedAssets, setFailedAssets] = useState(NO_FAILURES)
+
+  const setFailed = useCallback((kind, ids) => {
+    setFailedAssets(current => {
+      const others = current.filter(entry => entry.kind !== kind)
+      const mine = (ids || []).map(assetId => ({ kind, assetId }))
+      if (others.length === current.length && mine.length === 0) return current
+      const next = [...others, ...mine]
+      // Identity matters: this feeds a render, and a fresh empty array on every
+      // load would re-render the page for no change.
+      return next.length === 0 && current.length === 0 ? current : next
+    })
+  }, [])
   const [meshes, setMeshes] = useState(NO_MESHES)
 
   // The graph hash, not the IR object: the compiler is pure, so recompiling an
@@ -100,7 +122,9 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     loadVfxTextures(ir, { resolveUrl }).then(result => {
       // A late resolve for an effect the author has already navigated away
       // from must not touch the current one.
-      if (cancelled || result.textures.size === 0) return
+      if (cancelled) return
+      setFailed('texture', result.failed)
+      if (result.textures.size === 0) return
       setTextures(result.textures)
     })
     return () => {
@@ -119,7 +143,9 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     if (!ir || !resolveUrl) return undefined
     let cancelled = false
     loadVfxMeshes(ir, { resolveUrl }).then(result => {
-      if (cancelled || result.meshes.size === 0) return
+      if (cancelled) return
+      setFailed('mesh', result.failed)
+      if (result.meshes.size === 0) return
       setMeshes(result.meshes)
       // THE SAME GEOMETRY SERVES BOTH JOBS. A mesh may be the particle's own
       // model, the shape it spawns over, or both, and loadVfxMeshes has already
@@ -161,5 +187,5 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
     if (textures !== NO_TEXTURES) disposeVfxTextures(textures)
   }, [textures])
 
-  return { runtime, batches, textures, meshes }
+  return { runtime, batches, textures, meshes, failedAssets }
 }

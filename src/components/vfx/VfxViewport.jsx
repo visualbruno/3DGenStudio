@@ -233,8 +233,28 @@ export default function VfxViewport({
       shadows={false}
       // Debounced so dragging a splitter does not call setSize every frame.
       resize={{ offsetSize: true, debounce: { scroll: 50, resize: 80 } }}
-      gl={{ powerPreference: 'high-performance' }}
-      onCreated={({ gl }) => {
+      // AN OPAQUE CANVAS, WHICH ADDITIVE PARTICLES REQUIRE.
+      //
+      // Every other viewport here is a transparent canvas over a CSS backdrop,
+      // and that is fine for them because none of them blend additively. It is
+      // not fine here. A transparent canvas is composited as PREMULTIPLIED
+      // alpha, where a channel may not exceed the alpha it is premultiplied by,
+      // and browsers clamp when it does. So an additive particle over an empty
+      // background had nowhere to go: writing alpha made its black background
+      // an opaque BLACK BOX hiding the backdrop, and not writing alpha made the
+      // glow itself get clamped away - visible only where something else, like
+      // a grid line, had already put alpha in the buffer.
+      //
+      // Rendering into an opaque buffer removes the dilemma rather than trading
+      // one artefact for the other, and it is what every engine does with
+      // additive particles. vfxThumbnail.js already renders opaque, which is
+      // why saved thumbnails always looked right while the live preview did
+      // not.
+      gl={{ alpha: false, powerPreference: 'high-performance' }}
+      onCreated={({ gl, scene }) => {
+        // The ground the CSS used to provide. It has to live in the scene now,
+        // because an opaque canvas covers the page behind it.
+        scene.background = new THREE.Color('#0c0d0f')
         const canvas = gl.domElement
         canvas.addEventListener('webglcontextlost', event => {
           event.preventDefault()

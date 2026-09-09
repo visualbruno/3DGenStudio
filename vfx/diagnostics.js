@@ -284,6 +284,25 @@ const DEFS = Object.freeze({
       args: { contextId: d.contextId, param: 'mode', value: 'mesh' },
     }),
   },
+  W_FLIPBOOK_FRAME_COUNT: {
+    severity: SEVERITY.WARN,
+    title: 'The player and the sheet disagree',
+    message: (d) => `"${d.systemName}" has a ${d.columns} by ${d.rows} sheet - ${d.tiles} frames - but Play Sprite Sheet is set to ${d.frames}.`,
+    // THE HALF-CONFIGURED CASE THAT SURVIVES THE OTHER FIX. Adding the player
+    // through W_FLIPBOOK_NOT_PLAYED gives it the DEFAULT 16 frames, which is
+    // right for a 4x4 sheet and wrong for every other size - and being wrong
+    // looks like a broken animation rather than a mismatched number: too few
+    // and the last frames never show, too many and it plays past the sheet into
+    // whatever the atlas has after it.
+    hint: (d) => (d.frames < d.tiles
+      ? `Only the first ${d.frames} of ${d.tiles} frames are ever shown.`
+      : `It runs past the end of the sheet after frame ${d.tiles}.`),
+    fix: (d) => ({
+      label: `Play all ${d.tiles} frames`,
+      action: 'setProp',
+      args: { blockId: d.blockId, prop: 'frames', value: d.tiles },
+    }),
+  },
   W_FLIPBOOK_NOT_PLAYED: {
     severity: SEVERITY.WARN,
     title: 'The sprite sheet never advances',

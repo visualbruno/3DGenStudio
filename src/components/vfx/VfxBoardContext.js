@@ -48,6 +48,7 @@ const EMPTY = Object.freeze({
     addBlock: noop,
     moveBlock: noop,
     setContextParam: noop,
+    setSpriteSheet: noop,
     addContext: noop,
     removeContext: noop,
     addSystem: noop,
