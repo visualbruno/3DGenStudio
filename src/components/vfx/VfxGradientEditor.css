@@ -1,0 +1,244 @@
+.vfx-grad {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px 9px;
+  background: #14171d;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+}
+
+.vfx-grad__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vfx-grad__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #c9cdd6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-grad__preset {
+  flex: 0 0 auto;
+  max-width: 96px;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #c9cdd6;
+  font-size: 10px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.vfx-grad__head button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.vfx-grad__head button:hover {
+  color: #e6e8ec;
+  background: #2b2f38;
+}
+
+.vfx-grad__head .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- the three strips ----------------------------------------------------- */
+
+.vfx-grad__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vfx-grad__bar {
+  display: block;
+  width: 100%;
+  border-left: 1px solid #2a2d34;
+  border-right: 1px solid #2a2d34;
+}
+
+.vfx-grad__rail {
+  position: relative;
+  min-width: 0;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.vfx-grad__rail.is-alpha {
+  border-radius: 4px 4px 0 0;
+  border-bottom: none;
+}
+
+.vfx-grad__rail.is-color {
+  border-radius: 0 0 4px 4px;
+  border-top: none;
+}
+
+/* A stop marker. Positioned by its centre, so `left: 0%` and `left: 100%`
+   still sit inside the rail rather than half outside it. */
+.vfx-grad__stop {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translate(-50%, -50%);
+  border: 1px solid #101216;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+.vfx-grad__stop.is-color {
+  border-radius: 2px;
+}
+
+/* The alpha marker is a diamond, so the two rails are distinguishable at a
+   glance and without relying on colour. */
+.vfx-grad__stop.is-alpha {
+  background: #dce3ef;
+  border-radius: 1px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+}
+
+.vfx-grad__stop.is-selected {
+  box-shadow: 0 0 0 2px #ffffff;
+  z-index: 2;
+}
+
+/* --- the selected-stop row ------------------------------------------------ */
+
+.vfx-grad__selected {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  min-width: 0;
+}
+
+.vfx-grad__swatch {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.vfx-grad__swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.vfx-grad__swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.vfx-grad__swatch::-moz-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.vfx-grad__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vfx-grad__field.is-narrow {
+  flex: 0 0 auto;
+  width: 62px;
+}
+
+.vfx-grad__field > span {
+  font-size: 9px;
+  font-weight: 600;
+  color: #6d7484;
+}
+
+.vfx-grad__field input[type='text'] {
+  width: 100%;
+  min-width: 0;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e8ec;
+  font-size: 11px;
+  height: 26px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-grad__field input[type='text']:focus {
+  outline: none;
+  border-color: #2f6feb;
+}
+
+.vfx-grad__remove {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  background: none;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.vfx-grad__remove:hover {
+  color: #ff9b9b;
+  border-color: #6d3131;
+  background: #2a1d1d;
+}
+
+.vfx-grad__remove .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- notes ---------------------------------------------------------------- */
+
+.vfx-grad__hdr {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #ffd88a;
+  background: #221c0f;
+  border: 1px solid #4a3a12;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+.vfx-grad__notice {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #ebd6a3;
+  background: #221c0f;
+  border: 1px solid #4a3a12;
+  border-radius: 4px;
+  padding: 4px 6px;
+}

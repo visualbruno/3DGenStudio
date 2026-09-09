@@ -34,6 +34,13 @@ import {
   evalCurve,
   evalCurveLut,
   linearCurve,
+  addCurveKey,
+  moveCurveKey,
+  removeCurveKey,
+  setKeyInterp,
+  cycleKeyInterp,
+  setKeyTangent,
+  describeCurve,
 } from './curve.js';
 
 let failures = 0;
@@ -275,6 +282,110 @@ const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
   const unity = curveToUnityKeyframes(curve);
   const flatAtPeaks = near(unity[1].outTangent, 0) && near(unity[2].inTangent, 0);
   check('clamped tangents export as flat', flatAtPeaks, `${unity[1].outTangent.toFixed(3)} / ${unity[2].inTangent.toFixed(3)}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Editing ---');
+// ---------------------------------------------------------------------------
+//
+// The curve editor is canvas and pointer capture, so none of its DRAWING can be
+// checked here. What can be checked is the part that actually goes wrong: the
+// sort. A key dragged past its neighbour changes its own index, and an editor
+// that lost track of which key it was dragging would silently start dragging a
+// different one.
+{
+  const ramp = linearCurve(0, 1);
+
+  const added = addCurveKey(ramp, 0.5);
+  check('addCurveKey inserts in order',
+    added.curve.keys.map((k) => k.t).join(',') === '0,0.5,1');
+  check('  and reports where it landed', added.index === 1);
+  // THE BEHAVIOUR THAT MATTERS: clicking empty space to add a key must not
+  // change the shape. An author adding a key is pinning a curve they already
+  // like.
+  const before = [0, 0.25, 0.5, 0.75, 1].map((t) => evalCurve(ramp, t));
+  const after = [0, 0.25, 0.5, 0.75, 1].map((t) => evalCurve(added.curve, t));
+  check('  without changing the curve',
+    before.every((v, i) => Math.abs(v - after[i]) < 1e-9),
+    after.map((v) => v.toFixed(3)).join(','));
+
+  // A key added into a stepped segment stays stepped, or adding a key would
+  // silently smooth a curve the author had deliberately made discrete.
+  const stepped = createCurve([
+    { t: 0, v: 0, interp: CURVE_INTERP.CONSTANT },
+    { t: 1, v: 1, interp: CURVE_INTERP.CONSTANT },
+  ]);
+  check('  inheriting the interpolation it was dropped into',
+    addCurveKey(stepped, 0.5).curve.keys[1].interp === CURVE_INTERP.CONSTANT);
+
+  // THE SORT. Drag the middle key left past the first one.
+  const three = addCurveKey(ramp, 0.5).curve;
+  const dragged = moveCurveKey(three, 1, { t: -0.5, v: 0.9 });
+  check('moveCurveKey clamps into 0..1',
+    dragged.curve.keys.every((k) => k.t >= 0 && k.t <= 1));
+  check('  and FOLLOWS the key it moved past its neighbour',
+    Math.abs(dragged.curve.keys[dragged.index].v - 0.9) < 1e-9,
+    `index ${dragged.index}, v ${dragged.curve.keys[dragged.index].v}`);
+  check('  keeping every key', dragged.curve.keys.length === 3);
+
+  check('removeCurveKey removes one', removeCurveKey(three, 1).curve.keys.length === 2);
+  // A curve with no keys evaluates to zero, which on a size or alpha property
+  // means invisible - the author would press Delete and lose the effect.
+  const single = createCurve([{ t: 0, v: 1 }]);
+  check('  but refuses the last one', removeCurveKey(single, 0).curve === single);
+  check('  and reports -1 when it refused', removeCurveKey(single, 0).index === -1);
+
+  check('cycleKeyInterp walks smooth -> straight -> step -> smooth',
+    ['auto', 'linear', 'constant'].every((mode, i) => {
+      const from = createCurve([{ t: 0, v: 0, interp: mode }, { t: 1, v: 1 }]);
+      const expected = ['linear', 'constant', 'auto'][i];
+      return cycleKeyInterp(from, 0).curve.keys[0].interp === expected;
+    }));
+  // 'free' is reached by dragging a handle, never by cycling - so a
+  // double-click on a hand-tuned key returns it to smooth rather than landing
+  // somewhere arbitrary.
+  const freeKey = createCurve([{ t: 0, v: 0, interp: CURVE_INTERP.FREE }, { t: 1, v: 1 }]);
+  check('  and a hand-tuned key cycles back to smooth',
+    cycleKeyInterp(freeKey, 0).curve.keys[0].interp === CURVE_INTERP.AUTO);
+
+  // Switching TO free must not move the curve: the handles are seeded from what
+  // auto was already producing, so taking manual control starts from the shape
+  // on screen.
+  const hump = createCurve([{ t: 0, v: 0 }, { t: 0.5, v: 1 }, { t: 1, v: 0 }]);
+  const freed = setKeyInterp(hump, 0, CURVE_INTERP.FREE);
+  const sameShape = [0.1, 0.2, 0.3, 0.4].every(
+    (t) => Math.abs(evalCurve(hump, t) - evalCurve(freed.curve, t)) < 1e-9,
+  );
+  check('setKeyInterp to free seeds the handles from auto', sameShape,
+    [0.1, 0.2, 0.3, 0.4].map((t) => evalCurve(freed.curve, t).toFixed(4)).join(','));
+
+  const tangent = setKeyTangent(hump, 1, 'out', 3);
+  check('setKeyTangent implies free', tangent.curve.keys[1].interp === CURVE_INTERP.FREE);
+  check('  and stores the slope', Math.abs(tangent.curve.keys[1].outTangent - 3) < 1e-9);
+  // Dragging the IN handle frees the PREVIOUS segment, because that is the
+  // segment whose far end the handle controls.
+  const inTangent = setKeyTangent(hump, 1, 'in', -2);
+  check('  while an in-handle frees the segment BEFORE it',
+    inTangent.curve.keys[0].interp === CURVE_INTERP.FREE
+    && Math.abs(inTangent.curve.keys[1].inTangent + 2) < 1e-9);
+
+  // The accessible name. A canvas is invisible to a screen reader, so this
+  // sentence is the entire description of the widget for anyone not looking at
+  // it.
+  const words = describeCurve(hump);
+  check('describeCurve says the shape in words',
+    words.includes('hump') && words.includes('3 keys'), words);
+  check('  and a flat curve says so', describeCurve(constantCurve(2)).includes('flat'),
+    describeCurve(constantCurve(2)));
+
+  // Immutability, for the same reason as every edit in src/utils/vfx/edits.js:
+  // the undo history is snapshot-based.
+  const frozen = JSON.stringify(hump);
+  addCurveKey(hump, 0.25);
+  moveCurveKey(hump, 0, { t: 0.4 });
+  removeCurveKey(hump, 1);
+  setKeyTangent(hump, 0, 'out', 9);
+  check('every curve mutator leaves its input alone', JSON.stringify(hump) === frozen);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

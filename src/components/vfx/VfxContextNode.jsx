@@ -28,8 +28,10 @@ import { Handle, Position, useStore } from '@xyflow/react'
 import { CATALOG } from '../../../vfx/catalog.js'
 import { CONTEXT_KIND } from '../../../vfx/doc.js'
 import useVfxBlockDrag from '../../hooks/useVfxBlockDrag'
+import useVfxHoverCard from '../../hooks/useVfxHoverCard'
 import { useVfxBoard } from './VfxBoardContext'
 import VfxBlockRow from './VfxBlockRow'
+import VfxHoverCard from './VfxHoverCard'
 import './VfxContextNode.css'
 
 // Below this zoom the engine chips are hidden. GraphPage.css:734-737 records a
@@ -42,6 +44,10 @@ export default function VfxContextNode({ id, data, selected }) {
   const { actions, expanded, fieldProps, engineTarget, level } = useVfxBoard()
   const listRef = useRef(null)
   const [adding, setAdding] = useState(false)
+  // The palette is where a newcomer decides, so it is where the explanation has
+  // to be. Portalled, so it is legible at 0.4 zoom and does not scale with the
+  // board - see VfxHoverCard.
+  const hover = useVfxHoverCard()
 
   // Subscribed narrowly to the zoom scalar rather than to the whole transform,
   // so a pan does not re-render every node on the board.
@@ -210,7 +216,7 @@ export default function VfxContextNode({ id, data, selected }) {
                   actions.addBlock(id, entry.id)
                   setAdding(false)
                 }}
-                title={entry.teach}
+                {...hover.bind(entry)}
               >
                 <span className="vfx-node__add-name">{entry.label}</span>
                 {/* The blurb is always visible, never hover-only: a palette
@@ -228,6 +234,8 @@ export default function VfxContextNode({ id, data, selected }) {
         )}
         <span className="vfx-node__order">runs top to bottom</span>
       </div>
+
+      {hover.card && <VfxHoverCard anchor={hover.card.anchor} def={hover.card.def} />}
     </div>
   )
 }

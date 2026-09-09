@@ -193,18 +193,61 @@ section('Properties and value modes');
     restored.a === range.a && restored.b === range.b,
     `${restored.a} to ${restored.b}`);
 
-  const size = blocksOf(doc).find((b) => b.type === 'update.sizeOverLife');
-  if (size) {
-    const spike = pure('setCurvePreset', doc,
-      (d) => edits.setCurvePreset(d, size.id, 'size', 'rampDown'));
-    const value = blocksOf(spike).find((b) => b.id === size.id).props.size;
-    const expected = CURVE_PRESETS.find((p) => p.id === 'rampDown').build();
-    check('setCurvePreset writes the preset shape',
-      value.curve.keys.length === expected.keys.length
-      && value.curve.keys[0].v === expected.keys[0].v);
-    check('setCurvePreset refuses an unknown preset',
-      edits.setCurvePreset(doc, size.id, 'size', 'nope') === doc);
-  }
+  // The blocks these checks need are ADDED rather than looked for. The first
+  // version of this section guarded on `if (size)` and the sparks fixture has
+  // neither a Spawn Rate nor a Size Over Life - so every check inside silently
+  // did not run. A vacuous test is worse than a missing one, because it reports
+  // success.
+  const updateStage = doc.systems[0].contexts.find((c) => c.kind === CONTEXT_KIND.UPDATE);
+  const spawnStage = doc.systems[0].contexts.find((c) => c.kind === CONTEXT_KIND.SPAWN);
+  let rich = edits.addBlock(doc, {
+    contextId: updateStage.id,
+    blockType: 'update.sizeOverLife',
+  });
+  rich = edits.addBlock(rich, { contextId: spawnStage.id, blockType: 'spawn.rate' });
+
+  const size = blocksOf(rich).find((b) => b.type === 'update.sizeOverLife');
+  const rate = blocksOf(rich).find((b) => b.type === 'spawn.rate');
+  check('the fixture really has the blocks these checks need',
+    Boolean(size) && Boolean(rate));
+
+  const spike = pure('setCurvePreset', rich,
+    (d) => edits.setCurvePreset(d, size.id, 'scale', 'rampDown'));
+  const shaped = blocksOf(spike).find((b) => b.id === size.id).props.scale;
+  const expected = CURVE_PRESETS.find((entry) => entry.id === 'rampDown').build();
+  check('setCurvePreset writes the preset shape',
+    shaped.curve.keys.length === expected.keys.length
+    && Math.abs(shaped.curve.keys[0].v - expected.keys[0].v) < 1e-9,
+    `${shaped.curve.keys.length} keys, first ${shaped.curve.keys[0].v}`);
+  check('setCurvePreset refuses an unknown preset',
+    edits.setCurvePreset(rich, size.id, 'scale', 'nope') === rich);
+
+  // WHICH AXIS A CURVE RUNS ALONG IS THE PROPERTY'S MEANING, NOT A CHOICE. A
+  // spawn rate is a property of the emitter and has no particle whose age could
+  // be read, so the catalog declares it as a curve over effect TIME. Before it
+  // was declared, three places disagreed: the value said 'life', the runtime
+  // sampled effect time anyway (readSpawnScalar has no particle to ask), and
+  // the curve editor labelled its x axis "particle age".
+  const curved = edits.setBlockPropMode(rich, rate.id, 'rate', VALUE_MODE.CURVE);
+  check('a spawn rate becomes a curve over effect TIME',
+    blocksOf(curved).find((b) => b.id === rate.id).props.rate.domain === 'time',
+    blocksOf(curved).find((b) => b.id === rate.id).props.rate.domain);
+  // Picking a shape must not silently move it onto the other axis.
+  const reshaped = edits.setCurvePreset(curved, rate.id, 'rate', 'rampDown');
+  check('  and a preset preserves the domain',
+    blocksOf(reshaped).find((b) => b.id === rate.id).props.rate.domain === 'time');
+  // The compiler carries it, which is what makes the frequency classification
+  // honest: a per-frame value rather than a per-particle one.
+  const spawnBindings = compileVfxGraph(reshaped).ir.systems[0].spawn
+    .flatMap((entry) => entry.bindings)
+    .filter((binding) => binding.prop === 'rate');
+  check('  and the IR carries it through to the binding',
+    spawnBindings.length > 0 && spawnBindings.every((b) => b.domain === 'time'),
+    spawnBindings.map((b) => b.domain).join(','));
+
+  check('an over-life property stays on the life axis',
+    blocksOf(edits.setCurvePreset(rich, size.id, 'scale', 'rampDown'))
+      .find((b) => b.id === size.id).props.scale.domain === 'life');
 
   check('setBlockProp on a missing block is identity',
     edits.setBlockProp(doc, 'blk_nope', 'x', 1) === doc);

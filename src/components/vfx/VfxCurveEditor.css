@@ -1,0 +1,194 @@
+.vfx-curve {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px 9px;
+  background: #14171d;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+}
+
+.vfx-curve__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vfx-curve__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #c9cdd6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vfx-curve__preset {
+  flex: 0 0 auto;
+  max-width: 96px;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 4px;
+  color: #c9cdd6;
+  font-size: 10px;
+  height: 22px;
+  cursor: pointer;
+}
+
+.vfx-curve__head button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+}
+
+.vfx-curve__head button:hover {
+  color: #e6e8ec;
+  background: #2b2f38;
+}
+
+.vfx-curve__head .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* The wrapper carries the size; the canvas is sized in JS from a
+   ResizeObserver on this element, in CSS pixels with a device-pixel backing
+   store. Height is fixed rather than aspect-driven so the graph does not
+   reflow while the parameters pane is being resized. */
+.vfx-curve__canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 168px;
+  min-width: 0;
+}
+
+.vfx-curve__canvas {
+  display: block;
+  border-radius: 4px;
+  /* No default focus ring - the canvas draws its own selection - but focus has
+     to be visible or the keyboard path is unusable. */
+  outline: none;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.vfx-curve__canvas:focus-visible {
+  box-shadow: 0 0 0 2px #2f6feb;
+}
+
+.vfx-curve__status {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 24px;
+  font-size: 10px;
+  color: #9aa1af;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-curve__interp {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #8fb4f5;
+  background: #16202f;
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.vfx-curve__hint {
+  line-height: 1.4;
+  color: #767d8b;
+}
+
+.vfx-curve__notice {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #ebd6a3;
+  background: #221c0f;
+  border: 1px solid #4a3a12;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+
+/* --- the numbers table ---------------------------------------------------- */
+
+.vfx-curve__numbers {
+  font-size: 10px;
+  color: #8b929f;
+}
+
+.vfx-curve__numbers summary {
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.vfx-curve__numbers table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 4px;
+}
+
+.vfx-curve__numbers th {
+  text-align: left;
+  font-size: 9px;
+  font-weight: 600;
+  color: #5f6673;
+  padding: 2px 3px;
+  border-bottom: 1px solid #22252c;
+}
+
+.vfx-curve__numbers td {
+  padding: 2px 3px;
+}
+
+.vfx-curve__numbers tr.is-selected td {
+  background: #1c2735;
+}
+
+.vfx-curve__numbers input,
+.vfx-curve__numbers select {
+  width: 100%;
+  min-width: 0;
+  background: #101216;
+  border: 1px solid #2a2d34;
+  border-radius: 3px;
+  color: #d6d9df;
+  font-size: 10px;
+  padding: 1px 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-curve__numbers td button {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: #6d7484;
+  cursor: pointer;
+  padding: 1px;
+  border-radius: 3px;
+}
+
+.vfx-curve__numbers td button:hover:not(:disabled) {
+  color: #ff9b9b;
+  background: #2a1d1d;
+}
+
+.vfx-curve__numbers td button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.vfx-curve__numbers td .material-symbols-outlined {
+  font-size: 13px;
+}

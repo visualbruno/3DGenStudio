@@ -1,0 +1,92 @@
+/* Bottom-centred inside the viewport pane, not middle-centred: the middle is
+   where the effect is meant to be, and covering it would hide the moment it
+   starts working again. */
+.vfx-empty {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  justify-content: center;
+  /* The card takes the pointer; the strip around it must not, or it would
+     swallow orbit drags across the lower third of the viewport. */
+  pointer-events: none;
+  z-index: 5;
+}
+
+.vfx-empty__card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  max-width: 420px;
+  padding: 10px 12px;
+  /* Opaque. No backdrop-filter over a live WebGL canvas - the rule at the top
+     of VfxEditorPage.css. */
+  background: #191b20;
+  border: 1px solid #4a3a12;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px #0b0c0e;
+  pointer-events: auto;
+}
+
+.vfx-empty__icon {
+  flex: 0 0 auto;
+  font-size: 19px;
+  color: #e0a33c;
+  margin-top: 1px;
+}
+
+.vfx-empty__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vfx-empty__text strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffd88a;
+  margin-bottom: 2px;
+}
+
+.vfx-empty__text p {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: #b8c0cf;
+}
+
+.vfx-empty__actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: center;
+}
+
+.vfx-empty__actions button {
+  white-space: nowrap;
+  background: #232732;
+  border: 1px solid #313743;
+  border-radius: 5px;
+  color: #b8c0cf;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+
+.vfx-empty__actions button:hover {
+  background: #2b3444;
+  color: #e6e8ec;
+}
+
+.vfx-empty__actions button.is-primary {
+  background: #2f6feb;
+  border-color: #2f6feb;
+  color: #fff;
+}
+
+.vfx-empty__actions button.is-primary:hover {
+  background: #4482f5;
+}

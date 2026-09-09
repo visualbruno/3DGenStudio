@@ -549,9 +549,13 @@ function stashOf(value) {
  *
  * @param {VfxValue} value
  * @param {string} nextMode
- * @param {{channels?: number, range?: {min?: number, max?: number}}} [options]
+ * @param {{channels?: number, range?: {min?: number, max?: number},
+ *          domain?: string}} [options]
  *   `range` comes from the property's catalog entry and keeps a derived random
  *   range inside legal bounds - no negative lifetimes, no negative sizes.
+ *   `domain` likewise: which axis a curve on this property runs along is a
+ *   fact about the property, not something the author picks, so a spawn rate
+ *   becomes a curve over effect TIME while a size becomes one over LIFE.
  * @returns {VfxValue} a new value; the input is not modified
  */
 export function setValueMode(value, nextMode, options = {}) {
@@ -603,15 +607,23 @@ export function setValueMode(value, nextMode, options = {}) {
       );
     }
   } else if (nextMode === VALUE_MODE.CURVE) {
+    // The declared domain wins over a stashed one: the property's meaning does
+    // not change because the author flipped modes twice, and a document written
+    // before the domain was declared has to be corrected rather than preserved.
+    const domain = options.domain || restored?.domain || VALUE_DOMAIN.LIFE;
     next = restored
-      ? curveValue(createCurve(restored.curve.keys, restored.curve), restored)
+      ? curveValue(createCurve(restored.curve.keys, restored.curve), { ...restored, domain })
       // A flat curve at the current value: the shape is unchanged until the
       // author drags a key, so switching to curve mode never alters the look.
-      : curveValue(constantCurve(1), { scale: asNumber(Array.isArray(literal) ? literal[0] : literal, 1) });
+      : curveValue(constantCurve(1), {
+        scale: asNumber(Array.isArray(literal) ? literal[0] : literal, 1),
+        domain,
+      });
   } else if (nextMode === VALUE_MODE.GRADIENT) {
+    const domain = options.domain || restored?.domain || VALUE_DOMAIN.LIFE;
     next = restored
-      ? gradientValue(createGradient(restored.gradient), restored)
-      : gradientValue(createGradient({}));
+      ? gradientValue(createGradient(restored.gradient), { ...restored, domain })
+      : gradientValue(createGradient({}), { domain });
   } else if (nextMode === VALUE_MODE.LINK) {
     next = restored
       ? linkValue(restored.nodeId, restored.port, fitChannels(literal, channels))

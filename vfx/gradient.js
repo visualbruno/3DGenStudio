@@ -271,6 +271,235 @@ export function evalGradient(gradient, t, out) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Editing
+// ---------------------------------------------------------------------------
+//
+// Pure and immutable, and here for the same reasons as the curve editors: the
+// sort is the difficulty, and the sort is what an index-based selection gets
+// wrong the moment a stop is dragged past its neighbour. Every mutator returns
+// the new gradient AND the index the touched stop ended up at.
+//
+// COLOUR AND ALPHA ARE SEPARATE LISTS and stay separate. Unity's Gradient is
+// two lists, so merging them would not round-trip: a colour stop at t=0.3 and
+// an alpha stop at t=0.7 cannot be expressed as one list of four-component
+// stops without inventing values the author never set.
+
+/**
+ * @typedef {Object} VfxGradientEdit
+ * @property {VfxGradient} gradient
+ * @property {number} index where the touched stop ended up, or -1
+ */
+
+function rebuildGradient(gradient, colorKeys, alphaKeys) {
+  return createGradient({ colorKeys, alphaKeys, mode: gradient.mode });
+}
+
+// As sortTracking in curve.js: the identity is carried by the original index,
+// because two stops may legitimately share a t while being dragged apart.
+function sortTrackingKeys(keys, tracked) {
+  const marked = keys.map((key, i) => ({ key, was: i }));
+  marked.sort((a, b) => (a.key.t - b.key.t) || (a.was - b.was));
+  return {
+    keys: marked.map((entry) => entry.key),
+    index: marked.findIndex((entry) => entry.was === tracked),
+  };
+}
+
+/**
+ * Add a colour stop.
+ *
+ * The colour defaults to the gradient's OWN colour at t, so clicking empty
+ * rail adds a stop WITHOUT changing the look. That is the single most
+ * important behaviour in a gradient editor: an author adding a stop is almost
+ * always about to adjust it, and a stop that arrives as white has already
+ * destroyed the ramp they were refining.
+ *
+ * "Without changing the look" is true to the precision the FORMAT has, not
+ * exactly. Stops are stored as hex plus an intensity - because that is what
+ * Unity's Gradient is, and storing floats instead would stop the round trip
+ * working - so a sampled colour makes one trip through 8-bit sRGB and can come
+ * back up to half a bit different. That is ~0.4% in linear light at mid tones
+ * and invisible; the test asserts the bound rather than equality, and the bound
+ * is a property of hex storage rather than of this function.
+ *
+ * @param {VfxGradient} gradient
+ * @param {number} t
+ * @param {{hex?: string, intensity?: number}} [spec]
+ * @returns {VfxGradientEdit}
+ */
+export function addColorKey(gradient, t, spec = {}) {
+  const clamped = Math.min(1, Math.max(0, t));
+  let hex = spec.hex;
+  let intensity = spec.intensity;
+  if (typeof hex !== 'string') {
+    const rgba = new Float64Array(4);
+    evalGradient(gradient, clamped, rgba);
+    // The sampled colour is linear and may exceed 1, so it is split back into a
+    // hex plus an intensity the same way the inspector's colour field does -
+    // otherwise sampling an HDR gradient would clamp the new stop to white.
+    const peak = Math.max(rgba[0], rgba[1], rgba[2], 1);
+    intensity = Number.isFinite(intensity) ? intensity : peak;
+    hex = srgbToHex(
+      linearToSrgb(rgba[0] / peak),
+      linearToSrgb(rgba[1] / peak),
+      linearToSrgb(rgba[2] / peak),
+    );
+  }
+  const keys = [...gradient.colorKeys, createColorKey({ t: clamped, hex, intensity })];
+  const sorted = sortTrackingKeys(keys, keys.length - 1);
+  return {
+    gradient: rebuildGradient(gradient, sorted.keys, gradient.alphaKeys),
+    index: sorted.index,
+  };
+}
+
+/**
+ * Add an alpha stop, defaulting to the gradient's own alpha at t.
+ * @param {VfxGradient} gradient
+ * @param {number} t
+ * @param {number} [a]
+ * @returns {VfxGradientEdit}
+ */
+export function addAlphaKey(gradient, t, a) {
+  const clamped = Math.min(1, Math.max(0, t));
+  let value = a;
+  if (!Number.isFinite(value)) {
+    const rgba = new Float64Array(4);
+    evalGradient(gradient, clamped, rgba);
+    value = rgba[3];
+  }
+  const keys = [...gradient.alphaKeys, createAlphaKey({ t: clamped, a: value })];
+  const sorted = sortTrackingKeys(keys, keys.length - 1);
+  return {
+    gradient: rebuildGradient(gradient, gradient.colorKeys, sorted.keys),
+    index: sorted.index,
+  };
+}
+
+/**
+ * Patch a colour stop - its position, hex or intensity.
+ * @param {VfxGradient} gradient
+ * @param {number} index
+ * @param {{t?: number, hex?: string, intensity?: number}} patch
+ * @returns {VfxGradientEdit}
+ */
+export function updateColorKey(gradient, index, patch) {
+  if (index < 0 || index >= gradient.colorKeys.length) return { gradient, index: -1 };
+  const keys = gradient.colorKeys.map((key, i) => (
+    i === index ? createColorKey({ ...key, ...patch }) : key
+  ));
+  const sorted = sortTrackingKeys(keys, index);
+  return {
+    gradient: rebuildGradient(gradient, sorted.keys, gradient.alphaKeys),
+    index: sorted.index,
+  };
+}
+
+/**
+ * Patch an alpha stop.
+ * @param {VfxGradient} gradient
+ * @param {number} index
+ * @param {{t?: number, a?: number}} patch
+ * @returns {VfxGradientEdit}
+ */
+export function updateAlphaKey(gradient, index, patch) {
+  if (index < 0 || index >= gradient.alphaKeys.length) return { gradient, index: -1 };
+  const keys = gradient.alphaKeys.map((key, i) => (
+    i === index ? createAlphaKey({ ...key, ...patch }) : key
+  ));
+  const sorted = sortTrackingKeys(keys, index);
+  return {
+    gradient: rebuildGradient(gradient, gradient.colorKeys, sorted.keys),
+    index: sorted.index,
+  };
+}
+
+/**
+ * Remove a colour stop. The last one cannot go - createGradient would put a
+ * white one back, so the author would press Delete and watch the ramp turn
+ * white instead of nothing happening.
+ *
+ * @param {VfxGradient} gradient
+ * @param {number} index
+ * @returns {VfxGradientEdit}
+ */
+export function removeColorKey(gradient, index) {
+  if (gradient.colorKeys.length <= 1) return { gradient, index: -1 };
+  if (index < 0 || index >= gradient.colorKeys.length) return { gradient, index: -1 };
+  const keys = gradient.colorKeys.filter((_, i) => i !== index);
+  return {
+    gradient: rebuildGradient(gradient, keys, gradient.alphaKeys),
+    index: Math.min(index, keys.length - 1),
+  };
+}
+
+/**
+ * Remove an alpha stop. As above: the last one stays.
+ * @param {VfxGradient} gradient
+ * @param {number} index
+ * @returns {VfxGradientEdit}
+ */
+export function removeAlphaKey(gradient, index) {
+  if (gradient.alphaKeys.length <= 1) return { gradient, index: -1 };
+  if (index < 0 || index >= gradient.alphaKeys.length) return { gradient, index: -1 };
+  const keys = gradient.alphaKeys.filter((_, i) => i !== index);
+  return {
+    gradient: rebuildGradient(gradient, gradient.colorKeys, keys),
+    index: Math.min(index, keys.length - 1),
+  };
+}
+
+/**
+ * A one-line description of a gradient, in words.
+ *
+ * The accessible name for the editor. Named colours rather than hex, because
+ * "#ff8a1e" tells a screen-reader user nothing and "orange" tells them what
+ * they need.
+ *
+ * @param {VfxGradient} gradient
+ * @returns {string}
+ */
+export function describeGradient(gradient) {
+  const parts = gradient.colorKeys.map((key) => (
+    `${nameColor(key.hex)} at ${Math.round(key.t * 100)}%${key.intensity > 1.001 ? ` (${Math.round(key.intensity * 10) / 10}x bright)` : ''}`
+  ));
+  const alpha = gradient.alphaKeys.map((key) => (
+    `${Math.round(key.a * 100)}% at ${Math.round(key.t * 100)}%`
+  ));
+  return `Colour: ${parts.join(', ')}. Opacity: ${alpha.join(', ')}.`;
+}
+
+// A coarse colour name from a hex string. Twelve buckets by hue plus the
+// achromatic cases - enough to be useful in a spoken description, and
+// deliberately not a 140-entry CSS colour table nobody can hear the difference
+// between.
+const HUE_NAMES = Object.freeze([
+  'red', 'orange', 'yellow', 'lime', 'green', 'teal',
+  'cyan', 'azure', 'blue', 'violet', 'magenta', 'pink',
+]);
+
+function nameColor(hex) {
+  const [r, g, b] = hexToSrgb(hex);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const chroma = max - min;
+  if (max < 0.08) return 'black';
+  if (chroma < 0.08) return max > 0.85 ? 'white' : max > 0.4 ? 'grey' : 'dark grey';
+
+  let hue;
+  if (max === r) hue = ((g - b) / chroma + 6) % 6;
+  else if (max === g) hue = (b - r) / chroma + 2;
+  else hue = (r - g) / chroma + 4;
+
+  // hue is in SEXTANTS (0..6) from the standard HSV derivation, and there are
+  // twelve names, so it doubles. Getting this wrong is silent: every colour
+  // still gets a name, just the wrong half of the wheel.
+  const name = HUE_NAMES[Math.round(hue * 2) % 12] || HUE_NAMES[0];
+  const shade = max < 0.35 ? 'dark ' : min > 0.55 ? 'pale ' : '';
+  return `${shade}${name}`;
+}
+
 /**
  * Bake to a linear RGBA table of n samples spanning t = 0..1 inclusive.
  *

@@ -45,6 +45,7 @@ import VfxBoard from '../components/vfx/VfxBoard'
 import VfxParamsPanel from '../components/vfx/VfxParamsPanel'
 import VfxTimeline from '../components/vfx/VfxTimeline'
 import VfxSplitter from '../components/vfx/VfxSplitter'
+import VfxEmptyOverlay from '../components/vfx/VfxEmptyOverlay'
 import useVfxRuntime from '../hooks/useVfxRuntime'
 import useVfxDocument from '../hooks/useVfxDocument'
 import { useProjects } from '../context/ProjectContext'
@@ -58,6 +59,7 @@ import { makeTextureResolver } from '../utils/vfxApi.js'
 import { createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
 import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
 import { indexDiagnostics, clearLayout, setNodePosition } from '../utils/vfx/flow.js'
+import { BLAME_ACTION } from '../utils/vfx/blame.js'
 import { readPaneSize } from '../utils/vfx/panes.js'
 import * as edits from '../utils/vfx/edits.js'
 import './VfxEditorPage.css'
@@ -69,6 +71,12 @@ const PREVIEW_KEY = 'vfx:pane:preview'
 const LEVEL_KEY = 'vfx:level'
 const PARAMS_DEFAULT = 300
 const PREVIEW_DEFAULT = 520
+
+// How many particles the curve editor's playhead overlay samples. The editor
+// draws one tick each, and past a couple of hundred they stop being
+// distinguishable from a filled bar - so sampling more would cost work to
+// produce less information.
+const PLAYHEAD_SAMPLES = 192
 
 const readLevel = () => {
   try {
@@ -104,6 +112,10 @@ export default function VfxEditorPage() {
   const [preview, setPreview] = useState({})
   const [picker, setPicker] = useState(null)
   const [timelineCollapsed, setTimelineCollapsed] = useState(false)
+  // Bumped to force CameraRig to re-frame. Combined with the graph hash rather
+  // than replacing it, so an edit still re-frames on a new effect and "Frame
+  // the effect" works without one.
+  const [frameNonce, setFrameNonce] = useState(0)
 
   // Read in the state initialiser, so the very first paint is already the right
   // width - no flash of the default, and no layout effect.
@@ -471,6 +483,45 @@ export default function VfxEditorPage() {
     cameraRef.current = camera
   }, [])
 
+  // Where the running simulation currently is, for an open curve editor to draw
+  // on its graph.
+  //
+  // TWO DIFFERENT ANSWERS, because "over life" and "over effect time" are
+  // different axes. Effect time has exactly one position, so it is one line.
+  // Particle life does NOT - every living particle is at a different point on
+  // the curve - so this hands back a sample of their normalised ages and the
+  // editor draws a tick each. Watching that population sweep left to right is
+  // the single best teaching device in the editor: it makes the curve and the
+  // effect visibly the same object.
+  //
+  // Called from the editor's own rAF loop, so it must allocate as little as
+  // possible and never touch React. The sample array is reused.
+  const agesRef = useRef(new Float32Array(PLAYHEAD_SAMPLES))
+  const getCurvePlayhead = useCallback(() => {
+    const current = runtimeRef.current
+    if (!current) return null
+    const duration = current.ir.effect.duration || 1
+    const ages = agesRef.current
+    let written = 0
+    for (const emitter of current.emitters) {
+      const { planes, count } = emitter.pool
+      if (!planes.age || !planes.lifetime) continue
+      // Strided rather than truncated: taking the first N particles would
+      // sample only the oldest, because the pool is compacted by swap-remove
+      // and the newest are at the end. A stride shows the whole population.
+      const stride = Math.max(1, Math.ceil(count / PLAYHEAD_SAMPLES))
+      for (let i = 0; i < count && written < ages.length; i += stride) {
+        const lifetime = planes.lifetime[i]
+        ages[written] = lifetime > 0 ? planes.age[i] / lifetime : 0
+        written += 1
+      }
+    }
+    return {
+      t: (current.time % duration) / duration,
+      ages: written > 0 ? ages.subarray(0, written) : null,
+    }
+  }, [])
+
   // --- keyboard ------------------------------------------------------------
 
   useEffect(() => {
@@ -515,6 +566,18 @@ export default function VfxEditorPage() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [redo, undo])
 
+  // The verbs the empty-preview overlay can offer that are not document edits.
+  // Kept here rather than in the overlay because every one of them is page
+  // state the overlay has no business owning.
+  const handleBlameAction = useCallback(action => {
+    if (action === BLAME_ACTION.PLAY) setPlaying(true)
+    else if (action === BLAME_ACTION.RESTART) {
+      restart()
+      setPlaying(true)
+    } else if (action === BLAME_ACTION.FRAME) setFrameNonce(current => current + 1)
+    else if (action === BLAME_ACTION.UNMUTE) setPreview({})
+  }, [restart])
+
   // --- save ----------------------------------------------------------------
 
   const handleSave = async ({ saveAs = false } = {}) => {
@@ -544,6 +607,14 @@ export default function VfxEditorPage() {
       return null
     }
   }
+
+  // How many systems are currently silenced, which is the overlay's way of
+  // telling "the graph is broken" apart from "you left a solo on". Solo wins:
+  // when anything is soloed, everything else is silenced.
+  const anySolo = doc.systems.some(system => preview[system.id]?.solo)
+  const mutedCount = doc.systems.filter(system => (
+    anySolo ? !preview[system.id]?.solo : Boolean(preview[system.id]?.muted)
+  )).length
 
   const saveLabel = status === 'saving' ? 'Saving...' : assetId == null ? 'Save to library' : 'Save'
   const paramsOpen = selection != null
@@ -709,6 +780,7 @@ export default function VfxEditorPage() {
               fieldProps={fieldProps}
               diagnostics={selectionDiagnostics}
               level={level}
+              getCurvePlayhead={getCurvePlayhead}
               onClose={() => setSelection(null)}
             />
           )}
@@ -836,10 +908,26 @@ export default function VfxEditorPage() {
             showGrid={showGrid}
             showScale={showScale}
             bounds={bounds}
-            frameKey={compiled.ir.graphHash}
+            frameKey={`${compiled.ir.graphHash}:${frameNonce}`}
             onCamera={handleCamera}
           />
           <VfxPreviewHud statsRef={statsRef} showKernels={profile} />
+          {/* "The preview never fails silently." Names the first
+              render-blocking cause in causal order after a grace period, and
+              distinguishes "nothing is produced" from "it is off screen" -
+              which look identical and have opposite fixes. */}
+          <VfxEmptyOverlay
+            statsRef={statsRef}
+            runtime={runtime}
+            cameraRef={cameraRef}
+            diagnostics={compiled.diagnostics}
+            playing={playing}
+            mutedSystems={mutedCount}
+            totalSystems={doc.systems.length}
+            onAction={handleBlameAction}
+            onFix={fix => actions.applyFix({ fix })}
+            canFix={edits.canApplyFix}
+          />
         </div>
       </div>
 

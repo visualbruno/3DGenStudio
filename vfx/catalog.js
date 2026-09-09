@@ -37,6 +37,7 @@
 //    cannot vary.
 
 import { CONTEXT_KIND } from './doc.js';
+import { VALUE_DOMAIN } from './value.js';
 
 /** How faithfully a block survives the trip into an engine. */
 export const ENGINE_SUPPORT = Object.freeze({
@@ -105,6 +106,11 @@ const M = Object.freeze({
  * @property {number} [max]
  * @property {number} [step]
  * @property {string[]} modes value modes offered
+ * @property {string} [domain] which axis a curve on this property runs along -
+ *   a VALUE_DOMAIN. Defaults to LIFE (particle age). NOT the author's choice:
+ *   it is a fact about what the property means, so it is declared here and
+ *   setValueMode applies it. A spawn rate is a property of the emitter and has
+ *   no particle whose age could be read, so it declares TIME.
  * @property {boolean} [basic] shown when the panel is not in Advanced mode
  * @property {boolean} [hot] shown inline on the node's block row
  * @property {string} [hint] per-property help, inline for basic properties
@@ -155,7 +161,13 @@ const BLOCK_LIST = [
         step: 1,
         // Over effect time, deliberately not over life: a spawn rate is a
         // property of the emitter, and a particle's age is meaningless here.
+        // Declared rather than only asserted in a comment - see `domain` on
+        // VfxPropDef. Without it the value carried domain 'life', the runtime
+        // sampled effect time anyway (readSpawnScalar has no particle to ask),
+        // and the curve editor labelled the axis "particle age" - three places
+        // disagreeing about one number.
         modes: ['const', 'random', 'curve'],
+        domain: VALUE_DOMAIN.TIME,
         basic: true,
         hot: true,
         hint: 'Particles emitted every second while the emitter is active.',

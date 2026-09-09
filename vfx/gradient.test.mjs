@@ -37,6 +37,13 @@ import {
   linearToSrgb,
   srgbToHex,
   srgbToLinear,
+  addColorKey,
+  addAlphaKey,
+  updateColorKey,
+  updateAlphaKey,
+  removeColorKey,
+  removeAlphaKey,
+  describeGradient,
 } from './gradient.js';
 
 let failures = 0;
@@ -324,6 +331,76 @@ const out = new Float64Array(4);
     worst = Math.max(worst, Math.abs(out[0] - key.R), Math.abs(out[3] - key.A));
   }
   check('Unreal merge is lossless at the stops', worst < 1e-9, `worst ${worst.toExponential(1)}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Editing ---');
+// ---------------------------------------------------------------------------
+{
+  const fire = GRADIENT_PRESETS.find((p) => p.id === 'fire').build();
+
+  // THE BEHAVIOUR THAT MATTERS: clicking empty rail adds a stop sampled from
+  // the gradient, so the ramp does not change. A stop that arrived as white
+  // would have destroyed the ramp the author was refining.
+  const probe = [0.1, 0.4, 0.55, 0.9];
+  const before = probe.map((t) => Array.from(evalGradient(fire, t, new Float64Array(4))));
+  const added = addColorKey(fire, 0.4);
+  const after = probe.map((t) => Array.from(evalGradient(added.gradient, t, new Float64Array(4))));
+
+  check('addColorKey inserts in order',
+    added.gradient.colorKeys.every((k, i, all) => i === 0 || all[i - 1].t <= k.t));
+  check('  and reports where it landed', added.index === 2, String(added.index));
+  // Not equality: stops are stored as hex, so a sampled colour makes one trip
+  // through 8-bit sRGB. The bound is a property of hex storage - which exists
+  // so Unity's Gradient round-trips - not of this function. 1.5/255 in sRGB.
+  const tolerance = 1.5 / 255;
+  const worst = Math.max(...before.flatMap((row, i) => row.map((v, c) => (
+    c === 3 ? Math.abs(v - after[i][c]) : Math.abs(linearToSrgb(v) - linearToSrgb(after[i][c]))
+  ))));
+  check('  leaving the ramp unchanged to hex precision', worst <= tolerance,
+    `worst ${worst.toFixed(5)} vs ${tolerance.toFixed(5)}`);
+
+  // An HDR stop must survive being sampled. Splitting the sampled linear colour
+  // into hex + intensity is what stops a 3x-bright core coming back as white.
+  const hot = addColorKey(fire, 0.02);
+  check('  and a sampled HDR colour keeps its brightness',
+    hot.gradient.colorKeys[hot.index].intensity > 1.5,
+    String(hot.gradient.colorKeys[hot.index].intensity));
+
+  const alpha = addAlphaKey(fire, 0.5);
+  check('addAlphaKey samples the existing alpha',
+    Math.abs(alpha.gradient.alphaKeys[alpha.index].a
+      - evalGradient(fire, 0.5, new Float64Array(4))[3]) < 1e-9);
+
+  // THE SORT, as in curve.js: drag a stop past its neighbours and the index has
+  // to follow it.
+  const moved = updateColorKey(added.gradient, added.index, { t: 0.01 });
+  check('updateColorKey follows a stop dragged past its neighbours',
+    Math.abs(moved.gradient.colorKeys[moved.index].t - 0.01) < 1e-9,
+    `index ${moved.index}`);
+  check('  keeping every stop',
+    moved.gradient.colorKeys.length === added.gradient.colorKeys.length);
+
+  check('removeColorKey removes one',
+    removeColorKey(added.gradient, 1).gradient.colorKeys.length
+    === added.gradient.colorKeys.length - 1);
+  // createGradient would put a white stop back, so the author would press
+  // Delete and watch the ramp turn white rather than nothing happening.
+  const one = createGradient({ colorKeys: [{ t: 0, hex: '#ff0000' }] });
+  check('  but refuses the last one', removeColorKey(one, 0).gradient === one);
+  check('  and the last alpha stop too', removeAlphaKey(one, 0).gradient === one);
+
+  const words = describeGradient(fire);
+  check('describeGradient names the colours rather than their hex',
+    words.includes('orange') && !words.includes('#'), words);
+  check('  and calls out HDR brightness', words.includes('bright'), words);
+
+  const frozen = JSON.stringify(fire);
+  addColorKey(fire, 0.3);
+  updateColorKey(fire, 0, { t: 0.9 });
+  removeColorKey(fire, 1);
+  addAlphaKey(fire, 0.3);
+  check('every gradient mutator leaves its input alone', JSON.stringify(fire) === frozen);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

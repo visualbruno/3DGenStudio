@@ -222,6 +222,35 @@
   padding: 2px 4px;
 }
 
+/* The button that opens the full curve or gradient editor under the row. */
+.vfx-prop__edit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 4px;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #8b929f;
+  cursor: pointer;
+}
+
+.vfx-prop__edit:hover {
+  color: #e6e8ec;
+  border-color: #3d6096;
+}
+
+.vfx-prop__edit.is-open {
+  background: #1c2735;
+  border-color: #3d6096;
+  color: #8fb4f5;
+}
+
+.vfx-prop__edit .material-symbols-outlined {
+  font-size: 15px;
+}
+
 /* --- asset slots ---------------------------------------------------------- */
 
 .vfx-prop__asset {

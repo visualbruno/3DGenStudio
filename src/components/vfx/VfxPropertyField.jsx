@@ -14,14 +14,18 @@
 // properties with no React change - which is the promise the catalog header
 // makes and this is where it is kept.
 //
-// CURVES AND GRADIENTS ARE PRESET-ONLY AT PHASE 6. The full editors (draggable
-// keys, tangent handles, an alpha rail) are phase 7. A preset list is not a
-// placeholder for them though: for the intended reader - a developer who has
-// never authored an effect - "Spike: bright instantly, then fades; this is a
-// muzzle flash" is a better first control than a blank curve canvas, and it
-// stays after the editors land. So the row shows the preset menu, a live
-// sparkline of the actual shape, and the magnitude, and says where the full
-// editor will be.
+// CURVES AND GRADIENTS SHOW A PRESET MENU FIRST AND A FULL EDITOR ON REQUEST.
+// The preset list is not a lesser version of the editor: for the intended
+// reader - a developer who has never authored an effect - "Spike: bright
+// instantly, then fades; this is a muzzle flash" is a better first control than
+// a blank canvas, and it is what most rows will ever need. The Edit button
+// opens VfxCurveEditor or VfxGradientEditor underneath the row for the cases
+// where a preset is only the starting point.
+//
+// THE EDITORS OPEN HERE AND NOWHERE ELSE. They are canvas widgets with pointer
+// capture, so putting one inside a node would mean every coordinate needed
+// React Flow's zoom division and every drag competed with the pane. `compact`
+// - the in-node variant - never renders them.
 //
 // COLOUR IS STORED LINEAR AND EDITED IN sRGB. The swatch converts both ways,
 // because <input type="color"> speaks hex sRGB and the simulation needs linear
@@ -40,6 +44,8 @@ import {
 } from '../../../vfx/gradient.js'
 import VfxModeSwitch from './VfxModeSwitch'
 import VfxDragNumber from './VfxDragNumber'
+import VfxCurveEditor from './VfxCurveEditor'
+import VfxGradientEditor from './VfxGradientEditor'
 import './VfxPropertyField.css'
 
 const VEC_LABELS = ['X', 'Y', 'Z']
@@ -180,6 +186,11 @@ function matchGradientPreset(gradient) {
  * @param {string} [props.sourceLabel] label of a wired source
  * @param {boolean} [props.compact] inline on a block row: no hint, no presets
  * @param {boolean} [props.modified] value differs from the catalog default
+ * @param {boolean} [props.editorOpen] whether the full curve/gradient editor
+ *   is expanded under this row
+ * @param {() => void} [props.onToggleEditor]
+ * @param {() => Object} [props.getPlayhead] read per frame by the curve
+ *   editor's overlay: `{t, ages}` from the running simulation
  */
 export default function VfxPropertyField({
   name,
@@ -197,6 +208,9 @@ export default function VfxPropertyField({
   sourceLabel = '',
   compact = false,
   modified = false,
+  editorOpen = false,
+  onToggleEditor = null,
+  getPlayhead = null,
 }) {
   const mode = value?.mode || VALUE_MODE.CONST
   const type = def?.type || PROP_TYPE.FLOAT
@@ -421,6 +435,19 @@ export default function VfxPropertyField({
             <option key={entry.id} value={entry.id} title={entry.hint}>{entry.label}</option>
           ))}
         </select>
+        {!compact && onToggleEditor && (
+          <button
+            type="button"
+            className={`vfx-prop__edit${editorOpen ? ' is-open' : ''}`}
+            onClick={onToggleEditor}
+            title={editorOpen ? 'Close the curve editor' : 'Open the curve editor'}
+            aria-expanded={editorOpen}
+          >
+            <span className="material-symbols-outlined">
+              {editorOpen ? 'expand_less' : 'tune'}
+            </span>
+          </button>
+        )}
         <div className="vfx-prop__scale" title="The curve runs 0 to 1; this is what it is multiplied by.">
           <span className="vfx-prop__axis-label">x</span>
           <VfxDragNumber
@@ -461,6 +488,19 @@ export default function VfxPropertyField({
             <option key={entry.id} value={entry.id} title={entry.hint}>{entry.label}</option>
           ))}
         </select>
+        {!compact && onToggleEditor && (
+          <button
+            type="button"
+            className={`vfx-prop__edit${editorOpen ? ' is-open' : ''}`}
+            onClick={onToggleEditor}
+            title={editorOpen ? 'Close the gradient editor' : 'Open the gradient editor'}
+            aria-expanded={editorOpen}
+          >
+            <span className="material-symbols-outlined">
+              {editorOpen ? 'expand_less' : 'tune'}
+            </span>
+          </button>
+        )}
         {hdr && (
           <span
             className="vfx-prop__hdr"
@@ -530,6 +570,32 @@ export default function VfxPropertyField({
             </button>
           ))}
         </div>
+      )}
+
+      {/* The full editors. Uncontrolled during a drag and controlled at the
+          edges, so a drag is one undo entry: the live path carries a coalesce
+          key, the commit path does not. */}
+      {editorOpen && mode === VALUE_MODE.CURVE && (
+        <VfxCurveEditor
+          value={value.curve}
+          unit={def?.unit || ''}
+          scale={Number.isFinite(value.scale) ? value.scale : 1}
+          domain={value.domain}
+          label={def?.label || name}
+          getPlayhead={getPlayhead}
+          onChange={curve => live({ ...value, curve }, `prop:${name}:curve`)}
+          onCommit={curve => commit({ ...value, curve })}
+          onClose={onToggleEditor}
+        />
+      )}
+      {editorOpen && mode === VALUE_MODE.GRADIENT && (
+        <VfxGradientEditor
+          value={value.gradient}
+          label={def?.label || name}
+          onChange={gradient => live({ ...value, gradient }, `prop:${name}:gradient`)}
+          onCommit={gradient => commit({ ...value, gradient })}
+          onClose={onToggleEditor}
+        />
       )}
 
       {def?.hint && <p className="vfx-prop__hint">{def.hint}</p>}

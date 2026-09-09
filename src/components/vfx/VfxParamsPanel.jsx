@@ -103,6 +103,8 @@ function EngineNote({ def }) {
  * @param {Object} props.fieldProps blockId -> propName -> extra props (asset labels)
  * @param {Array<Object>} props.diagnostics diagnostics for the selection
  * @param {string} props.level disclosure level
+ * @param {() => Object} [props.getCurvePlayhead] read per frame by an open
+ *   curve editor, so the running simulation draws itself on the graph
  * @param {() => void} props.onClose
  */
 export default function VfxParamsPanel({
@@ -112,11 +114,16 @@ export default function VfxParamsPanel({
   fieldProps = {},
   diagnostics = [],
   level = 'standard',
+  getCurvePlayhead = null,
   onClose,
 }) {
   // `full` opens Advanced by default - an author who chose the most detailed
   // level should not then have to open every section by hand.
   const [advanced, setAdvanced] = useState(level === 'full')
+  // ONE editor open at a time, keyed by property name. Two curve canvases in a
+  // panel this narrow would each be too short to edit, and both would run their
+  // own playhead loop.
+  const [openEditor, setOpenEditor] = useState(null)
 
   const found = findSelection(doc, selection)
   const kind = found?.kind || 'effect'
@@ -165,6 +172,9 @@ export default function VfxParamsPanel({
             actions={actions}
             fieldProps={fieldProps[found.block.id] || {}}
             level={level}
+            openEditor={openEditor}
+            setOpenEditor={setOpenEditor}
+            getCurvePlayhead={getCurvePlayhead}
           />
         )}
         {kind === 'context' && <ContextParams found={found} actions={actions} />}
@@ -196,7 +206,10 @@ function crumbFor(found, doc) {
 
 // ---------------------------------------------------------------------------
 
-function BlockParams({ found, advanced, setAdvanced, actions, fieldProps, level }) {
+function BlockParams({
+  found, advanced, setAdvanced, actions, fieldProps, level,
+  openEditor, setOpenEditor, getCurvePlayhead,
+}) {
   const { block } = found
   const def = CATALOG.block(block.type)
 
@@ -257,6 +270,9 @@ function BlockParams({ found, advanced, setAdvanced, actions, fieldProps, level 
             onPickAsset={() => actions.pickAsset(block.id, name, propDef.type)}
             onClearAsset={() => actions.setProp(block.id, name, '', {})}
             onUnwire={() => actions.unwire(block.id, name)}
+            editorOpen={openEditor === name}
+            onToggleEditor={() => setOpenEditor(openEditor === name ? null : name)}
+            getPlayhead={getCurvePlayhead}
             {...(fieldProps[name] || {})}
           />
         ))}

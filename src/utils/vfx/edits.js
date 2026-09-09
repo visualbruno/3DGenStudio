@@ -351,6 +351,9 @@ export function setBlockPropMode(doc, blockId, prop, mode) {
   const propDef = def?.props?.[prop]
   const channels = propDef ? propChannels(propDef.type) : undefined
   const range = propDef ? { min: propDef.min, max: propDef.max } : undefined
+  // Which axis a curve runs along is the property's own meaning, not a choice -
+  // so it comes from the catalog rather than from the author.
+  const domain = propDef?.domain
 
   return withBlockContext(doc, blockId, context => ({
     ...context,
@@ -360,7 +363,7 @@ export function setBlockPropMode(doc, blockId, prop, mode) {
           ...block,
           props: {
             ...block.props,
-            [prop]: setValueMode(block.props[prop], mode, { channels, range }),
+            [prop]: setValueMode(block.props[prop], mode, { channels, range, domain }),
           },
         }
         : block
@@ -372,18 +375,25 @@ export function setBlockPropMode(doc, blockId, prop, mode) {
 export function setCurvePreset(doc, blockId, prop, presetId) {
   const preset = CURVE_PRESETS.find(entry => entry.id === presetId)
   if (!preset) return doc
-  const current = findBlock(doc, blockId)?.block?.props?.[prop]
+  const found = findBlock(doc, blockId)
+  const current = found?.block?.props?.[prop]
   // The existing scale is kept: a preset changes the SHAPE, and the author's
   // magnitude is a separate decision they have already made.
   const scale = current?.mode === 'curve' && Number.isFinite(current.scale) ? current.scale : 1
-  return setBlockProp(doc, blockId, prop, curveValue(preset.build(), { scale }))
+  // And so is the domain - picking a new shape must not silently turn a curve
+  // over effect time into one over particle life.
+  const domain = CATALOG.block(found?.block?.type)?.props?.[prop]?.domain || current?.domain
+  return setBlockProp(doc, blockId, prop, curveValue(preset.build(), { scale, domain }))
 }
 
 /** Set a gradient preset on a property. */
 export function setGradientPreset(doc, blockId, prop, presetId) {
   const preset = GRADIENT_PRESETS.find(entry => entry.id === presetId)
   if (!preset) return doc
-  return setBlockProp(doc, blockId, prop, gradientValue(preset.build()))
+  const found = findBlock(doc, blockId)
+  const domain = CATALOG.block(found?.block?.type)?.props?.[prop]?.domain
+    || found?.block?.props?.[prop]?.domain
+  return setBlockProp(doc, blockId, prop, gradientValue(preset.build(), { domain }))
 }
 
 /** Assign an asset slot to a texture or mesh property. */

@@ -208,6 +208,232 @@ function applyWrap(curve, t, t0, t1) {
   return t;
 }
 
+// ---------------------------------------------------------------------------
+// Editing
+// ---------------------------------------------------------------------------
+//
+// Pure, immutable, and here rather than in the editor component for two
+// reasons. Sorting is the whole difficulty - a key dragged past its neighbour
+// changes its own index, and an editor that tracked selection by index would
+// select a different key mid-drag - so every mutator returns the new curve AND
+// the index the touched key ended up at. That is not something a React
+// component should be working out for itself, and it is not something that can
+// be checked by looking at a screenshot.
+//
+// The second reason: the compiler bakes these curves and the engine importers
+// re-emit them, so a mutator that produced an unsorted key list would fail
+// somewhere far from the drag that caused it.
+
+/**
+ * @typedef {Object} VfxCurveEdit
+ * @property {VfxCurve} curve the new curve
+ * @property {number} index where the touched key ended up, or -1
+ */
+
+/** Wrap a key list back into a curve, preserving the wrap modes. */
+function rebuild(curve, keys) {
+  return createCurve(keys, { preWrap: curve.preWrap, postWrap: curve.postWrap });
+}
+
+/**
+ * Sort keys and report where one of them landed.
+ *
+ * The identity is carried on a temporary symbol-free marker property rather
+ * than by comparing values, because two keys may legitimately share a value
+ * (a flat hold) and comparing t is exactly what a drag past a neighbour
+ * breaks.
+ */
+function sortTracking(curve, keys, tracked) {
+  const marked = keys.map((key, i) => ({ key, was: i }));
+  marked.sort((a, b) => (a.key.t - b.key.t) || (a.was - b.was));
+  const index = marked.findIndex((entry) => entry.was === tracked);
+  return { curve: rebuild(curve, marked.map((entry) => entry.key)), index };
+}
+
+/**
+ * Add a key.
+ *
+ * The value defaults to the curve's OWN value at t, so clicking empty space in
+ * the editor adds a key without changing the shape. An author who wanted the
+ * shape changed will drag it; one who was adding a key to pin a shape they
+ * already like must not have it move under them.
+ *
+ * @param {VfxCurve} curve
+ * @param {number} t
+ * @param {number} [v] defaults to evalCurve(curve, t)
+ * @returns {VfxCurveEdit}
+ */
+export function addCurveKey(curve, t, v) {
+  const clampedT = Math.min(1, Math.max(0, t));
+  const value = Number.isFinite(v) ? v : evalCurve(curve, clampedT);
+  // The new key inherits the interpolation of the segment it was dropped into,
+  // so adding a key to a stepped curve does not silently smooth it.
+  const before = curve.keys.filter((key) => key.t <= clampedT);
+  const interp = before.length > 0 ? before[before.length - 1].interp : curve.keys[0].interp;
+  const keys = [...curve.keys, createCurveKey({ t: clampedT, v: value, interp })];
+  return sortTracking(curve, keys, keys.length - 1);
+}
+
+/**
+ * Move a key.
+ *
+ * @param {VfxCurve} curve
+ * @param {number} index
+ * @param {{t?: number, v?: number}} to
+ * @returns {VfxCurveEdit}
+ */
+export function moveCurveKey(curve, index, to) {
+  if (index < 0 || index >= curve.keys.length) return { curve, index: -1 };
+  const keys = curve.keys.map((key, i) => (
+    i === index
+      ? createCurveKey({
+        ...key,
+        t: Number.isFinite(to.t) ? Math.min(1, Math.max(0, to.t)) : key.t,
+        v: Number.isFinite(to.v) ? to.v : key.v,
+      })
+      : key
+  ));
+  return sortTracking(curve, keys, index);
+}
+
+/**
+ * Remove a key.
+ *
+ * The LAST key cannot be removed. A curve with no keys evaluates to zero,
+ * which on a size property means invisible particles and on an alpha property
+ * means the same - and the author would be looking at an empty viewport having
+ * only pressed Delete on a graph.
+ *
+ * @param {VfxCurve} curve
+ * @param {number} index
+ * @returns {VfxCurveEdit}
+ */
+export function removeCurveKey(curve, index) {
+  if (curve.keys.length <= 1) return { curve, index: -1 };
+  if (index < 0 || index >= curve.keys.length) return { curve, index: -1 };
+  const keys = curve.keys.filter((_, i) => i !== index);
+  return { curve: rebuild(curve, keys), index: Math.min(index, keys.length - 1) };
+}
+
+/**
+ * Set a key's interpolation mode.
+ *
+ * Switching TO 'free' seeds the handles from what 'auto' was already
+ * producing, so the curve does not jump the moment the author decides to take
+ * manual control - they start from the shape they were looking at.
+ *
+ * @param {VfxCurve} curve
+ * @param {number} index
+ * @param {string} interp
+ * @returns {VfxCurveEdit}
+ */
+export function setKeyInterp(curve, index, interp) {
+  if (index < 0 || index >= curve.keys.length) return { curve, index: -1 };
+  const seedOut = autoTangent(curve.keys, index);
+  const keys = curve.keys.map((key, i) => {
+    if (i !== index) return key;
+    if (interp === CURVE_INTERP.FREE && key.interp !== CURVE_INTERP.FREE) {
+      return createCurveKey({ ...key, interp, outTangent: seedOut, inTangent: key.inTangent });
+    }
+    return createCurveKey({ ...key, interp });
+  });
+  // The NEXT key's inTangent is what the free segment reads at its far end, so
+  // it is seeded too - otherwise the first thing a 'free' segment does is snap
+  // flat at its right-hand end.
+  if (interp === CURVE_INTERP.FREE && index + 1 < keys.length) {
+    keys[index + 1] = createCurveKey({
+      ...keys[index + 1],
+      inTangent: autoTangent(curve.keys, index + 1),
+    });
+  }
+  return { curve: rebuild(curve, keys), index };
+}
+
+// The order a double-click walks. Smooth -> straight -> step is the order an
+// author thinks in, and 'free' is deliberately NOT in the cycle: it is reached
+// by dragging a handle, because arriving at it by accident leaves a curve whose
+// shape no longer follows its neighbours and no visible reason why.
+const INTERP_CYCLE = Object.freeze([
+  CURVE_INTERP.AUTO,
+  CURVE_INTERP.LINEAR,
+  CURVE_INTERP.CONSTANT,
+]);
+
+/**
+ * Advance a key's interpolation to the next mode in the cycle.
+ * @param {VfxCurve} curve
+ * @param {number} index
+ * @returns {VfxCurveEdit}
+ */
+export function cycleKeyInterp(curve, index) {
+  if (index < 0 || index >= curve.keys.length) return { curve, index: -1 };
+  const at = INTERP_CYCLE.indexOf(curve.keys[index].interp);
+  // 'free' is not in the cycle, so a double-click on a hand-tuned key returns
+  // it to 'auto' rather than to whatever happens to be next.
+  const next = INTERP_CYCLE[(at + 1) % INTERP_CYCLE.length];
+  return setKeyInterp(curve, index, at < 0 ? CURVE_INTERP.AUTO : next);
+}
+
+/**
+ * Set one of a key's tangent handles.
+ *
+ * Setting a tangent implies 'free' - the mode exists precisely to mean "the
+ * author dragged this" - so it is applied here rather than requiring two calls
+ * that could be made in the wrong order.
+ *
+ * @param {VfxCurve} curve
+ * @param {number} index
+ * @param {'in'|'out'} side
+ * @param {number} slope dv/dt
+ * @returns {VfxCurveEdit}
+ */
+export function setKeyTangent(curve, index, side, slope) {
+  if (index < 0 || index >= curve.keys.length) return { curve, index: -1 };
+  const value = Number.isFinite(slope) ? slope : 0;
+  const keys = curve.keys.map((key, i) => {
+    if (i !== index) return key;
+    return createCurveKey({
+      ...key,
+      [side === 'in' ? 'inTangent' : 'outTangent']: value,
+      // Dragging the OUT handle makes this key's own segment free. Dragging the
+      // IN handle makes the PREVIOUS segment free, which is handled below -
+      // this key's own mode is left alone in that case.
+      interp: side === 'out' ? CURVE_INTERP.FREE : key.interp,
+    });
+  });
+  if (side === 'in' && index > 0) {
+    keys[index - 1] = createCurveKey({ ...keys[index - 1], interp: CURVE_INTERP.FREE });
+  }
+  return { curve: rebuild(curve, keys), index };
+}
+
+/**
+ * A one-line description of a curve's shape, in words.
+ *
+ * The accessible name for the editor canvas, and the tooltip on a collapsed
+ * row. A canvas is invisible to a screen reader, and "curve" is not a
+ * description - "starts at 0, rises to 1, ends at 0, 3 keys" is.
+ *
+ * @param {VfxCurve} curve
+ * @param {{unit?: string}} [options]
+ * @returns {string}
+ */
+export function describeCurve(curve, options = {}) {
+  const unit = options.unit ? ` ${options.unit}` : '';
+  const round = (n) => String(Math.round(n * 1000) / 1000);
+  const keys = curve.keys;
+  if (keys.length === 1) return `constant ${round(keys[0].v)}${unit}`;
+
+  const { min, max } = curveExtent(curve);
+  const first = keys[0].v;
+  const last = keys[keys.length - 1].v;
+  const shape = Math.abs(max - min) < 1e-6
+    ? 'flat'
+    : last > first ? 'rising' : last < first ? 'falling' : 'a hump';
+  return `${shape}, from ${round(first)} to ${round(last)}${unit},`
+    + ` ranging ${round(min)} to ${round(max)}, ${keys.length} keys`;
+}
+
 /**
  * Evaluate a curve. This is the reference implementation - the LUT bake below
  * is measured against it, and so is anything the engine importers generate.
