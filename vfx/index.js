@@ -127,3 +127,43 @@ export {
   serializeVfxDoc,
   vfxSignature,
 } from './doc.js';
+
+export {
+  BLOCKS,
+  CATALOG,
+  CONTEXT_DEFS,
+  ENGINE_SUPPORT,
+  OPERATORS,
+  PROP_TYPE,
+  defaultContextParams,
+  defaultModes,
+  defaultProps,
+  makeCatalog,
+  propChannels,
+  worstEngineSupport,
+} from './catalog.js';
+
+export {
+  ATTRIBUTES,
+  BINDING_SRC,
+  CORE_ATTRIBUTES,
+  FREQ,
+  FREQ_LABEL,
+  VFX_IR_FORMAT,
+  createConstantPool,
+  createTablePool,
+  drawSlot,
+  hashString,
+  layoutAttributes,
+  validateIrSerializable,
+} from './ir.js';
+
+export {
+  DIAGNOSTIC_CODES,
+  SEVERITY,
+  createDiagnostics,
+  diagnosticDef,
+  summarizeDiagnostics,
+} from './diagnostics.js';
+
+export { compileVfxGraph } from './compile.js';
