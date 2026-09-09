@@ -307,6 +307,51 @@ export function layoutAttributes(requested) {
 }
 
 /**
+ * The per-instance vertex layout for one Output.
+ *
+ * ONE TABLE, BOTH SIDES. The JS write loop that fills the instanced buffer and
+ * the shader's attribute declarations are both generated from this - which
+ * matters because a hand-maintained layout is exactly where the two silently
+ * desync. An offset wrong by one float does not error; it makes every particle
+ * read its neighbour's size as its colour, and the result looks like a shader
+ * bug rather than a bookkeeping one.
+ *
+ * Only what the output actually needs is included, on the same reasoning as
+ * per-effect attributes: velocity is 12 bytes per instance that a plain
+ * billboard has no use for, and the buffer write is one of the three biggest
+ * per-frame costs.
+ *
+ * @param {Object} spec
+ * @param {string} spec.mode output render mode
+ * @param {Set<string>|string[]} spec.attributes attribute names the system has
+ * @param {boolean} [spec.smoothing] sub-step extrapolation, which needs velocity
+ * @returns {{stride: number, fields: Array<{name: string, size: number, offset: number, from: string}>}}
+ */
+export function buildInstanceLayout(spec) {
+  const has = spec.attributes instanceof Set ? spec.attributes : new Set(spec.attributes || []);
+  const fields = [];
+  let offset = 0;
+  const add = (name, size, from) => {
+    fields.push({ name, size, offset, from });
+    offset += size;
+  };
+
+  // Position, size and colour are on every particle that is drawn at all.
+  add('iPos', 3, 'position');
+  add('iSize', 1, 'size');
+  add('iColor', 4, 'color');
+
+  // Velocity is needed to orient a stretched billboard, and to extrapolate
+  // between simulation steps so a 60Hz sim does not judder on a 144Hz display.
+  const needsVelocity = spec.mode === 'stretched' || Boolean(spec.smoothing);
+  if (needsVelocity && has.has('velocity')) add('iVelocity', 3, 'velocity');
+  if (has.has('rotation')) add('iRotation', 1, 'rotation');
+  if (has.has('flipbookFrame')) add('iTile', 1, 'flipbookFrame');
+
+  return { stride: offset, fields };
+}
+
+/**
  * A short, stable hash of a string. Used for the graph hash that keys the
  * compile cache and for random draw slots.
  *

@@ -1,0 +1,342 @@
+/* VFX Editor page.
+ *
+ * NO backdrop-filter ANYWHERE IN THIS FILE. The HUD and the diagnostics strip
+ * both sit over or beside a live WebGL canvas, and a blurred layer there forces
+ * a full canvas readback on every composited frame in Chromium - measured at
+ * roughly half the framerate in the Electron build. The same rule is documented
+ * at the top of AssemblyPage.css and TreeGenPage.css. Opaque panels only.
+ *
+ * The three-pane grid the feature is built around (Parameters | Board |
+ * Preview) is not scaffolded yet: the board and the parameters panel arrive in
+ * phase 6, and laying out panes with nothing to put in them would mean guessing
+ * at sizes that the real content will decide. */
+
+.vfx-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* --- Toolbar ------------------------------------------------------------- */
+
+.vfx-page__bar {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.6rem 1.5rem;
+  background: var(--surface-container);
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.vfx-page__templates {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.vfx-page__template {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.vfx-page__template:hover {
+  color: var(--on-surface);
+  border-color: var(--primary);
+}
+
+.vfx-page__template.is-active {
+  color: var(--on-surface);
+  border-color: var(--primary);
+  background: rgba(172, 137, 255, 0.14);
+}
+
+.vfx-page__transport {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.vfx-page__transport button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  background: transparent;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.vfx-page__transport button:hover {
+  color: var(--on-surface);
+  border-color: var(--primary);
+}
+
+.vfx-page__transport .material-symbols-outlined {
+  font-size: 1.15rem;
+}
+
+.vfx-page__toggles {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-left: auto;
+  font-family: var(--font-label);
+  font-size: 0.78rem;
+  color: var(--on-surface-variant);
+}
+
+.vfx-page__toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.vfx-page__toggles select {
+  padding: 0.3rem 0.5rem;
+  background: var(--surface-container-highest, #1f2226);
+  color: var(--on-surface);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  font-family: var(--font-label);
+  font-size: 0.78rem;
+}
+
+/* --- Viewport ------------------------------------------------------------ */
+
+.vfx-page__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  background: var(--background);
+  padding: 1rem 1.5rem;
+}
+
+/* The canvas fills this, so it has to be size-constrained. Without the
+ * overflow rule a tall panel can push the canvas past the viewport and the
+ * WebGL drawing buffer chases the overflow - the same trap documented on
+ * .assembly-page__viewport. */
+.vfx-page__viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--outline-variant);
+  /* A dark ground, because additive particles are invisible on white. The
+   * background presets in phase 6 make this switchable; black is the honest
+   * default for authoring glow. */
+  background:
+    radial-gradient(circle at 50% 40%, rgba(172, 137, 255, 0.06), transparent 60%),
+    #0c0d0f;
+}
+
+.vfx-viewport__canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- HUD ----------------------------------------------------------------- */
+
+.vfx-hud {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  min-width: 190px;
+  padding: 0.6rem 0.7rem;
+  /* Opaque. See the header. */
+  background: #14161a;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  color: var(--on-surface-variant);
+  /* Tabular figures so the numbers do not jitter sideways as they change,
+   * which on a readout that updates four times a second is very visible. */
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.vfx-hud__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  line-height: 1.5;
+}
+
+.vfx-hud__row.is-bad .vfx-hud__value {
+  color: var(--error, #ff6b6b);
+  font-weight: 700;
+}
+
+.vfx-hud__label {
+  opacity: 0.75;
+}
+
+.vfx-hud__value {
+  color: var(--on-surface);
+}
+
+.vfx-hud__dim {
+  opacity: 0.5;
+}
+
+.vfx-hud__bar {
+  height: 3px;
+  margin: 0.25rem 0 0.5rem;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.vfx-hud__bar span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+}
+
+.vfx-hud__bar.is-high span {
+  background: #ffc46b;
+}
+
+.vfx-hud__bar.is-full span {
+  background: var(--error, #ff6b6b);
+}
+
+.vfx-hud__rule {
+  height: 1px;
+  margin: 0.45rem 0;
+  background: var(--outline-variant);
+}
+
+/* --- Diagnostics strip --------------------------------------------------- */
+
+.vfx-page__diagnostics {
+  border-top: 1px solid var(--outline-variant);
+  background: var(--surface-container);
+  padding: 0.5rem 1.5rem 0.6rem;
+  max-height: 190px;
+  overflow-y: auto;
+  font-family: var(--font-label);
+  font-size: 0.78rem;
+}
+
+.vfx-page__diagnostics-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--on-surface-variant);
+}
+
+.vfx-page__diagnostics.is-ok .vfx-page__diagnostics-summary {
+  color: #79e388;
+}
+
+.vfx-page__diagnostics.is-warn .vfx-page__diagnostics-summary {
+  color: #ffc46b;
+}
+
+.vfx-page__diagnostics.is-error .vfx-page__diagnostics-summary {
+  color: var(--error, #ff6b6b);
+}
+
+.vfx-page__diagnostics-summary .material-symbols-outlined {
+  font-size: 1.05rem;
+}
+
+.vfx-page__diagnostics-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.vfx-page__diagnostics-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-md, 8px);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--on-surface-variant);
+  line-height: 1.45;
+}
+
+.vfx-page__diagnostics-list li .material-symbols-outlined {
+  font-size: 1rem;
+  flex: 0 0 auto;
+  margin-top: 0.1rem;
+}
+
+.vfx-page__diagnostics-list li.is-error .material-symbols-outlined {
+  color: var(--error, #ff6b6b);
+}
+
+.vfx-page__diagnostics-list li.is-warn .material-symbols-outlined {
+  color: #ffc46b;
+}
+
+.vfx-page__diagnostics-list li.is-info .material-symbols-outlined {
+  color: var(--primary);
+}
+
+.vfx-page__diagnostics-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.vfx-page__diagnostics-text strong {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+/* The hint, in the same row rather than behind a disclosure: the audience has
+ * not learned this vocabulary, and the sentence explaining WHY is the half
+ * that actually teaches. */
+.vfx-page__diagnostics-text em {
+  display: block;
+  font-style: normal;
+  opacity: 0.72;
+  margin-top: 0.15rem;
+}
+
+.vfx-page__diagnostics-list li button {
+  flex: 0 0 auto;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.vfx-page__diagnostics-list li button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (max-width: 900px) {
+  .vfx-page__body {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .vfx-page__toggles {
+    margin-left: 0;
+  }
+}

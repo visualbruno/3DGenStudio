@@ -35,6 +35,7 @@ import {
   FREQ_LABEL,
   VFX_IR_FORMAT,
   createConstantPool,
+  buildInstanceLayout,
   createTablePool,
   drawSlot,
   hashString,
@@ -753,11 +754,17 @@ export function compileVfxGraph(document, options = {}) {
       const params = { ...contextParamDefaults(catalog, CONTEXT_KIND.OUTPUT), ...context.params };
       capabilities.add(`output.${params.mode}`);
       capabilities.add(`blend.${params.blend}`);
+      const instanceLayout = buildInstanceLayout({
+        mode: params.mode,
+        attributes: systemAttrs,
+        smoothing: params.smoothing !== false,
+      });
       return {
         contextId: context.id,
         mode: params.mode,
         blend: params.blend,
         sort: params.sort,
+        instanceLayout,
         blocks,
         // Outputs sharing this key can be drawn in one instanced call. The
         // criterion is material state plus render mode, which is the same
@@ -962,7 +969,7 @@ function runSystemDiagnostics(args) {
     const textureBlock = context.blocks.find((b) => b.type === 'output.setMainTexture');
     const slot = textureBlock ? normalizeValue(textureBlock.props.texture).v : '';
     if (!textureBlock || !slot || !doc.references[slot]) {
-      diag.report('W_NO_TEXTURE', { systemId: system.id, contextId: context.id },
+      diag.report('I_DEFAULT_SPRITE', { systemId: system.id, contextId: context.id },
         { systemName: system.name, blockId: textureBlock?.id || '' });
     }
 

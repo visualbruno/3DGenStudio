@@ -189,11 +189,15 @@ const DEFS = Object.freeze({
       args: { contextId: d.contextId, param: 'blend', value: 'alpha' },
     }),
   },
-  W_NO_TEXTURE: {
-    severity: SEVERITY.WARN,
-    title: 'No sprite chosen',
-    message: (d) => `The Output in "${d.systemName}" has no texture, so particles draw as hard-edged squares.`,
-    hint: () => 'A soft round blob is the right choice for most effects. With Additive blending the texture needs no alpha channel - its black areas are already invisible.',
+  I_DEFAULT_SPRITE: {
+    severity: SEVERITY.INFO,
+    title: 'Using the built-in sprite',
+    message: (d) => `The Output in "${d.systemName}" has no texture of its own, so it is drawing with the built-in soft blob.`,
+    // Deliberately an info rather than a warning: the effect looks reasonable
+    // as it is. The renderer always binds a soft radial sprite when none is
+    // chosen (see src/utils/vfx/assets.js), so there is nothing broken here -
+    // only something the author might want to improve on.
+    hint: () => 'That is the right shape for most smoke, fire and glow. Pick your own for anything with character - a streak, a shard, a flipbook. With Additive blending the texture needs no alpha channel, because its black areas are already invisible.',
     fix: (d) => ({
       label: 'Choose a sprite...',
       action: 'pickAsset',
