@@ -48,7 +48,7 @@
 import * as THREE from 'three'
 import { renderSceneToBlob } from './meshThumbnail.js'
 import { createBatches, disposeBatch, writeBatch } from './vfx/batch.js'
-import { createVfxRuntime, step } from './vfx/system.js'
+import { createVfxRuntime, installMeshSamplers, step } from './vfx/system.js'
 
 const THUMBNAIL_SIZE = 512
 const CAPTURE_FRACTION = 0.45
@@ -262,6 +262,9 @@ export async function createVfxThumbnailFile(ir, options = {}) {
 
   // A private runtime, so this never disturbs a preview that may be running.
   const runtime = createVfxRuntime(ir)
+  // Same as the sprite-sheet bake: a fresh runtime has no samplers, and a
+  // mesh emitter without one spawns everything at the origin.
+  installMeshSamplers(runtime, meshes)
   // A whole number of fixed steps, computed from the target time rather than
   // accumulated from a clock - that is what makes two runs identical.
   const steps = Math.max(1, Math.round(captureTime / ir.effect.fixedDt))

@@ -1,7 +1,9 @@
 # The Unity and Unreal importer plugins
 
-Specified here; **not built**. This document is what a plugin author needs
-before starting, and what the IR was designed against.
+**Unity: built and verified.** **Unreal: specified, not built.** This document
+is what a plugin author needs before starting, and what the IR was designed
+against. Everything measured rather than recalled has its spike script and
+raw output committed under `plugins/unity/Spikes/`.
 
 Both are **importers**. They read a bundle and build engine assets from
 pre-authored templates plus parameter binding. Neither synthesises a graph node
@@ -17,22 +19,64 @@ engine-side plugins consume it. Nothing here generates engine-native assets.
 - [VFX_ENGINE_MAPPING.md](VFX_ENGINE_MAPPING.md) — generated; what maps and what
   does not. Regenerate with `node tools/gen-vfx-mapping.mjs`.
 
-## Unity: templates plus exposed properties
+## Unity: the Shuriken Particle System — BUILT
 
-Unity can only set **exposed** properties on a `.vfx` from an Editor script. It
-cannot build a VFX Graph programmatically in any supported way.
+`plugins/unity/com.3dgenstudio.vfx-import/`, a UPM package. Verified end to end
+against Unity 6000.6.0f1 + URP 17.6.0: two real bundles exported from the app
+and imported into prefabs in batch mode. Evidence in `plugins/unity/Spikes/`.
 
-So the plugin ships hand-authored `.vfx` **templates**, one per archetype tier,
-copies one per imported effect, and binds:
+**It targets Shuriken, the built-in Particle System — not Visual Effect Graph.**
+That reverses what this document originally specified, and the reversal was
+forced by measurement:
 
-- exposed properties (floats, vectors, colours, curves, gradients, textures,
-  meshes),
-- the textures and meshes from the bundle, imported as Unity assets first,
-- baked curve LUTs where a curve cannot be set directly.
+1. **VFX Graph cannot be authored from a script.** `VFXGraph`, `VFXContext`,
+   `VFXBlock` and `VFXModel` are all `internal`, and there is no public
+   asset-creation API. A plugin can only bind *exposed properties* on a graph
+   somebody drew by hand.
+2. **No shipped template exposes anything to bind.** All seven `.vfx` files in
+   the package's own `Editor/Templates` — `Empty`, `Firework`, `Head_Trail`,
+   `Minimal_System`, `Simple_Burst`, `Simple_Loop`, `Simple_Trail` — report
+   **zero** exposed properties. So a VFX Graph backend does not start from a
+   stock template; it starts from an empty graph that must be drawn *and* have
+   every property exposed deliberately, per tier.
+3. **Shuriken can be built entirely from script**, and every module survives a
+   prefab save: burst lists of any length, `AnimationCurve`s with tangents,
+   `Gradient`s with separate colour and alpha rails, all the emitter shapes the
+   catalog uses, forces, noise, collision, spin, sub-emitters, render modes and
+   sorting.
+4. **Shuriken reaches every platform.** It is CPU-simulated, so no compute
+   shaders and no SSBOs. VFX Graph's own requirements page states it needs both,
+   that it **"does not support Open GL ES"**, and that on URP it **is not out of
+   preview and "only supports some of the platforms that URP supports"** — so
+   VFX Graph is effectively desktop and console, while Shuriken also covers
+   mobile, WebGL and low-end hardware.
 
-Tier selection is a **set-cover** problem over `ir.systems[].*[].kernel`: pick
-the smallest template whose capabilities are a superset of what the effect uses.
-That is why the IR lists kernels by name rather than by opaque index.
+A VFX Graph backend therefore stays **deferred, not rejected**: it would add GPU
+particle counts on desktop and console, and the honest cost is a set of
+hand-authored templates (one per renderer mode x blend mode, since blend is a
+graph *setting* and cannot be an exposed property) plus a validator that checks
+each template exposes the contract's property names. Nothing in the IR blocks
+it; the work is asset authoring, which is a human's.
+
+### What the importer does
+
+One prefab per bundle, one `ParticleSystem` per IR system. It reads
+`srcBlockType` rather than the lowered `kernel`, so it can name the author's own
+block when reporting a gap. Every import writes a `.import-report.txt` beside
+the prefab listing what came across natively, what was approximated and with
+what mechanism, and what was dropped.
+
+Notable mappings, all measured rather than assumed:
+
+- The timeline's clips become a **rate curve over the system duration** with
+  stepped keys, so N spawn windows survive natively — no burst approximation and
+  no template slot to run out of. `durationSteps <= 0` means the window stays
+  open forever, which is what the runtime's `anyWindowOpen` does.
+- Buoyancy — the fire presets' upward gravity — becomes a **negative**
+  `gravityModifier`, exactly.
+- Compiler-injected kernels (`init.snapshot`, `age.advance`,
+  `integrate.semiImplicit`) carry no `srcBlockType` and are skipped; Shuriken
+  ages and integrates itself.
 
 ## Unreal: emitter inheritance plus User Parameters
 
@@ -46,25 +90,72 @@ carry. Those import as baked values.
 
 ## Five spikes that constrain the IR
 
-These were meant to run before the IR was frozen. **They have not been run.**
-Anything below marked *assumed* is a risk that lands on the first plugin.
+**Run 2026-09-10 against Unity 6000.6.0f1 + URP 17.6.0 + Visual Effect Graph
+17.6.0.** The script and its raw output are committed at
+`plugins/unity/Spikes/` so the answers can be re-measured against a future
+Unity rather than trusted from this document.
 
 1. **Which Unity exposed-property types can an Editor script actually set?**
-   *Assumed: all of them.* If only `Texture` works, every curve must bake to a
-   LUT and the IR must declare its sample count — it does (`tables[].n`), so the
-   IR survives either answer.
-2. **How many template tiers are really needed?** Requires walking real effects'
-   kernel sets. The IR exposes them by name for exactly this.
-3. **Coordinate and unit convention.** Recommended: metres, Y-up,
-   right-handed; the plugin converts. `mcp/tools/tree.js` already has an
-   `engine: 'unity' | 'unreal' | 'godot'` axis vocabulary to reuse.
-4. **What determinism to promise.** Answered, in VFX_IR.md: statistical
-   conformance, checked against a shipped JSON fixture. Do not promise more.
-5. **Are burst lists and spawn-loop timing settable from an Editor script in
-   both engines?** *Assumed: yes.* This is the one the timeline feature depends
-   on: it decides whether clip timing survives as native spawn timing or has to
-   be baked into duplicated spawn contexts. `ir.systems[].schedule` is already
-   in whole simulation steps either way.
+   **ANSWERED: all of them, including curves and gradients.** `VisualEffect`
+   exposes `SetFloat`, `SetInt`, `SetUInt`, `SetBool`, `SetVector2/3/4`,
+   `SetMatrix4x4`, `SetTexture`, `SetMesh`, `SetSkinnedMeshRenderer`,
+   `SetGraphicsBuffer` and - the two that mattered - **`SetAnimationCurve` and
+   `SetGradient`**, each in both string and int-id overloads.
+
+   So **nothing has to be baked to a LUT.** An authored Hermite key maps
+   field-for-field onto a Unity `Keyframe`, which is why the IR keeps the
+   authored curves and gradients beside the baked tables: the tables are for the
+   preview, and the plugin reads the keys. The `tables[].n` sample count stays in
+   the IR for Niagara and for any future target that cannot take a curve, but
+   Unity does not need it.
+
+2. **How many template tiers are really needed?** **Constrained by spike 5, not
+   by op coverage.** Since a graph cannot be built from script (below), a tier is
+   a pre-authored `.vfx` and the tier count is driven by *structure* an effect
+   needs and a property cannot express: the number of systems, the renderer per
+   system, and the number of burst slots. Op coverage is not the axis - every
+   force in the catalog is native to VFX Graph.
+
+3. **Coordinate and unit convention.** **MEASURED, and it is the one finding
+   with a consequence for the exporter.** `Vector3.Cross(right, up)` returns
+   `(0, 0, 1)`, so Unity is **left-handed**, Y-up, with gravity `-9.81` on Y and
+   one unit to the metre.
+
+   Our IR is three.js's convention: **right-handed**, Y-up, metres. Same up
+   axis, same unit, *opposite handedness* - so the importer must **negate Z** on
+   every position, velocity, direction and offset it binds, and negate the X and
+   Y components of any euler rotation. This is not a preference to be settled
+   later; an effect imported without it is mirrored, which on anything with a
+   vortex or a directional emitter is visibly wrong and on a sphere emitter is
+   invisibly wrong. Record it once, in the plugin's conversion helper, and never
+   inline it.
+
+4. **What determinism to promise.** **Answered, and now with the mechanism to
+   back it.** `VisualEffect` carries `startSeed` and `resetSeedOnPlay`, so the
+   IR's per-system seed travels into Unity's own seed field and an imported
+   effect is reproducible *in Unity*. It still will not match this editor's
+   per-particle numbers - Unity's RNG is not PCG32 - so the promise stays what
+   VFX_IR.md says: **statistical conformance**, checked against a shipped
+   fixture. Do not promise more.
+
+5. **Are burst lists and spawn-loop timing settable from an Editor script?**
+   **ANSWERED, and this is the constraining finding: a graph's STRUCTURE cannot
+   be authored from script.** `VFXGraph`, `VFXContext`, `VFXBlock` and
+   `VFXModel` are all `internal` in `Unity.VisualEffectGraph.Editor`, and there
+   is no public asset-creation utility.
+
+   So the plan's "pre-authored templates plus parameter binding" is **required,
+   not merely preferred** - a plugin that tried to synthesise a graph node by
+   node would have to use reflection against internal types and would break on
+   any package update.
+
+   What that means for the timeline: a burst *list* is graph structure, so its
+   LENGTH is fixed by the template. Clip timing survives as **exposed properties
+   on a template with N burst slots** - each slot a delay and a count, both
+   settable via `SetFloat`/`SetInt` - plus the runtime levers `playRate`,
+   `Play`, `Stop`, `SendEvent` and `Reinit`, all of which are public. An effect
+   whose schedule needs more clips than the widest template has slots is a
+   reportable gap, not a silent truncation.
 
 ## Where the plugins live
 

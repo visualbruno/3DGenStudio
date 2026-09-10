@@ -1166,6 +1166,72 @@ app.post('/api/wiki/media', requireWikiAuthor, wikiMediaUpload.single('file'), a
   }
 });
 
+// Where the Unity importer lives, both in a checkout and in a packaged build:
+// the plugin folder sits beside server.js in both, because electron-builder
+// names it in `files:` and the Dockerfile copies it explicitly.
+const UNITY_PLUGIN_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)), 'plugins', 'unity');
+
+/**
+ * Copy the Unity importer into an exported bundle.
+ *
+ * BOTH FORMS, because they suit different people. The UPM package is what a
+ * project should actually depend on - Package Manager handles upgrades, and it
+ * installs under Packages/ rather than becoming part of the user's asset tree.
+ * The .unitypackage is the double-click path for someone who just wants the
+ * effect in a scene and has never opened Package Manager.
+ *
+ * @param {string} bundleDir
+ * @returns {Promise<{folder: string, unitypackage: string|null}>}
+ */
+async function copyUnityImporterInto(bundleDir) {
+  const source = path.join(UNITY_PLUGIN_DIR, 'com.3dgenstudio.vfx-import');
+  if (!existsSync(source)) {
+    throw new Error('the Unity importer is not present in this installation');
+  }
+
+  const target = path.join(bundleDir, 'UnityImporter', 'com.3dgenstudio.vfx-import');
+  await fs.cp(source, target, { recursive: true });
+
+  let unitypackage = null;
+  const bundled = path.join(UNITY_PLUGIN_DIR, '3dgenstudio-vfx-import.unitypackage');
+  if (existsSync(bundled)) {
+    const dest = path.join(bundleDir, 'UnityImporter', '3dgenstudio-vfx-import.unitypackage');
+    await fs.copyFile(bundled, dest);
+    unitypackage = 'UnityImporter/3dgenstudio-vfx-import.unitypackage';
+  }
+
+  // A README so the folder explains itself six months later, when the person
+  // opening it is not the person who exported it.
+  await fs.writeFile(
+    path.join(bundleDir, 'UnityImporter', 'HOW-TO-IMPORT.txt'),
+    [
+      'Importing this effect into Unity',
+      '================================',
+      '',
+      'Pick either route - they install the same importer.',
+      '',
+      '1. Package Manager (recommended; handles upgrades cleanly)',
+      '     Window > Package Manager > + > Add package from disk...',
+      '     choose  UnityImporter/com.3dgenstudio.vfx-import/package.json',
+      '',
+      '2. Double-click  UnityImporter/3dgenstudio-vfx-import.unitypackage',
+      '     Installs into Assets/3DGenStudioVfxImport/ instead.',
+      '',
+      'Then:  Assets > Import VFX Bundle...  and choose THIS folder',
+      '(the one containing manifest.json).',
+      '',
+      'A .import-report.txt lands beside the generated prefab saying exactly',
+      'what came across natively, what was approximated and what could not be',
+      'carried at all.',
+      ''
+    ].join('\n'),
+    'utf8'
+  );
+
+  return { folder: 'UnityImporter/com.3dgenstudio.vfx-import', unitypackage };
+}
+
 // ── VFX presets ───────────────────────────────────────────────────────────
 // The starter-effect library, as FILES rather than as code. See vfx/preset.js
 // for why the directory is the index and why a preset may not reference assets.
@@ -7627,6 +7693,7 @@ app.post('/api/assets/:id/vfx-export', async (req, res) => {
     // for the plan and then writes the bundle to the user's own disk. Calling
     // buildVfxExport directly here would read a database this machine does not
     // have in remote mode.
+    const includeImporter = req.body?.includeUnityImporter === true;
     const { manifest, files } = await buildVfxExportPlan(assetId, {
       appVersion: await readAppVersion(),
       engineTarget
@@ -7660,6 +7727,25 @@ app.post('/api/assets/:id/vfx-export', async (req, res) => {
       }
     }
 
+    // THE IMPORTER TRAVELS WITH THE BUNDLE, when asked for. Without this the
+    // only way to obtain it is to clone the repository, which a user of the
+    // packaged app cannot do - so an exported effect would arrive with nothing
+    // able to read it.
+    if (includeImporter) {
+      try {
+        const copied = await copyUnityImporterInto(bundleDir);
+        manifest.unityImporter = copied;
+      } catch (importerErr) {
+        // Best effort, like the asset copies above: the bundle itself is the
+        // deliverable and a missing importer is recoverable by hand.
+        manifest.warnings.push({
+          code: 'IMPORTER_UNAVAILABLE',
+          severity: 'warn',
+          message: `Could not write the Unity importer: ${importerErr?.message || importerErr}`
+        });
+      }
+    }
+
     // Written LAST, so its warnings include any that copying produced.
     await fs.writeFile(
       path.join(bundleDir, 'manifest.json'),
@@ -7671,6 +7757,7 @@ app.post('/api/assets/:id/vfx-export', async (req, res) => {
       folder: bundleDir,
       name: bundleName,
       fileCount: copied,
+      unityImporter: manifest.unityImporter || null,
       warnings: manifest.warnings
     });
   } catch (err) {

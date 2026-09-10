@@ -1,0 +1,23 @@
+EVERY CHECK PASSED
+
+VisualEffectAsset property APIs:
+    public GetExposedProperties(List`1)
+    public GetExposedSpace(Int32)
+    public GetExposedSpace(String)
+
+ok    the package ships .vfx templates  [Library\PackageCache\com.unity.visualeffectgraph@47051adff7cc\Editor\Templates]
+ok    templates import as VisualEffectAssets  [7 copied]
+
+Exposed properties of each shipped template:
+  Empty.vfx: 0 exposed
+  Firework.vfx: 0 exposed
+  Head_Trail.vfx: 0 exposed
+  Minimal_System.vfx: 0 exposed
+  Simple_Burst.vfx: 0 exposed
+  Simple_Loop.vfx: 0 exposed
+  Simple_Trail.vfx: 0 exposed
+
+NOTE: no shipped template exposes a float, so the persistence half of
+this spike could not run against a stock asset. That is itself the
+finding: our templates must expose properties deliberately - a stock
+graph exposes nothing useful to bind.

@@ -1,0 +1,54 @@
+ALL BUNDLES IMPORTED
+
+================ Fire Mesh ================
+11 native, 3 approximated, 2 dropped
+
+DROPPED
+  effect          mesh 1788877569172-218606807.glb Unity has no built-in glTF importer - add com.unity.cloud.gltfast (or UnityGLTF) to the project and import again, or convert the mesh to FBX before exporting
+  Flame           initialize.positionMesh        the bundle has no mesh for this slot
+
+APPROXIMATED
+  Flame           initialize.velocityDirection   became a constant velocity over life, which keeps pushing rather than setting an initial speed; spread is not carried
+  Flame           update.turbulence              became the noise module: Unity's noise is value noise, not the divergence-free curl noise the preview uses, so the motion differs in character even at the same strength
+  Flame           gradient HDR                   a key at 3.0x intensity was folded into an LDR colour; Unity's Gradient has no HDR channel, so use the material's emission for the glow
+
+NATIVE
+  Flame           spawn.rate                     400/s
+  Flame           initialize.setLifetime        
+  Flame           initialize.setSize            
+  Flame           initialize.setColor           
+  Flame           initialize.setRotation        
+  Flame           update.gravity                 gravityModifier -0.16
+  Flame           update.drag                    limitVelocityOverLifetime.drag
+  Flame           update.sizeOverLife           
+  Flame           update.colorOverLife          
+  Flame           output.mode                    Billboard
+  Flame           output.blend                   additive -> Universal Render Pipeline/Particles/Unlit
+
+prefab: Assets/ImportedVfx/Fire Mesh/Fire Mesh.prefab  systems: 1
+  Flame          max=2048   life=0.70..4.00         size=0.28..1.00         bursts=0 rate=400 shape=Mesh render=Billboard sort=None mat=Universal Render Pipeline/Particles/Unlit
+    grav=-0.16 colourOverLife=True sizeOverLife=True noise=True collision=False spin=False mesh=none
+
+================ Sparks ================
+10 native, 2 approximated
+
+APPROXIMATED
+  Sparks          initialize.velocityRandom      became a random velocity over life; it is re-applied every frame rather than drawn once at birth, so drag and gravity read slightly differently
+  Sparks          gradient HDR                   a key at 4.0x intensity was folded into an LDR colour; Unity's Gradient has no HDR channel, so use the material's emission for the glow
+
+NATIVE
+  Sparks          spawn.burst                    1 burst(s) of 140
+  Sparks          initialize.setLifetime        
+  Sparks          initialize.setSize            
+  Sparks          initialize.setColor           
+  Sparks          initialize.positionSphere      Sphere
+  Sparks          update.gravity                 gravityModifier 1.00
+  Sparks          update.drag                    limitVelocityOverLifetime.drag
+  Sparks          update.colorOverLife          
+  Sparks          output.mode                    Stretch
+  Sparks          output.blend                   additive -> Universal Render Pipeline/Particles/Unlit
+
+prefab: Assets/ImportedVfx/Sparks/Sparks.prefab  systems: 1
+  Sparks         max=512    life=0.30..0.85         size=0.02..3.13         bursts=1 rate=0 shape=Sphere render=Stretch sort=None mat=Universal Render Pipeline/Particles/Unlit
+    grav=1.00 colourOverLife=True sizeOverLife=False noise=False collision=False spin=False mesh=none
+

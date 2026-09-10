@@ -83,6 +83,11 @@ COPY --chown=node:node vfx ./vfx
 COPY --chown=node:node wiki ./wiki
 # The VFX starter-effect library, served read-only from /api/vfx/presets.
 COPY --chown=node:node resources/vfx ./resources/vfx
+# The Unity importer, offered alongside an exported VFX bundle. Named
+# precisely: plugins/unity also holds the Phase 0 spikes and the packaging
+# tool, which are development artifacts with no place in a server image.
+COPY --chown=node:node plugins/unity/com.3dgenstudio.vfx-import ./plugins/unity/com.3dgenstudio.vfx-import
+COPY --chown=node:node plugins/unity/3dgenstudio-vfx-import.unitypackage ./plugins/unity/
 
 # Run unprivileged. Ownership is set by --chown on each COPY above rather than a
 # trailing `chown -R /app`: that recursive form rewrites every one of the ~40k

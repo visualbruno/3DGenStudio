@@ -1,0 +1,31 @@
+Shuriken spike: EVERY CHECK PASSED
+
+ok    main.duration writes through  [2.50]
+ok      a two-constant random range survives  [TwoConstants]
+ok      maxParticles maps to the IR's capacity
+ok      and simulation space is settable
+ok    a burst list of arbitrary length is settable  [5]
+ok      with the times preserved  [1.10]
+ok      and the counts preserved  [60,8]
+ok      alongside a rate
+ok    a curve over life takes an AnimationCurve  [3 keys]
+ok      including its tangents  [2.00]
+ok      and its multiplier
+ok    a gradient over life takes a Gradient  [3 colour keys]
+ok      with colour and alpha keys kept apart
+ok    an emitter shape is settable  [ConeVolume]
+      shapes available: Sphere SphereShell Hemisphere HemisphereShell Cone Box Mesh ConeShell ConeVolume ConeVolumeShell Circle CircleEdge SingleSidedEdge MeshRenderer SkinnedMeshRenderer BoxShell BoxEdge Donut Rectangle Sprite SpriteRenderer
+ok    a force over life is settable
+ok    a speed limit maps to limitVelocityOverLifetime
+ok    turbulence maps to the noise module
+ok    plane collision is settable
+ok    spin maps to rotationOverLifetime
+ok    a sub-emitter slot exists  [count 0]
+ok    the render mode covers billboard/stretch/mesh  [Billboard Stretch HorizontalBillboard VerticalBillboard Mesh None]
+ok      and sorting is settable
+ok    it saves as a prefab
+ok      and reloads from disk
+ok      with the burst list intact  [5]
+ok      the curve intact
+ok      the gradient intact
+ok      and the shape intact

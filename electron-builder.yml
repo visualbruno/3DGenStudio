@@ -110,6 +110,10 @@ files:
   - resources/rigs/**/*
   # The VFX starter-effect library: small JSON graphs plus their thumbnails.
   - resources/vfx/**/*
+  # The Unity importer, handed to the user beside an exported bundle. The
+  # UPM package for Package Manager, and the .unitypackage for a double-click.
+  - plugins/unity/com.3dgenstudio.vfx-import/**/*
+  - plugins/unity/3dgenstudio-vfx-import.unitypackage
   - python-server/**/*
   - "!python-server/.venv/**"
   - "!python-server/**/__pycache__/**"

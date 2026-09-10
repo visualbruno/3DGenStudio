@@ -30,7 +30,7 @@ import { buildVertexShader, createParticleMaterial } from './materials.js';
 import { MAX_SHEET_PIXELS, planSpriteSheet } from './spriteSheet.js';
 import { getDefaultSprite } from './assets.js';
 import { sortIndicesByValue } from './sort.js';
-import { createVfxRuntime, step } from './system.js';
+import { createVfxRuntime, installMeshSamplers, step } from './system.js';
 import { aliveCount, liveParticleBounds } from '../vfxThumbnail.js';
 
 let failures = 0;
@@ -858,6 +858,112 @@ console.log('\n--- The sprite-sheet renderer ---');
   // about twenty thousand instead of three hundred.
   check('the simulation is walked forward once, not re-run per cell',
     /while \(runtime\.stepIndex < plan\.frames\[index\]\) step\(runtime\)/.test(source));
+}
+
+
+// ---------------------------------------------------------------------------
+console.log('\n--- A fresh runtime needs its mesh samplers ---');
+// ---------------------------------------------------------------------------
+//
+// A MESH EMITTER WITH NO SAMPLER DOES NOT FAIL - it spawns every particle at
+// the shape's origin (`placeShape(..., 0, 0, 0)` in shape.position.mesh), so
+// the system collapses to a point. Silent, and identical to an effect somebody
+// just never finished.
+//
+// The live preview installs samplers in useVfxRuntime and looked right, while
+// the sprite-sheet bake and the simulated thumbnail each built their OWN
+// runtime and installed nothing. So a mesh-emitted effect baked as a handful of
+// particles at the origin, which is the bug the user reported: a 4x4 sheet of
+// almost-empty cells for an effect that fills the viewport.
+{
+  // A cube, big enough that "spread over the surface" and "all at the origin"
+  // cannot be confused for one another.
+  const side = 4;
+  const cube = new THREE.BoxGeometry(side, side, side);
+  const meshes = new Map([[77, cube]]);
+
+  let doc = normalizeVfxDoc(templateById('fire').build());
+  const system = doc.systems[0];
+  const init = system.contexts.find((c) => c.kind === 'initialize');
+  // Replace whatever shape the template has with a mesh emitter on asset 77.
+  for (const block of init.blocks.filter((b) => b.type.startsWith('initialize.position'))) {
+    doc = edits.removeBlock(doc, block.id);
+  }
+  doc = edits.addBlock(doc, { contextId: init.id, blockType: 'initialize.positionMesh' });
+  const meshBlock = doc.systems[0].contexts.find((c) => c.id === init.id).blocks
+    .filter((b) => b.type === 'initialize.positionMesh').pop();
+  doc = edits.setAssetReference(doc, 'mesh_test', {
+    kind: 'mesh', ref: 'asset:77', name: 'Cube', colorSpace: 'srgb',
+  });
+  doc = edits.setBlockAssetSlot(doc, meshBlock.id, 'mesh', 'mesh_test');
+
+  const { ir } = compileVfxGraph(doc, { assetIndex: new Set([77]) });
+  check('the effect compiles with a mesh emitter',
+    ir.systems[0].init.some((b) => b.srcBlockType === 'initialize.positionMesh'));
+
+  // How far from the origin do the particles get? A sampler spreads them over
+  // the cube's surface; without one they are all exactly at the offset.
+  const spread = (install) => {
+    const runtime = createVfxRuntime(ir);
+    if (install) installMeshSamplers(runtime, meshes);
+    for (let i = 0; i < 30; i += 1) step(runtime);
+    const emitter = runtime.emitters[0];
+    const position = emitter.pool.planes.position;
+    let furthest = 0;
+    for (let i = 0; i < emitter.pool.count; i += 1) {
+      const x = position[i * 3];
+      const z = position[i * 3 + 2];
+      furthest = Math.max(furthest, Math.hypot(x, z));
+    }
+    return { furthest, alive: emitter.pool.count };
+  };
+
+  const without = spread(false);
+  const withSamplers = spread(true);
+
+  check('particles are alive either way', without.alive > 20 && withSamplers.alive > 20,
+    `${without.alive} vs ${withSamplers.alive}`);
+
+  // THE BUG, STATED AS A NUMBER. Without a sampler every particle is BORN at
+  // the origin, so after thirty frames the cloud has only drifted as far as its
+  // own velocity carried it. With one, the particles start spread over a
+  // 4-unit cube, so the cloud is wider than the drift by an order of magnitude.
+  //
+  // Not asserting "exactly zero": these are measured after thirty steps of real
+  // simulation, drag and turbulence included, because that is the state a bake
+  // actually captures. Spawn-position equality would be a narrower test of a
+  // narrower thing.
+  check('without a sampler the cloud stays clustered at the origin',
+    without.furthest < 0.5, without.furthest.toFixed(3));
+  check('installing samplers spreads it over the mesh instead',
+    withSamplers.furthest > 1.5, withSamplers.furthest.toFixed(3));
+  check('  which is a difference of several times over, not a nuance',
+    withSamplers.furthest > without.furthest * 5,
+    `${withSamplers.furthest.toFixed(2)} vs ${without.furthest.toFixed(2)}`);
+
+  check('the installer reports what it did', installMeshSamplers(createVfxRuntime(ir), meshes) === 1);
+  // Geometry without positions cannot be sampled, and must not throw - a
+  // partially loaded glTF is a normal intermediate state.
+  check('  and skips geometry it cannot sample',
+    installMeshSamplers(createVfxRuntime(ir), new Map([[77, {}], [78, null]])) === 0);
+  check('  and tolerates no runtime or no meshes',
+    installMeshSamplers(null, meshes) === 0 && installMeshSamplers(createVfxRuntime(ir), null) === 0);
+
+  cube.dispose();
+
+  // Both offscreen capture paths must install them. Checked in the source
+  // because neither can run headlessly - they need a WebGL context - and this
+  // is precisely the pair that forgot.
+  const sheet = await readFile(new URL('./spriteSheet.js', import.meta.url), 'utf8');
+  check('the sprite-sheet bake installs samplers',
+    /installMeshSamplers\(runtime, meshes\)/.test(sheet));
+  const thumb = await readFile(new URL('../vfxThumbnail.js', import.meta.url), 'utf8');
+  check('  and so does the simulated thumbnail',
+    /installMeshSamplers\(runtime, meshes\)/.test(thumb));
+  const hook = await readFile(new URL('../../hooks/useVfxRuntime.js', import.meta.url), 'utf8');
+  check('  and the preview uses the same one rather than its own copy',
+    /installMeshSamplers\(runtime, result\.meshes\)/.test(hook)
+    && !/buildMeshSampler/.test(hook));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

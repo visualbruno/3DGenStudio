@@ -1,0 +1,16 @@
+{
+  "name": "com.3dgenstudio.vfx-import",
+  "displayName": "3D Gen Studio VFX Import",
+  "version": "0.1.0",
+  "unity": "6000.0",
+  "description": "Imports a VFX bundle exported from 3D Gen Studio and builds a Unity particle effect from it. Editor-only.",
+  "keywords": [
+    "vfx",
+    "particles",
+    "importer"
+  ],
+  "author": {
+    "name": "3D Gen Studio"
+  },
+  "hideInEditor": false
+}

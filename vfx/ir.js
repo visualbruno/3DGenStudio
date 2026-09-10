@@ -149,6 +149,31 @@ export const FREQ_LABEL = Object.freeze({
 });
 
 /**
+ * The coordinate convention every vector in the IR is expressed in.
+ *
+ * DECLARED RATHER THAN ASSUMED, because the alternative is a mirrored effect
+ * that nobody can explain. Measured on 2026-09-10 (see
+ * plugins/unity/Spikes/): this editor is three.js's convention -
+ * RIGHT-handed, Y-up, one unit to the metre - and **Unity is LEFT-handed**
+ * with the same up axis and the same unit. Same up, same scale, opposite
+ * handedness.
+ *
+ * So an importer targeting Unity must negate Z on every position, velocity,
+ * direction and offset, and negate the X and Y of any euler rotation. Getting
+ * that wrong mirrors the effect: obvious on a vortex or a directional emitter,
+ * and invisible on a sphere emitter, which is what makes it worth stating in
+ * the contract instead of in a comment in one plugin.
+ *
+ * It ships IN the IR, not only in the docs, so a plugin can refuse a bundle
+ * whose space it does not recognise rather than importing it wrong.
+ */
+export const VFX_IR_SPACE = Object.freeze({
+  handedness: 'right',
+  up: 'Y',
+  unit: 'metre',
+});
+
+/**
  * @typedef {Object} VfxIrBinding
  * @property {string} prop the block property this fills
  * @property {number} width channels
@@ -179,14 +204,16 @@ export const FREQ_LABEL = Object.freeze({
 /**
  * @typedef {Object} VfxIr
  * @property {number} irFormat
+ * @property {Object} space the coordinate convention every vector is in
  * @property {string} graphHash of the normalised document, layout excluded
  * @property {Object} effect seed, duration, loop, fixedDt, capacity, bounds
  * @property {Array<{name: string, width: number, type: string, offset: number}>} attributes
  * @property {number[]} constants
  * @property {Array<{name: string, exposedId: string, offset: number, width: number}>} uniforms
- * @property {Array<Object>} tables baked curve and gradient lookup tables
- * @property {Array<Object>} curves authored curves, for the importers
- * @property {Array<Object>} gradients authored gradients, for the importers
+ * @property {Array<Object>} tables baked curve and gradient lookup tables,
+ *   each carrying the authored curve or gradient it was baked from in
+ *   `authored` - a binding's `index` addresses this array, so it is the only
+ *   route from a binding to the keys an importer needs
  * @property {Array<Object>} assets resolved asset slots
  * @property {Array<Object>} systems
  * @property {Array<Object>} events
@@ -269,7 +296,12 @@ export function createTablePool() {
     add: (table) => {
       // The key includes the sample count and the data, because the same curve
       // baked at two resolutions is genuinely two tables.
-      const key = `${table.kind}:${table.n}:${table.data.join(',')}`;
+      // The authored form is part of the key, not just the samples: two
+      // curves that happen to bake to the same numbers but carry different
+      // keys are one table to the preview and two different curves to an
+      // importer, and the importer's answer is the one that has to be right.
+      const key = `${table.kind}:${table.n}:${table.data.join(',')}`
+        + `:${JSON.stringify(table.authored || null)}`;
       if (index.has(key)) return index.get(key);
       const at = tables.length;
       tables.push({ ...table, id: at });

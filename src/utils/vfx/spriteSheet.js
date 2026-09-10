@@ -37,7 +37,7 @@
 // comes from the live preview, because where to stand is a judgement.
 import * as THREE from 'three'
 import { createBatches, disposeBatch, writeBatch } from './batch.js'
-import { createVfxRuntime, step } from './system.js'
+import { createVfxRuntime, installMeshSamplers, step } from './system.js'
 import { squareCameraFrom } from '../vfxThumbnail.js'
 
 /**
@@ -176,6 +176,10 @@ export async function captureSpriteSheet(options) {
   renderer.clear()
 
   const runtime = createVfxRuntime(ir)
+  // MESH EMITTERS NEED THEIR SAMPLERS, and this is a FRESH runtime - the
+  // preview's samplers belong to the preview's runtime. Without them a mesh
+  // emitter spawns every particle at the origin and the sheet bakes a dot.
+  installMeshSamplers(runtime, meshes)
   const batches = createBatches(ir, runtime.emitters, { textures, meshes })
   const scene = new THREE.Scene()
   // Deliberately NO scene.background: a background colour is an opaque clear,

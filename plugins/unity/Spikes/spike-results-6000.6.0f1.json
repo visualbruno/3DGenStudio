@@ -1,0 +1,84 @@
+{
+  "unityVersion": "6000.6.0f1",
+  "renderPipeline": "UnityEngine.Rendering.Universal.UniversalRenderPipelineAsset",
+  "vfxRuntimeAssembly": "UnityEngine.VFXModule",
+  "vfxPackageVersion": "unknown",
+  "spike1_settableTypes": {
+    "visualEffectSetters": [
+      "SetAnimationCurve(Int32, AnimationCurve)",
+      "SetAnimationCurve(String, AnimationCurve)",
+      "SetBool(Int32, Boolean)",
+      "SetBool(String, Boolean)",
+      "SetFloat(Int32, Single)",
+      "SetFloat(String, Single)",
+      "SetGradient(Int32, Gradient)",
+      "SetGradient(String, Gradient)",
+      "SetGraphicsBuffer(Int32, GraphicsBuffer)",
+      "SetGraphicsBuffer(String, GraphicsBuffer)",
+      "SetInt(Int32, Int32)",
+      "SetInt(String, Int32)",
+      "SetMatrix4x4(Int32, Matrix4x4)",
+      "SetMatrix4x4(String, Matrix4x4)",
+      "SetMesh(Int32, Mesh)",
+      "SetMesh(String, Mesh)",
+      "SetSkinnedMeshRenderer(Int32, SkinnedMeshRenderer)",
+      "SetSkinnedMeshRenderer(String, SkinnedMeshRenderer)",
+      "SetTexture(Int32, Texture)",
+      "SetTexture(String, Texture)",
+      "SetUInt(Int32, UInt32)",
+      "SetUInt(String, UInt32)",
+      "SetVector2(Int32, Vector2)",
+      "SetVector2(String, Vector2)",
+      "SetVector3(Int32, Vector3)",
+      "SetVector3(String, Vector3)",
+      "SetVector4(Int32, Vector4)",
+      "SetVector4(String, Vector4)"
+    ],
+    "required": {
+      "SetAnimationCurve": true,
+      "SetBool": true,
+      "SetFloat": true,
+      "SetGradient": true,
+      "SetInt": true,
+      "SetMatrix4x4": true,
+      "SetMesh": true,
+      "SetTexture": true,
+      "SetVector2": true,
+      "SetVector3": true,
+      "SetVector4": true
+    },
+    "curvesTravelAsCurves": true,
+    "gradientsTravelAsGradients": true
+  },
+  "spike5_graphAuthoring": {
+    "editorAssemblyPresent": true,
+    "assetEditorUtilityFound": false,
+    "graphModelVisibility": {
+      "VFXGraph": "internal",
+      "VFXContext": "internal",
+      "VFXBlock": "internal",
+      "VFXModel": "internal",
+      "SetAttribute": "internal"
+    },
+    "spawnBlockTypes": [
+      "AttributeProviderSpawner",
+      "SpawnMode",
+      "VFXSpawnerSetAttribute"
+    ],
+    "runtimeSpawnControls": {
+      "playRate": true,
+      "pause": true,
+      "Play": true,
+      "Stop": true,
+      "SendEvent": true,
+      "Reinit": true,
+      "startSeed": true,
+      "resetSeedOnPlay": true
+    }
+  },
+  "spike3_conventions": {
+    "crossRightUp": "(0, 0, 1)",
+    "handedness": "left",
+    "physicsGravityY": -9.8100004196167
+  }
+}

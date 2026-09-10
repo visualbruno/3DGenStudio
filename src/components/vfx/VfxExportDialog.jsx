@@ -33,6 +33,10 @@ export default function VfxExportDialog({ assetId, name: effectName, onClose }) 
   const [name, setName] = useState(effectName || 'effect')
   const [outputFolder, setOutputFolder] = useState('')
   const [engineTarget, setEngineTarget] = useState('')
+  // On by default. The importer is the only thing that can read the bundle,
+  // and a user of the packaged app has no other way to obtain it - there is
+  // no repository to clone. Twenty-six kilobytes is not worth a decision.
+  const [includeUnityImporter, setIncludeUnityImporter] = useState(true)
   const [showFolderBrowser, setShowFolderBrowser] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [error, setError] = useState('')
@@ -53,6 +57,7 @@ export default function VfxExportDialog({ assetId, name: effectName, onClose }) 
         folder,
         name: name.trim(),
         engineTarget: engineTarget || null,
+        includeUnityImporter,
       }))
     } catch (err) {
       setError(err.message || 'Failed to export the effect.')
@@ -123,17 +128,32 @@ export default function VfxExportDialog({ assetId, name: effectName, onClose }) 
             </select>
           </label>
 
+          <label className="project-io__field project-io__field--check">
+            <input
+              type="checkbox"
+              checked={includeUnityImporter}
+              onChange={event => setIncludeUnityImporter(event.target.checked)}
+            />
+            <span>Include the Unity importer</span>
+          </label>
+
           <p className="project-io__hint">
             Creates <code>{folderBase}/</code> containing <code>manifest.json</code> — the graph,
             the compiled IR and the engine mapping — plus <code>vfx/</code> and
             <code> assets/</code> with every texture and mesh this effect uses. An importer plugin
             reads the IR, not the graph.
+            {includeUnityImporter && (
+              <> The Unity importer goes in <code>UnityImporter/</code> beside it, as both a
+              Package Manager package and a <code>.unitypackage</code>, with a note saying how
+              to install either.</>
+            )}
           </p>
 
           {error && <div className="project-io__message project-io__message--error">{error}</div>}
           {result && (
             <div className="project-io__message project-io__message--success">
               Exported {result.fileCount} file{result.fileCount === 1 ? '' : 's'} to {result.folder}
+              {result.unityImporter && ' with the Unity importer'}
               {/* Surfaced rather than buried in the manifest: a missing texture
                   does not fail the export, so this is the only place the author
                   finds out the bundle is short of something. */}

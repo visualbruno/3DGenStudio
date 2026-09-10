@@ -26,6 +26,7 @@ import { computeSpawnCount, createEmitter, resetEmitter, spawnStep } from './emi
 import { poolBytes } from './pool.js';
 import { clearEvents, createEventQueue, resetEventQueue } from './events.js';
 import { createStats } from './stats.js';
+import { buildMeshSampler } from './meshSample.js';
 import { pcgHash2 } from '../../../vfx/random.js';
 
 // How much memory snapshots may use in total. Sized to be generous on a desktop
@@ -485,6 +486,41 @@ export function setMeshSampler(runtime, assetId, sampler) {
   if (assetId == null) return;
   if (sampler) runtime.env.meshSamplers.set(assetId, sampler);
   else runtime.env.meshSamplers.delete(assetId);
+}
+
+/**
+ * Install a sampler for every loaded mesh a runtime might emit from.
+ *
+ * WHY THIS EXISTS AS A FUNCTION. A mesh emitter with no sampler does not fail -
+ * `shape.position.mesh` falls back to `placeShape(..., 0, 0, 0)` and every
+ * particle spawns at the shape's origin, so the system collapses to a point.
+ * The live preview installs samplers in useVfxRuntime and looked right, while
+ * the sprite-sheet bake and the simulated thumbnail each built their own
+ * runtime and installed nothing - so a mesh-emitted effect baked as a handful
+ * of particles at the origin, with nothing anywhere saying why.
+ *
+ * Three call sites needed the same six lines, so they get one function. The
+ * `meshes` map is the same one the batch builder takes: asset id to a
+ * BufferGeometry-like object.
+ *
+ * @param {Object} runtime
+ * @param {Map<number, {attributes?: Object, index?: Object}>} meshes
+ * @returns {number} how many samplers were installed, for the caller to report
+ */
+export function installMeshSamplers(runtime, meshes) {
+  if (!runtime || !meshes) return 0;
+  let installed = 0;
+  for (const [assetId, geometry] of meshes) {
+    const positions = geometry?.attributes?.position?.array;
+    if (!positions) continue;
+    setMeshSampler(runtime, assetId, buildMeshSampler({
+      positions,
+      normals: geometry.attributes?.normal?.array || null,
+      index: geometry.index?.array || null,
+    }));
+    installed += 1;
+  }
+  return installed;
 }
 
 /** Also used by computeSpawnCount's callers in tests. */

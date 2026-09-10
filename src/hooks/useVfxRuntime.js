@@ -30,8 +30,7 @@ import {
   loadVfxMeshes,
   loadVfxTextures,
 } from '../utils/vfx/assets.js'
-import { createVfxRuntime, setMeshSampler } from '../utils/vfx/system.js'
-import { buildMeshSampler } from '../utils/vfx/meshSample.js'
+import { createVfxRuntime, installMeshSamplers } from '../utils/vfx/system.js'
 
 // Shared empties, so an effect with no assets keeps a STABLE identity and the
 // batches memo below does not rebuild every render.
@@ -157,15 +156,10 @@ export default function useVfxRuntime({ ir, resolveUrl = null, profile = false, 
       // the one in scope is the one these meshes belong to - a later document
       // would have cancelled this callback.
       if (!runtime) return
-      for (const [assetId, geometry] of result.meshes) {
-        const positions = geometry.attributes?.position?.array
-        if (!positions) continue
-        setMeshSampler(runtime, assetId, buildMeshSampler({
-          positions,
-          normals: geometry.attributes?.normal?.array || null,
-          index: geometry.index?.array || null,
-        }))
-      }
+      // One installer, shared with the sprite-sheet bake and the simulated
+      // thumbnail - see installMeshSamplers. This was the original copy, and
+      // the other two never having one is what baked mesh emitters as a dot.
+      installMeshSamplers(runtime, result.meshes)
     })
     return () => {
       cancelled = true

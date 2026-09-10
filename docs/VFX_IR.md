@@ -16,6 +16,21 @@ must not disagree:
 Defined in `vfx/ir.js`. `VFX_IR_FORMAT` is bumped whenever a change would make
 an existing plugin **misread** a bundle.
 
+## Coordinate space
+
+`ir.space` is `{ handedness: 'right', up: 'Y', unit: 'metre' }` and every vector
+in the IR - position, velocity, direction, offset, bounds - is in it.
+
+**Unity is LEFT-handed**, measured on 2026-09-10 against 6000.6.0f1
+(`Vector3.Cross(right, up)` returns `(0, 0, 1)`; see `plugins/unity/Spikes/`).
+Same up axis, same unit, opposite handedness - so a Unity importer must negate Z
+on every vector it binds and negate the X and Y of any euler rotation.
+
+An importer must **read this field and refuse a space it does not recognise**
+rather than assume. Skipping the conversion mirrors the effect, which is obvious
+on a vortex or a directional emitter and invisible on a sphere emitter - the
+worst combination, because it ships.
+
 ## Five guarantees
 
 1. **It is plain JSON.** No typed arrays, no `NaN`, no `undefined`, no class

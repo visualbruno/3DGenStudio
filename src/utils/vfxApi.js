@@ -220,13 +220,16 @@ export async function saveVfxAsset({ name, doc, thumbnail = null, assetId = null
  * @param {{folder: string, name?: string, engineTarget?: string|null}} options
  * @returns {Promise<{folder: string, name: string, fileCount: number, warnings: Array<Object>}>}
  */
-export async function exportVfxBundle(assetId, { folder, name = '', engineTarget = null }) {
+export async function exportVfxBundle(
+  assetId,
+  { folder, name = '', engineTarget = null, includeUnityImporter = false },
+) {
   const id = vfxAssetId(assetId)
   if (id == null) throw new Error(`"${assetId}" is not a valid asset id.`)
   const response = await fetch(`${API_BASE}/assets/${id}/vfx-export`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder, name, engineTarget }),
+    body: JSON.stringify({ folder, name, engineTarget, includeUnityImporter }),
   })
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) throw new Error(payload?.error || 'Could not export the effect')

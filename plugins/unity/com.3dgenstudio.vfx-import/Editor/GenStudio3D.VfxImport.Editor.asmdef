@@ -1,0 +1,14 @@
+{
+  "name": "GenStudio3D.VfxImport.Editor",
+  "rootNamespace": "GenStudio3D.VfxImport",
+  "references": [],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

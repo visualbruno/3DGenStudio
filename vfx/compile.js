@@ -40,6 +40,7 @@ import {
   FREQ,
   FREQ_LABEL,
   VFX_IR_FORMAT,
+  VFX_IR_SPACE,
   createConstantPool,
   buildInstanceLayout,
   createTablePool,
@@ -604,8 +605,20 @@ function lowerBinding(prop, propDef, value, block, ctx) {
         data: Array.from(bakeCurve(value.curve, n)),
         min: extent.min,
         max: extent.max,
+        // THE AUTHORED KEYS, CARRIED BESIDE THE BAKED SAMPLES.
+        //
+        // A binding's `index` addresses this table, so this is the only place
+        // an importer can reach the curve it was baked from. It used to sit in
+        // a separate `ir.curves` array pushed in encounter order while the
+        // tables are content-addressed - so the two index spaces did not line
+        // up and an importer holding a binding had no way to find its curve at
+        // all. Phase 0 found that by trying to write one.
+        //
+        // Unity takes an AnimationCurve directly (spike 1), so the keys are
+        // what an importer wants and the samples are for the preview. Keeping
+        // them on one object is also what stops them drifting.
+        authored: value.curve,
       });
-      ctx.curves.push(value.curve);
       return {
         ...base,
         src: BINDING_SRC.CURVE,
@@ -621,8 +634,11 @@ function lowerBinding(prop, propDef, value, block, ctx) {
         kind: 'gradient',
         n,
         data: Array.from(bakeGradient(value.gradient, n)),
+        // Beside the samples, for the same reason as a curve's keys above.
+        // Separate colour and alpha key lists, because Unity's Gradient has
+        // them separate too and a merged list cannot round trip.
+        authored: value.gradient,
       });
-      ctx.gradients.push(value.gradient);
       return { ...base, src: BINDING_SRC.GRADIENT, index, domain: value.domain || 'life' };
     }
     default:
@@ -678,8 +694,6 @@ export function compileVfxGraph(document, options = {}) {
   // same literal share an entry.
   const constants = createConstantPool();
   const tables = createTablePool();
-  const curves = [];
-  const gradients = [];
 
   // Blackboard -> uniform slots.
   const uniforms = [];
@@ -838,7 +852,7 @@ export function compileVfxGraph(document, options = {}) {
           const registers = new Map();
           let nextReg = 0;
           const ctx = {
-            catalog, sorted, constants, tables, curves, gradients,
+            catalog, sorted, constants, tables,
             propEdge, inputEdge, uniformIndex, registers, ops,
             // Carried so lowerOperatorTree can name the block an operator feeds
             // rather than reporting a node id nobody can find on the board.
@@ -1310,6 +1324,10 @@ export function compileVfxGraph(document, options = {}) {
 
   const ir = {
     irFormat: VFX_IR_FORMAT,
+    // The convention every vector below is in. See VFX_IR_SPACE: this is
+    // right-handed and Unity is left-handed, so an importer that does not read
+    // this and flip Z produces a mirrored effect.
+    space: VFX_IR_SPACE,
     graphHash: String(hashString(vfxSignature(doc))),
     // One entry per (source system, trigger) pair anything listens to. The
     // runtime allocates a queue channel per entry; two listeners on the same
@@ -1333,8 +1351,6 @@ export function compileVfxGraph(document, options = {}) {
     constants: constants.values(),
     uniforms,
     tables: tables.values(),
-    curves,
-    gradients,
     assets,
     systems: irSystems,
     events: doc.events,

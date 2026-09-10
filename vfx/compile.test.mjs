@@ -37,7 +37,13 @@ import {
 import { compileVfxGraph } from './compile.js';
 import { DIAGNOSTIC_CODES, summarizeDiagnostics } from './diagnostics.js';
 import { CONTEXT_KIND, createEmptyVfxDoc, normalizeVfxDoc } from './doc.js';
-import { BINDING_SRC, CORE_ATTRIBUTES, VFX_IR_FORMAT, validateIrSerializable } from './ir.js';
+import {
+  BINDING_SRC,
+  CORE_ATTRIBUTES,
+  VFX_IR_FORMAT,
+  VFX_IR_SPACE,
+  validateIrSerializable,
+} from './ir.js';
 import * as fixtures from './fixtures.mjs';
 import { constValue, curveValue } from './value.js';
 import { CURVE_PRESETS } from './curve.js';
@@ -124,6 +130,21 @@ function record(result) {
   const revived = JSON.parse(JSON.stringify(ir));
   check('IR survives a JSON round trip unchanged', JSON.stringify(revived) === JSON.stringify(ir));
   check('  and declares its format', ir.irFormat === VFX_IR_FORMAT);
+
+  // MEASURED, NOT ASSUMED (Phase 0, 2026-09-10, plugins/unity/Spikes/): this
+  // editor is three.js's convention - right-handed, Y-up, metres - while Unity
+  // is LEFT-handed with the same up axis and the same unit.
+  //
+  // Same up, same scale, OPPOSITE handedness. An importer that fails to flip Z
+  // produces a mirrored effect: obvious on a vortex or a directional emitter,
+  // and invisible on a sphere emitter - which is precisely why it belongs in
+  // the contract and not in one plugin's comment. It travels IN the IR so a
+  // plugin can refuse a space it does not recognise rather than import it
+  // wrongly.
+  check('  and the space its vectors are in',
+    ir.space?.handedness === 'right' && ir.space?.up === 'Y' && ir.space?.unit === 'metre',
+    JSON.stringify(ir.space));
+  check('  from the shared constant rather than a literal', ir.space === VFX_IR_SPACE);
 }
 
 {
