@@ -27,6 +27,7 @@ import { buildInstanceLayout } from '../../../vfx/ir.js';
 import { VFX_TEMPLATES, templateById } from './templates.js';
 import { createBatch, createBatches, disposeBatch, writeBatch } from './batch.js';
 import { buildVertexShader, createParticleMaterial } from './materials.js';
+import { MAX_SHEET_PIXELS, planSpriteSheet } from './spriteSheet.js';
 import { getDefaultSprite } from './assets.js';
 import { sortIndicesByValue } from './sort.js';
 import { createVfxRuntime, step } from './system.js';
@@ -714,6 +715,149 @@ console.log('\n--- The sprite black point ---');
     source.indexOf('texel.rgb = max(texel.rgb - uBlackPoint') > 0
     && source.indexOf('texel.rgb = max(texel.rgb - uBlackPoint')
       < source.indexOf('vec4 colour = texel * vColor'));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The sprite-sheet plan ---');
+// ---------------------------------------------------------------------------
+//
+// Every arithmetic mistake a sprite sheet can contain is in this function, so
+// it is separated from the render and checked against numbers worked out by
+// hand rather than against its own output.
+{
+  const plan = (extra = {}) => planSpriteSheet({
+    startFrame: 0, endFrame: 60, columns: 4, rows: 4, cell: 256, ...extra,
+  });
+
+  const base = plan();
+  check('the grid decides the cell count', base.count === 16);
+  check('  and the sheet size', base.width === 1024 && base.height === 1024,
+    `${base.width}x${base.height}`);
+
+  // THE LOOP SEAM, and it is the one thing here that is not obvious.
+  //
+  // A looping flipbook plays cell 15 and then cell 0 again. If cell 15 is the
+  // same moment as cell 0 the effect visibly stutters once per cycle. So a loop
+  // divides the span by the CELL COUNT - 60/16 = 3.75 - which lands the last
+  // cell at frame 56, one step short of 60, and 60 IS frame 0 of the next
+  // cycle. A one-shot has no seam and wants the last frame, so it divides by
+  // count - 1: 60/15 = 4 exactly, last cell at 60.
+  const loop = plan({ loop: true });
+  const shot = plan({ loop: false });
+  check('a looping effect stops short of the end frame',
+    loop.frames[15] === 56, String(loop.frames[15]));
+  check('  stepping by count, not count-1', loop.stepFrames === 60 / 16);
+  check('a one-shot captures the end frame exactly',
+    shot.frames[15] === 60, String(shot.frames[15]));
+  check('  stepping by count-1', shot.stepFrames === 4);
+  check('both start at the start frame',
+    loop.frames[0] === 0 && shot.frames[0] === 0);
+
+  // Ascending, because the renderer walks the simulation FORWARD once and steps
+  // to each frame in turn. A frame out of order would be unreachable - the sim
+  // cannot be rewound - and the cell would silently get the previous frame.
+  const ascending = (list) => list.every((frame, i) => i === 0 || frame >= list[i - 1]);
+  check('frames are ascending', ascending(loop.frames) && ascending(shot.frames));
+
+  // A start offset shifts the whole range rather than the step.
+  const offset = plan({ startFrame: 30, endFrame: 90, loop: false });
+  check('the range can start anywhere',
+    offset.frames[0] === 30 && offset.frames[15] === 90,
+    `${offset.frames[0]}..${offset.frames[15]}`);
+  check('  with the same step as the same-length range at zero',
+    offset.stepFrames === shot.stepFrames);
+
+  // A RANGE SHORTER THAN THE GRID. 8 frames into 16 cells means half the cells
+  // repeat their neighbour, which looks like the effect stalled - so it is
+  // counted and the dialog says so instead of quietly producing it.
+  const cramped = plan({ endFrame: 8, loop: false });
+  check('too short a range is reported as duplicate cells',
+    cramped.duplicates > 0, `${cramped.duplicates} duplicates`);
+  check('  and a long enough range has none', shot.duplicates === 0);
+
+  // The cap is not the GPU's - it is what an engine and a phone will take.
+  check('an oversized sheet is flagged, not clamped',
+    plan({ columns: 32, rows: 32, cell: 512 }).tooLarge === true);
+  check('  and a big-but-legal one is not',
+    plan({ columns: 16, rows: 16, cell: 512 }).tooLarge === false,
+    `${MAX_SHEET_PIXELS} limit`);
+
+  // Degenerate input has to produce something renderable rather than NaN
+  // cells: these fields come from number inputs, which hand back '' as NaN the
+  // moment the field is cleared mid-edit.
+  const junk = planSpriteSheet({
+    startFrame: NaN, endFrame: NaN, columns: 0, rows: -3, cell: 'x', loop: false,
+  });
+  check('junk input still plans something renderable',
+    junk.count === 1 && junk.frames.length === 1
+    && junk.frames.every(Number.isFinite) && junk.width > 0,
+    JSON.stringify({ count: junk.count, frames: junk.frames, w: junk.width }));
+  // A single cell must not divide by zero on count - 1.
+  check('  including a one-cell sheet', Number.isFinite(junk.stepFrames));
+
+  // An end at or before the start would make every cell one instant.
+  const inverted = planSpriteSheet({
+    startFrame: 40, endFrame: 10, columns: 2, rows: 1, cell: 64, loop: false,
+  });
+  check('an end before the start is pushed past it',
+    inverted.endFrame > inverted.startFrame,
+    `${inverted.startFrame}..${inverted.endFrame}`);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The sprite-sheet renderer ---');
+// ---------------------------------------------------------------------------
+//
+// Nothing here draws - WebGLRenderer needs a context - so this checks the two
+// decisions in the module that are invisible in a rendered frame and expensive
+// to get wrong.
+{
+  const source = await readFile(new URL('./spriteSheet.js', import.meta.url), 'utf8');
+
+  // STRAIGHT ALPHA. `alpha: true` alone gives a PREMULTIPLIED buffer, and an
+  // additive particle is bright rgb at low alpha - exactly the case where the
+  // premultiply-then-divide round trip destroys the colour. Both flags, or the
+  // transparency the whole feature exists for is unusable.
+  check('the renderer asks for a straight-alpha buffer',
+    /alpha: true/.test(source) && /premultipliedAlpha: false/.test(source));
+  // toBlob reads the buffer in a later task than the renders.
+  check('  and a buffer that survives until toBlob',
+    /preserveDrawingBuffer: true/.test(source));
+  // A scene background is an OPAQUE clear: it would fill the alpha channel and
+  // undo all of the above.
+  check('  with no scene background to fill the alpha in',
+    !/scene\.background\s*=/.test(source));
+
+  // ONE CONTEXT. A renderer per cell is a WebGL context per cell, and an 8x8
+  // sheet would ask for sixty-four.
+  const renderers = [...source.matchAll(/new THREE\.WebGLRenderer/g)];
+  check('exactly one renderer is created for the whole sheet',
+    renderers.length === 1, `${renderers.length} found`);
+  // Cells are drawn into one buffer, so the clear happens once and autoClear
+  // must be off or each cell would wipe the previous fifteen.
+  check('  cleared once, with autoClear off',
+    /autoClear = false/.test(source) && /renderer\.clear\(\)/.test(source));
+  check('  and scissored per cell', /setScissor\(/.test(source) && /setViewport\(/.test(source));
+
+  // CELL ORDER MUST MATCH THE SHADER. materials.js computes column = frame %
+  // columns and row = floor(frame / columns), with a V flip that puts row 0 at
+  // the TOP of the image - while GL's viewport origin is the bottom-left. Get
+  // the flip wrong and a baked explosion implodes when played back.
+  check('cells are laid out row-major from the top',
+    /const column = index % plan\.columns/.test(source)
+    && /const row = Math\.floor\(index \/ plan\.columns\)/.test(source)
+    && /plan\.height - \(row \+ 1\) \* plan\.cell/.test(source));
+
+  const materials = await readFile(new URL('./materials.js', import.meta.url), 'utf8');
+  check('  which is the order the flipbook shader samples',
+    /float column = mod\(frame, uTiles\.x\)/.test(materials)
+    && /float row = floor\(frame \/ uTiles\.x\)/.test(materials));
+
+  // The sim cannot be rewound, so the frames are walked forward ONCE. Restarting
+  // from zero per cell would be count-squared steps - at 8x8 over 300 frames,
+  // about twenty thousand instead of three hundred.
+  check('the simulation is walked forward once, not re-run per cell',
+    /while \(runtime\.stepIndex < plan\.frames\[index\]\) step\(runtime\)/.test(source));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

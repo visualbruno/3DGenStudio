@@ -116,7 +116,10 @@ export function liveParticleBounds(runtime) {
  * position/quaternion, so a camera that turns out to be parented to a rig still
  * captures from where it actually is.
  */
-function squareCameraFrom(source) {
+// Exported for the sprite-sheet bake, which needs exactly the same framing rule
+// - square cells, the author's vertical extent kept - so that a sheet and a
+// card of the same effect show the same thing.
+export function squareCameraFrom(source) {
   const camera = source.clone()
   source.updateMatrixWorld()
   source.matrixWorld.decompose(camera.position, camera.quaternion, camera.scale)

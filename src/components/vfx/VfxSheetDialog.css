@@ -1,0 +1,238 @@
+/* The sprite-sheet dialog.
+ *
+ * Opaque, like every other panel that sits over the live WebGL canvas - see the
+ * header of VfxPresetsDialog.css for why backdrop-filter is banned here. */
+
+.vfx-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 7, 9, 0.72);
+}
+
+.vfx-sheet {
+  width: min(520px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 8px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.vfx-sheet__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2d34;
+  background: #1a1d23;
+}
+
+.vfx-sheet__header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #e6e9f0;
+}
+
+.vfx-sheet__header button {
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: #8a93a4;
+  cursor: pointer;
+}
+
+.vfx-sheet__header button:hover {
+  background: #2b3039;
+  color: #e6e9f0;
+}
+
+.vfx-sheet__body {
+  padding: 14px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vfx-sheet__teach,
+.vfx-sheet__hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #8a93a4;
+}
+
+.vfx-sheet__teach strong,
+.vfx-sheet__hint strong {
+  color: #c8cfdb;
+  font-weight: 600;
+}
+
+.vfx-sheet__row {
+  display: flex;
+  gap: 10px;
+}
+
+.vfx-sheet__row > label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vfx-sheet__row > label > span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+}
+
+/* The time a frame number lands on, under the field. A frame index means
+ * nothing on its own; a frame index and 0.35s together mean something. */
+.vfx-sheet__row > label > em {
+  font-size: 10.5px;
+  font-style: normal;
+  color: #6c7688;
+}
+
+.vfx-sheet__row input[type='number'],
+.vfx-sheet__row select {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 8px;
+  min-width: 0;
+}
+
+.vfx-sheet__row input:focus-visible,
+.vfx-sheet__row select:focus-visible {
+  outline: 2px solid #6ea8ff;
+  outline-offset: 1px;
+}
+
+.vfx-sheet__row > label.is-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 7px;
+}
+
+.vfx-sheet__row > label.is-check > span {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: normal;
+  color: #d8dde7;
+}
+
+/* --- the derived numbers -------------------------------------------------- */
+
+.vfx-sheet__summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 10px;
+  background: #14161b;
+  border: 1px solid #24272f;
+  border-radius: 6px;
+}
+
+.vfx-sheet__summary div {
+  min-width: 0;
+}
+
+.vfx-sheet__summary dt {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6c7688;
+  margin-bottom: 2px;
+}
+
+.vfx-sheet__summary dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: #e6e9f0;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-sheet__summary dd em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: #737d8e;
+}
+
+.vfx-sheet__summary dd.is-bad {
+  color: #ff9b9b;
+}
+
+.vfx-sheet__message {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #1c1f26;
+  border: 1px solid #2c3039;
+  color: #c8cfdb;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.vfx-sheet__message.is-error {
+  background: rgba(255, 107, 107, 0.12);
+  border-color: rgba(255, 107, 107, 0.35);
+  color: #ffb3b3;
+}
+
+.vfx-sheet__message.is-warn {
+  background: rgba(255, 196, 107, 0.1);
+  border-color: rgba(255, 196, 107, 0.3);
+  color: #ffd9a0;
+}
+
+.vfx-sheet__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #2a2d34;
+  background: #1a1d23;
+}
+
+.vfx-sheet__actions button {
+  background: #22262e;
+  border: 1px solid #2f333c;
+  border-radius: 6px;
+  color: #d8dde7;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.vfx-sheet__actions button:hover:not(:disabled) {
+  background: #2b3039;
+}
+
+.vfx-sheet__actions .is-primary {
+  background: #4c6ef5;
+  border-color: #4c6ef5;
+  color: #fff;
+}
+
+.vfx-sheet__actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}

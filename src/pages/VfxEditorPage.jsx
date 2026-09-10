@@ -43,6 +43,7 @@ import VfxExportDialog from '../components/vfx/VfxExportDialog'
 import VfxSpritePanel from '../components/vfx/VfxSpritePanel'
 import VfxShortcuts from '../components/vfx/VfxShortcuts'
 import VfxPresetsDialog from '../components/vfx/VfxPresetsDialog'
+import VfxSheetDialog from '../components/vfx/VfxSheetDialog'
 import VfxViewport from '../components/vfx/VfxViewport'
 import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
 import VfxBoard from '../components/vfx/VfxBoard'
@@ -141,6 +142,7 @@ export default function VfxEditorPage() {
   const [spriteOpen, setSpriteOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [presetsOpen, setPresetsOpen] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
   // The system the board is showing. See activeSystemId below for why this is
   // a LAST CHOICE rather than the answer.
   const [pinnedSystemId, setPinnedSystemId] = useState(null)
@@ -1029,6 +1031,17 @@ export default function VfxEditorPage() {
           >
             <span className="material-symbols-outlined">photo_camera</span>
           </button>
+          {/* Beside Snapshot on purpose: both bake the viewport to a PNG from
+              the camera as it stands, one frame against a grid of them. */}
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={() => setSheetOpen(true)}
+            title="Bake this effect into a flipbook sprite sheet"
+            aria-label="Generate a sprite sheet"
+          >
+            <span className="material-symbols-outlined">grid_on</span>
+          </button>
           <span className={`vfx-page__status is-${dirty ? 'dirty' : status}`}>
             {status === 'loading' ? 'Opening...'
               : status === 'saving' ? 'Saving...'
@@ -1298,6 +1311,19 @@ export default function VfxEditorPage() {
       />
 
       {shortcutsOpen && <VfxShortcuts onClose={() => setShortcutsOpen(false)} />}
+
+      {sheetOpen && (
+        <VfxSheetDialog
+          ir={compiled.ir}
+          doc={doc}
+          name={name}
+          cameraRef={cameraRef}
+          textures={textures}
+          meshes={meshes}
+          notify={notify}
+          onClose={() => setSheetOpen(false)}
+        />
+      )}
 
       {presetsOpen && (
         <VfxPresetsDialog
