@@ -14,10 +14,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irx-a3_texture",
+      "file": "star-four.png",
+      "kind": "image",
+      "name": "Star Four"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188804,
+    "savedAt": 1789031482700,
     "name": "Hologram Motes",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-af",
+        "id": "sys-gv",
         "name": "Motes",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-af",
+            "id": "c-spawn-gv",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-a8",
+                "id": "b-go",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-af",
+            "id": "c-init-gv",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-a9",
+                "id": "b-gp",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-aa",
+                "id": "b-gq",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-ab",
+                "id": "b-gr",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-ac",
+                "id": "b-gs",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -143,7 +151,7 @@
                 }
               },
               {
-                "id": "b-ad",
+                "id": "b-gt",
                 "type": "initialize.velocityDirection",
                 "enabled": true,
                 "props": {
@@ -172,12 +180,12 @@
             "params": {}
           },
           {
-            "id": "c-update-af",
+            "id": "c-update-gv",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-ae",
+                "id": "b-gu",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -225,10 +233,26 @@
             "params": {}
           },
           {
-            "id": "c-out-af",
+            "id": "c-out-gv",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irx-a3",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irx-a3_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -239,7 +263,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0k-5y",
+              "id": "clip-mtvb5irx-a2",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -252,7 +276,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irx-a3_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Star Four",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

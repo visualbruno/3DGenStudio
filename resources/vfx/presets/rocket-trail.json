@@ -15,10 +15,24 @@
     "additive",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5is2-ak_texture",
+      "file": "flame-wisp.png",
+      "kind": "image",
+      "name": "Flame Wisp"
+    },
+    {
+      "slot": "tex_blk-mtvb5is2-al_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188811,
+    "savedAt": 1789031482706,
     "name": "Rocket Trail",
     "effect": {
       "seed": 12345,
@@ -44,7 +58,7 @@
     },
     "systems": [
       {
-        "id": "sys-av",
+        "id": "sys-hb",
         "name": "Flame",
         "enabled": true,
         "solo": false,
@@ -53,12 +67,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-av",
+            "id": "c-spawn-hb",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-ao",
+                "id": "b-h4",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +86,12 @@
             "params": {}
           },
           {
-            "id": "c-init-av",
+            "id": "c-init-hb",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-ap",
+                "id": "b-h5",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +105,7 @@
                 }
               },
               {
-                "id": "b-aq",
+                "id": "b-h6",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +119,7 @@
                 }
               },
               {
-                "id": "b-ar",
+                "id": "b-h7",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +135,7 @@
                 }
               },
               {
-                "id": "b-as",
+                "id": "b-h8",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -138,12 +152,12 @@
             "params": {}
           },
           {
-            "id": "c-update-av",
+            "id": "c-update-hb",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-at",
+                "id": "b-h9",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -176,7 +190,7 @@
                 }
               },
               {
-                "id": "b-au",
+                "id": "b-ha",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -239,10 +253,26 @@
             "params": {}
           },
           {
-            "id": "c-out-av",
+            "id": "c-out-hb",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5is2-ak",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5is2-ak_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -253,7 +283,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0r-6c",
+              "id": "clip-mtvb5is2-ai",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -262,7 +292,7 @@
         }
       },
       {
-        "id": "sys-b5",
+        "id": "sys-hl",
         "name": "Smoke",
         "enabled": true,
         "solo": false,
@@ -271,12 +301,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-b5",
+            "id": "c-spawn-hl",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-aw",
+                "id": "b-hc",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -290,12 +320,12 @@
             "params": {}
           },
           {
-            "id": "c-init-b5",
+            "id": "c-init-hl",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-ax",
+                "id": "b-hd",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -309,7 +339,7 @@
                 }
               },
               {
-                "id": "b-ay",
+                "id": "b-he",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -323,7 +353,7 @@
                 }
               },
               {
-                "id": "b-az",
+                "id": "b-hf",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -339,7 +369,7 @@
                 }
               },
               {
-                "id": "b-b0",
+                "id": "b-hg",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -353,7 +383,7 @@
                 }
               },
               {
-                "id": "b-b1",
+                "id": "b-hh",
                 "type": "initialize.setRotation",
                 "enabled": true,
                 "props": {
@@ -370,12 +400,12 @@
             "params": {}
           },
           {
-            "id": "c-update-b5",
+            "id": "c-update-hl",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-b2",
+                "id": "b-hi",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -390,7 +420,7 @@
                 }
               },
               {
-                "id": "b-b3",
+                "id": "b-hj",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -423,7 +453,7 @@
                 }
               },
               {
-                "id": "b-b4",
+                "id": "b-hk",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -477,10 +507,26 @@
             "params": {}
           },
           {
-            "id": "c-out-b5",
+            "id": "c-out-hl",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5is2-al",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5is2-al_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -491,7 +537,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0r-6d",
+              "id": "clip-mtvb5is2-aj",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -504,7 +550,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5is2-ak_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Flame Wisp",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5is2-al_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

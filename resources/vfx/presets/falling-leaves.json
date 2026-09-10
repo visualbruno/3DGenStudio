@@ -14,10 +14,18 @@
     "beginner",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ir7-7v_texture",
+      "file": "shard.png",
+      "kind": "image",
+      "name": "Shard"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188777,
+    "savedAt": 1789031482675,
     "name": "Falling Leaves",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-7q",
+        "id": "sys-e6",
         "name": "Leaves",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-7q",
+            "id": "c-spawn-e6",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-7f",
+                "id": "b-dv",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-7q",
+            "id": "c-init-e6",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-7g",
+                "id": "b-dw",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -87,7 +95,7 @@
                 }
               },
               {
-                "id": "b-7h",
+                "id": "b-dx",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -101,7 +109,7 @@
                 }
               },
               {
-                "id": "b-7i",
+                "id": "b-dy",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -117,7 +125,7 @@
                 }
               },
               {
-                "id": "b-7j",
+                "id": "b-dz",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -140,7 +148,7 @@
                 }
               },
               {
-                "id": "b-7k",
+                "id": "b-e0",
                 "type": "initialize.velocityDirection",
                 "enabled": true,
                 "props": {
@@ -169,12 +177,12 @@
             "params": {}
           },
           {
-            "id": "c-update-7q",
+            "id": "c-update-e6",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-7l",
+                "id": "b-e1",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -185,7 +193,7 @@
                 }
               },
               {
-                "id": "b-7m",
+                "id": "b-e2",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -200,7 +208,7 @@
                 }
               },
               {
-                "id": "b-7n",
+                "id": "b-e3",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -214,7 +222,7 @@
                 }
               },
               {
-                "id": "b-7o",
+                "id": "b-e4",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -259,7 +267,7 @@
                 }
               },
               {
-                "id": "b-7p",
+                "id": "b-e5",
                 "type": "update.killOnBounds",
                 "enabled": true,
                 "props": {
@@ -277,10 +285,26 @@
             "params": {}
           },
           {
-            "id": "c-out-7q",
+            "id": "c-out-e6",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ir7-7v",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ir7-7v_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -291,7 +315,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzt-40",
+              "id": "clip-mtvb5ir7-7u",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -304,7 +328,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ir7-7v_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Shard",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

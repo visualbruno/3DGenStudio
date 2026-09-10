@@ -15,10 +15,24 @@
     "additive",
     "stretched"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ipw-4t_texture",
+      "file": "hard-flare.png",
+      "kind": "image",
+      "name": "Hard Flare"
+    },
+    {
+      "slot": "tex_blk-mtvb5ipw-4u_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188716,
+    "savedAt": 1789031482628,
     "name": "Ricochet",
     "effect": {
       "seed": 12345,
@@ -44,7 +58,7 @@
     },
     "systems": [
       {
-        "id": "sys-2n",
+        "id": "sys-93",
         "name": "Flash",
         "enabled": true,
         "solo": false,
@@ -53,12 +67,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-2n",
+            "id": "c-spawn-93",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-2h",
+                "id": "b-8x",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -72,12 +86,12 @@
             "params": {}
           },
           {
-            "id": "c-init-2n",
+            "id": "c-init-93",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-2i",
+                "id": "b-8y",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -88,7 +102,7 @@
                 }
               },
               {
-                "id": "b-2j",
+                "id": "b-8z",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -99,7 +113,7 @@
                 }
               },
               {
-                "id": "b-2k",
+                "id": "b-90",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -115,7 +129,7 @@
                 }
               },
               {
-                "id": "b-2l",
+                "id": "b-91",
                 "type": "initialize.positionPoint",
                 "enabled": true,
                 "props": {}
@@ -124,12 +138,12 @@
             "params": {}
           },
           {
-            "id": "c-update-2n",
+            "id": "c-update-93",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-2m",
+                "id": "b-92",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -165,10 +179,26 @@
             "params": {}
           },
           {
-            "id": "c-out-2n",
+            "id": "c-out-93",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ipw-4t",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ipw-4t_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -179,7 +209,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqy4-1f",
+              "id": "clip-mtvb5ipw-4r",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -188,7 +218,7 @@
         }
       },
       {
-        "id": "sys-2w",
+        "id": "sys-9c",
         "name": "Sparks",
         "enabled": true,
         "solo": false,
@@ -197,12 +227,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-2w",
+            "id": "c-spawn-9c",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-2o",
+                "id": "b-94",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -216,12 +246,12 @@
             "params": {}
           },
           {
-            "id": "c-init-2w",
+            "id": "c-init-9c",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-2p",
+                "id": "b-95",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -235,7 +265,7 @@
                 }
               },
               {
-                "id": "b-2q",
+                "id": "b-96",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -249,7 +279,7 @@
                 }
               },
               {
-                "id": "b-2r",
+                "id": "b-97",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -265,7 +295,7 @@
                 }
               },
               {
-                "id": "b-2s",
+                "id": "b-98",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -290,12 +320,12 @@
             "params": {}
           },
           {
-            "id": "c-update-2w",
+            "id": "c-update-9c",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-2t",
+                "id": "b-99",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -310,7 +340,7 @@
                 }
               },
               {
-                "id": "b-2u",
+                "id": "b-9a",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -321,7 +351,7 @@
                 }
               },
               {
-                "id": "b-2v",
+                "id": "b-9b",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -375,10 +405,26 @@
             "params": {}
           },
           {
-            "id": "c-out-2w",
+            "id": "c-out-9c",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ipw-4u",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ipw-4u_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -389,7 +435,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqy4-1g",
+              "id": "clip-mtvb5ipw-4s",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -402,7 +448,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ipw-4t_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Hard Flare",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5ipw-4u_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

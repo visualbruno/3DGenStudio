@@ -14,10 +14,24 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iqs-6y_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    },
+    {
+      "slot": "tex_blk-mtvb5iqs-6z_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188760,
+    "savedAt": 1789031482660,
     "name": "Energy Burst",
     "effect": {
       "seed": 12345,
@@ -43,7 +57,7 @@
     },
     "systems": [
       {
-        "id": "sys-6b",
+        "id": "sys-cr",
         "name": "Core",
         "enabled": true,
         "solo": false,
@@ -52,12 +66,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-6b",
+            "id": "c-spawn-cr",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-62",
+                "id": "b-ci",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -71,12 +85,12 @@
             "params": {}
           },
           {
-            "id": "c-init-6b",
+            "id": "c-init-cr",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-63",
+                "id": "b-cj",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +104,7 @@
                 }
               },
               {
-                "id": "b-64",
+                "id": "b-ck",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +118,7 @@
                 }
               },
               {
-                "id": "b-65",
+                "id": "b-cl",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +134,7 @@
                 }
               },
               {
-                "id": "b-66",
+                "id": "b-cm",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -134,7 +148,7 @@
                 }
               },
               {
-                "id": "b-67",
+                "id": "b-cn",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -151,12 +165,12 @@
             "params": {}
           },
           {
-            "id": "c-update-6b",
+            "id": "c-update-cr",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-68",
+                "id": "b-co",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -167,7 +181,7 @@
                 }
               },
               {
-                "id": "b-69",
+                "id": "b-cp",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -200,7 +214,7 @@
                 }
               },
               {
-                "id": "b-6a",
+                "id": "b-cq",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -259,10 +273,26 @@
             "params": {}
           },
           {
-            "id": "c-out-6b",
+            "id": "c-out-cr",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqs-6y",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqs-6y_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -273,7 +303,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzc-37",
+              "id": "clip-mtvb5iqs-6w",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -282,7 +312,7 @@
         }
       },
       {
-        "id": "sys-6l",
+        "id": "sys-d1",
         "name": "Streaks",
         "enabled": true,
         "solo": false,
@@ -291,12 +321,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-6l",
+            "id": "c-spawn-d1",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-6c",
+                "id": "b-cs",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -310,12 +340,12 @@
             "params": {}
           },
           {
-            "id": "c-init-6l",
+            "id": "c-init-d1",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-6d",
+                "id": "b-ct",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -329,7 +359,7 @@
                 }
               },
               {
-                "id": "b-6e",
+                "id": "b-cu",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -343,7 +373,7 @@
                 }
               },
               {
-                "id": "b-6f",
+                "id": "b-cv",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -359,7 +389,7 @@
                 }
               },
               {
-                "id": "b-6g",
+                "id": "b-cw",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -373,7 +403,7 @@
                 }
               },
               {
-                "id": "b-6h",
+                "id": "b-cx",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -390,12 +420,12 @@
             "params": {}
           },
           {
-            "id": "c-update-6l",
+            "id": "c-update-d1",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-6i",
+                "id": "b-cy",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -406,7 +436,7 @@
                 }
               },
               {
-                "id": "b-6j",
+                "id": "b-cz",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -439,7 +469,7 @@
                 }
               },
               {
-                "id": "b-6k",
+                "id": "b-d0",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -498,10 +528,26 @@
             "params": {}
           },
           {
-            "id": "c-out-6l",
+            "id": "c-out-d1",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqs-6z",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqs-6z_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -512,7 +558,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzc-38",
+              "id": "clip-mtvb5iqs-6x",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -525,7 +571,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iqs-6y_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5iqs-6z_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

@@ -16,10 +16,18 @@
     "alpha",
     "stretched"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irj-8z_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188791,
+    "savedAt": 1789031482687,
     "name": "Water Splash",
     "effect": {
       "seed": 12345,
@@ -45,7 +53,7 @@
     },
     "systems": [
       {
-        "id": "sys-97",
+        "id": "sys-fn",
         "name": "Droplets",
         "enabled": true,
         "solo": false,
@@ -54,12 +62,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-97",
+            "id": "c-spawn-fn",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-8y",
+                "id": "b-fe",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -73,12 +81,12 @@
             "params": {}
           },
           {
-            "id": "c-init-97",
+            "id": "c-init-fn",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-8z",
+                "id": "b-ff",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -92,7 +100,7 @@
                 }
               },
               {
-                "id": "b-90",
+                "id": "b-fg",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -106,7 +114,7 @@
                 }
               },
               {
-                "id": "b-91",
+                "id": "b-fh",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -122,7 +130,7 @@
                 }
               },
               {
-                "id": "b-92",
+                "id": "b-fi",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -137,7 +145,7 @@
                 }
               },
               {
-                "id": "b-93",
+                "id": "b-fj",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -162,12 +170,12 @@
             "params": {}
           },
           {
-            "id": "c-update-97",
+            "id": "c-update-fn",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-94",
+                "id": "b-fk",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -182,7 +190,7 @@
                 }
               },
               {
-                "id": "b-95",
+                "id": "b-fl",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -201,7 +209,7 @@
                 }
               },
               {
-                "id": "b-96",
+                "id": "b-fm",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -241,10 +249,26 @@
             "params": {}
           },
           {
-            "id": "c-out-97",
+            "id": "c-out-fn",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irj-8z",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irj-8z_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "alpha",
@@ -255,7 +279,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr07-4z",
+              "id": "clip-mtvb5irj-8y",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -268,7 +292,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irj-8z_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

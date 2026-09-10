@@ -15,10 +15,18 @@
     "collision",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "mesh_blk-mtvb5isw-c7_mesh",
+      "file": "plank.glb",
+      "kind": "mesh",
+      "name": "Plank"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188839,
+    "savedAt": 1789031482736,
     "name": "Confetti",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-dn",
+        "id": "sys-k3",
         "name": "Confetti",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-dn",
+            "id": "c-spawn-k3",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-dc",
+                "id": "b-js",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-dn",
+            "id": "c-init-k3",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-dd",
+                "id": "b-jt",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-de",
+                "id": "b-ju",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-df",
+                "id": "b-jv",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-dg",
+                "id": "b-jw",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -135,7 +143,7 @@
                 }
               },
               {
-                "id": "b-dh",
+                "id": "b-jx",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -161,12 +169,12 @@
             "params": {}
           },
           {
-            "id": "c-update-dn",
+            "id": "c-update-k3",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-di",
+                "id": "b-jy",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -181,7 +189,7 @@
                 }
               },
               {
-                "id": "b-dj",
+                "id": "b-jz",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -192,7 +200,7 @@
                 }
               },
               {
-                "id": "b-dk",
+                "id": "b-k0",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -206,7 +214,7 @@
                 }
               },
               {
-                "id": "b-dl",
+                "id": "b-k1",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -225,7 +233,7 @@
                 }
               },
               {
-                "id": "b-dm",
+                "id": "b-k2",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -291,12 +299,24 @@
             "params": {}
           },
           {
-            "id": "c-out-dn",
+            "id": "c-out-k3",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isw-c7",
+                "type": "output.setMesh",
+                "enabled": true,
+                "props": {
+                  "mesh": {
+                    "mode": "const",
+                    "v": "mesh_blk-mtvb5isw-c7_mesh"
+                  }
+                }
+              }
+            ],
             "params": {
-              "mode": "billboard",
+              "mode": "mesh",
               "blend": "alpha",
               "sort": "none"
             }
@@ -305,7 +325,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr1j-7q",
+              "id": "clip-mtvb5isw-c6",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -318,7 +338,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "mesh_blk-mtvb5isw-c7_mesh": {
+        "kind": "mesh",
+        "ref": "",
+        "name": "Plank",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

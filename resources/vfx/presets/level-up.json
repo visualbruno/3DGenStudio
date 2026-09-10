@@ -15,10 +15,24 @@
     "staged",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5isu-by_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    },
+    {
+      "slot": "tex_blk-mtvb5isu-bz_texture",
+      "file": "ring.png",
+      "kind": "image",
+      "name": "Ring"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188837,
+    "savedAt": 1789031482734,
     "name": "Level Up",
     "effect": {
       "seed": 12345,
@@ -44,7 +58,7 @@
     },
     "systems": [
       {
-        "id": "sys-d1",
+        "id": "sys-jh",
         "name": "Column",
         "enabled": true,
         "solo": false,
@@ -53,12 +67,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-d1",
+            "id": "c-spawn-jh",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-ct",
+                "id": "b-j9",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +86,12 @@
             "params": {}
           },
           {
-            "id": "c-init-d1",
+            "id": "c-init-jh",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-cu",
+                "id": "b-ja",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +105,7 @@
                 }
               },
               {
-                "id": "b-cv",
+                "id": "b-jb",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +119,7 @@
                 }
               },
               {
-                "id": "b-cw",
+                "id": "b-jc",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +135,7 @@
                 }
               },
               {
-                "id": "b-cx",
+                "id": "b-jd",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -136,7 +150,7 @@
                 }
               },
               {
-                "id": "b-cy",
+                "id": "b-je",
                 "type": "initialize.velocityDirection",
                 "enabled": true,
                 "props": {
@@ -165,12 +179,12 @@
             "params": {}
           },
           {
-            "id": "c-update-d1",
+            "id": "c-update-jh",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-cz",
+                "id": "b-jf",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -181,7 +195,7 @@
                 }
               },
               {
-                "id": "b-d0",
+                "id": "b-jg",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -221,10 +235,26 @@
             "params": {}
           },
           {
-            "id": "c-out-d1",
+            "id": "c-out-jh",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isu-by",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isu-by_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -244,7 +274,7 @@
         }
       },
       {
-        "id": "sys-db",
+        "id": "sys-jr",
         "name": "Ring",
         "enabled": true,
         "solo": false,
@@ -253,12 +283,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-db",
+            "id": "c-spawn-jr",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-d2",
+                "id": "b-ji",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -272,12 +302,12 @@
             "params": {}
           },
           {
-            "id": "c-init-db",
+            "id": "c-init-jr",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-d3",
+                "id": "b-jj",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -291,7 +321,7 @@
                 }
               },
               {
-                "id": "b-d4",
+                "id": "b-jk",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -305,7 +335,7 @@
                 }
               },
               {
-                "id": "b-d5",
+                "id": "b-jl",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -321,7 +351,7 @@
                 }
               },
               {
-                "id": "b-d6",
+                "id": "b-jm",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -336,7 +366,7 @@
                 }
               },
               {
-                "id": "b-d7",
+                "id": "b-jn",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -353,12 +383,12 @@
             "params": {}
           },
           {
-            "id": "c-update-db",
+            "id": "c-update-jr",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-d8",
+                "id": "b-jo",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -369,7 +399,7 @@
                 }
               },
               {
-                "id": "b-d9",
+                "id": "b-jp",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -402,7 +432,7 @@
                 }
               },
               {
-                "id": "b-da",
+                "id": "b-jq",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -442,10 +472,26 @@
             "params": {}
           },
           {
-            "id": "c-out-db",
+            "id": "c-out-jr",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isu-bz",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isu-bz_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -469,7 +515,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5isu-by_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5isu-bz_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Ring",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

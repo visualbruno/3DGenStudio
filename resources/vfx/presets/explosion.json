@@ -18,10 +18,18 @@
     "additive",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ine-17_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927762,
+    "savedAt": 1789031482537,
     "name": "Explosion",
     "effect": {
       "seed": 12345,
@@ -299,7 +307,23 @@
             "id": "c-out-20",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ine-17",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ine-17_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -310,7 +334,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lf-11",
+              "id": "clip-mtvb5ind-14",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -545,7 +569,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lf-12",
+              "id": "clip-mtvb5ine-15",
               "at": 0.02,
               "duration": 0,
               "loop": false
@@ -837,7 +861,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lf-13",
+              "id": "clip-mtvb5ine-16",
               "at": 0.08,
               "duration": 0.7,
               "loop": false
@@ -850,7 +874,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ine-17_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

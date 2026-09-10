@@ -14,10 +14,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irr-9n_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188798,
+    "savedAt": 1789031482695,
     "name": "Thruster",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-9y",
+        "id": "sys-ge",
         "name": "Plume",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-9y",
+            "id": "c-spawn-ge",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-9q",
+                "id": "b-g6",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-9y",
+            "id": "c-init-ge",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-9r",
+                "id": "b-g7",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-9s",
+                "id": "b-g8",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-9t",
+                "id": "b-g9",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-9u",
+                "id": "b-ga",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -153,12 +161,12 @@
             "params": {}
           },
           {
-            "id": "c-update-9y",
+            "id": "c-update-ge",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-9v",
+                "id": "b-gb",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -169,7 +177,7 @@
                 }
               },
               {
-                "id": "b-9w",
+                "id": "b-gc",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -202,7 +210,7 @@
                 }
               },
               {
-                "id": "b-9x",
+                "id": "b-gd",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -256,10 +264,26 @@
             "params": {}
           },
           {
-            "id": "c-out-9y",
+            "id": "c-out-ge",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irr-9n",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irr-9n_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -270,7 +294,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0f-5k",
+              "id": "clip-mtvb5irr-9m",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -283,7 +307,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irr-9n_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

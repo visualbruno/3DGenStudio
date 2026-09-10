@@ -1331,6 +1331,14 @@ export default function VfxEditorPage() {
           dirty={dirty}
           currentDoc={doc}
           currentName={name}
+          notify={notify}
+          // A preset's bundled sprites are deduped against the library by name,
+          // so the dialog needs a fresh listing rather than this page's cached
+          // one - it may itself have just installed some.
+          listLibrary={async () => {
+            const library = await getLibraryAssets?.()
+            return [...(library?.images || []), ...(library?.meshes || [])]
+          }}
           onOpen={preset => {
             loadTemplate(preset)
             setSelection(null)

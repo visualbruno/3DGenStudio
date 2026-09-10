@@ -27,6 +27,7 @@ import {
 import { compileVfxGraph } from '../../../vfx/compile.js'
 import { normalizeVfxDoc } from '../../../vfx/doc.js'
 import { createVfxThumbnailFile } from '../../utils/vfxThumbnail.js'
+import { resolvePresetAssets } from '../../utils/vfx/presetAssets.js'
 import {
   deleteVfxPreset,
   getVfxPreset,
@@ -139,8 +140,14 @@ function PresetCard({ preset, authorMode, busy, onOpen, onEdit, onDelete, onShoo
  * @param {boolean} props.dirty whether the open effect has unsaved changes
  * @param {Object|null} props.currentDoc the open document, for "save as preset"
  * @param {string} props.currentName
+ * @param {() => Promise<Array<Object>>} props.listLibrary reads the asset
+ *   library, so a preset's bundled sprites are deduped against what is
+ *   already installed rather than added again on every open
+ * @param {(message: string, type?: string) => void} props.notify
  */
-export default function VfxPresetsDialog({ onClose, onOpen, dirty, currentDoc, currentName }) {
+export default function VfxPresetsDialog({
+  onClose, onOpen, dirty, currentDoc, currentName, listLibrary, notify,
+}) {
   const [presets, setPresets] = useState([])
   const [authorMode, setAuthorMode] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -237,8 +244,38 @@ export default function VfxPresetsDialog({ onClose, onOpen, dirty, currentDoc, c
     )) return
     setBusy(true)
     try {
-      onOpen(await getVfxPreset(preset.id))
+      const full = await getVfxPreset(preset.id)
+
+      // A preset names the sprites and meshes it needs by FILENAME, because an
+      // asset id from the authoring machine means nothing here. Installing them
+      // into this library and rewiring the slots is what turns the preset into
+      // an ordinary document - see src/utils/vfx/presetAssets.js.
+      const { doc, installed, missing } = await resolvePresetAssets(full, {
+        listLibrary,
+        onProgress: (done, total) => setError(
+          total > 1 ? `Adding preset assets to your library... ${done} of ${total}` : '',
+        ),
+      })
+
+      onOpen({ ...full, doc })
       onClose()
+
+      // SAID OUT LOUD, both ways. An install the author did not ask for should
+      // not be a surprise they find in their library later; and a texture that
+      // failed to install leaves a system drawing with the built-in blob, which
+      // is indistinguishable from a preset nobody bothered to texture.
+      if (missing.length) {
+        notify?.(
+          `${full.name} opened, but ${missing.length} asset${missing.length === 1 ? '' : 's'} `
+          + `could not be wired: ${missing.map((need) => need.file).join(', ')}`,
+          'error',
+        )
+      } else if (installed.length) {
+        notify?.(
+          `Added ${installed.length} preset asset${installed.length === 1 ? '' : 's'} to your library`,
+          'success',
+        )
+      }
     } catch (err) {
       setError(err?.message || 'Could not open that preset.')
     } finally {

@@ -16,10 +16,18 @@
     "vortex",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ip0-34_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927820,
+    "savedAt": 1789031482596,
     "name": "Trail",
     "effect": {
       "seed": 12345,
@@ -303,7 +311,23 @@
             "id": "c-out-66",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ip0-34",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ip0-34_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -314,7 +338,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75n0-2r",
+              "id": "clip-mtvb5ip0-32",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -570,7 +594,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75n0-2s",
+              "id": "clip-mtvb5ip0-33",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -583,7 +607,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ip0-34_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

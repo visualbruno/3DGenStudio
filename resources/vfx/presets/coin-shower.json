@@ -15,10 +15,18 @@
     "collision",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "mesh_blk-mtvb5isz-cf_mesh",
+      "file": "coin.glb",
+      "kind": "mesh",
+      "name": "Coin"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188843,
+    "savedAt": 1789031482739,
     "name": "Coin Shower",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-dy",
+        "id": "sys-ke",
         "name": "Coins",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-dy",
+            "id": "c-spawn-ke",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-do",
+                "id": "b-k4",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-dy",
+            "id": "c-init-ke",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-dp",
+                "id": "b-k5",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-dq",
+                "id": "b-k6",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-dr",
+                "id": "b-k7",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-ds",
+                "id": "b-k8",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -135,7 +143,7 @@
                 }
               },
               {
-                "id": "b-dt",
+                "id": "b-k9",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -161,12 +169,12 @@
             "params": {}
           },
           {
-            "id": "c-update-dy",
+            "id": "c-update-ke",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-du",
+                "id": "b-ka",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -181,7 +189,7 @@
                 }
               },
               {
-                "id": "b-dv",
+                "id": "b-kb",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -195,7 +203,7 @@
                 }
               },
               {
-                "id": "b-dw",
+                "id": "b-kc",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -214,7 +222,7 @@
                 }
               },
               {
-                "id": "b-dx",
+                "id": "b-kd",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -254,12 +262,24 @@
             "params": {}
           },
           {
-            "id": "c-out-dy",
+            "id": "c-out-ke",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isz-cf",
+                "type": "output.setMesh",
+                "enabled": true,
+                "props": {
+                  "mesh": {
+                    "mode": "const",
+                    "v": "mesh_blk-mtvb5isz-cf_mesh"
+                  }
+                }
+              }
+            ],
             "params": {
-              "mode": "billboard",
+              "mode": "mesh",
               "blend": "alpha",
               "sort": "none"
             }
@@ -268,7 +288,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr1n-7x",
+              "id": "clip-mtvb5isz-ce",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -281,7 +301,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "mesh_blk-mtvb5isz-cf_mesh": {
+        "kind": "mesh",
+        "ref": "",
+        "name": "Coin",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

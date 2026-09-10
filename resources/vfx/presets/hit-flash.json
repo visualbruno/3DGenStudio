@@ -14,10 +14,24 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iq4-5b_texture",
+      "file": "hard-flare.png",
+      "kind": "image",
+      "name": "Hard Flare"
+    },
+    {
+      "slot": "tex_blk-mtvb5iq5-5c_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188729,
+    "savedAt": 1789031482636,
     "name": "Hit Flash",
     "effect": {
       "seed": 12345,
@@ -43,7 +57,7 @@
     },
     "systems": [
       {
-        "id": "sys-3d",
+        "id": "sys-9t",
         "name": "Flash",
         "enabled": true,
         "solo": false,
@@ -52,12 +66,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-3d",
+            "id": "c-spawn-9t",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-37",
+                "id": "b-9n",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -71,12 +85,12 @@
             "params": {}
           },
           {
-            "id": "c-init-3d",
+            "id": "c-init-9t",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-38",
+                "id": "b-9o",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -87,7 +101,7 @@
                 }
               },
               {
-                "id": "b-39",
+                "id": "b-9p",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -98,7 +112,7 @@
                 }
               },
               {
-                "id": "b-3a",
+                "id": "b-9q",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -114,7 +128,7 @@
                 }
               },
               {
-                "id": "b-3b",
+                "id": "b-9r",
                 "type": "initialize.positionPoint",
                 "enabled": true,
                 "props": {}
@@ -123,12 +137,12 @@
             "params": {}
           },
           {
-            "id": "c-update-3d",
+            "id": "c-update-9t",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-3c",
+                "id": "b-9s",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -171,10 +185,26 @@
             "params": {}
           },
           {
-            "id": "c-out-3d",
+            "id": "c-out-9t",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iq4-5b",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iq4-5b_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -185,7 +215,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqyi-1u",
+              "id": "clip-mtvb5iq4-59",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -194,7 +224,7 @@
         }
       },
       {
-        "id": "sys-3n",
+        "id": "sys-a3",
         "name": "Streaks",
         "enabled": true,
         "solo": false,
@@ -203,12 +233,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-3n",
+            "id": "c-spawn-a3",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-3e",
+                "id": "b-9u",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -222,12 +252,12 @@
             "params": {}
           },
           {
-            "id": "c-init-3n",
+            "id": "c-init-a3",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-3f",
+                "id": "b-9v",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -241,7 +271,7 @@
                 }
               },
               {
-                "id": "b-3g",
+                "id": "b-9w",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -255,7 +285,7 @@
                 }
               },
               {
-                "id": "b-3h",
+                "id": "b-9x",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -271,7 +301,7 @@
                 }
               },
               {
-                "id": "b-3i",
+                "id": "b-9y",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -285,7 +315,7 @@
                 }
               },
               {
-                "id": "b-3j",
+                "id": "b-9z",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -302,12 +332,12 @@
             "params": {}
           },
           {
-            "id": "c-update-3n",
+            "id": "c-update-a3",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-3k",
+                "id": "b-a0",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -318,7 +348,7 @@
                 }
               },
               {
-                "id": "b-3l",
+                "id": "b-a1",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -351,7 +381,7 @@
                 }
               },
               {
-                "id": "b-3m",
+                "id": "b-a2",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -391,10 +421,26 @@
             "params": {}
           },
           {
-            "id": "c-out-3n",
+            "id": "c-out-a3",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iq5-5c",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iq5-5c_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -405,7 +451,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqyi-1v",
+              "id": "clip-mtvb5iq4-5a",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -418,7 +464,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iq4-5b_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Hard Flare",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5iq5-5c_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

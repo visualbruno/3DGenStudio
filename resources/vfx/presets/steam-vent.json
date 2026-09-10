@@ -14,10 +14,18 @@
     "beginner",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ipm-3w_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188703,
+    "savedAt": 1789031482618,
     "name": "Steam Vent",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-1j",
+        "id": "sys-7z",
         "name": "Steam",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-1j",
+            "id": "c-spawn-7z",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-19",
+                "id": "b-7p",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-1j",
+            "id": "c-init-7z",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-1a",
+                "id": "b-7q",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-1b",
+                "id": "b-7r",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-1c",
+                "id": "b-7s",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-1d",
+                "id": "b-7t",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -142,7 +150,7 @@
                 }
               },
               {
-                "id": "b-1e",
+                "id": "b-7u",
                 "type": "initialize.setRotation",
                 "enabled": true,
                 "props": {
@@ -159,12 +167,12 @@
             "params": {}
           },
           {
-            "id": "c-update-1j",
+            "id": "c-update-7z",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-1f",
+                "id": "b-7v",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -175,7 +183,7 @@
                 }
               },
               {
-                "id": "b-1g",
+                "id": "b-7w",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -190,7 +198,7 @@
                 }
               },
               {
-                "id": "b-1h",
+                "id": "b-7x",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -223,7 +231,7 @@
                 }
               },
               {
-                "id": "b-1i",
+                "id": "b-7y",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -263,10 +271,26 @@
             "params": {}
           },
           {
-            "id": "c-out-1j",
+            "id": "c-out-7z",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ipm-3w",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ipm-3w_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -277,7 +301,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqxr-n",
+              "id": "clip-mtvb5ipm-3v",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -290,7 +314,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ipm-3w_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

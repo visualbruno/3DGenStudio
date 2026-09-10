@@ -15,10 +15,18 @@
     "additive",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ipo-44_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188705,
+    "savedAt": 1789031482620,
     "name": "Ember Drift",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-1s",
+        "id": "sys-88",
         "name": "Embers",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-1s",
+            "id": "c-spawn-88",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-1k",
+                "id": "b-80",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-1s",
+            "id": "c-init-88",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-1l",
+                "id": "b-81",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-1m",
+                "id": "b-82",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-1n",
+                "id": "b-83",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-1o",
+                "id": "b-84",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -136,7 +144,7 @@
                 }
               },
               {
-                "id": "b-1p",
+                "id": "b-85",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -162,12 +170,12 @@
             "params": {}
           },
           {
-            "id": "c-update-1s",
+            "id": "c-update-88",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-1q",
+                "id": "b-86",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -182,7 +190,7 @@
                 }
               },
               {
-                "id": "b-1r",
+                "id": "b-87",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -230,10 +238,26 @@
             "params": {}
           },
           {
-            "id": "c-out-1s",
+            "id": "c-out-88",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ipo-44",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ipo-44_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -244,7 +268,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqxt-u",
+              "id": "clip-mtvb5ipo-43",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -257,7 +281,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ipo-44_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

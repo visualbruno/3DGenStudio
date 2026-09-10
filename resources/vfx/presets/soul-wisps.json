@@ -15,10 +15,18 @@
     "additive",
     "vortex"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iqq-6p_texture",
+      "file": "flame-wisp.png",
+      "kind": "image",
+      "name": "Flame Wisp"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188757,
+    "savedAt": 1789031482658,
     "name": "Soul Wisps",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-61",
+        "id": "sys-ch",
         "name": "Wisps",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-61",
+            "id": "c-spawn-ch",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-5s",
+                "id": "b-c8",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-61",
+            "id": "c-init-ch",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-5t",
+                "id": "b-c9",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-5u",
+                "id": "b-ca",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-5v",
+                "id": "b-cb",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-5w",
+                "id": "b-cc",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -136,7 +144,7 @@
                 }
               },
               {
-                "id": "b-5x",
+                "id": "b-cd",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -162,12 +170,12 @@
             "params": {}
           },
           {
-            "id": "c-update-61",
+            "id": "c-update-ch",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-5y",
+                "id": "b-ce",
                 "type": "update.vortex",
                 "enabled": true,
                 "props": {
@@ -198,7 +206,7 @@
                 }
               },
               {
-                "id": "b-5z",
+                "id": "b-cf",
                 "type": "update.speedLimit",
                 "enabled": true,
                 "props": {
@@ -209,7 +217,7 @@
                 }
               },
               {
-                "id": "b-60",
+                "id": "b-cg",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -257,10 +265,26 @@
             "params": {}
           },
           {
-            "id": "c-out-61",
+            "id": "c-out-ch",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqq-6p",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqq-6p_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -271,7 +295,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqza-30",
+              "id": "clip-mtvb5iqq-6o",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -284,7 +308,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iqq-6p_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Flame Wisp",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

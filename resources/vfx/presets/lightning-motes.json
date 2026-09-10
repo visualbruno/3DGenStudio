@@ -15,10 +15,18 @@
     "additive",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ir0-77_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188769,
+    "savedAt": 1789031482668,
     "name": "Lightning Motes",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-6t",
+        "id": "sys-d9",
         "name": "Motes",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-6t",
+            "id": "c-spawn-d9",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-6m",
+                "id": "b-d2",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-6t",
+            "id": "c-init-d9",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-6n",
+                "id": "b-d3",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-6o",
+                "id": "b-d4",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-6p",
+                "id": "b-d5",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-6q",
+                "id": "b-d6",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -138,12 +146,12 @@
             "params": {}
           },
           {
-            "id": "c-update-6t",
+            "id": "c-update-d9",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-6r",
+                "id": "b-d7",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -158,7 +166,7 @@
                 }
               },
               {
-                "id": "b-6s",
+                "id": "b-d8",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -212,10 +220,26 @@
             "params": {}
           },
           {
-            "id": "c-out-6t",
+            "id": "c-out-d9",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ir0-77",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ir0-77_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -226,7 +250,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzl-3f",
+              "id": "clip-mtvb5ir0-76",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -239,7 +263,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ir0-77_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

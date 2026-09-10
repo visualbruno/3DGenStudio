@@ -148,6 +148,123 @@ const plume = ({
   output: { mode: 'billboard', blend: 'alpha', sort: 'depth' },
 });
 
+// ── The asset pack ─────────────────────────────────────────────────────────
+//
+// Which sprite (or chip) each preset draws with, as a TABLE rather than as
+// edits inside fifty-three builders. Applied by `attachPackAssets` below, which
+// goes through the same mutator the editor's own asset picker uses - so a
+// seeded preset is shaped exactly like one an author wired by hand.
+//
+// The slot is registered with an EMPTY ref and the FILE is declared in the
+// preset's `assets` list. That is the whole install-independence trick: the
+// stored preset names a file in a directory the app owns, and opening it
+// installs that file here and rewrites the slot to whatever id it got. See the
+// header of vfx/preset.js.
+//
+// A `mesh` entry also switches that Output to the mesh renderer, because a
+// rock chip drawn as a billboard is a grey square.
+export const PRESET_PACK = {
+  // Fire and smoke: the wisp for flame, the puff for anything that billows.
+  fire: [{ system: 'Flame', file: 'flame-wisp.png' }],
+  torch: [{ system: 'Flame', file: 'flame-wisp.png' }],
+  campfire: [
+    { system: 'Flame', file: 'flame-wisp.png' },
+    { system: 'Embers', file: 'soft-glow.png' },
+    { system: 'Smoke', file: 'smoke-puff.png' },
+  ],
+  smoke: [{ system: 'Smoke', file: 'smoke-puff.png' }],
+  'black-smoke': [{ system: 'Smoke', file: 'smoke-puff.png' }],
+  'steam-vent': [{ system: 'Steam', file: 'smoke-puff.png' }],
+  'ember-drift': [{ system: 'Embers', file: 'soft-glow.png' }],
+
+  // Impacts: streaks for sparks, the flare for the pop, the puff for dust.
+  sparks: [{ system: 'Sparks', file: 'spark-streak.png' }],
+  ricochet: [
+    { system: 'Flash', file: 'hard-flare.png' },
+    { system: 'Sparks', file: 'spark-streak.png' },
+  ],
+  'metal-grind': [{ system: 'Sparks', file: 'spark-streak.png' }],
+  'hit-flash': [
+    { system: 'Flash', file: 'hard-flare.png' },
+    { system: 'Streaks', file: 'spark-streak.png' },
+  ],
+  'impact-dust': [{ system: 'Dust', file: 'smoke-puff.png' }],
+  blood: [{ system: 'Spray', file: 'soft-glow.png' }],
+
+  // Explosions.
+  explosion: [{ system: 'Fireball', file: 'smoke-puff.png' }],
+  grenade: [
+    { system: 'Fireball', file: 'smoke-puff.png' },
+    { system: 'Fragments', file: 'stone-shard.glb', mesh: true },
+    { system: 'Smoke', file: 'smoke-puff.png' },
+  ],
+  shockwave: [{ system: 'Ring', file: 'ring.png' }],
+  'debris-burst': [{ system: 'Debris', file: 'rock-chip.glb', mesh: true }],
+  firework: [{ system: 'Shell', file: 'soft-glow.png' }],
+
+  // Magic and energy.
+  magic: [{ system: 'Motes', file: 'star-four.png' }],
+  portal: [{ system: 'Ring', file: 'soft-glow.png' }],
+  'heal-aura': [{ system: 'Motes', file: 'star-four.png' }],
+  'arcane-shield': [{ system: 'Shell', file: 'soft-glow.png' }],
+  'soul-wisps': [{ system: 'Wisps', file: 'flame-wisp.png' }],
+  'energy-burst': [
+    { system: 'Core', file: 'soft-glow.png' },
+    { system: 'Streaks', file: 'spark-streak.png' },
+  ],
+  'lightning-motes': [{ system: 'Motes', file: 'spark-streak.png' }],
+
+  // Weather.
+  rain: [{ system: 'Rain', file: 'spark-streak.png' }],
+  'heavy-rain': [{ system: 'Rain', file: 'spark-streak.png' }],
+  snow: [{ system: 'Snow', file: 'soft-glow.png' }],
+  blizzard: [{ system: 'Snow', file: 'soft-glow.png' }],
+  'falling-leaves': [{ system: 'Leaves', file: 'shard.png' }],
+
+  // Environment.
+  dust: [{ system: 'Motes', file: 'dust-mote.png' }],
+  pollen: [{ system: 'Pollen', file: 'dust-mote.png' }],
+  fireflies: [{ system: 'Flies', file: 'soft-glow.png' }],
+  'ash-fall': [{ system: 'Ash', file: 'dust-mote.png' }],
+  'waterfall-mist': [{ system: 'Mist', file: 'smoke-puff.png' }],
+
+  // Liquids.
+  'water-splash': [{ system: 'Droplets', file: 'spark-streak.png' }],
+  fountain: [{ system: 'Water', file: 'spark-streak.png' }],
+  'lava-bubbles': [{ system: 'Bubbles', file: 'soft-glow.png' }],
+
+  // Sci-fi.
+  thruster: [{ system: 'Plume', file: 'soft-glow.png' }],
+  'warp-streaks': [{ system: 'Streaks', file: 'spark-streak.png' }],
+  'hologram-motes': [{ system: 'Motes', file: 'star-four.png' }],
+  'electric-arc': [{ system: 'Arc', file: 'spark-streak.png' }],
+
+  // Trails.
+  trail: [{ system: 'Ribbon', file: 'spark-streak.png' }],
+  'rocket-trail': [
+    { system: 'Flame', file: 'flame-wisp.png' },
+    { system: 'Smoke', file: 'smoke-puff.png' },
+  ],
+  comet: [
+    { system: 'Head', file: 'soft-glow.png' },
+    { system: 'Tail', file: 'spark-streak.png' },
+  ],
+  'arrow-streak': [{ system: 'Streak', file: 'spark-streak.png' }],
+
+  // Organic.
+  'spore-cloud': [{ system: 'Spores', file: 'smoke-puff.png' }],
+  'fly-swarm': [{ system: 'Flies', file: 'dust-mote.png' }],
+
+  // Interface.
+  'pickup-sparkle': [{ system: 'Sparkle', file: 'star-four.png' }],
+  'level-up': [
+    { system: 'Column', file: 'spark-streak.png' },
+    { system: 'Ring', file: 'ring.png' },
+  ],
+  confetti: [{ system: 'Confetti', file: 'plank.glb', mesh: true }],
+  'coin-shower': [{ system: 'Coins', file: 'coin.glb', mesh: true }],
+};
+
 // ── The library ────────────────────────────────────────────────────────────
 
 export const PRESET_SEED = {

@@ -12,6 +12,7 @@
 // So this checks what the seeder checks, but against what is actually on disk
 // rather than against the builders that produced it once.
 import { readdir, readFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -26,6 +27,7 @@ import {
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const DIR = path.join(ROOT, 'resources', 'vfx', 'presets');
+const PACK = path.join(ROOT, 'resources', 'vfx', 'assets');
 
 let failures = 0;
 const fail = (id, message) => {
@@ -42,6 +44,7 @@ if (files.length === 0) {
 const seen = new Set();
 const categories = new Map();
 const tags = new Map();
+const packUsage = new Map();
 
 for (const file of files.sort()) {
   const stem = file.slice(0, -5);
@@ -82,6 +85,17 @@ for (const file of files.sort()) {
     fail(stem, `does not compile: ${err.message}`);
   }
 
+  // A DECLARATION NAMING A FILE THE PACK DOES NOT HAVE installs nothing and
+  // wires nothing: the effect opens drawing with the built-in blob and the only
+  // clue is an info diagnostic. This is the check that keeps the two directories
+  // in step, and it is why the pack ships beside the presets.
+  for (const need of preset.assets) {
+    if (!existsSync(path.join(PACK, need.file))) {
+      fail(stem, `declares "${need.file}", which is not in resources/vfx/assets/`);
+    }
+    packUsage.set(need.file, (packUsage.get(need.file) || 0) + 1);
+  }
+
   categories.set(preset.category, (categories.get(preset.category) || 0) + 1);
   for (const tag of preset.tags) tags.set(tag, (tags.get(tag) || 0) + 1);
 }
@@ -91,6 +105,15 @@ for (const category of PRESET_CATEGORIES) {
   console.log(`  ${String(categories.get(category) || 0).padStart(3)}  ${category}`);
 }
 console.log(`\n  tags: ${[...tags.entries()].sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t}(${n})`).join(' ')}`);
+
+// Unused pack files are not an error - the author may be staging one for a
+// preset not yet written - but an unused one is usually a typo in a
+// declaration that the existence check above did not catch because BOTH
+// names happened to exist.
+const packFiles = (await readdir(PACK).catch(() => [])).filter((f) => !f.startsWith('.'));
+const unused = packFiles.filter((file) => !packUsage.has(file));
+console.log(`\n  pack: ${packFiles.length} files, ${packUsage.size} used`
+  + (unused.length ? `, unused: ${unused.join(' ')}` : ''));
 
 if (failures) {
   console.error(`\n${failures} problem(s)`);

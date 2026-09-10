@@ -14,10 +14,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5isq-br_texture",
+      "file": "star-four.png",
+      "kind": "image",
+      "name": "Star Four"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188834,
+    "savedAt": 1789031482730,
     "name": "Pickup Sparkle",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-cs",
+        "id": "sys-j8",
         "name": "Sparkle",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-cs",
+            "id": "c-spawn-j8",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-ci",
+                "id": "b-iy",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-cs",
+            "id": "c-init-j8",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-cj",
+                "id": "b-iz",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-ck",
+                "id": "b-j0",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-cl",
+                "id": "b-j1",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-cm",
+                "id": "b-j2",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -134,7 +142,7 @@
                 }
               },
               {
-                "id": "b-cn",
+                "id": "b-j3",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -151,12 +159,12 @@
             "params": {}
           },
           {
-            "id": "c-update-cs",
+            "id": "c-update-j8",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-co",
+                "id": "b-j4",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -171,7 +179,7 @@
                 }
               },
               {
-                "id": "b-cp",
+                "id": "b-j5",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -182,7 +190,7 @@
                 }
               },
               {
-                "id": "b-cq",
+                "id": "b-j6",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -215,7 +223,7 @@
                 }
               },
               {
-                "id": "b-cr",
+                "id": "b-j7",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -269,10 +277,26 @@
             "params": {}
           },
           {
-            "id": "c-out-cs",
+            "id": "c-out-j8",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isq-br",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isq-br_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -283,7 +307,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr1e-7d",
+              "id": "clip-mtvb5isq-bq",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -296,7 +320,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5isq-br_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Star Four",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

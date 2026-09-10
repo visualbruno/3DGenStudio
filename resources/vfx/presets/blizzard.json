@@ -15,10 +15,18 @@
     "alpha",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ir4-7n_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188774,
+    "savedAt": 1789031482672,
     "name": "Blizzard",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-7e",
+        "id": "sys-du",
         "name": "Snow",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-7e",
+            "id": "c-spawn-du",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-73",
+                "id": "b-dj",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-7e",
+            "id": "c-init-du",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-74",
+                "id": "b-dk",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -88,7 +96,7 @@
                 }
               },
               {
-                "id": "b-75",
+                "id": "b-dl",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -102,7 +110,7 @@
                 }
               },
               {
-                "id": "b-76",
+                "id": "b-dm",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -118,7 +126,7 @@
                 }
               },
               {
-                "id": "b-77",
+                "id": "b-dn",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -141,7 +149,7 @@
                 }
               },
               {
-                "id": "b-78",
+                "id": "b-do",
                 "type": "initialize.velocityDirection",
                 "enabled": true,
                 "props": {
@@ -170,12 +178,12 @@
             "params": {}
           },
           {
-            "id": "c-update-7e",
+            "id": "c-update-du",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-79",
+                "id": "b-dp",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -186,7 +194,7 @@
                 }
               },
               {
-                "id": "b-7a",
+                "id": "b-dq",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -201,7 +209,7 @@
                 }
               },
               {
-                "id": "b-7b",
+                "id": "b-dr",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -215,7 +223,7 @@
                 }
               },
               {
-                "id": "b-7c",
+                "id": "b-ds",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -260,7 +268,7 @@
                 }
               },
               {
-                "id": "b-7d",
+                "id": "b-dt",
                 "type": "update.killOnBounds",
                 "enabled": true,
                 "props": {
@@ -278,10 +286,26 @@
             "params": {}
           },
           {
-            "id": "c-out-7e",
+            "id": "c-out-du",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ir4-7n",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ir4-7n_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -292,7 +316,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzq-3t",
+              "id": "clip-mtvb5ir4-7m",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -305,7 +329,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ir4-7n_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

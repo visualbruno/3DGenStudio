@@ -16,10 +16,11 @@
     "additive",
     "alpha"
   ],
+  "assets": [],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992939042,
+    "savedAt": 1789031482516,
     "name": "Muzzle Flash",
     "effect": {
       "seed": 12345,
@@ -45,7 +46,7 @@
     },
     "systems": [
       {
-        "id": "sys-7",
+        "id": "sys-t",
         "name": "Flash",
         "enabled": true,
         "solo": false,
@@ -54,12 +55,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-7",
+            "id": "c-spawn-t",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-1",
+                "id": "b-n",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -73,12 +74,12 @@
             "params": {}
           },
           {
-            "id": "c-init-7",
+            "id": "c-init-t",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-2",
+                "id": "b-o",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -89,7 +90,7 @@
                 }
               },
               {
-                "id": "b-3",
+                "id": "b-p",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -103,7 +104,7 @@
                 }
               },
               {
-                "id": "b-4",
+                "id": "b-q",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -122,12 +123,12 @@
             "params": {}
           },
           {
-            "id": "c-update-7",
+            "id": "c-update-t",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-5",
+                "id": "b-r",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -167,7 +168,7 @@
                 }
               },
               {
-                "id": "b-6",
+                "id": "b-s",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -230,7 +231,7 @@
             "params": {}
           },
           {
-            "id": "c-out-7",
+            "id": "c-out-t",
             "kind": "output",
             "label": "",
             "blocks": [],
@@ -244,7 +245,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo7eav-7",
+              "id": "clip-mtvb5imu-n",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -253,7 +254,7 @@
         }
       },
       {
-        "id": "sys-g",
+        "id": "sys-12",
         "name": "Sparks",
         "enabled": true,
         "solo": false,
@@ -262,12 +263,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-g",
+            "id": "c-spawn-12",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-8",
+                "id": "b-u",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -281,12 +282,12 @@
             "params": {}
           },
           {
-            "id": "c-init-g",
+            "id": "c-init-12",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-9",
+                "id": "b-v",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -300,7 +301,7 @@
                 }
               },
               {
-                "id": "b-a",
+                "id": "b-w",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -314,7 +315,7 @@
                 }
               },
               {
-                "id": "b-b",
+                "id": "b-x",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -330,7 +331,7 @@
                 }
               },
               {
-                "id": "b-c",
+                "id": "b-y",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -355,12 +356,12 @@
             "params": {}
           },
           {
-            "id": "c-update-g",
+            "id": "c-update-12",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-d",
+                "id": "b-z",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -375,7 +376,7 @@
                 }
               },
               {
-                "id": "b-e",
+                "id": "b-10",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -386,7 +387,7 @@
                 }
               },
               {
-                "id": "b-f",
+                "id": "b-11",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -440,7 +441,7 @@
             "params": {}
           },
           {
-            "id": "c-out-g",
+            "id": "c-out-12",
             "kind": "output",
             "label": "",
             "blocks": [],
@@ -454,7 +455,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo7eav-8",
+              "id": "clip-mtvb5imu-o",
               "at": 0.03,
               "duration": 0,
               "loop": false
@@ -463,7 +464,7 @@
         }
       },
       {
-        "id": "sys-p",
+        "id": "sys-1b",
         "name": "Smoke",
         "enabled": true,
         "solo": false,
@@ -472,12 +473,12 @@
         "seedOffset": 121509,
         "contexts": [
           {
-            "id": "c-spawn-p",
+            "id": "c-spawn-1b",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-h",
+                "id": "b-13",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -491,12 +492,12 @@
             "params": {}
           },
           {
-            "id": "c-init-p",
+            "id": "c-init-1b",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-i",
+                "id": "b-14",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -510,7 +511,7 @@
                 }
               },
               {
-                "id": "b-j",
+                "id": "b-15",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -524,7 +525,7 @@
                 }
               },
               {
-                "id": "b-k",
+                "id": "b-16",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -540,7 +541,7 @@
                 }
               },
               {
-                "id": "b-l",
+                "id": "b-17",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -565,12 +566,12 @@
             "params": {}
           },
           {
-            "id": "c-update-p",
+            "id": "c-update-1b",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-m",
+                "id": "b-18",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -581,7 +582,7 @@
                 }
               },
               {
-                "id": "b-n",
+                "id": "b-19",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -614,7 +615,7 @@
                 }
               },
               {
-                "id": "b-o",
+                "id": "b-1a",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -668,7 +669,7 @@
             "params": {}
           },
           {
-            "id": "c-out-p",
+            "id": "c-out-1b",
             "kind": "output",
             "label": "",
             "blocks": [],
@@ -682,7 +683,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo7eav-9",
+              "id": "clip-mtvb5imu-p",
               "at": 0.05,
               "duration": 0.25,
               "loop": false

@@ -15,10 +15,18 @@
     "attractor",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ins-1f_texture",
+      "file": "star-four.png",
+      "kind": "image",
+      "name": "Star Four"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927776,
+    "savedAt": 1789031482550,
     "name": "Magic",
     "effect": {
       "seed": 12345,
@@ -317,7 +325,23 @@
             "id": "c-out-31",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ins-1f",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ins-1f_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -328,7 +352,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lt-1a",
+              "id": "clip-mtvb5ins-1e",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -341,7 +365,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ins-1f_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Star Four",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

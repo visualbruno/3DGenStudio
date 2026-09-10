@@ -16,10 +16,18 @@
     "alpha",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5imm-g_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927744,
+    "savedAt": 1789031482508,
     "name": "Smoke",
     "effect": {
       "seed": 12345,
@@ -298,7 +306,23 @@
             "id": "c-out-m",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5imm-g",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5imm-g_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -309,7 +333,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75kx-e",
+              "id": "clip-mtvb5imm-f",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -322,7 +346,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5imm-g_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

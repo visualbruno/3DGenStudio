@@ -15,10 +15,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5in8-x_texture",
+      "file": "flame-wisp.png",
+      "kind": "image",
+      "name": "Flame Wisp"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927755,
+    "savedAt": 1789031482531,
     "name": "Fire",
     "effect": {
       "seed": 12345,
@@ -324,7 +332,23 @@
             "id": "c-out-1o",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5in8-x",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5in8-x_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -335,7 +359,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75l7-u",
+              "id": "clip-mtvb5in8-w",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -348,7 +372,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5in8-x_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Flame Wisp",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

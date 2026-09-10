@@ -14,10 +14,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iqk-69_texture",
+      "file": "star-four.png",
+      "kind": "image",
+      "name": "Star Four"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188748,
+    "savedAt": 1789031482652,
     "name": "Heal Aura",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-5h",
+        "id": "sys-bx",
         "name": "Motes",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-5h",
+            "id": "c-spawn-bx",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-58",
+                "id": "b-bo",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-5h",
+            "id": "c-init-bx",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-59",
+                "id": "b-bp",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-5a",
+                "id": "b-bq",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-5b",
+                "id": "b-br",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-5c",
+                "id": "b-bs",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -135,7 +143,7 @@
                 }
               },
               {
-                "id": "b-5d",
+                "id": "b-bt",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -161,12 +169,12 @@
             "params": {}
           },
           {
-            "id": "c-update-5h",
+            "id": "c-update-bx",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-5e",
+                "id": "b-bu",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -181,7 +189,7 @@
                 }
               },
               {
-                "id": "b-5f",
+                "id": "b-bv",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -221,7 +229,7 @@
                 }
               },
               {
-                "id": "b-5g",
+                "id": "b-bw",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -269,10 +277,26 @@
             "params": {}
           },
           {
-            "id": "c-out-5h",
+            "id": "c-out-bx",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqk-69",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqk-69_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -283,7 +307,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqz1-2m",
+              "id": "clip-mtvb5iqk-68",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -296,7 +320,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iqk-69_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Star Four",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

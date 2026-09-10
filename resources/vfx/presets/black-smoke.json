@@ -15,10 +15,18 @@
     "alpha",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ipr-4c_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188708,
+    "savedAt": 1789031482623,
     "name": "Black Smoke",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-24",
+        "id": "sys-8k",
         "name": "Smoke",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-24",
+            "id": "c-spawn-8k",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-1t",
+                "id": "b-89",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-24",
+            "id": "c-init-8k",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-1u",
+                "id": "b-8a",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-1v",
+                "id": "b-8b",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-1w",
+                "id": "b-8c",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-1x",
+                "id": "b-8d",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -136,7 +144,7 @@
                 }
               },
               {
-                "id": "b-1y",
+                "id": "b-8e",
                 "type": "initialize.velocityDirection",
                 "enabled": true,
                 "props": {
@@ -162,7 +170,7 @@
                 }
               },
               {
-                "id": "b-1z",
+                "id": "b-8f",
                 "type": "initialize.setRotation",
                 "enabled": true,
                 "props": {
@@ -179,12 +187,12 @@
             "params": {}
           },
           {
-            "id": "c-update-24",
+            "id": "c-update-8k",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-20",
+                "id": "b-8g",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -199,7 +207,7 @@
                 }
               },
               {
-                "id": "b-21",
+                "id": "b-8h",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -210,7 +218,7 @@
                 }
               },
               {
-                "id": "b-22",
+                "id": "b-8i",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -243,7 +251,7 @@
                 }
               },
               {
-                "id": "b-23",
+                "id": "b-8j",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -297,10 +305,26 @@
             "params": {}
           },
           {
-            "id": "c-out-24",
+            "id": "c-out-8k",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ipr-4c",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ipr-4c_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -311,7 +335,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqxw-11",
+              "id": "clip-mtvb5ipr-4b",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -324,7 +348,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ipr-4c_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

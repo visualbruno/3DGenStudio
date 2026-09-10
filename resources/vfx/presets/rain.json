@@ -15,10 +15,18 @@
     "stretched",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iob-1w_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927793,
+    "savedAt": 1789031482571,
     "name": "Rain",
     "effect": {
       "seed": 12345,
@@ -254,7 +262,23 @@
             "id": "c-out-3v",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iob-1w",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iob-1w_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "alpha",
@@ -265,7 +289,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75ma-1p",
+              "id": "clip-mtvb5iob-1v",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -278,7 +302,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iob-1w_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

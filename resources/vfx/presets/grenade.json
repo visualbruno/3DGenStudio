@@ -17,10 +17,30 @@
     "additive",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iq8-5j_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    },
+    {
+      "slot": "mesh_blk-mtvb5iq8-5k_mesh",
+      "file": "stone-shard.glb",
+      "kind": "mesh",
+      "name": "Stone Shard"
+    },
+    {
+      "slot": "tex_blk-mtvb5iq9-5l_texture",
+      "file": "smoke-puff.png",
+      "kind": "image",
+      "name": "Smoke Puff"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188735,
+    "savedAt": 1789031482640,
     "name": "Grenade",
     "effect": {
       "seed": 12345,
@@ -46,7 +66,7 @@
     },
     "systems": [
       {
-        "id": "sys-3y",
+        "id": "sys-ae",
         "name": "Fireball",
         "enabled": true,
         "solo": false,
@@ -55,12 +75,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-3y",
+            "id": "c-spawn-ae",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-3o",
+                "id": "b-a4",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -74,12 +94,12 @@
             "params": {}
           },
           {
-            "id": "c-init-3y",
+            "id": "c-init-ae",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-3p",
+                "id": "b-a5",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -93,7 +113,7 @@
                 }
               },
               {
-                "id": "b-3q",
+                "id": "b-a6",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -107,7 +127,7 @@
                 }
               },
               {
-                "id": "b-3r",
+                "id": "b-a7",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -123,7 +143,7 @@
                 }
               },
               {
-                "id": "b-3s",
+                "id": "b-a8",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -137,7 +157,7 @@
                 }
               },
               {
-                "id": "b-3t",
+                "id": "b-a9",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -151,7 +171,7 @@
                 }
               },
               {
-                "id": "b-3u",
+                "id": "b-aa",
                 "type": "initialize.setRotation",
                 "enabled": true,
                 "props": {
@@ -168,12 +188,12 @@
             "params": {}
           },
           {
-            "id": "c-update-3y",
+            "id": "c-update-ae",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-3v",
+                "id": "b-ab",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -184,7 +204,7 @@
                 }
               },
               {
-                "id": "b-3w",
+                "id": "b-ac",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -217,7 +237,7 @@
                 }
               },
               {
-                "id": "b-3x",
+                "id": "b-ad",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -280,10 +300,26 @@
             "params": {}
           },
           {
-            "id": "c-out-3y",
+            "id": "c-out-ae",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iq8-5j",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iq8-5j_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -303,7 +339,7 @@
         }
       },
       {
-        "id": "sys-49",
+        "id": "sys-ap",
         "name": "Fragments",
         "enabled": true,
         "solo": false,
@@ -312,12 +348,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-49",
+            "id": "c-spawn-ap",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-3z",
+                "id": "b-af",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -331,12 +367,12 @@
             "params": {}
           },
           {
-            "id": "c-init-49",
+            "id": "c-init-ap",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-40",
+                "id": "b-ag",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -350,7 +386,7 @@
                 }
               },
               {
-                "id": "b-41",
+                "id": "b-ah",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -364,7 +400,7 @@
                 }
               },
               {
-                "id": "b-42",
+                "id": "b-ai",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -380,7 +416,7 @@
                 }
               },
               {
-                "id": "b-43",
+                "id": "b-aj",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -394,7 +430,7 @@
                 }
               },
               {
-                "id": "b-44",
+                "id": "b-ak",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -411,12 +447,12 @@
             "params": {}
           },
           {
-            "id": "c-update-49",
+            "id": "c-update-ap",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-45",
+                "id": "b-al",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -431,7 +467,7 @@
                 }
               },
               {
-                "id": "b-46",
+                "id": "b-am",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -442,7 +478,7 @@
                 }
               },
               {
-                "id": "b-47",
+                "id": "b-an",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -461,7 +497,7 @@
                 }
               },
               {
-                "id": "b-48",
+                "id": "b-ao",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -478,12 +514,24 @@
             "params": {}
           },
           {
-            "id": "c-out-49",
+            "id": "c-out-ap",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iq8-5k",
+                "type": "output.setMesh",
+                "enabled": true,
+                "props": {
+                  "mesh": {
+                    "mode": "const",
+                    "v": "mesh_blk-mtvb5iq8-5k_mesh"
+                  }
+                }
+              }
+            ],
             "params": {
-              "mode": "billboard",
+              "mode": "mesh",
               "blend": "alpha",
               "sort": "none"
             }
@@ -501,7 +549,7 @@
         }
       },
       {
-        "id": "sys-4m",
+        "id": "sys-b2",
         "name": "Smoke",
         "enabled": true,
         "solo": false,
@@ -510,12 +558,12 @@
         "seedOffset": 121509,
         "contexts": [
           {
-            "id": "c-spawn-4m",
+            "id": "c-spawn-b2",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-4a",
+                "id": "b-aq",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -529,12 +577,12 @@
             "params": {}
           },
           {
-            "id": "c-init-4m",
+            "id": "c-init-b2",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-4b",
+                "id": "b-ar",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -548,7 +596,7 @@
                 }
               },
               {
-                "id": "b-4c",
+                "id": "b-as",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -562,7 +610,7 @@
                 }
               },
               {
-                "id": "b-4d",
+                "id": "b-at",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -578,7 +626,7 @@
                 }
               },
               {
-                "id": "b-4e",
+                "id": "b-au",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -592,7 +640,7 @@
                 }
               },
               {
-                "id": "b-4f",
+                "id": "b-av",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -606,7 +654,7 @@
                 }
               },
               {
-                "id": "b-4g",
+                "id": "b-aw",
                 "type": "initialize.setRotation",
                 "enabled": true,
                 "props": {
@@ -623,12 +671,12 @@
             "params": {}
           },
           {
-            "id": "c-update-4m",
+            "id": "c-update-b2",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-4h",
+                "id": "b-ax",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -639,7 +687,7 @@
                 }
               },
               {
-                "id": "b-4i",
+                "id": "b-ay",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -654,7 +702,7 @@
                 }
               },
               {
-                "id": "b-4j",
+                "id": "b-az",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -669,7 +717,7 @@
                 }
               },
               {
-                "id": "b-4k",
+                "id": "b-b0",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -702,7 +750,7 @@
                 }
               },
               {
-                "id": "b-4l",
+                "id": "b-b1",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -756,10 +804,26 @@
             "params": {}
           },
           {
-            "id": "c-out-4m",
+            "id": "c-out-b2",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iq9-5l",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iq9-5l_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -783,7 +847,26 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iq8-5j_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      },
+      "mesh_blk-mtvb5iq8-5k_mesh": {
+        "kind": "mesh",
+        "ref": "",
+        "name": "Stone Shard",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5iq9-5l_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Smoke Puff",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

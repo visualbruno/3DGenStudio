@@ -15,10 +15,18 @@
     "additive",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ir9-83_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188779,
+    "savedAt": 1789031482677,
     "name": "Fireflies",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-80",
+        "id": "sys-eg",
         "name": "Flies",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-80",
+            "id": "c-spawn-eg",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-7r",
+                "id": "b-e7",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-80",
+            "id": "c-init-eg",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-7s",
+                "id": "b-e8",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-7t",
+                "id": "b-e9",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-7u",
+                "id": "b-ea",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-7v",
+                "id": "b-eb",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -144,7 +152,7 @@
                 }
               },
               {
-                "id": "b-7w",
+                "id": "b-ec",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -170,12 +178,12 @@
             "params": {}
           },
           {
-            "id": "c-update-80",
+            "id": "c-update-eg",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-7x",
+                "id": "b-ed",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -190,7 +198,7 @@
                 }
               },
               {
-                "id": "b-7y",
+                "id": "b-ee",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -201,7 +209,7 @@
                 }
               },
               {
-                "id": "b-7z",
+                "id": "b-ef",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -249,10 +257,26 @@
             "params": {}
           },
           {
-            "id": "c-out-80",
+            "id": "c-out-eg",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ir9-83",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ir9-83_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -263,7 +287,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzv-47",
+              "id": "clip-mtvb5ir9-82",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -276,7 +300,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ir9-83_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

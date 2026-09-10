@@ -15,10 +15,18 @@
     "collision",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "mesh_blk-mtvb5iqi-61_mesh",
+      "file": "rock-chip.glb",
+      "kind": "mesh",
+      "name": "Rock Chip"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188746,
+    "savedAt": 1789031482650,
     "name": "Debris Burst",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-57",
+        "id": "sys-bn",
         "name": "Debris",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-57",
+            "id": "c-spawn-bn",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-4x",
+                "id": "b-bd",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-57",
+            "id": "c-init-bn",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-4y",
+                "id": "b-be",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-4z",
+                "id": "b-bf",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-50",
+                "id": "b-bg",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-51",
+                "id": "b-bh",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -135,7 +143,7 @@
                 }
               },
               {
-                "id": "b-52",
+                "id": "b-bi",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -161,12 +169,12 @@
             "params": {}
           },
           {
-            "id": "c-update-57",
+            "id": "c-update-bn",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-53",
+                "id": "b-bj",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -181,7 +189,7 @@
                 }
               },
               {
-                "id": "b-54",
+                "id": "b-bk",
                 "type": "update.spin",
                 "enabled": true,
                 "props": {
@@ -195,7 +203,7 @@
                 }
               },
               {
-                "id": "b-55",
+                "id": "b-bl",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -214,7 +222,7 @@
                 }
               },
               {
-                "id": "b-56",
+                "id": "b-bm",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -254,12 +262,24 @@
             "params": {}
           },
           {
-            "id": "c-out-57",
+            "id": "c-out-bn",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqi-61",
+                "type": "output.setMesh",
+                "enabled": true,
+                "props": {
+                  "mesh": {
+                    "mode": "const",
+                    "v": "mesh_blk-mtvb5iqi-61_mesh"
+                  }
+                }
+              }
+            ],
             "params": {
-              "mode": "billboard",
+              "mode": "mesh",
               "blend": "alpha",
               "sort": "none"
             }
@@ -268,7 +288,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqyy-2f",
+              "id": "clip-mtvb5iqi-60",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -281,7 +301,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "mesh_blk-mtvb5iqi-61_mesh": {
+        "kind": "mesh",
+        "ref": "",
+        "name": "Rock Chip",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

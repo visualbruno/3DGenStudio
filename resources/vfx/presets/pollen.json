@@ -15,10 +15,18 @@
     "additive",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irb-8b_texture",
+      "file": "dust-mote.png",
+      "kind": "image",
+      "name": "Dust Mote"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188782,
+    "savedAt": 1789031482679,
     "name": "Pollen",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-89",
+        "id": "sys-ep",
         "name": "Pollen",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-89",
+            "id": "c-spawn-ep",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-81",
+                "id": "b-eh",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-89",
+            "id": "c-init-ep",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-82",
+                "id": "b-ei",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-83",
+                "id": "b-ej",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-84",
+                "id": "b-ek",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-85",
+                "id": "b-el",
                 "type": "initialize.positionBox",
                 "enabled": true,
                 "props": {
@@ -144,7 +152,7 @@
                 }
               },
               {
-                "id": "b-86",
+                "id": "b-em",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -170,12 +178,12 @@
             "params": {}
           },
           {
-            "id": "c-update-89",
+            "id": "c-update-ep",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-87",
+                "id": "b-en",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -190,7 +198,7 @@
                 }
               },
               {
-                "id": "b-88",
+                "id": "b-eo",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -238,10 +246,26 @@
             "params": {}
           },
           {
-            "id": "c-out-89",
+            "id": "c-out-ep",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irb-8b",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irb-8b_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -252,7 +276,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqzy-4e",
+              "id": "clip-mtvb5irb-8a",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -265,7 +289,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irb-8b_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Dust Mote",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

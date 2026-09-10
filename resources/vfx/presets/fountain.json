@@ -15,10 +15,18 @@
     "collision",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irl-97_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188792,
+    "savedAt": 1789031482689,
     "name": "Fountain",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-9g",
+        "id": "sys-fw",
         "name": "Water",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-9g",
+            "id": "c-spawn-fw",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-98",
+                "id": "b-fo",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-9g",
+            "id": "c-init-fw",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-99",
+                "id": "b-fp",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-9a",
+                "id": "b-fq",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-9b",
+                "id": "b-fr",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-9c",
+                "id": "b-fs",
                 "type": "initialize.positionCone",
                 "enabled": true,
                 "props": {
@@ -146,12 +154,12 @@
             "params": {}
           },
           {
-            "id": "c-update-9g",
+            "id": "c-update-fw",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-9d",
+                "id": "b-ft",
                 "type": "update.gravity",
                 "enabled": true,
                 "props": {
@@ -166,7 +174,7 @@
                 }
               },
               {
-                "id": "b-9e",
+                "id": "b-fu",
                 "type": "update.collidePlane",
                 "enabled": true,
                 "props": {
@@ -185,7 +193,7 @@
                 }
               },
               {
-                "id": "b-9f",
+                "id": "b-fv",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -225,10 +233,26 @@
             "params": {}
           },
           {
-            "id": "c-out-9g",
+            "id": "c-out-fw",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irl-97",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irl-97_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "alpha",
@@ -239,7 +263,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr08-56",
+              "id": "clip-mtvb5irl-96",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -252,7 +276,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irl-97_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

@@ -16,10 +16,18 @@
     "attractor",
     "collision"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iqn-6h_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188754,
+    "savedAt": 1789031482655,
     "name": "Arcane Shield",
     "effect": {
       "seed": 12345,
@@ -45,7 +53,7 @@
     },
     "systems": [
       {
-        "id": "sys-5r",
+        "id": "sys-c7",
         "name": "Shell",
         "enabled": true,
         "solo": false,
@@ -54,12 +62,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-5r",
+            "id": "c-spawn-c7",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-5i",
+                "id": "b-by",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -73,12 +81,12 @@
             "params": {}
           },
           {
-            "id": "c-init-5r",
+            "id": "c-init-c7",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-5j",
+                "id": "b-bz",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -92,7 +100,7 @@
                 }
               },
               {
-                "id": "b-5k",
+                "id": "b-c0",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -106,7 +114,7 @@
                 }
               },
               {
-                "id": "b-5l",
+                "id": "b-c1",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -122,7 +130,7 @@
                 }
               },
               {
-                "id": "b-5m",
+                "id": "b-c2",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -136,7 +144,7 @@
                 }
               },
               {
-                "id": "b-5n",
+                "id": "b-c3",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -162,12 +170,12 @@
             "params": {}
           },
           {
-            "id": "c-update-5r",
+            "id": "c-update-c7",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-5o",
+                "id": "b-c4",
                 "type": "update.vortex",
                 "enabled": true,
                 "props": {
@@ -198,7 +206,7 @@
                 }
               },
               {
-                "id": "b-5p",
+                "id": "b-c5",
                 "type": "update.collideSphere",
                 "enabled": true,
                 "props": {
@@ -228,7 +236,7 @@
                 }
               },
               {
-                "id": "b-5q",
+                "id": "b-c6",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -276,10 +284,26 @@
             "params": {}
           },
           {
-            "id": "c-out-5r",
+            "id": "c-out-c7",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqn-6h",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqn-6h_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -290,7 +314,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqz6-2t",
+              "id": "clip-mtvb5iqn-6g",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -303,7 +327,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iqn-6h_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

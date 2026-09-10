@@ -15,10 +15,18 @@
     "additive",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5irz-ab_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188807,
+    "savedAt": 1789031482703,
     "name": "Electric Arc",
     "effect": {
       "seed": 12345,
@@ -44,7 +52,7 @@
     },
     "systems": [
       {
-        "id": "sys-an",
+        "id": "sys-h3",
         "name": "Arc",
         "enabled": true,
         "solo": false,
@@ -53,12 +61,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-an",
+            "id": "c-spawn-h3",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-ag",
+                "id": "b-gw",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +80,12 @@
             "params": {}
           },
           {
-            "id": "c-init-an",
+            "id": "c-init-h3",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-ah",
+                "id": "b-gx",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +99,7 @@
                 }
               },
               {
-                "id": "b-ai",
+                "id": "b-gy",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +113,7 @@
                 }
               },
               {
-                "id": "b-aj",
+                "id": "b-gz",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +129,7 @@
                 }
               },
               {
-                "id": "b-ak",
+                "id": "b-h0",
                 "type": "initialize.positionLine",
                 "enabled": true,
                 "props": {
@@ -154,12 +162,12 @@
             "params": {}
           },
           {
-            "id": "c-update-an",
+            "id": "c-update-h3",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-al",
+                "id": "b-h1",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -174,7 +182,7 @@
                 }
               },
               {
-                "id": "b-am",
+                "id": "b-h2",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -228,10 +236,26 @@
             "params": {}
           },
           {
-            "id": "c-out-an",
+            "id": "c-out-h3",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5irz-ab",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5irz-ab_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -242,7 +266,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0n-65",
+              "id": "clip-mtvb5irz-aa",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -255,7 +279,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5irz-ab_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

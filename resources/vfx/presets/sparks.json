@@ -15,10 +15,18 @@
     "additive",
     "stretched"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5im8-8_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927729,
+    "savedAt": 1789031482494,
     "name": "Sparks",
     "effect": {
       "seed": 12345,
@@ -249,7 +257,23 @@
             "id": "c-out-a",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5im8-8",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5im8-8_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -260,7 +284,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75kj-7",
+              "id": "clip-mtvb5im8-7",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -273,7 +297,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5im8-8_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

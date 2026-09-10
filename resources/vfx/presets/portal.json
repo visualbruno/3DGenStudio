@@ -15,10 +15,18 @@
     "vortex",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5io1-1o_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927783,
+    "savedAt": 1789031482560,
     "name": "Portal",
     "effect": {
       "seed": 12345,
@@ -288,7 +296,23 @@
             "id": "c-out-3b",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5io1-1o",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5io1-1o_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -299,7 +323,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lz-1h",
+              "id": "clip-mtvb5io0-1m",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -544,7 +568,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75lz-1i",
+              "id": "clip-mtvb5io0-1n",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -557,7 +581,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5io1-1o_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

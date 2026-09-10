@@ -15,10 +15,18 @@
     "collision",
     "alpha"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iok-2l_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927802,
+    "savedAt": 1789031482580,
     "name": "Blood Hit",
     "effect": {
       "seed": 12345,
@@ -271,7 +279,23 @@
             "id": "c-out-4t",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iok-2l",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iok-2l_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "alpha",
@@ -282,7 +306,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75mi-2a",
+              "id": "clip-mtvb5iok-2j",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -528,7 +552,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75mi-2b",
+              "id": "clip-mtvb5iok-2k",
               "at": 0,
               "duration": 0.12,
               "loop": false
@@ -541,7 +565,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iok-2l_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

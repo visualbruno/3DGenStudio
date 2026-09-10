@@ -24,6 +24,8 @@ function check(label, ok, detail = '') {
 
 // The character this file is about, named rather than written, so the checks
 // are not themselves a way to break the file that holds them.
+import { indexInstalledPackAssets, presetAssetName } from '../../../vfx/preset.js';
+
 const BACKTICK = String.fromCharCode(96);
 
 const materials = await readFile(new URL('./materials.js', import.meta.url), 'utf8');
@@ -737,6 +739,141 @@ console.log('\n--- The Snapshot button ---');
   check('the file is named as a thumbnail slug',
     /link\.download = `\$\{slug\}\.png`/.test(page)
     && /replace\(\/\[\^a-z0-9\]\+\/g, '-'\)/.test(page));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- Dedup for installed preset assets ---');
+// ---------------------------------------------------------------------------
+//
+// A preset names a bundled FILE; opening it installs that file into this
+// library. Every subsequent open has to find the copy already there, or opening
+// Campfire five times adds fifteen textures.
+//
+// DEDUP IS BY NAME, and that is forced rather than chosen: the library listing
+// does NOT project the metadata column (recorded in vfxApi.js), so there is
+// nowhere to hide a content hash. It is also what
+// /api/setup/install-workflows already does for bundled workflows.
+{
+  const index = indexInstalledPackAssets([
+    { id: 'library:12', name: 'VFX Flame Wisp' },
+    { id: 14, name: 'VFX Soft Glow' },
+    // A user's OWN asset that happens to share the bare name. The prefix is
+    // what stops it being adopted as though it came from the pack and then
+    // silently becoming the texture of every fire preset.
+    { id: 15, name: 'Flame Wisp' },
+    { id: 16, name: '' },
+    { id: 'not-a-number', name: 'VFX Ring' },
+    null,
+  ]);
+
+  check('a prefixed row is indexed', index.get('VFX Flame Wisp') === 12);
+  check('  through the library:<id> handle form', index.get('VFX Soft Glow') === 14);
+  check('an unprefixed row of the same name is ignored', !index.has('Flame Wisp'));
+  check('  and so is a nameless or unusable row',
+    index.size === 2, [...index.keys()].join(' '));
+
+  // TWO ROWS WITH ONE NAME means a previous install raced, or the author
+  // duplicated one. Picking the lower id keeps a preset opening the same way
+  // every time rather than alternating between copies.
+  const dupes = indexInstalledPackAssets([
+    { id: 40, name: 'VFX Ring' },
+    { id: 12, name: 'VFX Ring' },
+    { id: 99, name: 'VFX Ring' },
+  ]);
+  check('duplicates resolve to the lowest id, deterministically', dupes.get('VFX Ring') === 12);
+
+  // The name in the library is what the preset's declaration asks for, so the
+  // two must be produced by the same function - a prefix applied in one place
+  // and not the other means nothing is ever deduped.
+  check('the installed name matches what the format generates',
+    presetAssetName({ name: 'Flame Wisp' }) === 'VFX Flame Wisp');
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The install-on-open path ---');
+// ---------------------------------------------------------------------------
+//
+// Checked against the source rather than executed: the install itself is fetch
+// plus FormData against a live server, which is what tools/vfx-preset-e2e
+// territory covers. What matters here is the two decisions that would fail
+// silently.
+{
+  const source = await readFile(new URL('./presetAssets.js', import.meta.url), 'utf8');
+
+  // A FAILED INSTALL MUST NOT BE FATAL AND MUST NOT BE SILENT. One texture that
+  // fails should still let the author open the effect and see the other three -
+  // but a system quietly drawing with the built-in blob is indistinguishable
+  // from a preset nobody bothered to texture, which is the exact shape of bug
+  // this project keeps re-learning.
+  check('a failed install is collected rather than thrown',
+    /catch \(err\) \{[\s\S]{0,400}failed\.push\(/.test(source));
+  check('  and reported back beside the document',
+    /return \{[\s\S]{0,200}installed,[\s\S]{0,200}missing:/.test(source));
+
+  // The dedup index is rebuilt from a FRESH listing on every open, because the
+  // page's cached copy may predate assets this very dialog installed.
+  check('the library is re-read rather than taken from a cache',
+    /await options\.listLibrary\(\)/.test(source));
+
+  // Two needs naming one file in a single preset must share the upload.
+  check('an install is recorded so a repeat need in one preset reuses it',
+    /byName\.set\(presetAssetName\(need\), id\)/.test(source));
+
+  // The bundled bytes come off the static /resources mount - no route, no auth,
+  // and the same path in the browser, in Electron and behind the gateway.
+  check('bundled bytes are read from the static resources mount',
+    /\/resources\/vfx\/assets\//.test(source));
+
+  const page = await readFile(new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+  check('the page hands the dialog a live library reader',
+    /listLibrary=\{async \(\) => \{/.test(page));
+
+  const dialog = await readFile(
+    new URL('../../components/vfx/VfxPresetsDialog.jsx', import.meta.url), 'utf8');
+  check('opening a preset resolves its assets first',
+    /resolvePresetAssets\(full, \{/.test(dialog)
+    && dialog.indexOf('resolvePresetAssets') < dialog.indexOf('onOpen({ ...full, doc })'));
+  // Installing assets into someone's library without saying so is a surprise
+  // they find later; failing to install one and saying nothing is worse.
+  check('  and both outcomes are announced',
+    /could not be wired/.test(dialog) && /to your library/.test(dialog));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The asset pack ships and is gated ---');
+// ---------------------------------------------------------------------------
+{
+  const server = await readFile(new URL('../../../server.js', import.meta.url), 'utf8');
+
+  // Reading the pack is public; adding to it is the author's alone. The pack
+  // ships with the app, so a stranger writing into it would change what every
+  // preset draws with.
+  check('adding to the pack is behind the author gate',
+    /app\.post\('\/api\/vfx\/preset-assets', requireVfxAuthor/.test(server));
+  check('  while listing it is public',
+    /app\.get\('\/api\/vfx\/preset-assets', async/.test(server));
+  // Refusing rather than overwriting, and never guessing a suffix: fifty
+  // presets may already name the file being replaced.
+  check('  and a name collision is refused, not overwritten',
+    /already in the pack[\s\S]{0,120}overwrite/.test(server));
+
+  // A DECLARATION NAMING A FILE THE PACK DOES NOT HAVE installs nothing and
+  // wires nothing - the effect opens on the built-in blob with only an info
+  // diagnostic to show for it. Caught at save, where the author can act.
+  check('a preset naming a file the pack lacks cannot be saved',
+    /The preset asset pack has no file/.test(server));
+
+  const mode = await readFile(new URL('../../../serverMode.js', import.meta.url), 'utf8');
+  check('the pack routes are forwarded in shared-server mode',
+    /'\/api\/vfx\/preset-assets'/.test(mode));
+
+  // resources/vfx/**/* already covers the pack in both builds - the presets and
+  // their assets live in one tree precisely so they cannot ship apart.
+  const builder = await readFile(new URL('../../../electron-builder.yml', import.meta.url), 'utf8');
+  const dockerfile = await readFile(new URL('../../../Dockerfile', import.meta.url), 'utf8');
+  check('the pack ships wherever the presets ship',
+    /- resources\/vfx\/\*\*\/\*/.test(builder)
+    && /COPY .*resources\/vfx \.\/resources\/vfx/.test(dockerfile));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

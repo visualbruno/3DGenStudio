@@ -16,10 +16,18 @@
     "sub-emitter",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5ios-2v_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788992927809,
+    "savedAt": 1789031482588,
     "name": "Firework",
     "effect": {
       "seed": 12345,
@@ -230,7 +238,23 @@
             "id": "c-out-5c",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5ios-2v",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5ios-2v_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -241,7 +265,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75mq-2i",
+              "id": "clip-mtvb5ios-2s",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -477,7 +501,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75mq-2j",
+              "id": "clip-mtvb5ios-2t",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -687,7 +711,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuo75mq-2k",
+              "id": "clip-mtvb5ios-2u",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -700,7 +724,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5ios-2v_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

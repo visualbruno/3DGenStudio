@@ -14,10 +14,18 @@
     "beginner",
     "additive"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5iqg-5t_texture",
+      "file": "ring.png",
+      "kind": "image",
+      "name": "Ring"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188744,
+    "savedAt": 1789031482648,
     "name": "Shockwave",
     "effect": {
       "seed": 12345,
@@ -43,7 +51,7 @@
     },
     "systems": [
       {
-        "id": "sys-4w",
+        "id": "sys-bc",
         "name": "Ring",
         "enabled": true,
         "solo": false,
@@ -52,12 +60,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-4w",
+            "id": "c-spawn-bc",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-4n",
+                "id": "b-b3",
                 "type": "spawn.burst",
                 "enabled": true,
                 "props": {
@@ -71,12 +79,12 @@
             "params": {}
           },
           {
-            "id": "c-init-4w",
+            "id": "c-init-bc",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-4o",
+                "id": "b-b4",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -90,7 +98,7 @@
                 }
               },
               {
-                "id": "b-4p",
+                "id": "b-b5",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -104,7 +112,7 @@
                 }
               },
               {
-                "id": "b-4q",
+                "id": "b-b6",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -120,7 +128,7 @@
                 }
               },
               {
-                "id": "b-4r",
+                "id": "b-b7",
                 "type": "initialize.positionCircle",
                 "enabled": true,
                 "props": {
@@ -135,7 +143,7 @@
                 }
               },
               {
-                "id": "b-4s",
+                "id": "b-b8",
                 "type": "initialize.velocityRadial",
                 "enabled": true,
                 "props": {
@@ -152,12 +160,12 @@
             "params": {}
           },
           {
-            "id": "c-update-4w",
+            "id": "c-update-bc",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-4t",
+                "id": "b-b9",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -168,7 +176,7 @@
                 }
               },
               {
-                "id": "b-4u",
+                "id": "b-ba",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -201,7 +209,7 @@
                 }
               },
               {
-                "id": "b-4v",
+                "id": "b-bb",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -241,10 +249,26 @@
             "params": {}
           },
           {
-            "id": "c-out-4w",
+            "id": "c-out-bc",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5iqg-5t",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5iqg-5t_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -255,7 +279,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocqyw-28",
+              "id": "clip-mtvb5iqg-5s",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -268,7 +292,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5iqg-5t_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Ring",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

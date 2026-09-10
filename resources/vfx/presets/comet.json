@@ -15,10 +15,24 @@
     "additive",
     "stretched"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5isa-au_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    },
+    {
+      "slot": "tex_blk-mtvb5isa-av_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188818,
+    "savedAt": 1789031482714,
     "name": "Comet",
     "effect": {
       "seed": 12345,
@@ -44,7 +58,7 @@
     },
     "systems": [
       {
-        "id": "sys-bd",
+        "id": "sys-ht",
         "name": "Head",
         "enabled": true,
         "solo": false,
@@ -53,12 +67,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-bd",
+            "id": "c-spawn-ht",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-b6",
+                "id": "b-hm",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -72,12 +86,12 @@
             "params": {}
           },
           {
-            "id": "c-init-bd",
+            "id": "c-init-ht",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-b7",
+                "id": "b-hn",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -91,7 +105,7 @@
                 }
               },
               {
-                "id": "b-b8",
+                "id": "b-ho",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -105,7 +119,7 @@
                 }
               },
               {
-                "id": "b-b9",
+                "id": "b-hp",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -121,7 +135,7 @@
                 }
               },
               {
-                "id": "b-ba",
+                "id": "b-hq",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -138,12 +152,12 @@
             "params": {}
           },
           {
-            "id": "c-update-bd",
+            "id": "c-update-ht",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-bb",
+                "id": "b-hr",
                 "type": "update.sizeOverLife",
                 "enabled": true,
                 "props": {
@@ -176,7 +190,7 @@
                 }
               },
               {
-                "id": "b-bc",
+                "id": "b-hs",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -230,10 +244,26 @@
             "params": {}
           },
           {
-            "id": "c-out-bd",
+            "id": "c-out-ht",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isa-au",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isa-au_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "additive",
@@ -244,7 +274,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0y-6k",
+              "id": "clip-mtvb5isa-as",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -253,7 +283,7 @@
         }
       },
       {
-        "id": "sys-bm",
+        "id": "sys-i2",
         "name": "Tail",
         "enabled": true,
         "solo": false,
@@ -262,12 +292,12 @@
         "seedOffset": 81006,
         "contexts": [
           {
-            "id": "c-spawn-bm",
+            "id": "c-spawn-i2",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-be",
+                "id": "b-hu",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -281,12 +311,12 @@
             "params": {}
           },
           {
-            "id": "c-init-bm",
+            "id": "c-init-i2",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-bf",
+                "id": "b-hv",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -300,7 +330,7 @@
                 }
               },
               {
-                "id": "b-bg",
+                "id": "b-hw",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -314,7 +344,7 @@
                 }
               },
               {
-                "id": "b-bh",
+                "id": "b-hx",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -330,7 +360,7 @@
                 }
               },
               {
-                "id": "b-bi",
+                "id": "b-hy",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -344,7 +374,7 @@
                 }
               },
               {
-                "id": "b-bj",
+                "id": "b-hz",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -370,12 +400,12 @@
             "params": {}
           },
           {
-            "id": "c-update-bm",
+            "id": "c-update-i2",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-bk",
+                "id": "b-i0",
                 "type": "update.drag",
                 "enabled": true,
                 "props": {
@@ -386,7 +416,7 @@
                 }
               },
               {
-                "id": "b-bl",
+                "id": "b-i1",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -440,10 +470,26 @@
             "params": {}
           },
           {
-            "id": "c-out-bm",
+            "id": "c-out-i2",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isa-av",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isa-av_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "stretched",
               "blend": "additive",
@@ -454,7 +500,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr0y-6l",
+              "id": "clip-mtvb5isa-at",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -467,7 +513,20 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5isa-au_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtvb5isa-av_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

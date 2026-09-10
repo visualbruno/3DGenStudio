@@ -16,10 +16,18 @@
     "alpha",
     "turbulence"
   ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtvb5isn-bj_texture",
+      "file": "dust-mote.png",
+      "kind": "image",
+      "name": "Dust Mote"
+    }
+  ],
   "doc": {
     "format": 1,
     "kind": "vfx-graph",
-    "savedAt": 1788993188831,
+    "savedAt": 1789031482727,
     "name": "Fly Swarm",
     "effect": {
       "seed": 12345,
@@ -45,7 +53,7 @@
     },
     "systems": [
       {
-        "id": "sys-ch",
+        "id": "sys-ix",
         "name": "Flies",
         "enabled": true,
         "solo": false,
@@ -54,12 +62,12 @@
         "seedOffset": 40503,
         "contexts": [
           {
-            "id": "c-spawn-ch",
+            "id": "c-spawn-ix",
             "kind": "spawn",
             "label": "",
             "blocks": [
               {
-                "id": "b-c7",
+                "id": "b-in",
                 "type": "spawn.rate",
                 "enabled": true,
                 "props": {
@@ -73,12 +81,12 @@
             "params": {}
           },
           {
-            "id": "c-init-ch",
+            "id": "c-init-ix",
             "kind": "initialize",
             "label": "",
             "blocks": [
               {
-                "id": "b-c8",
+                "id": "b-io",
                 "type": "initialize.setLifetime",
                 "enabled": true,
                 "props": {
@@ -92,7 +100,7 @@
                 }
               },
               {
-                "id": "b-c9",
+                "id": "b-ip",
                 "type": "initialize.setSize",
                 "enabled": true,
                 "props": {
@@ -106,7 +114,7 @@
                 }
               },
               {
-                "id": "b-ca",
+                "id": "b-iq",
                 "type": "initialize.setColor",
                 "enabled": true,
                 "props": {
@@ -122,7 +130,7 @@
                 }
               },
               {
-                "id": "b-cb",
+                "id": "b-ir",
                 "type": "initialize.positionSphere",
                 "enabled": true,
                 "props": {
@@ -136,7 +144,7 @@
                 }
               },
               {
-                "id": "b-cc",
+                "id": "b-is",
                 "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
@@ -162,12 +170,12 @@
             "params": {}
           },
           {
-            "id": "c-update-ch",
+            "id": "c-update-ix",
             "kind": "update",
             "label": "",
             "blocks": [
               {
-                "id": "b-cd",
+                "id": "b-it",
                 "type": "update.attractor",
                 "enabled": true,
                 "props": {
@@ -190,7 +198,7 @@
                 }
               },
               {
-                "id": "b-ce",
+                "id": "b-iu",
                 "type": "update.turbulence",
                 "enabled": true,
                 "props": {
@@ -205,7 +213,7 @@
                 }
               },
               {
-                "id": "b-cf",
+                "id": "b-iv",
                 "type": "update.speedLimit",
                 "enabled": true,
                 "props": {
@@ -216,7 +224,7 @@
                 }
               },
               {
-                "id": "b-cg",
+                "id": "b-iw",
                 "type": "update.colorOverLife",
                 "enabled": true,
                 "props": {
@@ -264,10 +272,26 @@
             "params": {}
           },
           {
-            "id": "c-out-ch",
+            "id": "c-out-ix",
             "kind": "output",
             "label": "",
-            "blocks": [],
+            "blocks": [
+              {
+                "id": "blk-mtvb5isn-bj",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtvb5isn-bj_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
             "params": {
               "mode": "billboard",
               "blend": "alpha",
@@ -278,7 +302,7 @@
         "schedule": {
           "clips": [
             {
-              "id": "clip-mtuocr1b-76",
+              "id": "clip-mtvb5isn-bi",
               "at": 0,
               "duration": 0,
               "loop": false
@@ -291,7 +315,14 @@
     "operators": [],
     "edges": [],
     "exposed": [],
-    "references": {},
+    "references": {
+      "tex_blk-mtvb5isn-bj_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Dust Mote",
+        "colorSpace": "srgb"
+      }
+    },
     "layout": {
       "nodes": {},
       "notes": []

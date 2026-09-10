@@ -22,6 +22,7 @@ import {
   presetSummary,
   validatePreset,
   PRESET_ID_PATTERN,
+  PRESET_ASSET_FILE_PATTERN,
 } from './vfx/preset.js';
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
@@ -1263,6 +1264,18 @@ app.put('/api/vfx/presets/:id', requireVfxAuthor, async (req, res) => {
       });
     }
 
+    // A DECLARATION NAMING A FILE THAT IS NOT IN THE PACK would install nothing
+    // and wire nothing: the effect would open drawing with the built-in blob
+    // and the only clue would be an info diagnostic. Checked here because it is
+    // the one part of validation that needs the filesystem.
+    for (const need of preset.assets) {
+      if (!existsSync(path.join(RESOURCES_DIR, 'vfx', 'assets', need.file))) {
+        return res.status(400).json({
+          error: `The preset asset pack has no file "${need.file}". Add it first.`,
+        });
+      }
+    }
+
     await fs.mkdir(VFX_PRESETS_DIR, { recursive: true });
     const { updatedAt, hasThumbnail, ...onDisk } = preset;
     await fs.writeFile(vfxPresetPath(id), `${JSON.stringify(onDisk, null, 2)}\n`, 'utf8');
@@ -1312,6 +1325,95 @@ app.post('/api/vfx/presets/:id/thumbnail', requireVfxAuthor, async (req, res) =>
   } catch (err) {
     console.error(`Failed to save the thumbnail for "${id}":`, err);
     res.status(500).json({ error: err.message || 'Failed to save the thumbnail' });
+  }
+});
+
+// ── The VFX preset asset pack ─────────────────────────────────────────────
+// The sprites and debris chips the shipped presets draw with, under
+// resources/vfx/assets/ and served read-only by the /resources static mount -
+// so there is no route here to READ one, only to list and to add.
+//
+// A preset names these by FILENAME, never by asset id: a filename in a
+// directory the app owns is install-independent in the way a database row is
+// not. Opening a preset installs the file it names into the local library and
+// rewrites the reference to whatever id it got here. See vfx/preset.js.
+const VFX_PACK_DIR = path.join(RESOURCES_DIR, 'vfx', 'assets');
+
+const PACK_MIME_EXTENSIONS = new Map([
+  ['image/png', 'png'],
+  ['image/jpeg', 'jpg'],
+  ['image/webp', 'webp'],
+  ['model/gltf-binary', 'glb'],
+  ['application/octet-stream', 'glb'],
+]);
+
+app.get('/api/vfx/preset-assets', async (req, res) => {
+  try {
+    const names = await fs.readdir(VFX_PACK_DIR).catch(() => []);
+    const assets = [];
+    for (const file of names.sort()) {
+      if (!PRESET_ASSET_FILE_PATTERN.test(file)) continue;
+      const stat = await fs.stat(path.join(VFX_PACK_DIR, file)).catch(() => null);
+      assets.push({
+        file,
+        kind: /\.(glb|gltf)$/i.test(file) ? 'mesh' : 'image',
+        bytes: stat ? stat.size : 0,
+      });
+    }
+    res.json({ assets, authorMode: isWikiAuthorMode() });
+  } catch (err) {
+    console.error('Failed to list the VFX preset asset pack:', err);
+    res.status(500).json({ error: err.message || 'Failed to list the asset pack' });
+  }
+});
+
+// Add a file to the pack. This is how an author turns "the effect I am looking
+// at uses a sprite from my library" into a preset anyone can open: the bytes
+// are copied OUT of the install-specific library and INTO the shipped pack,
+// where a filename is all the reference a preset needs.
+app.post('/api/vfx/preset-assets', requireVfxAuthor, async (req, res) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const dataUrl = String(req.body?.dataUrl || '');
+    const match = /^data:([\w./+-]+);base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!match) return res.status(400).json({ error: 'Expected a base64 data URL.' });
+
+    const extension = PACK_MIME_EXTENSIONS.get(match[1].toLowerCase());
+    if (!extension) {
+      return res.status(400).json({ error: `The pack does not take ${match[1]} files.` });
+    }
+
+    const slug = (name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'asset')
+      .slice(0, 48);
+    const file = `${slug}.${extension}`;
+    // Belt and braces: the slug is built from a pattern that cannot produce a
+    // path, and then checked against the pattern that the preset format
+    // enforces, so the two can never disagree about what is a legal name.
+    if (!PRESET_ASSET_FILE_PATTERN.test(file)) {
+      return res.status(400).json({ error: `"${file}" is not a usable pack filename.` });
+    }
+
+    const target = path.join(VFX_PACK_DIR, file);
+    // Refusing rather than overwriting, and asking twice rather than guessing a
+    // suffix: the pack ships with the app, so quietly replacing a file that
+    // fifty presets already name would break all fifty.
+    if (existsSync(target) && req.body?.overwrite !== true) {
+      return res.status(409).json({
+        error: `"${file}" is already in the pack. Rename it, or resend with overwrite to replace it.`,
+        file,
+      });
+    }
+
+    await fs.mkdir(VFX_PACK_DIR, { recursive: true });
+    await fs.writeFile(target, Buffer.from(match[2], 'base64'));
+    res.json({
+      file,
+      kind: extension === 'glb' ? 'mesh' : 'image',
+      name: name || slug,
+    });
+  } catch (err) {
+    console.error('Failed to add to the VFX preset asset pack:', err);
+    res.status(500).json({ error: err.message || 'Failed to add the asset' });
   }
 });
 
