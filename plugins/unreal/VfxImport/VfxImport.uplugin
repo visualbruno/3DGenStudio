@@ -1,0 +1,23 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "3D Gen Studio VFX Import",
+	"Description": "Imports a VFX bundle exported from 3D Gen Studio and builds a Niagara system from it.",
+	"Category": "FX",
+	"CreatedBy": "3D Gen Studio",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "VfxImportEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{ "Name": "Niagara", "Enabled": true }
+	]
+}

@@ -1,0 +1,494 @@
+{
+ "engineVersion": "5.8.2-56702186+++UE5+Release-5.8",
+ "classes": {
+  "NiagaraExternalEditContext": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraClipboardEditorScriptingUtilities": {
+   "present": true,
+   "callables": [
+    "acquire_editor_element_handle",
+    "call_method",
+    "cast",
+    "create_bool_local_value_input",
+    "create_color_local_value_input",
+    "create_data_value_input",
+    "create_dynamic_value_input",
+    "create_enum_linked_value_input",
+    "create_enum_local_value_input",
+    "create_expression_value_input",
+    "create_float_local_value_input",
+    "create_int_local_value_input",
+    "create_linked_value_input",
+    "create_matrix_local_value_input",
+    "create_quat_local_value_input",
+    "create_struct_local_value_input",
+    "create_vec2_local_value_input",
+    "create_vec3_local_value_input",
+    "create_vec4_local_value_input",
+    "get_class",
+    "get_default_object",
+    "get_editor_property",
+    "get_fname",
+    "get_full_name",
+    "get_name",
+    "get_outer",
+    "get_outermost",
+    "get_package",
+    "get_path_name",
+    "get_type_name",
+    "get_typed_outer",
+    "get_world",
+    "is_editor_property_overridden",
+    "is_package_external",
+    "modify",
+    "rename",
+    "reset_editor_property",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_class",
+    "try_get_input_by_name",
+    "try_get_local_value_as_float",
+    "try_get_local_value_as_int",
+    "try_set_local_value_as_int"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_SystemSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_SystemData": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_EmitterSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_EmitterData": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_EmitterTopology": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_ModuleSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_ModuleData": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_ModuleTopology": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_ModuleInputValues": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_RendererSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_RendererData": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_StackInputSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_StackInputData": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_StackInputValue": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_SetParameterEntry": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_UserVariables": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_UserVariable": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_Variable": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_VariableValue": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_DynamicInputSchema": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraExt_StackIssues": {
+   "present": true,
+   "callables": [
+    "assign",
+    "cast",
+    "copy",
+    "export_text",
+    "get_editor_property",
+    "import_text",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_struct",
+    "to_dict",
+    "to_tuple"
+   ],
+   "properties": []
+  },
+  "NiagaraPythonEmitter": {
+   "present": true,
+   "callables": [
+    "acquire_editor_element_handle",
+    "call_method",
+    "cast",
+    "get_class",
+    "get_default_object",
+    "get_editor_property",
+    "get_fname",
+    "get_full_name",
+    "get_module",
+    "get_modules",
+    "get_name",
+    "get_object",
+    "get_outer",
+    "get_outermost",
+    "get_package",
+    "get_path_name",
+    "get_properties",
+    "get_typed_outer",
+    "get_world",
+    "has_module",
+    "is_editor_property_overridden",
+    "is_package_external",
+    "modify",
+    "rename",
+    "reset_editor_property",
+    "set_editor_properties",
+    "set_editor_property",
+    "set_properties",
+    "static_class"
+   ],
+   "properties": []
+  },
+  "NiagaraPythonModule": {
+   "present": true,
+   "callables": [
+    "acquire_editor_element_handle",
+    "call_method",
+    "cast",
+    "get_class",
+    "get_default_object",
+    "get_editor_property",
+    "get_fname",
+    "get_full_name",
+    "get_name",
+    "get_object",
+    "get_outer",
+    "get_outermost",
+    "get_package",
+    "get_path_name",
+    "get_typed_outer",
+    "get_world",
+    "is_editor_property_overridden",
+    "is_package_external",
+    "modify",
+    "rename",
+    "reset_editor_property",
+    "set_editor_properties",
+    "set_editor_property",
+    "static_class"
+   ],
+   "properties": []
+  }
+ }
+}

@@ -1,0 +1,9 @@
+LogVfxImport: Display: PROBE creating VfxProbeSystem in /Game/VfxProbe
+LogVfxImport: Display: PROBE create=ok /Game/VfxProbe/VfxProbeSystem.VfxProbeSystem
+LogVfxImport: Display: PROBE summary emitters=0 errors=0
+LogVfxImport: Display: PROBE template=/Niagara/DefaultAssets/Templates/Emitters/Minimal.Minimal
+LogVfxImport: Display: PROBE addEmitter errors=0
+LogVfxImport: Display: PROBE afterAdd emitters=1
+LogVfxImport: Display: PROBE save=ok ../../../../../../Git/VfxImportSpikeUE/Content/VfxProbe/VfxProbeSystem.uasset
+LogVfxImport: Display: PROBE reloaded emitters=1
+LogVfxImport: Display: PROBE RESULT create=ok save=ok emittersOnDisk=1
