@@ -58,6 +58,10 @@ electron/
 release/
 build/
 resources/
+# ...except the VFX preset library, which the server reads and serves. The rest
+# of resources/ is animation GLBs, preview videos and Python wheels that only a
+# desktop install uses.
+!resources/vfx/
 tools/
 setup/
 dist/

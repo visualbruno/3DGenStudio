@@ -1,0 +1,293 @@
+{
+  "format": 1,
+  "id": "soul-wisps",
+  "name": "Soul Wisps",
+  "category": "Magic & Energy",
+  "description": "Pale wisps circling slowly upward, for spirits, necromancy and haunted places.",
+  "teaches": [
+    "A slow vortex as an orbit",
+    "Speed limits keeping an orbit stable",
+    "Long lifetimes with few particles"
+  ],
+  "tags": [
+    "looping",
+    "intermediate",
+    "additive",
+    "vortex"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188757,
+    "name": "Soul Wisps",
+    "effect": {
+      "seed": 12345,
+      "duration": 6,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-61",
+        "name": "Wisps",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-61",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5s",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 30
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-61",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5t",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 4,
+                    "b": 6,
+                    "freq": "perParticle",
+                    "v": 5
+                  }
+                }
+              },
+              {
+                "id": "b-5u",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.06,
+                    "b": 0.14,
+                    "freq": "perParticle",
+                    "v": 0.1
+                  }
+                }
+              },
+              {
+                "id": "b-5v",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.7,
+                      1.6,
+                      1.5,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5w",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 1.1
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.5
+                  }
+                }
+              },
+              {
+                "id": "b-5x",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -0.1,
+                      0.2,
+                      -0.1
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      0.1,
+                      0.5,
+                      0.1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-61",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5y",
+                "type": "update.vortex",
+                "enabled": true,
+                "props": {
+                  "position": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  "axis": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  "strength": {
+                    "mode": "const",
+                    "v": 2.2
+                  },
+                  "inward": {
+                    "mode": "const",
+                    "v": 0.35
+                  }
+                }
+              },
+              {
+                "id": "b-5z",
+                "type": "update.speedLimit",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "const",
+                    "v": 1.6
+                  }
+                }
+              },
+              {
+                "id": "b-60",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-61",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqza-30",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

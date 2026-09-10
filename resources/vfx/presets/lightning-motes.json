@@ -1,0 +1,248 @@
+{
+  "format": 1,
+  "id": "lightning-motes",
+  "name": "Lightning Motes",
+  "category": "Magic & Energy",
+  "description": "Crackling blue-white specks jittering around a charged object.",
+  "teaches": [
+    "High-frequency turbulence as electrical jitter",
+    "Very short lifetimes at a high rate",
+    "The electric ramp"
+  ],
+  "tags": [
+    "looping",
+    "intermediate",
+    "additive",
+    "turbulence"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188769,
+    "name": "Lightning Motes",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-6t",
+        "name": "Motes",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-6t",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-6m",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 300
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-6t",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-6n",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.12,
+                    "b": 0.3,
+                    "freq": "perParticle",
+                    "v": 0.21
+                  }
+                }
+              },
+              {
+                "id": "b-6o",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.02,
+                    "b": 0.05,
+                    "freq": "perParticle",
+                    "v": 0.035
+                  }
+                }
+              },
+              {
+                "id": "b-6p",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.4,
+                      1.8,
+                      2.8,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-6q",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.55
+                  }
+                },
+                "modes": {
+                  "fill": "surface"
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-6t",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-6r",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 9
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 5.5
+                  }
+                }
+              },
+              {
+                "id": "b-6s",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 6
+                        },
+                        {
+                          "t": 0.35,
+                          "hex": "#9fd8ff",
+                          "intensity": 3
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#2a6bff",
+                          "intensity": 1.4
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.6,
+                          "a": 0.8
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      6,
+                      6,
+                      6,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-6t",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqzl-3f",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

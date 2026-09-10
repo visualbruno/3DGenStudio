@@ -627,5 +627,117 @@ console.log('\n--- The preview canvas is opaque ---');
     /scene\.background\s*=\s*new THREE\.Color\(/.test(thumb));
 }
 
+// ---------------------------------------------------------------------------
+console.log('\n--- The preset library is read-only without the author flag ---');
+// ---------------------------------------------------------------------------
+//
+// The presets ship with the app and every installation can read them; only the
+// one carrying the marker file may write. That is the wiki's arrangement and it
+// reuses the wiki's marker deliberately - a second flag file would be a second
+// thing to remember and the one eventually forgotten.
+//
+// A MISSING GATE HERE IS NOT VISIBLE FROM THE AUTHOR'S MACHINE, which is the
+// whole reason to check it in a test: on the machine where the flag exists,
+// gated and ungated behave identically.
+{
+  const server = await readFile(new URL('../../../server.js', import.meta.url), 'utf8');
+
+  // Every mutating route, and there are exactly three.
+  const writes = [
+    /app\.put\('\/api\/vfx\/presets\/:id', requireVfxAuthor/,
+    /app\.delete\('\/api\/vfx\/presets\/:id', requireVfxAuthor/,
+    /app\.post\('\/api\/vfx\/presets\/:id\/thumbnail', requireVfxAuthor/,
+  ];
+  check('every preset write route is behind the author gate',
+    writes.every((pattern) => pattern.test(server)),
+    writes.map((p, i) => (p.test(server) ? '' : `#${i}`)).filter(Boolean).join(' ') || '3 of 3');
+  check('  and the gate is the wiki’s marker file',
+    /function requireVfxAuthor[\s\S]{0,200}isWikiAuthorMode\(\)/.test(server));
+  // The client cannot ask separately, so the listing carries it - and a client
+  // that never learns it would render Delete buttons that 403.
+  check('  with the listing reporting authorMode to the client',
+    /authorMode: isWikiAuthorMode\(\)/.test(server));
+
+  // THE ID BECOMES A FILENAME. `..%2f..%2fpackage` is a path, not an id, so it
+  // is matched against the pattern rather than merely escaped or joined.
+  check('a preset id is validated before it becomes a path',
+    /PRESET_ID_PATTERN\.test\(id\)/.test(server));
+
+  // One unreadable file must not empty the library: a half-written preset would
+  // otherwise take all fifty others down and read as "the presets are gone".
+  check('an unreadable preset is skipped rather than fatal',
+    /Skipping unreadable VFX preset/.test(server));
+
+  // Info-level diagnostics include I_DEFAULT_SPRITE, and a preset may not
+  // reference assets at all - so it ALWAYS draws with the built-in sprite. Read
+  // as "warnings", that fired on every save and trained the author to ignore
+  // the report.
+  check('only warn-level diagnostics are reported back as warnings',
+    /warnings: diagnostics\.filter\(\(entry\) => entry\.severity === 'warn'\)/.test(server));
+
+  // The shared-server case: presets live where the wiki lives, so a remote
+  // install must read the server's library rather than its own stale copy.
+  const mode = await readFile(new URL('../../../serverMode.js', import.meta.url), 'utf8');
+  check('the routes are forwarded in shared-server mode',
+    /'\/api\/vfx\/presets'/.test(mode));
+
+  // resources/ is excluded from the Docker image wholesale - it is animation
+  // GLBs, preview videos and Python wheels. The presets are the exception,
+  // because the SERVER serves them.
+  const dockerignore = await readFile(new URL('../../../.dockerignore', import.meta.url), 'utf8');
+  const dockerfile = await readFile(new URL('../../../Dockerfile', import.meta.url), 'utf8');
+  const builder = await readFile(new URL('../../../electron-builder.yml', import.meta.url), 'utf8');
+  check('the preset files ship in the Docker image',
+    /^!resources\/vfx\/$/m.test(dockerignore) && /COPY .*resources\/vfx \.\/resources\/vfx/.test(dockerfile));
+  check('  and in the desktop build', /- resources\/vfx\/\*\*\/\*/.test(builder));
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The Snapshot button ---');
+// ---------------------------------------------------------------------------
+//
+// WHY IT EXISTS: the preset library's bulk thumbnail pass renders a SIMULATED
+// frame at a fixed capture time, and no single time works for fifty-three
+// effects whose lifetimes run from 0.07s to seven seconds - a one-shot burst
+// has already died, a slow plume has not arrived - so a good number of cards
+// came out black. Choosing the frame is a judgement, so Snapshot hands it to
+// the author: scrub, orbit, press.
+{
+  const page = await readFile(
+    new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+
+  check('the toolbar has a snapshot button', /onClick=\{handleSnapshot\}/.test(page));
+  // Next to the shortcuts icon, which is where it was asked for and where the
+  // other icon-only tools live.
+  check('  placed after the keyboard-shortcuts icon',
+    page.indexOf('setShortcutsOpen(true)') < page.indexOf('onClick={handleSnapshot}'));
+
+  // THE SAME RENDERER THE CARD USES, fed the LIVE runtime and camera - that is
+  // the "capture the frame on screen" path, as opposed to the simulated one
+  // that produced the black cards.
+  check('it captures the live frame, not a simulated one',
+    /handleSnapshot = async[\s\S]{0,1400}createVfxThumbnailFile\(compiled\.ir, \{[\s\S]{0,200}runtime,[\s\S]{0,120}camera: cameraRef\.current/
+      .test(page));
+
+  // A REPORT, NOT A FALLBACK. createVfxThumbnailFile falls back to a simulated
+  // frame when nothing is alive, which is right for a save and wrong here: the
+  // author asked for THIS frame, and quietly handing back another black PNG is
+  // the same bug they pressed the button to escape. This project has been
+  // burned by exactly that shape before - a correct fallback with no report is
+  // indistinguishable from a broken feature.
+  check('an empty frame is reported rather than silently substituted',
+    /handleSnapshot = async[\s\S]{0,900}aliveCount\(runtime\) === 0[\s\S]{0,220}notify\(/.test(page));
+  // aliveCount reads runtime.emitters, and useVfxRuntime returns null until the
+  // effect has compiled and its assets have loaded.
+  check('  and a runtime that does not exist yet does not throw',
+    /!runtime \|\| aliveCount\(runtime\) === 0/.test(page));
+
+  // Named the way resources/vfx/thumbnails/ expects, so a snapshot of a
+  // preset-derived effect drops straight in.
+  check('the file is named as a thumbnail slug',
+    /link\.download = `\$\{slug\}\.png`/.test(page)
+    && /replace\(\/\[\^a-z0-9\]\+\/g, '-'\)/.test(page));
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

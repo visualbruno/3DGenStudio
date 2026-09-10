@@ -1,0 +1,709 @@
+{
+  "format": 1,
+  "id": "firework",
+  "name": "Firework",
+  "category": "Explosions",
+  "description": "A shell that rises and bursts into stars, which themselves trail embers.",
+  "teaches": [
+    "Sub-emitters: one system emitting where another's particles die",
+    "Three levels deep, and why the chance setting matters",
+    "Inheriting the parent's velocity",
+    "Why a sub-emitter must NOT have a position block"
+  ],
+  "tags": [
+    "one-shot",
+    "advanced",
+    "sub-emitter",
+    "additive"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788992927809,
+    "name": "Firework",
+    "effect": {
+      "seed": 12345,
+      "duration": 3.2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 4096,
+      "boundsMin": [
+        -8,
+        -1,
+        -8
+      ],
+      "boundsMax": [
+        8,
+        12,
+        8
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-5c",
+        "name": "Shell",
+        "enabled": true,
+        "solo": false,
+        "capacity": 32,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-5c",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-54",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 1
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-5c",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-55",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "const",
+                    "v": 1
+                  }
+                }
+              },
+              {
+                "id": "b-56",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": 0.12
+                  }
+                }
+              },
+              {
+                "id": "b-57",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-58",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      0.1,
+                      1,
+                      0
+                    ]
+                  },
+                  "speed": {
+                    "mode": "const",
+                    "v": 9
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 2
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-5c",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-59",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -4.5,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5a",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 0.6
+                  }
+                }
+              },
+              {
+                "id": "b-5b",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffd9a0",
+                          "intensity": 4
+                        },
+                        {
+                          "t": 0.4,
+                          "hex": "#ff7a1a",
+                          "intensity": 2.2
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#8c1b06",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.75,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      4,
+                      2.7754870451679596,
+                      1.4061303980017574,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-5c",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuo75mq-2i",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "sys-5m",
+        "name": "Stars",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 81006,
+        "contexts": [
+          {
+            "id": "c-evt-stars",
+            "kind": "event",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "trigger": "onDeath",
+              "source": "sys-5c",
+              "probability": "1"
+            }
+          },
+          {
+            "id": "c-spawn-5m",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5d",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 90
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-5m",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5e",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.8,
+                    "b": 1.6,
+                    "freq": "perParticle",
+                    "v": 1.2000000000000002
+                  }
+                }
+              },
+              {
+                "id": "b-5f",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.03,
+                    "b": 0.07,
+                    "freq": "perParticle",
+                    "v": 0.05
+                  }
+                }
+              },
+              {
+                "id": "b-5g",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5h",
+                "type": "initialize.velocityRadial",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": 3,
+                    "b": 6.5,
+                    "freq": "perParticle",
+                    "v": 4.75
+                  }
+                }
+              },
+              {
+                "id": "b-5i",
+                "type": "initialize.inheritVelocity",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "const",
+                    "v": 0.35
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-5m",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5j",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -3.2,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5k",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.1
+                  }
+                }
+              },
+              {
+                "id": "b-5l",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ff0000",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.17,
+                          "hex": "#ffff00",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.34,
+                          "hex": "#00ff00",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.5,
+                          "hex": "#00ffff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.67,
+                          "hex": "#0000ff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.84,
+                          "hex": "#ff00ff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#ff0000",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      0,
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-5m",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuo75mq-2j",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "sys-5v",
+        "name": "Embers",
+        "enabled": true,
+        "solo": false,
+        "capacity": 1024,
+        "simulationSpace": "inherit",
+        "seedOffset": 121509,
+        "contexts": [
+          {
+            "id": "c-evt-embers",
+            "kind": "event",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "trigger": "onDeath",
+              "source": "sys-5m",
+              "probability": "0.5"
+            }
+          },
+          {
+            "id": "c-spawn-5v",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5n",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 2
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-5v",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5o",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.5,
+                    "b": 1.2,
+                    "freq": "perParticle",
+                    "v": 0.85
+                  }
+                }
+              },
+              {
+                "id": "b-5p",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.015,
+                    "b": 0.035,
+                    "freq": "perParticle",
+                    "v": 0.025
+                  }
+                }
+              },
+              {
+                "id": "b-5q",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5r",
+                "type": "initialize.inheritVelocity",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "const",
+                    "v": 0.15
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-5v",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5s",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -2.2,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5t",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.6
+                  }
+                }
+              },
+              {
+                "id": "b-5u",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffd9a0",
+                          "intensity": 4
+                        },
+                        {
+                          "t": 0.4,
+                          "hex": "#ff7a1a",
+                          "intensity": 2.2
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#8c1b06",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.75,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      4,
+                      2.7754870451679596,
+                      1.4061303980017574,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-5v",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuo75mq-2k",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

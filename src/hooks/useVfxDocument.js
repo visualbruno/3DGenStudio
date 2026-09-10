@@ -177,12 +177,19 @@ export default function useVfxDocument({ assetId = null, onError = null } = {}) 
     setDraft(null)
   }, [key])
 
-  const loadTemplate = useCallback(template => {
-    const built = normalizeVfxDoc(template.build())
+  // Takes either a TEMPLATE, which carries a builder, or a PRESET, which
+  // carries the document itself - a preset is JSON on disk, so there is nothing
+  // to build. One path rather than two, because everything after this line
+  // (resetting history, clearing the asset id) is identical and getting it
+  // right twice is how the two drift.
+  const loadTemplate = useCallback(source => {
+    const built = normalizeVfxDoc(
+      typeof source.build === 'function' ? source.build() : source.doc,
+    )
     // reset, not commit: a template is a different document, and an undo that
     // replaced the open effect with the previous one would be startling.
     resetHistory(built)
-    setName(template.name)
+    setName(source.name)
     // A template is a NEW effect, not an edit of the open one: clearing the
     // asset id is what stops Save silently overwriting whatever the author had
     // open with something they picked out of a gallery.

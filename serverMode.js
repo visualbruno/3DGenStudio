@@ -134,6 +134,7 @@ const REMOTE_DATA_PREFIXES = [
   '/api/graph',
   '/api/boards',
   '/api/wiki',
+  '/api/vfx/presets',            // the shared starter-effect library, like the wiki
   '/api/tasks',
   '/api/mesh-assemblies',         // global assembly documents; hyphenated so it is NOT
                                   // caught by the '/api/meshes' local-only prefix above

@@ -81,6 +81,8 @@ COPY --chown=node:node tools/migrate-sqlite-to-postgres.mjs ./tools/
 COPY --chown=node:node mcp ./mcp
 COPY --chown=node:node vfx ./vfx
 COPY --chown=node:node wiki ./wiki
+# The VFX starter-effect library, served read-only from /api/vfx/presets.
+COPY --chown=node:node resources/vfx ./resources/vfx
 
 # Run unprivileged. Ownership is set by --chown on each COPY above rather than a
 # trailing `chown -R /app`: that recursive form rewrites every one of the ~40k

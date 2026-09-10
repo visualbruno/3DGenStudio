@@ -108,6 +108,8 @@ files:
   - resources/animations/**/*
   - resources/animpreviews/**/*
   - resources/rigs/**/*
+  # The VFX starter-effect library: small JSON graphs plus their thumbnails.
+  - resources/vfx/**/*
   - python-server/**/*
   - "!python-server/.venv/**"
   - "!python-server/**/__pycache__/**"

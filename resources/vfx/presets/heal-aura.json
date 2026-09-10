@@ -1,0 +1,305 @@
+{
+  "format": 1,
+  "id": "heal-aura",
+  "name": "Heal Aura",
+  "category": "Magic & Energy",
+  "description": "Soft green motes rising around a character, the standard restore-health cue.",
+  "teaches": [
+    "Rising motes from a ring",
+    "Fade in and out with one curve",
+    "Why healing effects read best in green"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "additive"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188748,
+    "name": "Heal Aura",
+    "effect": {
+      "seed": 12345,
+      "duration": 3,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-5h",
+        "name": "Motes",
+        "enabled": true,
+        "solo": false,
+        "capacity": 384,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-5h",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-58",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 110
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-5h",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-59",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1.2,
+                    "b": 2,
+                    "freq": "perParticle",
+                    "v": 1.6
+                  }
+                }
+              },
+              {
+                "id": "b-5a",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.04,
+                    "b": 0.09,
+                    "freq": "perParticle",
+                    "v": 0.065
+                  }
+                }
+              },
+              {
+                "id": "b-5b",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.5,
+                      2.2,
+                      0.9,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5c",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.5
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.35
+                  }
+                }
+              },
+              {
+                "id": "b-5d",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -0.15,
+                      0.8,
+                      -0.15
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      0.15,
+                      1.8,
+                      0.15
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-5h",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5e",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 0.35
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 0.9
+                  }
+                }
+              },
+              {
+                "id": "b-5f",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "auto"
+                        },
+                        {
+                          "t": 0.5,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "auto"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "auto"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1.3,
+                    "v": 1.3
+                  }
+                }
+              },
+              {
+                "id": "b-5g",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-5h",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqz1-2m",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

@@ -1,0 +1,264 @@
+{
+  "format": 1,
+  "id": "electric-arc",
+  "name": "Electric Arc",
+  "category": "Sci-Fi & Tech",
+  "description": "Current jumping along a line between two terminals.",
+  "teaches": [
+    "The Line emitter and even placement",
+    "Turbulence as arc wander",
+    "Short lives making a path look alive"
+  ],
+  "tags": [
+    "looping",
+    "intermediate",
+    "additive",
+    "turbulence"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188807,
+    "name": "Electric Arc",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-an",
+        "name": "Arc",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-an",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ag",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 420
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-an",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ah",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.08,
+                    "b": 0.2,
+                    "freq": "perParticle",
+                    "v": 0.14
+                  }
+                }
+              },
+              {
+                "id": "b-ai",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.02,
+                    "b": 0.05,
+                    "freq": "perParticle",
+                    "v": 0.035
+                  }
+                }
+              },
+              {
+                "id": "b-aj",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.6,
+                      2,
+                      3,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-ak",
+                "type": "initialize.positionLine",
+                "enabled": true,
+                "props": {
+                  "start": {
+                    "mode": "const",
+                    "v": [
+                      -1.2,
+                      0.4,
+                      0
+                    ]
+                  },
+                  "end": {
+                    "mode": "const",
+                    "v": [
+                      1.2,
+                      0.4,
+                      0
+                    ]
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.06
+                  }
+                },
+                "modes": {
+                  "placement": "random"
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-an",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-al",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 7
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 3.5
+                  }
+                }
+              },
+              {
+                "id": "b-am",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 6
+                        },
+                        {
+                          "t": 0.35,
+                          "hex": "#9fd8ff",
+                          "intensity": 3
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#2a6bff",
+                          "intensity": 1.4
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.6,
+                          "a": 0.8
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      6,
+                      6,
+                      6,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-an",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr0n-65",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

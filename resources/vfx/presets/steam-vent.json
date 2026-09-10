@@ -1,0 +1,299 @@
+{
+  "format": 1,
+  "id": "steam-vent",
+  "name": "Steam Vent",
+  "category": "Fire & Smoke",
+  "description": "A pressurised jet of white steam that spreads and thins as it slows.",
+  "teaches": [
+    "A narrow cone as a jet",
+    "Drag turning a jet into a cloud",
+    "Alpha blending on a light effect"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188703,
+    "name": "Steam Vent",
+    "effect": {
+      "seed": 12345,
+      "duration": 3,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-1j",
+        "name": "Steam",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-1j",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-19",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 120
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-1j",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-1a",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.9,
+                    "b": 1.6,
+                    "freq": "perParticle",
+                    "v": 1.25
+                  }
+                }
+              },
+              {
+                "id": "b-1b",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.12,
+                    "b": 0.22,
+                    "freq": "perParticle",
+                    "v": 0.16999999999999998
+                  }
+                }
+              },
+              {
+                "id": "b-1c",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      0.5
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-1d",
+                "type": "initialize.positionCone",
+                "enabled": true,
+                "props": {
+                  "angle": {
+                    "mode": "const",
+                    "v": 12
+                  },
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.06
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 4,
+                    "b": 6,
+                    "freq": "perParticle",
+                    "v": 5
+                  }
+                }
+              },
+              {
+                "id": "b-1e",
+                "type": "initialize.setRotation",
+                "enabled": true,
+                "props": {
+                  "rotation": {
+                    "mode": "random",
+                    "a": -3.14,
+                    "b": 3.14,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-1j",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-1f",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 2.4
+                  }
+                }
+              },
+              {
+                "id": "b-1g",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 0.7
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 0.9
+                  }
+                }
+              },
+              {
+                "id": "b-1h",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 3,
+                    "v": 3
+                  }
+                }
+              },
+              {
+                "id": "b-1i",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-1j",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "depth"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqxr-n",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

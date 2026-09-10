@@ -1,0 +1,261 @@
+{
+  "format": 1,
+  "id": "fountain",
+  "name": "Fountain",
+  "category": "Liquids",
+  "description": "A continuous jet of water arcing up and falling back into its basin.",
+  "teaches": [
+    "Rate emission through a cone",
+    "A parabola from gravity alone",
+    "Collision as the basin surface"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "collision",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188792,
+    "name": "Fountain",
+    "effect": {
+      "seed": 12345,
+      "duration": 4,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 2048,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-9g",
+        "name": "Water",
+        "enabled": true,
+        "solo": false,
+        "capacity": 1024,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-9g",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-98",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 320
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-9g",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-99",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1.4,
+                    "b": 2.2,
+                    "freq": "perParticle",
+                    "v": 1.8
+                  }
+                }
+              },
+              {
+                "id": "b-9a",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.025,
+                    "b": 0.06,
+                    "freq": "perParticle",
+                    "v": 0.042499999999999996
+                  }
+                }
+              },
+              {
+                "id": "b-9b",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.8,
+                      0.92,
+                      1,
+                      0.9
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-9c",
+                "type": "initialize.positionCone",
+                "enabled": true,
+                "props": {
+                  "angle": {
+                    "mode": "const",
+                    "v": 14
+                  },
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.08
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 5.5,
+                    "b": 7,
+                    "freq": "perParticle",
+                    "v": 6.25
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-9g",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-9d",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -9.8,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-9e",
+                "type": "update.collidePlane",
+                "enabled": true,
+                "props": {
+                  "height": {
+                    "mode": "const",
+                    "v": 0
+                  },
+                  "bounce": {
+                    "mode": "const",
+                    "v": 0.15
+                  },
+                  "friction": {
+                    "mode": "const",
+                    "v": 0.7
+                  }
+                }
+              },
+              {
+                "id": "b-9f",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-9g",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr08-56",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

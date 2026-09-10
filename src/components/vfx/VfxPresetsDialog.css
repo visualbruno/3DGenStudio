@@ -1,0 +1,534 @@
+/* The VFX preset library dialog.
+ *
+ * OPAQUE THROUGHOUT. The editor page runs a live WebGL canvas behind this, and
+ * `backdrop-filter` over one is what drags the Electron build to single-digit
+ * frames - the same rule AssemblyPage.css and TreeGenPage.css already carry.
+ * The overlay is a flat wash, not a blur. */
+
+.vfx-presets-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 7, 9, 0.72);
+}
+
+.vfx-presets {
+  width: min(1180px, 100%);
+  height: min(820px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: #16181d;
+  border: 1px solid #2a2d34;
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+/* --- header --------------------------------------------------------------- */
+
+.vfx-presets__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #2a2d34;
+  background: #1a1d23;
+}
+
+.vfx-presets__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vfx-presets__title h2 {
+  margin: 0;
+  font-size: 15px;
+  color: #e6e9f0;
+  white-space: nowrap;
+}
+
+.vfx-presets__title .material-symbols-outlined {
+  color: #ac89ff;
+  font-size: 20px;
+}
+
+.vfx-presets__count {
+  font-size: 11px;
+  color: #8a93a4;
+  white-space: nowrap;
+}
+
+.vfx-presets__badge {
+  padding: 2px 7px;
+  border: 1px solid #3a3f49;
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8a93a4;
+}
+
+.vfx-presets__search {
+  flex: 1;
+  min-width: 0;
+  background: #12141a;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.vfx-presets__search:focus-visible {
+  outline: 2px solid #6ea8ff;
+  outline-offset: 1px;
+}
+
+.vfx-presets__new,
+.vfx-presets__close {
+  background: #22262e;
+  border: 1px solid #2f333c;
+  border-radius: 6px;
+  color: #d8dde7;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vfx-presets__new:hover,
+.vfx-presets__close:hover {
+  background: #2b3039;
+}
+
+.vfx-presets__close {
+  display: grid;
+  place-items: center;
+  padding: 5px;
+}
+
+/* --- body ----------------------------------------------------------------- */
+
+.vfx-presets__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 208px minmax(0, 1fr);
+}
+
+.vfx-presets__rail {
+  border-right: 1px solid #2a2d34;
+  padding: 10px 8px;
+  overflow-y: auto;
+  background: #14161b;
+}
+
+.vfx-presets__cat {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  margin-bottom: 2px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: #b7bfcc;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vfx-presets__cat:hover {
+  background: #1e222a;
+  color: #e6e9f0;
+}
+
+.vfx-presets__cat.is-active {
+  background: rgba(172, 137, 255, 0.16);
+  color: #e6e9f0;
+}
+
+/* The category's own hue, so the rail, the group heading and the placeholder
+ * art on every card all agree without anyone having to read a legend. */
+.vfx-presets__cat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: hsl(var(--vfx-preset-hue, 220) 65% 62%);
+}
+
+.vfx-presets__cat-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: #737d8e;
+}
+
+.vfx-presets__main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 14px 20px;
+}
+
+/* --- filters -------------------------------------------------------------- */
+
+.vfx-presets__filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid #22252c;
+}
+
+.vfx-presets__filter-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.vfx-presets__filter-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6c7688;
+  margin-right: 2px;
+}
+
+.vfx-presets__chip {
+  background: #1c1f26;
+  border: 1px solid #2c3039;
+  border-radius: 999px;
+  color: #b7bfcc;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.vfx-presets__chip:hover {
+  border-color: #3d4250;
+  color: #e6e9f0;
+}
+
+.vfx-presets__chip.is-active {
+  background: rgba(172, 137, 255, 0.2);
+  border-color: #ac89ff;
+  color: #efe9ff;
+}
+
+.vfx-presets__clear {
+  background: none;
+  border: none;
+  color: #8a93a4;
+  font: inherit;
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.vfx-presets__error {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.12);
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  color: #ffb3b3;
+  font-size: 12px;
+}
+
+.vfx-presets__empty {
+  color: #8a93a4;
+  font-size: 13px;
+  padding: 28px 4px;
+}
+
+/* --- groups and cards ----------------------------------------------------- */
+
+.vfx-presets__group {
+  margin-top: 18px;
+}
+
+.vfx-presets__group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(var(--vfx-preset-hue, 220) 55% 72%);
+}
+
+.vfx-presets__group-title span {
+  font-size: 10px;
+  color: #6c7688;
+  letter-spacing: normal;
+}
+
+.vfx-presets__group-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #24272f;
+}
+
+.vfx-presets__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 12px;
+}
+
+.vfx-preset-card {
+  position: relative;
+  border-radius: 8px;
+}
+
+.vfx-preset-card__open {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 0 0 10px;
+  background: #1a1d23;
+  border: 1px solid #262a32;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.vfx-preset-card__open:hover:not(:disabled) {
+  border-color: #ac89ff;
+  transform: translateY(-1px);
+}
+
+.vfx-preset-card__open:focus-visible {
+  outline: 2px solid #6ea8ff;
+  outline-offset: 2px;
+}
+
+.vfx-preset-card__open:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* 16:10, so a captured thumbnail and the lettered placeholder occupy exactly
+ * the same space and the grid does not reflow as thumbnails arrive. */
+.vfx-preset-card__art {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 10;
+  background:
+    radial-gradient(circle at 50% 45%,
+      hsl(var(--vfx-preset-hue, 220) 60% 26%),
+      hsl(var(--vfx-preset-hue, 220) 45% 12%));
+  border-bottom: 1px solid #262a32;
+}
+
+.vfx-preset-card__art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.vfx-preset-card__initials {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: hsl(var(--vfx-preset-hue, 220) 70% 78%);
+  opacity: 0.85;
+}
+
+.vfx-preset-card__name {
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e6e9f0;
+}
+
+.vfx-preset-card__blurb {
+  padding: 0 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #8a93a4;
+  /* Two lines, so cards in a row stay the same height and the grid reads as a
+   * grid rather than as a ragged wall. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vfx-preset-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 10px 0;
+}
+
+.vfx-preset-card__tag {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #22262e;
+  font-size: 10px;
+  color: #98a1b1;
+}
+
+.vfx-preset-card__admin {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.vfx-preset-card:hover .vfx-preset-card__admin,
+.vfx-preset-card:focus-within .vfx-preset-card__admin {
+  opacity: 1;
+}
+
+.vfx-preset-card__admin button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: rgba(12, 14, 18, 0.85);
+  border: 1px solid #3a3f49;
+  border-radius: 5px;
+  color: #d8dde7;
+  cursor: pointer;
+}
+
+.vfx-preset-card__admin button:hover {
+  background: #2b3039;
+  color: #fff;
+}
+
+.vfx-preset-card__admin .material-symbols-outlined {
+  font-size: 15px;
+}
+
+/* --- the author's metadata form ------------------------------------------- */
+
+.vfx-presets__editor {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(460px, calc(100% - 48px));
+  height: fit-content;
+  max-height: calc(100% - 48px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: #1a1d23;
+  border: 1px solid #3a3f49;
+  border-radius: 10px;
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.6);
+}
+
+.vfx-presets__editor h3 {
+  margin: 0 0 2px;
+  font-size: 14px;
+  color: #e6e9f0;
+}
+
+.vfx-presets__editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vfx-presets__editor label > span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+}
+
+.vfx-presets__editor input,
+.vfx-presets__editor select,
+.vfx-presets__editor textarea {
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 5px;
+  color: #e6e9f0;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 8px;
+  resize: vertical;
+}
+
+.vfx-presets__editor input:disabled {
+  color: #7b8494;
+}
+
+.vfx-presets__editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.vfx-presets__editor-actions button {
+  background: #22262e;
+  border: 1px solid #2f333c;
+  border-radius: 6px;
+  color: #d8dde7;
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.vfx-presets__editor-actions .is-primary {
+  background: #4c6ef5;
+  border-color: #4c6ef5;
+  color: #fff;
+}
+
+.vfx-presets__editor-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* Below this the rail costs more than it gives: the categories become a scroll
+ * of their own and the grid drops to one column. */
+@media (max-width: 900px) {
+  .vfx-presets__body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vfx-presets__rail {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid #2a2d34;
+  }
+
+  .vfx-presets__cat {
+    width: auto;
+    white-space: nowrap;
+  }
+}

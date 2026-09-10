@@ -1,0 +1,306 @@
+{
+  "format": 1,
+  "id": "impact-dust",
+  "name": "Impact Dust",
+  "category": "Impacts & Hits",
+  "description": "The ring of dust kicked outward where something heavy lands.",
+  "teaches": [
+    "Outward velocity from a flat circle",
+    "Drag stopping a ring in place",
+    "One-shot timing"
+  ],
+  "tags": [
+    "one-shot",
+    "beginner",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188713,
+    "name": "Impact Dust",
+    "effect": {
+      "seed": 12345,
+      "duration": 1.6,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-2g",
+        "name": "Dust",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-2g",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-25",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 60
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-2g",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-26",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.6,
+                    "b": 1.2,
+                    "freq": "perParticle",
+                    "v": 0.8999999999999999
+                  }
+                }
+              },
+              {
+                "id": "b-27",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.15,
+                    "b": 0.3,
+                    "freq": "perParticle",
+                    "v": 0.22499999999999998
+                  }
+                }
+              },
+              {
+                "id": "b-28",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      0.95,
+                      0.85,
+                      0.6
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-29",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.3
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.4
+                  }
+                }
+              },
+              {
+                "id": "b-2a",
+                "type": "initialize.velocityRadial",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": 1.6,
+                    "b": 3.2,
+                    "freq": "perParticle",
+                    "v": 2.4000000000000004
+                  }
+                }
+              },
+              {
+                "id": "b-2b",
+                "type": "initialize.setRotation",
+                "enabled": true,
+                "props": {
+                  "rotation": {
+                    "mode": "random",
+                    "a": -3.14,
+                    "b": 3.14,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-2g",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-2c",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 3.2
+                  }
+                }
+              },
+              {
+                "id": "b-2d",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      0.4,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-2e",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 2.2,
+                    "v": 2.2
+                  }
+                }
+              },
+              {
+                "id": "b-2f",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-2g",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "depth"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqy1-18",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

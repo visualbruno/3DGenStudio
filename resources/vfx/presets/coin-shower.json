@@ -1,0 +1,290 @@
+{
+  "format": 1,
+  "id": "coin-shower",
+  "name": "Coin Shower",
+  "category": "UI & Feedback",
+  "description": "Gold coins spraying up and clattering down, for loot and rewards.",
+  "teaches": [
+    "Heavy gravity reading as weight",
+    "Bounce and friction tuned to settle fast",
+    "Warm colour without additive"
+  ],
+  "tags": [
+    "one-shot",
+    "beginner",
+    "collision",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188843,
+    "name": "Coin Shower",
+    "effect": {
+      "seed": 12345,
+      "duration": 3,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-dy",
+        "name": "Coins",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-dy",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-do",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 70
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-dy",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-dp",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1.8,
+                    "b": 2.8,
+                    "freq": "perParticle",
+                    "v": 2.3
+                  }
+                }
+              },
+              {
+                "id": "b-dq",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.05,
+                    "b": 0.09,
+                    "freq": "perParticle",
+                    "v": 0.07
+                  }
+                }
+              },
+              {
+                "id": "b-dr",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.5,
+                      1.15,
+                      0.35,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-ds",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.15
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              },
+              {
+                "id": "b-dt",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -2.5,
+                      4,
+                      -2.5
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      2.5,
+                      7.5,
+                      2.5
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-dy",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-du",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -16,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-dv",
+                "type": "update.spin",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": -18,
+                    "b": 18,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              },
+              {
+                "id": "b-dw",
+                "type": "update.collidePlane",
+                "enabled": true,
+                "props": {
+                  "height": {
+                    "mode": "const",
+                    "v": 0
+                  },
+                  "bounce": {
+                    "mode": "const",
+                    "v": 0.4
+                  },
+                  "friction": {
+                    "mode": "const",
+                    "v": 0.6
+                  }
+                }
+              },
+              {
+                "id": "b-dx",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-dy",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr1n-7x",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

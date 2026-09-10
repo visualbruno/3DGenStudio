@@ -42,6 +42,7 @@ import AssetSelectorModal from '../components/AssetSelectorModal'
 import VfxExportDialog from '../components/vfx/VfxExportDialog'
 import VfxSpritePanel from '../components/vfx/VfxSpritePanel'
 import VfxShortcuts from '../components/vfx/VfxShortcuts'
+import VfxPresetsDialog from '../components/vfx/VfxPresetsDialog'
 import VfxViewport from '../components/vfx/VfxViewport'
 import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
 import VfxBoard from '../components/vfx/VfxBoard'
@@ -57,9 +58,8 @@ import { compileVfxGraph } from '../../vfx/compile.js'
 import { summarizeDiagnostics } from '../../vfx/diagnostics.js'
 import { PROP_TYPE } from '../../vfx/catalog.js'
 import { REF_KIND, formatAssetRef } from '../../vfx/doc.js'
-import { VFX_TEMPLATES } from '../utils/vfx/templates.js'
 import { indexLibraryAssets, makeAssetResolver, vfxAssetId } from '../utils/vfxApi.js'
-import { createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
+import { aliveCount, createVfxThumbnailFile } from '../utils/vfxThumbnail.js'
 import { reset, seekTo, setSystemState } from '../utils/vfx/system.js'
 import {
   autoLayout,
@@ -98,23 +98,6 @@ const PREVIEW_DEFAULT = 520
 // distinguishable from a filled bar - so sampling more would cost work to
 // produce less information.
 const PLAYHEAD_SAMPLES = 192
-
-// The starter library, grouped by category. Built once at module scope: the
-// grouping is a function of a frozen array, so recomputing it per render would
-// be pure waste. Insertion order is the catalog's order, which puts the
-// categories in the sequence the templates were authored in rather than
-// alphabetically - "Impacts & Hits" first, because that is what most people
-// come here to make.
-const TEMPLATE_GROUPS = (() => {
-  const byCategory = new Map()
-  for (const template of VFX_TEMPLATES) {
-    const key = template.category || 'Other'
-    const list = byCategory.get(key)
-    if (list) list.push(template)
-    else byCategory.set(key, [template])
-  }
-  return [...byCategory.entries()]
-})()
 
 const readLevel = () => {
   try {
@@ -157,6 +140,7 @@ export default function VfxEditorPage() {
   const [exporting, setExporting] = useState(false)
   const [spriteOpen, setSpriteOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [presetsOpen, setPresetsOpen] = useState(false)
   // The system the board is showing. See activeSystemId below for why this is
   // a LAST CHOICE rather than the answer.
   const [pinnedSystemId, setPinnedSystemId] = useState(null)
@@ -816,6 +800,56 @@ export default function VfxEditorPage() {
     else if (action === BLAME_ACTION.UNMUTE) setPreview({})
   }, [restart])
 
+  // --- snapshot -------------------------------------------------------------
+
+  // Download the frame on screen as a PNG.
+  //
+  // WHY THIS EXISTS: the preset library's bulk thumbnail pass renders from a
+  // SIMULATED frame at a fixed time, and for a good number of effects that time
+  // is simply wrong - a one-shot burst has already died, a slow plume has not
+  // arrived yet - so the card comes out black. No fixed time works for
+  // fifty-three effects with lifetimes from 0.07s to seven seconds.
+  //
+  // Choosing the frame is a judgement, so this hands it to the author: scrub to
+  // where the effect looks best, orbit to the angle you want, press Snapshot.
+  // It is the same renderer the card uses (square, 512px, no grid or gizmos),
+  // so what lands in the file is what the card will look like.
+  const handleSnapshot = async () => {
+    // A REPORT, NOT A FALLBACK. createVfxThumbnailFile falls back to a
+    // simulated frame when nothing is alive, which is right for a save but
+    // wrong here: the author asked for THIS frame, and silently handing them
+    // another black PNG is exactly the black-card problem again.
+    // useVfxRuntime returns null until the effect has compiled and its assets
+    // have loaded, and aliveCount reads runtime.emitters straight off it.
+    if (!runtime || aliveCount(runtime) === 0) {
+      notify('Nothing is alive at this frame - play the effect and pause where it looks best.', 'error')
+      return
+    }
+    let file
+    try {
+      file = await createVfxThumbnailFile(compiled.ir, {
+        name,
+        runtime,
+        camera: cameraRef.current,
+        textures,
+        meshes,
+      })
+    } catch (err) {
+      notify(err?.message || 'Could not render the snapshot.', 'error')
+      return
+    }
+    // Named the way resources/vfx/thumbnails/ expects, so a snapshot of a
+    // preset-derived effect can be dropped straight in without renaming.
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'effect'
+    const url = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${slug}.png`
+    link.click()
+    URL.revokeObjectURL(url)
+    notify(`Saved ${slug}.png`, 'success')
+  }
+
   // --- save ----------------------------------------------------------------
 
   const handleSave = async ({ saveAs = false } = {}) => {
@@ -952,6 +986,19 @@ export default function VfxEditorPage() {
               Export...
             </button>
           )}
+          {/* The starter library. This replaced a row of twelve buttons
+              wired to in-code templates: fifty-odd effects do not fit in a
+              toolbar, and the ones worth having are the ones nobody has
+              written yet - so the library is FILES, browsable and searchable,
+              and adding to it is not a code change. */}
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={() => setPresetsOpen(true)}
+            title="Browse ready-made effects and open one"
+          >
+            VFX Presets...
+          </button>
           {/* Generating a sprite needs a system to give it to, and the board
               already tracks which one is being edited - so this follows the
               board rather than asking again. */}
@@ -972,6 +1019,15 @@ export default function VfxEditorPage() {
             aria-label="Keyboard shortcuts"
           >
             <span className="material-symbols-outlined">keyboard</span>
+          </button>
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={handleSnapshot}
+            title="Download the current frame as a PNG, framed the way a preset card is"
+            aria-label="Snapshot the current frame"
+          >
+            <span className="material-symbols-outlined">photo_camera</span>
           </button>
           <span className={`vfx-page__status is-${dirty ? 'dirty' : status}`}>
             {status === 'loading' ? 'Opening...'
@@ -1026,44 +1082,6 @@ export default function VfxEditorPage() {
             <option value="unity">Target: Unity</option>
             <option value="unreal">Target: Unreal</option>
           </select>
-        </div>
-      </div>
-
-      {/* Templates are the on-ramp, not demo content: nobody learns a particle
-          system from an empty board.
-
-          GROUPED BY CATEGORY AND SCROLLABLE. Twelve of them in a flat flex row
-          overflowed the toolbar; grouping also makes the row answer "what kind
-          of effect am I making" before "which one", which is the order an
-          author actually decides in. The full-pane gallery with animated hover
-          previews is still ahead - it needs one shared offscreen canvas that
-          the hovered card portals into, because twelve live WebGL contexts is
-          how you crash the tab. */}
-      <div className="vfx-page__templates">
-        <span className="vfx-page__templates-label">Start from</span>
-        <div className="vfx-page__template-groups">
-          {TEMPLATE_GROUPS.map(([category, entries]) => (
-            <div className="vfx-page__template-group" key={category}>
-              <span className="vfx-page__template-category">{category}</span>
-              <div className="vfx-page__template-row">
-                {entries.map(template => (
-                  <button
-                    key={template.id}
-                    type="button"
-                    className="vfx-page__template"
-                    onClick={() => {
-                      loadTemplate(template)
-                      setSelection(null)
-                      setExpanded({})
-                    }}
-                    title={`${template.blurb}\n\nTeaches:\n- ${template.teaches.join('\n- ')}`}
-                  >
-                    {template.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
         </div>
       </div>
 
@@ -1280,6 +1298,20 @@ export default function VfxEditorPage() {
       />
 
       {shortcutsOpen && <VfxShortcuts onClose={() => setShortcutsOpen(false)} />}
+
+      {presetsOpen && (
+        <VfxPresetsDialog
+          onClose={() => setPresetsOpen(false)}
+          dirty={dirty}
+          currentDoc={doc}
+          currentName={name}
+          onOpen={preset => {
+            loadTemplate(preset)
+            setSelection(null)
+            setExpanded({})
+          }}
+        />
+      )}
 
       {spriteOpen && (
         <VfxSpritePanel

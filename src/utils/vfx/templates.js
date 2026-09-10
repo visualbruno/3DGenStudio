@@ -40,11 +40,14 @@ const findPreset = (list, id, kind) => {
   if (!preset) throw new Error(`VFX template: no ${kind} preset "${id}"`)
   return preset.build()
 }
-const curve = (id, options) => curveValue(findPreset(CURVE_PRESETS, id, 'curve'), options)
-const ramp = id => gradientValue(findPreset(GRADIENT_PRESETS, id, 'gradient'))
+export const curve = (id, options) => curveValue(findPreset(CURVE_PRESETS, id, 'curve'), options)
+export const ramp = id => gradientValue(findPreset(GRADIENT_PRESETS, id, 'gradient'))
 
 let counter = 0
-const block = (type, props = {}, modes) => {
+// EXPORTED FOR THE PRESET SEEDER (tools/vfx-preset-seed.mjs), which authors the
+// rest of the library in the same vocabulary. One DSL, so a preset written
+// today and a template written in phase 8 cannot drift into two dialects.
+export const block = (type, props = {}, modes) => {
   counter += 1
   const entry = { id: `b-${counter.toString(36)}`, type, enabled: true, props }
   if (modes) entry.modes = modes
@@ -53,7 +56,7 @@ const block = (type, props = {}, modes) => {
 
 // Assemble a system from per-stage stacks. The Output's params carry the render
 // state; its blocks carry the texture slot.
-function makeSystem(spec) {
+export function makeSystem(spec) {
   counter += 1
   const tag = counter.toString(36)
   const contexts = [

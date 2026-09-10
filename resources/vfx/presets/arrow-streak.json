@@ -1,0 +1,252 @@
+{
+  "format": 1,
+  "id": "arrow-streak",
+  "name": "Arrow Streak",
+  "category": "Trails & Projectiles",
+  "description": "A thin fading ribbon behind a fast arrow or a thrown blade.",
+  "teaches": [
+    "The cheapest possible trail",
+    "A single system with no forces",
+    "How lifetime sets a trail’s length"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "additive",
+    "stretched"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188826,
+    "name": "Arrow Streak",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-bu",
+        "name": "Streak",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-bu",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-bn",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 300
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-bu",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-bo",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.15,
+                    "b": 0.35,
+                    "freq": "perParticle",
+                    "v": 0.25
+                  }
+                }
+              },
+              {
+                "id": "b-bp",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.02,
+                    "b": 0.045,
+                    "freq": "perParticle",
+                    "v": 0.0325
+                  }
+                }
+              },
+              {
+                "id": "b-bq",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.6,
+                      1.5,
+                      1.2,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-br",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.03
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-bu",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-bs",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1,
+                    "v": 1
+                  }
+                }
+              },
+              {
+                "id": "b-bt",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-bu",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr16-6s",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

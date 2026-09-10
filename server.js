@@ -15,6 +15,14 @@ import { fileURLToPath } from 'node:url';
 import si from 'systeminformation';
 import { WebSocket as WsWebSocket } from 'ws';
 import tencentcloudSdk from 'tencentcloud-sdk-nodejs-intl-en';
+import { normalizeVfxDoc } from './vfx/doc.js';
+import { compileVfxGraph } from './vfx/compile.js';
+import {
+  normalizePreset,
+  presetSummary,
+  validatePreset,
+  PRESET_ID_PATTERN,
+} from './vfx/preset.js';
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
@@ -1154,6 +1162,156 @@ app.post('/api/wiki/media', requireWikiAuthor, wikiMediaUpload.single('file'), a
   } catch (err) {
     console.error('Failed to upload wiki media:', err);
     res.status(500).json({ error: err.message || 'Failed to upload wiki media' });
+  }
+});
+
+// ── VFX presets ───────────────────────────────────────────────────────────
+// The starter-effect library, as FILES rather than as code. See vfx/preset.js
+// for why the directory is the index and why a preset may not reference assets.
+//
+// The author gate is the WIKI'S, deliberately: `.wiki-author` already marks
+// "this installation is the one content is written on", and a second marker
+// file would mean two things to remember and one of them eventually missing.
+const VFX_PRESETS_DIR = path.join(RESOURCES_DIR, 'vfx', 'presets');
+const VFX_THUMBS_DIR = path.join(RESOURCES_DIR, 'vfx', 'thumbnails');
+
+function requireVfxAuthor(req, res, next) {
+  if (!isWikiAuthorMode()) {
+    return res.status(403).json({ error: 'VFX presets are read-only on this installation.' });
+  }
+  next();
+}
+
+const vfxPresetPath = (id) => path.join(VFX_PRESETS_DIR, `${id}.json`);
+
+// The id comes from the URL and becomes a filename, so it is checked against
+// the pattern rather than merely escaped - `..%2f..%2fetc` is a path, not an id.
+function readPresetId(req, res) {
+  const id = String(req.params.id || '');
+  if (!PRESET_ID_PATTERN.test(id)) {
+    res.status(400).json({ error: 'Invalid preset id.' });
+    return null;
+  }
+  return id;
+}
+
+async function readVfxPreset(id) {
+  const raw = await fs.readFile(vfxPresetPath(id), 'utf8');
+  const preset = normalizePreset(JSON.parse(raw), id);
+  const stat = await fs.stat(vfxPresetPath(id)).catch(() => null);
+  preset.updatedAt = stat ? stat.mtime.toISOString() : '';
+  preset.hasThumbnail = existsSync(path.join(VFX_THUMBS_DIR, `${id}.png`));
+  return preset;
+}
+
+app.get('/api/vfx/presets', async (req, res) => {
+  try {
+    const entries = await fs.readdir(VFX_PRESETS_DIR).catch(() => []);
+    const ids = entries
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => name.slice(0, -5))
+      .filter((id) => PRESET_ID_PATTERN.test(id));
+    const presets = [];
+    for (const id of ids) {
+      try {
+        presets.push(presetSummary(await readVfxPreset(id)));
+      } catch (err) {
+        // ONE BAD FILE MUST NOT EMPTY THE LIBRARY. A half-written preset, or a
+        // hand-edited one with a stray comma, would otherwise take every other
+        // effect down with it and read as "the presets are gone".
+        console.error(`Skipping unreadable VFX preset "${id}":`, err.message);
+      }
+    }
+    res.json({ presets, authorMode: isWikiAuthorMode() });
+  } catch (err) {
+    console.error('Failed to list VFX presets:', err);
+    res.status(500).json({ error: err.message || 'Failed to list VFX presets' });
+  }
+});
+
+app.get('/api/vfx/presets/:id', async (req, res) => {
+  const id = readPresetId(req, res);
+  if (!id) return;
+  try {
+    res.json({ preset: await readVfxPreset(id) });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No such preset.' });
+    console.error(`Failed to read VFX preset "${id}":`, err);
+    res.status(500).json({ error: err.message || 'Failed to read the preset' });
+  }
+});
+
+app.put('/api/vfx/presets/:id', requireVfxAuthor, async (req, res) => {
+  const id = readPresetId(req, res);
+  if (!id) return;
+  try {
+    const preset = normalizePreset({ ...(req.body || {}), id }, id);
+    const errors = validatePreset(preset);
+    if (errors.length) return res.status(400).json({ error: errors.join(' ') });
+
+    // COMPILED BEFORE IT IS WRITTEN. A preset that does not compile is not a
+    // starter effect, it is a bug someone else will open and blame themselves
+    // for - which is exactly what the "a template that trips a diagnostic is a
+    // bug in the template" rule was written to prevent. Warnings are returned
+    // so the author sees them, but do not block the save.
+    preset.doc = normalizeVfxDoc(preset.doc);
+    const { diagnostics } = compileVfxGraph(preset.doc, { assetIndex: new Set() });
+    const blocking = diagnostics.filter((entry) => entry.severity === 'error');
+    if (blocking.length) {
+      return res.status(400).json({
+        error: `The effect does not compile: ${blocking.map((d) => d.message).join(' ')}`,
+      });
+    }
+
+    await fs.mkdir(VFX_PRESETS_DIR, { recursive: true });
+    const { updatedAt, hasThumbnail, ...onDisk } = preset;
+    await fs.writeFile(vfxPresetPath(id), `${JSON.stringify(onDisk, null, 2)}\n`, 'utf8');
+    res.json({
+      preset: await readVfxPreset(id),
+      // WARNINGS ONLY, not "everything that is not an error". Info-level
+      // diagnostics include I_DEFAULT_SPRITE, and a preset may not reference
+      // assets at all - so it ALWAYS draws with the built-in sprite and that
+      // notice fired on every single save. A save that always reports a problem
+      // trains the author to ignore the report.
+      warnings: diagnostics.filter((entry) => entry.severity === 'warn').map((d) => d.message),
+    });
+  } catch (err) {
+    console.error(`Failed to save VFX preset "${id}":`, err);
+    res.status(500).json({ error: err.message || 'Failed to save the preset' });
+  }
+});
+
+app.delete('/api/vfx/presets/:id', requireVfxAuthor, async (req, res) => {
+  const id = readPresetId(req, res);
+  if (!id) return;
+  try {
+    await fs.unlink(vfxPresetPath(id));
+    // Best effort: a preset with no thumbnail is fine, a thumbnail with no
+    // preset is litter that the next preset of the same name would inherit.
+    await fs.unlink(path.join(VFX_THUMBS_DIR, `${id}.png`)).catch(() => {});
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'No such preset.' });
+    console.error(`Failed to delete VFX preset "${id}":`, err);
+    res.status(500).json({ error: err.message || 'Failed to delete the preset' });
+  }
+});
+
+// The thumbnail arrives as a data URL in JSON rather than as multipart, because
+// the caller has just rendered it from a canvas and `toDataURL` is what it has.
+app.post('/api/vfx/presets/:id/thumbnail', requireVfxAuthor, async (req, res) => {
+  const id = readPresetId(req, res);
+  if (!id) return;
+  try {
+    const dataUrl = String(req.body?.dataUrl || '');
+    const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+    if (!match) return res.status(400).json({ error: 'Expected a PNG data URL.' });
+    await fs.mkdir(VFX_THUMBS_DIR, { recursive: true });
+    await fs.writeFile(path.join(VFX_THUMBS_DIR, `${id}.png`), Buffer.from(match[1], 'base64'));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`Failed to save the thumbnail for "${id}":`, err);
+    res.status(500).json({ error: err.message || 'Failed to save the thumbnail' });
   }
 });
 

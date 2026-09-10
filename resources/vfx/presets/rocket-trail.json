@@ -1,0 +1,513 @@
+{
+  "format": 1,
+  "id": "rocket-trail",
+  "name": "Rocket Trail",
+  "category": "Trails & Projectiles",
+  "description": "Fire at the nozzle fading back into a smoke tail behind a missile.",
+  "teaches": [
+    "Two systems making one tail",
+    "Fire in front of smoke",
+    "Why the smoke must outlive the flame"
+  ],
+  "tags": [
+    "looping",
+    "intermediate",
+    "additive",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188811,
+    "name": "Rocket Trail",
+    "effect": {
+      "seed": 12345,
+      "duration": 3,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 2048,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-av",
+        "name": "Flame",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-av",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ao",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 220
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-av",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ap",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.15,
+                    "b": 0.3,
+                    "freq": "perParticle",
+                    "v": 0.22499999999999998
+                  }
+                }
+              },
+              {
+                "id": "b-aq",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.08,
+                    "b": 0.16,
+                    "freq": "perParticle",
+                    "v": 0.12
+                  }
+                }
+              },
+              {
+                "id": "b-ar",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      2.2,
+                      1.1,
+                      0.4,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-as",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.05
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-av",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-at",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1.2,
+                    "v": 1.2
+                  }
+                }
+              },
+              {
+                "id": "b-au",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#fff6d5",
+                          "intensity": 3
+                        },
+                        {
+                          "t": 0.25,
+                          "hex": "#ffb545",
+                          "intensity": 2
+                        },
+                        {
+                          "t": 0.6,
+                          "hex": "#d1441a",
+                          "intensity": 1.2
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#2a2320",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.08,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.7,
+                          "a": 0.7
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      2.625,
+                      2.074523730260733,
+                      1.2922346129014959,
+                      0.9933467741935483
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-av",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr0r-6c",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "sys-b5",
+        "name": "Smoke",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 81006,
+        "contexts": [
+          {
+            "id": "c-spawn-b5",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-aw",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 140
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-b5",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ax",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1.4,
+                    "b": 2.4,
+                    "freq": "perParticle",
+                    "v": 1.9
+                  }
+                }
+              },
+              {
+                "id": "b-ay",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.1,
+                    "b": 0.22,
+                    "freq": "perParticle",
+                    "v": 0.16
+                  }
+                }
+              },
+              {
+                "id": "b-az",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      0.6
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-b0",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.07
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              },
+              {
+                "id": "b-b1",
+                "type": "initialize.setRotation",
+                "enabled": true,
+                "props": {
+                  "rotation": {
+                    "mode": "random",
+                    "a": -3.14,
+                    "b": 3.14,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-b5",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-b2",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 0.5
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 0.5
+                  }
+                }
+              },
+              {
+                "id": "b-b3",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 3,
+                    "v": 3
+                  }
+                }
+              },
+              {
+                "id": "b-b4",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#6e6a66",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.5,
+                          "hex": "#4a4744",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#2e2c2a",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 0.55
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      0.12040059432581009,
+                      0.11117409924357116,
+                      0.10237402193770048,
+                      0.5478515625
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-b5",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "depth"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr0r-6d",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

@@ -1,0 +1,277 @@
+{
+  "format": 1,
+  "id": "shockwave",
+  "name": "Shockwave",
+  "category": "Explosions",
+  "description": "A flat ring of compressed air racing outward along the ground.",
+  "teaches": [
+    "A thin circle emitter as a ring",
+    "Outward velocity in one plane",
+    "How a hard stop reads as a wave front"
+  ],
+  "tags": [
+    "one-shot",
+    "beginner",
+    "additive"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188744,
+    "name": "Shockwave",
+    "effect": {
+      "seed": 12345,
+      "duration": 1.4,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-4w",
+        "name": "Ring",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-4w",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-4n",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 120
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-4w",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-4o",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.4,
+                    "b": 0.6,
+                    "freq": "perParticle",
+                    "v": 0.5
+                  }
+                }
+              },
+              {
+                "id": "b-4p",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.12,
+                    "b": 0.2,
+                    "freq": "perParticle",
+                    "v": 0.16
+                  }
+                }
+              },
+              {
+                "id": "b-4q",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.6,
+                      1.7,
+                      2,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-4r",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.35
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.05
+                  }
+                }
+              },
+              {
+                "id": "b-4s",
+                "type": "initialize.velocityRadial",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": 7,
+                    "b": 9,
+                    "freq": "perParticle",
+                    "v": 8
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-4w",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-4t",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 5.5
+                  }
+                }
+              },
+              {
+                "id": "b-4u",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1.6,
+                    "v": 1.6
+                  }
+                }
+              },
+              {
+                "id": "b-4v",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-4w",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqyw-28",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

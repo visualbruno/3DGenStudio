@@ -1,0 +1,287 @@
+{
+  "format": 1,
+  "id": "rain",
+  "name": "Rain",
+  "category": "Weather",
+  "description": "A falling slab of stretched drops, collected at the floor.",
+  "teaches": [
+    "Box emitters as a volume",
+    "Directional velocity",
+    "Kill Outside Box instead of more capacity"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "stretched",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788992927793,
+    "name": "Rain",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 4096,
+      "boundsMin": [
+        -16,
+        -7,
+        -16
+      ],
+      "boundsMax": [
+        16,
+        7,
+        16
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-3v",
+        "name": "Rain",
+        "enabled": true,
+        "solo": false,
+        "capacity": 2048,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-3v",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-3m",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 900
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-3v",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-3n",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "const",
+                    "v": 1.2
+                  }
+                }
+              },
+              {
+                "id": "b-3o",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.012,
+                    "b": 0.022,
+                    "freq": "perParticle",
+                    "v": 0.017
+                  }
+                }
+              },
+              {
+                "id": "b-3p",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-3q",
+                "type": "initialize.positionBox",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      14,
+                      0.5,
+                      14
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-3r",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      0.12,
+                      -1,
+                      0
+                    ]
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 11,
+                    "b": 15,
+                    "freq": "perParticle",
+                    "v": 13
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 2
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-3v",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-3s",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -6,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-3t",
+                "type": "update.killOnBounds",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      30,
+                      12,
+                      30
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-3u",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#eafcff",
+                          "intensity": 2.4
+                        },
+                        {
+                          "t": 0.45,
+                          "hex": "#7fdcff",
+                          "intensity": 1.6
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#1d5fb8",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.15,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1.406936991561986,
+                      1.9226717885722246,
+                      2.1222222222222222,
+                      0.9926470588235294
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-3v",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuo75ma-1p",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

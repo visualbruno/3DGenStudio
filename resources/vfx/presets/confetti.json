@@ -1,0 +1,327 @@
+{
+  "format": 1,
+  "id": "confetti",
+  "name": "Confetti",
+  "category": "UI & Feedback",
+  "description": "Paper squares fired upward that tumble down and land on the floor.",
+  "teaches": [
+    "Spin as tumbling paper",
+    "Alpha blending for opaque flat pieces",
+    "Collision so the celebration settles"
+  ],
+  "tags": [
+    "one-shot",
+    "intermediate",
+    "collision",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188839,
+    "name": "Confetti",
+    "effect": {
+      "seed": 12345,
+      "duration": 4,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-dn",
+        "name": "Confetti",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-dn",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-dc",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 180
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-dn",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-dd",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 2.5,
+                    "b": 3.8,
+                    "freq": "perParticle",
+                    "v": 3.15
+                  }
+                }
+              },
+              {
+                "id": "b-de",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.04,
+                    "b": 0.09,
+                    "freq": "perParticle",
+                    "v": 0.065
+                  }
+                }
+              },
+              {
+                "id": "b-df",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-dg",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.2
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              },
+              {
+                "id": "b-dh",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -3,
+                      5,
+                      -3
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      3,
+                      9,
+                      3
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-dn",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-di",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -7,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-dj",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.3
+                  }
+                }
+              },
+              {
+                "id": "b-dk",
+                "type": "update.spin",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": -12,
+                    "b": 12,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              },
+              {
+                "id": "b-dl",
+                "type": "update.collidePlane",
+                "enabled": true,
+                "props": {
+                  "height": {
+                    "mode": "const",
+                    "v": 0
+                  },
+                  "bounce": {
+                    "mode": "const",
+                    "v": 0.1
+                  },
+                  "friction": {
+                    "mode": "const",
+                    "v": 0.85
+                  }
+                }
+              },
+              {
+                "id": "b-dm",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ff0000",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.17,
+                          "hex": "#ffff00",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.34,
+                          "hex": "#00ff00",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.5,
+                          "hex": "#00ffff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.67,
+                          "hex": "#0000ff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 0.84,
+                          "hex": "#ff00ff",
+                          "intensity": 1
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#ff0000",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      0,
+                      0,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-dn",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr1j-7q",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

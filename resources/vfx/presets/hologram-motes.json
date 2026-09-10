@@ -1,0 +1,261 @@
+{
+  "format": 1,
+  "id": "hologram-motes",
+  "name": "Hologram Motes",
+  "category": "Sci-Fi & Tech",
+  "description": "Cyan specks scanning up a projected volume, for holograms and materialisation.",
+  "teaches": [
+    "A box emitter as a projection volume",
+    "Upward drift as a scan",
+    "Cool colour with no gravity"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "additive"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188804,
+    "name": "Hologram Motes",
+    "effect": {
+      "seed": 12345,
+      "duration": 3,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-af",
+        "name": "Motes",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-af",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-a8",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 200
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-af",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-a9",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1,
+                    "b": 2,
+                    "freq": "perParticle",
+                    "v": 1.5
+                  }
+                }
+              },
+              {
+                "id": "b-aa",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.015,
+                    "b": 0.04,
+                    "freq": "perParticle",
+                    "v": 0.0275
+                  }
+                }
+              },
+              {
+                "id": "b-ab",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.6,
+                      2,
+                      2.4,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-ac",
+                "type": "initialize.positionBox",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      1.2,
+                      2,
+                      1.2
+                    ]
+                  },
+                  "offset": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-ad",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 0.4,
+                    "b": 1,
+                    "freq": "perParticle",
+                    "v": 0.7
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 0.1
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-af",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ae",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-af",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr0k-5y",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

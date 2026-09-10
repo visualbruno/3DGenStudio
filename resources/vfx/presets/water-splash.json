@@ -1,0 +1,277 @@
+{
+  "format": 1,
+  "id": "water-splash",
+  "name": "Water Splash",
+  "category": "Liquids",
+  "description": "A crown of droplets thrown up where something enters water, falling back down.",
+  "teaches": [
+    "A cone burst plus gravity as a splash",
+    "Collision returning droplets to the surface",
+    "Stretched drops in flight"
+  ],
+  "tags": [
+    "one-shot",
+    "intermediate",
+    "collision",
+    "alpha",
+    "stretched"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188791,
+    "name": "Water Splash",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-97",
+        "name": "Droplets",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-97",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-8y",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 110
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-97",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-8z",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.7,
+                    "b": 1.4,
+                    "freq": "perParticle",
+                    "v": 1.0499999999999998
+                  }
+                }
+              },
+              {
+                "id": "b-90",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.02,
+                    "b": 0.055,
+                    "freq": "perParticle",
+                    "v": 0.0375
+                  }
+                }
+              },
+              {
+                "id": "b-91",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.75,
+                      0.9,
+                      1,
+                      0.85
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-92",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.25
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.6
+                  }
+                }
+              },
+              {
+                "id": "b-93",
+                "type": "initialize.positionCone",
+                "enabled": true,
+                "props": {
+                  "angle": {
+                    "mode": "const",
+                    "v": 35
+                  },
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.2
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 3,
+                    "b": 6,
+                    "freq": "perParticle",
+                    "v": 4.5
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-97",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-94",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -11,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-95",
+                "type": "update.collidePlane",
+                "enabled": true,
+                "props": {
+                  "height": {
+                    "mode": "const",
+                    "v": 0
+                  },
+                  "bounce": {
+                    "mode": "const",
+                    "v": 0.2
+                  },
+                  "friction": {
+                    "mode": "const",
+                    "v": 0.6
+                  }
+                }
+              },
+              {
+                "id": "b-96",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-97",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr07-4z",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

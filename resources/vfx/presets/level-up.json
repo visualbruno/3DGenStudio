@@ -1,0 +1,478 @@
+{
+  "format": 1,
+  "id": "level-up",
+  "name": "Level Up",
+  "category": "UI & Feedback",
+  "description": "A column of light rushing upward past the character, with a ring at the base.",
+  "teaches": [
+    "Two systems as one celebration",
+    "Upward velocity from a ring",
+    "Staged clips for a short sequence"
+  ],
+  "tags": [
+    "one-shot",
+    "intermediate",
+    "staged",
+    "additive"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188837,
+    "name": "Level Up",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": false,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-d1",
+        "name": "Column",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-d1",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-ct",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 300
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-d1",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-cu",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.5,
+                    "b": 1,
+                    "freq": "perParticle",
+                    "v": 0.75
+                  }
+                }
+              },
+              {
+                "id": "b-cv",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.05,
+                    "b": 0.12,
+                    "freq": "perParticle",
+                    "v": 0.08499999999999999
+                  }
+                }
+              },
+              {
+                "id": "b-cw",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      2.2,
+                      1.9,
+                      0.9,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-cx",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.5
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.3
+                  }
+                }
+              },
+              {
+                "id": "b-cy",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 3,
+                    "b": 5.5,
+                    "freq": "perParticle",
+                    "v": 4.25
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 0.06
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-d1",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-cz",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 0.8
+                  }
+                }
+              },
+              {
+                "id": "b-d0",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-d1",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-lvl-1",
+              "at": 0,
+              "duration": 0.9,
+              "loop": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "sys-db",
+        "name": "Ring",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 81006,
+        "contexts": [
+          {
+            "id": "c-spawn-db",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-d2",
+                "type": "spawn.burst",
+                "enabled": true,
+                "props": {
+                  "count": {
+                    "mode": "const",
+                    "v": 80
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-db",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-d3",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.4,
+                    "b": 0.7,
+                    "freq": "perParticle",
+                    "v": 0.55
+                  }
+                }
+              },
+              {
+                "id": "b-d4",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.08,
+                    "b": 0.16,
+                    "freq": "perParticle",
+                    "v": 0.12
+                  }
+                }
+              },
+              {
+                "id": "b-d5",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      2.4,
+                      2,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-d6",
+                "type": "initialize.positionCircle",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.4
+                  },
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.1
+                  }
+                }
+              },
+              {
+                "id": "b-d7",
+                "type": "initialize.velocityRadial",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": 2.5,
+                    "b": 4,
+                    "freq": "perParticle",
+                    "v": 3.25
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-db",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-d8",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 4
+                  }
+                }
+              },
+              {
+                "id": "b-d9",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1.3,
+                    "v": 1.3
+                  }
+                }
+              },
+              {
+                "id": "b-da",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-db",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-lvl-2",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

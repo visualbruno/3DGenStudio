@@ -22,7 +22,7 @@
     "electron:dev": "npm run build && electron .",
     "check:packaging": "node tools/check-packaged-modules.mjs",
     "check:db": "node tools/check-generated-db.mjs",
-    "check:vfx": "node tools/check-vfx-generated.mjs",
+    "check:vfx": "node tools/check-vfx-generated.mjs && node tools/check-vfx-presets.mjs",
     "db:migrate": "node tools/migrate-sqlite-to-postgres.mjs",
     "dist": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --publish never",
     "dist:win": "npm run check:packaging && npm run check:db && npm run check:vfx && npm run build && electron-builder --win --publish never",

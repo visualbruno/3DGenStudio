@@ -1,0 +1,300 @@
+{
+  "format": 1,
+  "id": "fly-swarm",
+  "name": "Fly Swarm",
+  "category": "Creatures & Organic",
+  "description": "A knot of insects circling a fixed point, never quite settling.",
+  "teaches": [
+    "An attractor as a leash",
+    "Turbulence fighting the attractor",
+    "A speed limit stopping orbital runaway"
+  ],
+  "tags": [
+    "looping",
+    "advanced",
+    "attractor",
+    "alpha",
+    "turbulence"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188831,
+    "name": "Fly Swarm",
+    "effect": {
+      "seed": 12345,
+      "duration": 5,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-ch",
+        "name": "Flies",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-ch",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-c7",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 50
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-ch",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-c8",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 3,
+                    "b": 5,
+                    "freq": "perParticle",
+                    "v": 4
+                  }
+                }
+              },
+              {
+                "id": "b-c9",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.015,
+                    "b": 0.03,
+                    "freq": "perParticle",
+                    "v": 0.0225
+                  }
+                }
+              },
+              {
+                "id": "b-ca",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.15,
+                      0.14,
+                      0.12,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-cb",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 0.6
+                  }
+                },
+                "modes": {
+                  "fill": "volume"
+                }
+              },
+              {
+                "id": "b-cc",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -1,
+                      -1,
+                      -1
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-ch",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-cd",
+                "type": "update.attractor",
+                "enabled": true,
+                "props": {
+                  "position": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  "strength": {
+                    "mode": "const",
+                    "v": 6
+                  },
+                  "radius": {
+                    "mode": "const",
+                    "v": 2.5
+                  }
+                }
+              },
+              {
+                "id": "b-ce",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 4
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 2.4
+                  }
+                }
+              },
+              {
+                "id": "b-cf",
+                "type": "update.speedLimit",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "const",
+                    "v": 2.2
+                  }
+                }
+              },
+              {
+                "id": "b-cg",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-ch",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocr1b-76",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

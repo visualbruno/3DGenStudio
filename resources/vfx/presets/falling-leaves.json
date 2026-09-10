@@ -1,0 +1,313 @@
+{
+  "format": 1,
+  "id": "falling-leaves",
+  "name": "Falling Leaves",
+  "category": "Weather",
+  "description": "Autumn leaves tumbling down through still air, spinning as they go.",
+  "teaches": [
+    "Spin plus drag reading as air resistance",
+    "Slow weather at a low rate",
+    "Warm colour without additive"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "alpha"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188777,
+    "name": "Falling Leaves",
+    "effect": {
+      "seed": 12345,
+      "duration": 6,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-7q",
+        "name": "Leaves",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-7q",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7f",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 45
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-7q",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7g",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "const",
+                    "v": 5.5
+                  }
+                }
+              },
+              {
+                "id": "b-7h",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.07,
+                    "b": 0.14,
+                    "freq": "perParticle",
+                    "v": 0.10500000000000001
+                  }
+                }
+              },
+              {
+                "id": "b-7i",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-7j",
+                "type": "initialize.positionBox",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      8,
+                      6,
+                      8
+                    ]
+                  },
+                  "offset": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      3,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-7k",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      0.15,
+                      -1,
+                      0.1
+                    ]
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 0.8,
+                    "b": 1.3,
+                    "freq": "perParticle",
+                    "v": 1.05
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 0.05
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-7q",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7l",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.1
+                  }
+                }
+              },
+              {
+                "id": "b-7m",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 0.8
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 0.35
+                  }
+                }
+              },
+              {
+                "id": "b-7n",
+                "type": "update.spin",
+                "enabled": true,
+                "props": {
+                  "speed": {
+                    "mode": "random",
+                    "a": -5,
+                    "b": 5,
+                    "freq": "perParticle",
+                    "v": 0
+                  }
+                }
+              },
+              {
+                "id": "b-7o",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-7p",
+                "type": "update.killOnBounds",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      8,
+                      6,
+                      8
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-7q",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "alpha",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqzt-40",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

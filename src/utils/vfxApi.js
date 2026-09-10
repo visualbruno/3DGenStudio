@@ -26,7 +26,7 @@
 // takes ONE `payload` JSON part and accepts the thumbnail in the same request.
 // Getting them the wrong way round produces a 400 that says nothing useful.
 
-import { API_BASE, assetUrl } from '../config.js'
+import { API_BASE, SERVER_ORIGIN, assetUrl } from '../config.js'
 import { indexLibraryAssets, vfxAssetId } from './vfx/library.js'
 import { normalizeVfxDoc, serializeVfxDoc, vfxAssetDigest } from '../../vfx/doc.js'
 
@@ -255,4 +255,97 @@ export function makeAssetResolver(rows) {
     const row = byId.get(asset.assetId)
     return row ? vfxFileUrl(row) : null
   }
+}
+
+// ── The preset library ─────────────────────────────────────────────────────
+// Ready-made effects, stored as files under resources/vfx/presets/ and served
+// read-only unless this installation carries the author marker. See
+// vfx/preset.js for the format and why a preset may not reference assets.
+//
+// THE LISTING DOES NOT CARRY THE GRAPHS. A staged explosion is tens of
+// kilobytes of blocks and the dialog needs none of it to draw a card, so the
+// document is fetched only when a preset is actually opened. Fifty presets list
+// in a few kilobytes this way instead of a megabyte.
+
+/**
+ * @returns {Promise<{presets: Object[], authorMode: boolean}>}
+ */
+export async function listVfxPresets() {
+  const response = await fetch(`${API_BASE}/vfx/presets`)
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not read the preset library')
+  return { presets: payload.presets || [], authorMode: Boolean(payload.authorMode) }
+}
+
+/**
+ * @param {string} id
+ * @returns {Promise<Object>} the preset, including its `doc`
+ */
+export async function getVfxPreset(id) {
+  const response = await fetch(`${API_BASE}/vfx/presets/${encodeURIComponent(id)}`)
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not read the preset')
+  return payload.preset
+}
+
+/**
+ * Create or replace a preset. Author installations only - everyone else gets a
+ * 403, which is the point.
+ *
+ * @param {string} id
+ * @param {Object} preset
+ * @returns {Promise<{preset: Object, warnings: string[]}>}
+ */
+export async function saveVfxPreset(id, preset) {
+  const response = await fetch(`${API_BASE}/vfx/presets/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(preset),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not save the preset')
+  return { preset: payload.preset, warnings: payload.warnings || [] }
+}
+
+/**
+ * @param {string} id
+ */
+export async function deleteVfxPreset(id) {
+  const response = await fetch(`${API_BASE}/vfx/presets/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload?.error || 'Could not delete the preset')
+  }
+}
+
+/**
+ * Store a card thumbnail, as a PNG data URL straight off a canvas.
+ *
+ * @param {string} id
+ * @param {string} dataUrl
+ */
+export async function saveVfxPresetThumbnail(id, dataUrl) {
+  const response = await fetch(`${API_BASE}/vfx/presets/${encodeURIComponent(id)}/thumbnail`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataUrl }),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload?.error || 'Could not save the thumbnail')
+  }
+}
+
+/**
+ * Where a preset's thumbnail lives. Served by the static /resources mount, so
+ * there is no route to add and no auth to consider - the same path works in the
+ * browser, in Electron and behind the gateway.
+ *
+ * @param {string} id
+ * @returns {string}
+ */
+export function vfxPresetThumbnailUrl(id) {
+  return `${SERVER_ORIGIN}/resources/vfx/thumbnails/${encodeURIComponent(id)}.png`
 }

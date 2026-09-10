@@ -1,0 +1,312 @@
+{
+  "format": 1,
+  "id": "arcane-shield",
+  "name": "Arcane Shield",
+  "category": "Magic & Energy",
+  "description": "A hollow sphere of light around the caster, held in place by an inward pull.",
+  "teaches": [
+    "Surface fill for a hollow shell",
+    "Sphere collision from the inside",
+    "An attractor that holds rather than pulls"
+  ],
+  "tags": [
+    "looping",
+    "advanced",
+    "additive",
+    "attractor",
+    "collision"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188754,
+    "name": "Arcane Shield",
+    "effect": {
+      "seed": 12345,
+      "duration": 4,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-5r",
+        "name": "Shell",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-5r",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5i",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 160
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-5r",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5j",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 1.6,
+                    "b": 2.6,
+                    "freq": "perParticle",
+                    "v": 2.1
+                  }
+                }
+              },
+              {
+                "id": "b-5k",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.05,
+                    "b": 0.1,
+                    "freq": "perParticle",
+                    "v": 0.07500000000000001
+                  }
+                }
+              },
+              {
+                "id": "b-5l",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      0.9,
+                      1.2,
+                      2.4,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5m",
+                "type": "initialize.positionSphere",
+                "enabled": true,
+                "props": {
+                  "radius": {
+                    "mode": "const",
+                    "v": 1
+                  }
+                },
+                "modes": {
+                  "fill": "surface"
+                }
+              },
+              {
+                "id": "b-5n",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -0.3,
+                      -0.3,
+                      -0.3
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      0.3,
+                      0.3,
+                      0.3
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-5r",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-5o",
+                "type": "update.vortex",
+                "enabled": true,
+                "props": {
+                  "position": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  "axis": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1,
+                      0
+                    ]
+                  },
+                  "strength": {
+                    "mode": "const",
+                    "v": 1.6
+                  },
+                  "inward": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              },
+              {
+                "id": "b-5p",
+                "type": "update.collideSphere",
+                "enabled": true,
+                "props": {
+                  "position": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      0,
+                      0
+                    ]
+                  },
+                  "radius": {
+                    "mode": "const",
+                    "v": 1
+                  },
+                  "bounce": {
+                    "mode": "const",
+                    "v": 0.6
+                  },
+                  "friction": {
+                    "mode": "const",
+                    "v": 0.1
+                  }
+                },
+                "modes": {
+                  "side": "inside"
+                }
+              },
+              {
+                "id": "b-5q",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-5r",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqz6-2t",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

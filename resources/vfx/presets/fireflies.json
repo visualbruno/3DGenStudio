@@ -1,0 +1,285 @@
+{
+  "format": 1,
+  "id": "fireflies",
+  "name": "Fireflies",
+  "category": "Environment",
+  "description": "Warm points of light blinking on and off across a clearing at dusk.",
+  "teaches": [
+    "Fade in and out as blinking",
+    "Very low rates for ambience",
+    "Wandering with turbulence alone"
+  ],
+  "tags": [
+    "looping",
+    "beginner",
+    "additive",
+    "turbulence"
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1788993188779,
+    "name": "Fireflies",
+    "effect": {
+      "seed": 12345,
+      "duration": 8,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 512,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-80",
+        "name": "Flies",
+        "enabled": true,
+        "solo": false,
+        "capacity": 192,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-80",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7r",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 26
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-80",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7s",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 4,
+                    "b": 7,
+                    "freq": "perParticle",
+                    "v": 5.5
+                  }
+                }
+              },
+              {
+                "id": "b-7t",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.02,
+                    "b": 0.045,
+                    "freq": "perParticle",
+                    "v": 0.0325
+                  }
+                }
+              },
+              {
+                "id": "b-7u",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      2.4,
+                      2,
+                      0.6,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-7v",
+                "type": "initialize.positionBox",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "const",
+                    "v": [
+                      8,
+                      2.5,
+                      8
+                    ]
+                  },
+                  "offset": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      1.2,
+                      0
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-7w",
+                "type": "initialize.velocityRandom",
+                "enabled": true,
+                "props": {
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -0.3,
+                      -0.2,
+                      -0.3
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      0.3,
+                      0.2,
+                      0.3
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-80",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-7x",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 0.6
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 0.5
+                  }
+                }
+              },
+              {
+                "id": "b-7y",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 0.9
+                  }
+                }
+              },
+              {
+                "id": "b-7z",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-80",
+            "kind": "output",
+            "label": "",
+            "blocks": [],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtuocqzv-47",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {},
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}
