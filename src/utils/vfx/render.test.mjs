@@ -21,6 +21,12 @@
 import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
 import { paintSheet } from '../../../tools/vfx-asset-writers.mjs';
+import {
+  decodePng,
+  downscaleRgba,
+  encodePng,
+  matteOnCheckerboard,
+} from '../../../vfx/png.js';
 import { compileVfxGraph } from '../../../vfx/compile.js';
 import { normalizeVfxDoc } from '../../../vfx/doc.js';
 import * as edits from './edits.js';
@@ -1031,6 +1037,98 @@ console.log('\n--- A fresh runtime needs its mesh samplers ---');
     refused = true;
   }
   check('a non-square sheet is refused, not quietly wrong', refused);
+}
+
+
+// --- PNG round trip, downscale and matte ------------------------------------
+//
+// WHY A DECODER EXISTS AT ALL: an agent could not LOOK at a sprite it had just
+// wired into an effect. A 1024x1024 RGBA PNG is about a megabyte, base64 adds a
+// third, and the transport refuses it - so the sprite went in unseen. Shrinking
+// it server-side means decoding it, and this project has no image library.
+//
+// A DECODER THAT IS SUBTLY WRONG IS WORSE THAN NONE: it would answer "is this
+// matte hard-edged" with a plausible wrong picture. So the round trip is exact,
+// byte for byte, rather than approximately right.
+{
+  console.log('\n--- PNG decode, downscale and matte ---');
+
+  // A gradient in every channel, so a swapped or dropped channel cannot pass.
+  const size = 16;
+  const source = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const at = (y * size + x) * 4;
+      source[at] = x * 16;
+      source[at + 1] = y * 16;
+      source[at + 2] = 255 - x * 16;
+      source[at + 3] = (x + y) * 8;
+    }
+  }
+
+  const round = decodePng(encodePng(size, source));
+  check('a PNG round-trips to the same size',
+    round?.width === size && round?.height === size,
+    `${round?.width}x${round?.height}`);
+  let worst = 0;
+  for (let i = 0; i < source.length; i += 1) {
+    worst = Math.max(worst, Math.abs(round.rgba[i] - source[i]));
+  }
+  check('  byte for byte, alpha included', worst === 0, `worst delta ${worst}`);
+
+  // Non-square, because the encoder gained a height argument for preview
+  // frames and a decoder that assumed square would read them sheared.
+  const wide = new Uint8Array(8 * 4 * 4).fill(200);
+  const wideRound = decodePng(encodePng(8, wide, 4));
+  check('a non-square PNG round-trips too',
+    wideRound?.width === 8 && wideRound?.height === 4,
+    `${wideRound?.width}x${wideRound?.height}`);
+
+  // DOWNSCALING AVERAGES, it does not sample. Nearest-neighbour on a soft
+  // sprite drops the faint outer falloff, which would make a perfectly good
+  // sprite look hard-edged in the preview - reporting the very bug this is
+  // meant to rule out.
+  const soft = { width: 4, height: 1, rgba: new Uint8Array([
+    255, 255, 255, 0,
+    255, 255, 255, 85,
+    255, 255, 255, 170,
+    255, 255, 255, 255,
+  ]) };
+  const half = downscaleRgba(soft, 2);
+  check('downscaling averages rather than sampling',
+    half.rgba[3] > 30 && half.rgba[3] < 60 && half.rgba[7] > 195 && half.rgba[7] < 225,
+    `alphas ${half.rgba[3]}, ${half.rgba[7]}`);
+  check('  and leaves a small image alone',
+    downscaleRgba(soft, 64).scale === 1);
+
+  // COLOUR IS WEIGHTED BY ALPHA. Clear pixels around a sprite are usually
+  // black, and an unweighted mean drags the soft edge toward them - the classic
+  // dark halo.
+  const halo = { width: 2, height: 1, rgba: new Uint8Array([
+    0, 0, 0, 0,        // clear black
+    255, 255, 255, 255, // solid white
+  ]) };
+  const merged = downscaleRgba(halo, 1);
+  check('a transparent neighbour does not darken the result',
+    merged.rgba[0] === 255, `r=${merged.rgba[0]}`);
+
+  // The checkerboard has to be VISIBLE where the image is clear and ABSENT
+  // where it is solid, or it is decoration rather than information.
+  const matted = matteOnCheckerboard({ width: 16, height: 16, rgba: source }, 4);
+  const opaque = [];
+  for (let i = 3; i < matted.length; i += 4) opaque.push(matted[i]);
+  check('the matte is fully opaque', opaque.every((a) => a === 255));
+  const clearPixel = matteOnCheckerboard(
+    { width: 2, height: 1, rgba: new Uint8Array([0, 0, 0, 0, 9, 9, 9, 255]) }, 1,
+  );
+  check('  showing the checker through a clear pixel', clearPixel[0] > 100,
+    String(clearPixel[0]));
+  check('  and nothing through a solid one', clearPixel[4] === 9, String(clearPixel[4]));
+
+  // REFUSED, NOT GUESSED. A shape this decoder does not read returns null so
+  // the caller can say why rather than showing a plausible wrong image.
+  check('a non-PNG is refused', decodePng(Buffer.from('not a png at all')) === null);
+  check('  and so is a truncated one', decodePng(encodePng(size, source).subarray(0, 30)) === null);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

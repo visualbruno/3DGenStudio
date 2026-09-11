@@ -3,6 +3,12 @@ import { Buffer } from 'node:buffer';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { toolHandler, withAssetUrls, findProjectAsset } from '../client.js';
+import {
+  decodePng,
+  downscaleRgba,
+  encodePng,
+  matteOnCheckerboard,
+} from '../../vfx/png.js';
 
 const MIME_BY_EXT = {
   '.png': 'image/png',
@@ -20,7 +26,17 @@ const MIME_BY_EXT = {
 // MCP image blocks Claude can actually see. Cap the raw size so the base64
 // payload stays under typical model/image limits (~5 MB base64).
 const VIEWABLE_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const MAX_VIEW_BYTES = 3.5 * 1024 * 1024;
+// THE CAP THAT ACTUALLY BITES IS THE TRANSPORT'S, AND IT IS ON BASE64. A tool
+// result is capped around a megabyte, and base64 inflates bytes by a third - so
+// a 1.03 MB sprite arrives as ~1.4 MB and is refused before any code here gets
+// a say. The old limit was 3.5 MB of RAW bytes, which is ~4.7 MB encoded: it
+// could never fire first, so instead of this file's clear "too large, use
+// download_asset" message the caller got an opaque transport failure and no
+// idea why. Budgeted in encoded bytes, under the real ceiling, with room for
+// the text part of the reply.
+const MAX_VIEW_BASE64 = 900 * 1024;
+/** Longest edge an inline preview is shrunk to when it will not fit. */
+const VIEW_PREVIEW_MAX_SIDE = 512;
 
 function imageMimeOf(filePath) {
   return MIME_BY_EXT[path.extname(String(filePath || '')).toLowerCase()] || null;
@@ -28,6 +44,27 @@ function imageMimeOf(filePath) {
 
 // Resolve what file a view/download request points at: an image asset's own
 // file, or — for meshes — its thumbnail when viewing.
+/**
+ * How much of an image is transparent, soft, or solid.
+ *
+ * Returned beside the picture because it answers the question NUMERICALLY as
+ * well as visually: "is this matte hard-edged" is a percentage, and a caller
+ * that cannot trust its own eyes on a thumbnail can still read `soft: 26.4`.
+ */
+function alphaProfile(rgba) {
+  let clear = 0;
+  let solid = 0;
+  let soft = 0;
+  const total = rgba.length / 4;
+  for (let i = 3; i < rgba.length; i += 4) {
+    const a = rgba[i];
+    if (a < 8) clear += 1;
+    else if (a > 247) solid += 1;
+    else soft += 1;
+  }
+  return { clear: clear / total, soft: soft / total, solid: solid / total };
+}
+
 function resolveViewTarget(asset) {
   const file = asset.filename || asset.filePath;
   const mime = imageMimeOf(file);
@@ -190,13 +227,19 @@ export function registerAssetTools(server, { api, notifyMutation }) {
 
   server.registerTool('view_asset', {
     title: 'View asset (image)',
-    description: 'SEE a project asset: returns the actual image so it can be visually inspected. For image assets returns the image itself; for meshes returns the thumbnail preview when one exists. Use this after generating images to check the results. For raw file access use download_asset.',
+    description: 'SEE a project asset: returns the actual image so it can be visually inspected. For image assets returns the image itself; for meshes returns the thumbnail preview when one exists. A PNG too large to send inline is SHRUNK rather than refused, and a transparent one is composited over a checkerboard so you can see the shape of its alpha - which is what you are usually checking on a sprite. Use this after generating images to check the results. For raw file access use download_asset.',
     inputSchema: {
       projectId: z.number().int(),
-      assetId: z.number().int().describe('Asset id (from list_assets or a generation result)')
+      assetId: z.number().int().describe('Asset id (from list_assets or a generation result)'),
+      maxWidth: z.number().int().min(32).max(2048).optional()
+        .describe('Shrink the longest edge to this many pixels. Large images are shrunk automatically; '
+          + 'pass this to ask for a specific size, or a bigger one to inspect detail.'),
+      alpha: z.enum(['checker', 'off']).optional()
+        .describe('How transparency is shown when the image is resized. "checker" (default) composites it '
+          + 'over a grey checkerboard so the shape of the alpha is visible; "off" leaves it flat.')
     },
     annotations: { readOnlyHint: true }
-  }, async ({ projectId, assetId } = {}) => {
+  }, async ({ projectId, assetId, maxWidth, alpha } = {}) => {
     try {
       const asset = await findProjectAsset(api, projectId, assetId);
       const target = resolveViewTarget(asset);
@@ -211,15 +254,6 @@ export function registerAssetTools(server, { api, notifyMutation }) {
       }
 
       const buffer = await api.fetchAssetBuffer(target.file);
-      if (buffer.length > MAX_VIEW_BYTES) {
-        return {
-          isError: true,
-          content: [{
-            type: 'text',
-            text: `Asset file is too large to view inline (${(buffer.length / 1024 / 1024).toFixed(1)} MB). Use download_asset to save it locally, or open its URL: ${api.assetUrl(target.file)}`
-          }]
-        };
-      }
 
       const info = {
         id: asset.id,
@@ -229,10 +263,72 @@ export function registerAssetTools(server, { api, notifyMutation }) {
         height: asset.height || undefined,
         url: api.assetUrl(asset.filename || asset.filePath)
       };
+
+      let data = buffer.toString('base64');
+      let mimeType = target.mime;
+      const notes = [];
+
+      // SHRUNK RATHER THAN REFUSED. A sprite too big to send is the case this
+      // tool is most needed for - somebody has just made it and wants to look
+      // at it - and "use download_asset" is not an answer when the caller has
+      // no eyes on the filesystem either.
+      const wantsSmaller = data.length > MAX_VIEW_BASE64 || Number.isFinite(maxWidth);
+      const decoded = wantsSmaller ? decodePng(buffer) : null;
+
+      if (wantsSmaller && decoded) {
+        const side = Math.max(32, Math.min(2048, Math.round(maxWidth) || VIEW_PREVIEW_MAX_SIDE));
+        const small = downscaleRgba(decoded, side);
+
+        // ALPHA IS USUALLY THE QUESTION on the images this gets pointed at.
+        // Every viewer flattens a transparent PNG onto something, and black is
+        // indistinguishable from the sprite BEING black - so a matte that came
+        // out hard-edged or that clipped the soft parts looks the same as one
+        // that did not. A checkerboard shows the shape of the alpha itself.
+        const stats = alphaProfile(decoded.rgba);
+        const checker = alpha !== 'off' && stats.clear > 0.01;
+        const pixels = checker ? matteOnCheckerboard(small) : small.rgba;
+
+        data = encodePng(small.width, pixels, small.height).toString('base64');
+        mimeType = 'image/png';
+        info.shownAt = `${small.width}x${small.height}`;
+        info.alpha = {
+          clear: +(stats.clear * 100).toFixed(1),
+          soft: +(stats.soft * 100).toFixed(1),
+          solid: +(stats.solid * 100).toFixed(1),
+        };
+        notes.push(
+          `Shown at ${small.width}x${small.height} (the full image is ${decoded.width}x${decoded.height}).`
+        );
+        if (checker) {
+          // SAID OUT LOUD, or the checks read as part of the artwork - which
+          // would be a worse misreading than the one this fixes.
+          notes.push(
+            'The grey checkerboard is NOT part of the image: it is behind the transparency, '
+            + `so you can see the shape of the alpha. ${info.alpha.soft}% of pixels are `
+            + 'partly transparent - a hard-edged or cut-out matte would be close to zero.'
+          );
+        }
+      }
+
+      if (data.length > MAX_VIEW_BASE64) {
+        return {
+          isError: true,
+          content: [{
+            type: 'text',
+            text: `Asset file is too large to view inline (${(buffer.length / 1024 / 1024).toFixed(1)} MB`
+              + `${decoded ? '' : ', and it is not an 8-bit PNG this tool can resize'}). `
+              + `Use download_asset to save it locally, or open its URL: ${api.assetUrl(target.file)}`
+          }]
+        };
+      }
+
       return {
         content: [
-          { type: 'image', data: buffer.toString('base64'), mimeType: target.mime },
-          { type: 'text', text: (target.note ? `${target.note}\n` : '') + JSON.stringify(info) }
+          { type: 'image', data, mimeType },
+          {
+            type: 'text',
+            text: [target.note, ...notes, JSON.stringify(info)].filter(Boolean).join('\n')
+          }
         ]
       };
     } catch (err) {
