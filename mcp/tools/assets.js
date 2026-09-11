@@ -63,18 +63,58 @@ export function registerAssetTools(server, { api, notifyMutation }) {
 
   server.registerTool('list_library_assets', {
     title: 'List asset library',
-    description: 'List the global (project-independent) asset library: images, meshes, brushes, and saved workflows.',
+    // ALWAYS BOUNDED. This used to return the entire library - every type,
+    // every asset, each with its URLs - and on a real library that exceeds the
+    // 1 MB tool-result cap, which does not truncate: the call simply fails and
+    // the tool is unusable exactly when there is enough content to need it.
+    description: 'List the global (project-independent) asset library: images, meshes, brushes, trees and VFX effects. '
+      + 'Results are PAGED and every bucket reports its true total, so narrow with `type` and `search` rather than '
+      + 'asking for everything - a large library will not fit in one result.',
+    inputSchema: {
+      type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx']).optional()
+        .describe('Only this kind. Omit to get a page of every kind, which is useful for finding your bearings and little else.'),
+      search: z.string().min(1).optional()
+        .describe('Case-insensitive substring match on the asset name.'),
+      limit: z.number().int().min(1).max(200).optional()
+        .describe('Rows per bucket (default 25).'),
+      offset: z.number().int().min(0).optional().describe('Rows to skip within each bucket (default 0).'),
+    },
     annotations: { readOnlyHint: true }
-  }, toolHandler(async () => {
-    const assets = await api.apiJson('GET', '/assets/library');
-    if (Array.isArray(assets)) return assets.map(asset => withAssetUrls(api, asset));
-    if (assets && typeof assets === 'object') {
-      return Object.fromEntries(Object.entries(assets).map(([key, value]) => [
-        key,
-        Array.isArray(value) ? value.map(asset => withAssetUrls(api, asset)) : value
-      ]));
+  }, toolHandler(async ({ type, search, limit = 25, offset = 0 } = {}) => {
+    const library = await api.apiJson('GET', '/assets/library');
+    const buckets = Array.isArray(library) ? { assets: library } : (library || {});
+
+    const needle = search ? String(search).toLowerCase() : null;
+    const wanted = type ? `${type}s` : null;
+
+    const out = {};
+    for (const [key, value] of Object.entries(buckets)) {
+      if (!Array.isArray(value)) { out[key] = value; continue; }
+      // `vfx` is already plural; everything else gains an s. Matching on both
+      // spellings rather than maintaining a map of one exception.
+      if (wanted && key !== wanted && key !== type) continue;
+
+      const matched = needle
+        ? value.filter((asset) => String(asset?.name || '').toLowerCase().includes(needle))
+        : value;
+      const page = matched.slice(offset, offset + limit);
+      out[key] = {
+        // THE TRUE TOTAL, not the page length. An agent that sees 25 rows and
+        // no total concludes the library holds 25 things.
+        total: matched.length,
+        offset,
+        returned: page.length,
+        ...(matched.length > offset + page.length
+          ? { more: `${matched.length - offset - page.length} further ${key} - raise offset to see them` }
+          : {}),
+        assets: page.map((asset) => withAssetUrls(api, asset)),
+      };
     }
-    return assets;
+
+    if (type && Object.keys(out).length === 0) {
+      return { error: `No "${type}" bucket in the library response.`, buckets: Object.keys(buckets) };
+    }
+    return out;
   }));
 
   server.registerTool('upload_asset', {

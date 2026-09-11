@@ -227,6 +227,22 @@ const DEFS = Object.freeze({
       args: { blockId: d.blockId, mode: d.mode, value: d.fallback },
     }),
   },
+  W_BAD_COLOR: {
+    severity: SEVERITY.WARN,
+    title: 'A colour that could not be read',
+    // ONE ROW PER GRADIENT, listing every key. The reporter keys on
+    // (code, block, prop) and swallows a repeat, which is right - a duplicate
+    // row is usually a compiler bug - and two mistyped keys on one ramp are
+    // genuinely two problems. Aggregating respects that rule instead of
+    // widening it, and an author fixes a gradient rather than a key anyway.
+    message: (d) => `"${d.blockLabel}" has ${d.keys.length === 1 ? 'a gradient key' : `${d.keys.length} gradient keys`} that ${d.keys.length === 1 ? 'is' : 'are'} not colours: ${d.keys.map((k) => `"${k.hex}" at t=${k.t.toFixed(2)}`).join(', ')} - drawing white instead.`,
+    // NO ONE-CLICK FIX. Every other warning here can offer one because the
+    // right answer is knowable; here only the author knows which colour they
+    // meant, and silently substituting one would be the same mistake the
+    // lenient parse made.
+    hint: () => 'Colours are "#rgb" or "#rrggbb". A stray space, a quote, or a '
+      + 'full-width digit pasted from elsewhere all look right and are not.',
+  },
   W_UNKNOWN_PARAM: {
     severity: SEVERITY.WARN,
     title: 'A setting this stage does not offer',

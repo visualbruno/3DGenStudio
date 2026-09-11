@@ -109,23 +109,42 @@ export function linearToSrgb(c) {
  * @param {string} hex
  * @returns {[number, number, number]}
  */
+const HEX_PATTERN = /^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+
+/**
+ * Is this a colour this app can read?
+ *
+ * Exported so the compiler can REPORT a bad one rather than leaving hexToSrgb
+ * to swallow it - see W_BAD_COLOR.
+ *
+ * @param {unknown} hex
+ * @returns {boolean}
+ */
+export function isValidHex(hex) {
+  return typeof hex === 'string' && HEX_PATTERN.test(hex.trim());
+}
+
 export function hexToSrgb(hex) {
   const text = String(hex || '').trim().replace(/^#/, '');
+
+  // MATCHED IN FULL, NOT PARSED LENIENTLY, and this is a real bug being fixed
+  // rather than tidiness. parseInt STOPS at the first character it cannot read
+  // and returns what it got so far; it only yields NaN when the FIRST character
+  // is bad. So "c96a<full-width 2>b" - six characters, with a full-width 2 that an
+  // editor or a paste can introduce invisibly - parsed as "c96a" and became a
+  // TEAL, while the author had typed an orange. Number.isFinite never saw a
+  // problem. A wrong colour that looks deliberate is far worse than white.
+  if (!HEX_PATTERN.test(text)) return [1, 1, 1];
+
   if (text.length === 3) {
-    const r = parseInt(text[0] + text[0], 16);
-    const g = parseInt(text[1] + text[1], 16);
-    const b = parseInt(text[2] + text[2], 16);
-    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b)) {
-      return [r / 255, g / 255, b / 255];
-    }
+    return [
+      parseInt(text[0] + text[0], 16) / 255,
+      parseInt(text[1] + text[1], 16) / 255,
+      parseInt(text[2] + text[2], 16) / 255,
+    ];
   }
-  if (text.length === 6) {
-    const n = parseInt(text, 16);
-    if (Number.isFinite(n)) {
-      return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
-    }
-  }
-  return [1, 1, 1];
+  const n = parseInt(text, 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
 /**

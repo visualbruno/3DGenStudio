@@ -58,6 +58,7 @@ import {
   chooseGradientSampleCount,
   gradientAlphaExtent,
   gradientMeanLuminance,
+  isValidHex,
 } from './gradient.js';
 import { RANDOM_FREQ, VALUE_MODE, normalizeValue, valueRange } from './value.js';
 
@@ -295,6 +296,12 @@ function lowerOperatorTree(rootId, ctx) {
   const out = ctx.nextRegister();
   const op = {
     op: OPERATOR_OPS[node.type] || 'const',
+    // THE AUTHORED TYPE, beside the lowered one - exactly the reason blocks
+    // carry srcBlockType. `op` is what the runtime dispatches ('mul'); this is
+    // what the author placed ('op.multiply'), and it is the only thing that can
+    // be looked up in the engine mapping table. Without it an export cannot say
+    // which operators an effect actually uses.
+    srcType: node.type,
     out,
     in: inputs,
     width: 1,
@@ -629,6 +636,22 @@ function lowerBinding(prop, propDef, value, block, ctx) {
       };
     }
     case VALUE_MODE.GRADIENT: {
+      // A COLOUR THAT COULD NOT BE READ IS REPORTED, not quietly drawn white.
+      // hexToSrgb falls back rather than throwing, because this also runs on
+      // hand-edited and agent-written documents - but a fallback with no report
+      // is indistinguishable from a broken feature, and an agent authoring a
+      // gradient through the MCP tools got `ok: true` and zero diagnostics for
+      // a key it had mistyped.
+      const badKeys = (value.gradient?.colorKeys || [])
+        .filter((key) => !isValidHex(key.hex))
+        .map((key) => ({ hex: String(key.hex), t: Number(key.t) || 0 }));
+      if (badKeys.length > 0) {
+        ctx.diag.report(
+          'W_BAD_COLOR',
+          { blockId: block.id, prop },
+          { blockLabel: ctx.consumer?.blockLabel || block.type, keys: badKeys },
+        );
+      }
       const n = chooseGradientSampleCount(value.gradient);
       const index = ctx.tables.add({
         kind: 'gradient',

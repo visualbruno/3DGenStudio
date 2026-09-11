@@ -44,6 +44,11 @@ import {
   VFX_IR_SPACE,
   validateIrSerializable,
 } from './ir.js';
+import {
+  buildEngineMapping,
+  collectUsedEngineIds,
+  unsupportedFor,
+} from './engineMapping.js';
 import * as fixtures from './fixtures.mjs';
 import { constValue, curveValue } from './value.js';
 import { CURVE_PRESETS } from './curve.js';
@@ -477,6 +482,56 @@ function record(result) {
   check('an approximated block is flagged for the target', Boolean(approx), approx?.message.slice(0, 70));
   check('  with the difference named', /amplitude and frequency/.test(approx.hint), approx.hint.slice(0, 60));
 
+  // THE EXPORT'S GAP LIST DESCRIBES THE EFFECT, NOT THE CATALOG. Reported by
+  // an agent: exporting a blast for Unreal listed update.attractor as a gap,
+  // and there was no attractor in the graph. One wrong row makes every other
+  // row suspect, and on a large effect the list is long enough that nobody
+  // re-checks it against the document.
+  {
+    const { ir } = compile(fixtures.stagedExplosion());
+    const mapping = buildEngineMapping();
+    const used = collectUsedEngineIds(ir);
+    const everything = unsupportedFor('unreal', mapping);
+    const thisEffect = unsupportedFor('unreal', mapping, used);
+
+    check('the catalog has gaps to report at all', everything.length > 0,
+      String(everything.length));
+    check('  and an effect reports fewer than all of them',
+      thisEffect.length < everything.length,
+      `${thisEffect.length} of ${everything.length}`);
+
+    // The real property: every row names something the effect CONTAINS.
+    const present = new Set([
+      ...used.block, ...used.operator, ...used.event, ...used.valueMode, ...used.renderMode,
+    ]);
+    const phantom = thisEffect.filter((row) => !present.has(row.id));
+    check('  and every row it does report is really in the graph',
+      phantom.length === 0, phantom.map((r) => r.id).join(', '));
+
+    // And nothing is lost: a gap the effect DOES have still appears.
+    const usedBlocks = [...used.block];
+    const shouldAppear = everything.filter((row) => usedBlocks.includes(row.id)).map((r) => r.id);
+    check('  while keeping the ones that genuinely apply',
+      shouldAppear.every((id) => thisEffect.some((row) => row.id === id)),
+      shouldAppear.join(', ') || 'none to keep');
+
+    // The IR has to carry the authored operator type for this to work at all -
+    // `op` is the LOWERED name ('mul') and cannot be looked up in the mapping,
+    // which is keyed by what the author placed ('op.multiply'). Checked on a
+    // fixture that HAS operators: stagedExplosion has none, so asserting it
+    // there passes without testing anything.
+    const wired = compile(fixtures.operatorWired()).ir;
+    const ops = wired.systems
+      .flatMap((sys) => [...sys.spawn, ...sys.init, ...sys.update])
+      .flatMap((block) => block.pre || []);
+    check('  operators carry the type the author placed',
+      ops.length > 0 && ops.every((op) => typeof op.srcType === 'string' && op.srcType.startsWith('op.')),
+      `${ops.length} ops: ${ops.map((o) => o.srcType).join(' ')}`);
+    check('  so an operator gap can be reported against the effect',
+      collectUsedEngineIds(wired).operator.size === new Set(ops.map((o) => o.srcType)).size,
+      [...collectUsedEngineIds(wired).operator].join(' '));
+  }
+
   const noTarget = compile(fixtures.stagedExplosion());
   check('engine notes are silent with no target chosen',
     !codesOf(noTarget).includes('I_ENGINE_APPROX'));
@@ -594,6 +649,30 @@ function record(result) {
     props.every((d) => d.hint.includes('start') && d.hint.includes('end')
       && d.hint.includes('thickness')),
     props[0]?.hint);
+
+  // A COLOUR THAT IS NOT ONE. Reported by an agent that authored a gradient
+  // through the MCP tools: the key held a full-width digit, the compile
+  // returned ok with zero diagnostics, and the effect drew a confident wrong
+  // colour rather than an obviously wrong one - because parseInt truncates at
+  // the first character it cannot read instead of refusing.
+  const colours = byCode('W_BAD_COLOR');
+  // ONE ROW FOR THE GRADIENT, listing both keys - the reporter deliberately
+  // keeps one row per (code, block, property), and an author fixes a ramp
+  // rather than a key.
+  check('a colour that cannot be read is reported', colours.length === 1,
+    String(colours.length));
+  check('  naming every bad key, not just the first',
+    colours[0]?.message.includes('#c96a') && colours[0]?.message.includes('characteristics'),
+    colours[0]?.message);
+  check('  saying where on the ramp each one is',
+    /t=0\.00/.test(colours[0]?.message || '') && /t=1\.00/.test(colours[0]?.message || ''),
+    colours[0]?.message);
+  check('  and what a colour looks like',
+    colours.every((d) => d.hint.includes('#rrggbb')), colours[0]?.hint);
+  // NO ONE-CLICK FIX, deliberately: only the author knows which colour they
+  // meant, and substituting one would repeat the mistake that caused this.
+  check('  offering no fix, because only the author knows the colour',
+    colours.every((d) => !d.fix));
 
   const modes = byCode('W_UNKNOWN_MODE');
   check('an unknown mode value is reported', modes.length === 1, String(modes.length));

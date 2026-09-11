@@ -158,6 +158,22 @@ export function registerVfxTools(server, { api, notifyMutation }) {
       kind,
       label: def.label,
       blurb: def.blurb,
+      // HOW TO ACTUALLY BUILD A SUB-EMITTER, on the context that needs it.
+      //
+      // The document has a top-level `events: []` array AND an `event` context
+      // kind, and only the second one does anything - the array is carried into
+      // the IR and read by nothing. An agent that found both had no way to tell
+      // which to populate and skipped sub-emitters entirely, so its debris had
+      // no trails. `optionsFrom` below explains where `source` gets its values;
+      // this explains the shape.
+      ...(kind === 'event' ? {
+        howTo: 'Give the CHILD system an `event` context as its first context, before `spawn`. '
+          + 'Set params {trigger, source, probability}: `trigger` is onDeath or onCollide, '
+          + '`source` is the id of the PARENT system in this same document, and `probability` '
+          + 'is 0..1. The child then spawns wherever the parent particle was. Leave the '
+          + 'top-level `events: []` array alone - it is vestigial and nothing reads it. '
+          + 'The "firework" preset is a worked example: read it with get_vfx_graph.',
+      } : {}),
       // The Output stage's settings are the ones most often got wrong, because
       // they are context PARAMS rather than blocks and are easy to miss.
       params: Object.entries(def.params || {}).map(([name, p]) => ({

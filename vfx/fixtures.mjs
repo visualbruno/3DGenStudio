@@ -668,6 +668,10 @@ export function emitterShapes() {
  *
  * @returns {Object} a normalised document
  */
+// U+FF12, a full-width 2. Named rather than pasted so it survives an editor
+// that would silently normalise it - which is the whole point of the bug.
+const FULLWIDTH_TWO = '\uFF12';
+
 export function agentTypos() {
   const doc = createEmptyVfxDoc({ name: 'Agent Typos' });
   doc.references = { tex: { kind: 'image', ref: 'asset:118', name: 't.png', colorSpace: 'srgb' } };
@@ -686,7 +690,24 @@ export function agentTypos() {
         width: constValue(0.1),
       }, { placement: 'sequential' }),
     ],
-    update: [block('update.drag', { drag: constValue(0.5) })],
+    update: [
+      block('update.drag', { drag: constValue(0.5) }),
+      // A GRADIENT WITH A COLOUR THAT IS NOT ONE. The first key holds a
+      // full-width digit, which is invisible in most editors and arrives
+      // routinely through a paste or a model's output; the second is prose.
+      // Both used to compile clean, and the first was WORSE than ignored - a
+      // lenient parseInt truncated it and produced a confident teal where an
+      // orange was meant.
+      block('update.colorOverLife', {
+        color: gradientValue({
+          colorKeys: [
+            { t: 0, hex: `#c96a${FULLWIDTH_TWO}b`, intensity: 1 },
+            { t: 1, hex: '#cbb characteristics', intensity: 1 },
+          ],
+          alphaKeys: [{ t: 0, a: 1 }, { t: 1, a: 0 }],
+        }),
+      }),
+    ],
     outputs: [{
       // Neither value is in the list. Both used to be accepted in silence.
       params: { mode: 'sparks', blend: 'add', sort: 'none' },

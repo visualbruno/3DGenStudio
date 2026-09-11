@@ -196,12 +196,20 @@ export function buildEngineMapping() {
  * @param {Object} [mapping] a prebuilt mapping, to avoid rebuilding it
  * @returns {Array<{kind: string, id: string, support: string, note: string}>}
  */
-export function unsupportedFor(target, mapping = null) {
+export function unsupportedFor(target, mapping = null, used = null) {
   const table = mapping || buildEngineMapping();
   const out = [];
   const collect = (kind, rows) => {
+    const inUse = used?.[kind] || null;
     for (const row of rows) {
       if (row[target] === ENGINE_SUPPORT.NATIVE) continue;
+      // FILTERED TO WHAT THE EFFECT CONTAINS, when the caller knows. Without
+      // this the list is the whole catalog's gaps, which an author reads as a
+      // report about THEIR effect: an agent exporting a blast for Unreal was
+      // told its point attractor would not survive, and there was no attractor
+      // in the graph. One wrong row makes every other row suspect, and on a
+      // large effect the list is long enough that nobody checks.
+      if (inUse && !inUse.has(row.id || row.mode)) continue;
       out.push({ kind, id: row.id || row.mode, support: row[target], note: row.note || '' });
     }
   };
@@ -222,4 +230,59 @@ function summarise(blocks, operators, target) {
     else counts.none += 1;
   }
   return counts;
+}
+
+/**
+ * Everything in an effect that the engine mapping has an opinion about.
+ *
+ * Reads the IR rather than the graph, because the IR is what the export ships
+ * and what a plugin consumes - and because the compiler has already resolved
+ * which blocks survive, which operators are reachable, and what each property
+ * ended up being bound to.
+ *
+ * @param {Object} ir a compiled effect
+ * @returns {{block: Set<string>, operator: Set<string>, event: Set<string>,
+ *   valueMode: Set<string>, renderMode: Set<string>}}
+ */
+export function collectUsedEngineIds(ir) {
+  const used = {
+    block: new Set(),
+    operator: new Set(),
+    event: new Set(),
+    valueMode: new Set(),
+    renderMode: new Set(),
+  };
+  if (!ir || !Array.isArray(ir.systems)) return used;
+
+  const readBlock = (block) => {
+    if (!block) return;
+    if (block.srcBlockType) used.block.add(block.srcBlockType);
+    for (const binding of block.bindings || []) {
+      // The IR's binding sources and the mapping's value modes are the same
+      // vocabulary for everything an author can choose. `register` is an
+      // operator chain, which is counted through `pre` instead, and `uniform`
+      // is the blackboard.
+      if (binding.src === 'uniform') used.valueMode.add('exposed');
+      else if (binding.src === 'register') used.valueMode.add('link');
+      else if (binding.src) used.valueMode.add(binding.src);
+    }
+    for (const op of block.pre || []) {
+      if (op?.srcType) used.operator.add(op.srcType);
+    }
+  };
+
+  for (const system of ir.systems) {
+    for (const stage of ['spawn', 'init', 'update']) {
+      for (const block of system[stage] || []) readBlock(block);
+    }
+    for (const output of system.outputs || []) {
+      if (output?.mode) used.renderMode.add(output.mode);
+      for (const block of output.blocks || []) readBlock(block);
+    }
+  }
+
+  for (const channel of ir.eventChannels || []) {
+    if (channel?.trigger) used.event.add(channel.trigger);
+  }
+  return used;
 }

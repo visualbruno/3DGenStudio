@@ -6,7 +6,11 @@ import path from 'path';
 // in a packaged app and in Docker.
 import { normalizeVfxDoc } from './vfx/doc.js';
 import { compileVfxGraph } from './vfx/compile.js';
-import { buildEngineMapping, unsupportedFor } from './vfx/engineMapping.js';
+import {
+  buildEngineMapping,
+  collectUsedEngineIds,
+  unsupportedFor,
+} from './vfx/engineMapping.js';
 import process from 'process';
 import fs from 'fs/promises';
 // The SQL engine lives behind db/index.js: SQLite for a desktop install,
@@ -5925,7 +5929,10 @@ export async function buildVfxExport(assetId, { appVersion = '', engineTarget = 
     engineMapping: mapping,
     // Only what THIS bundle's target cannot take intact, so a plugin author is
     // not left diffing the whole table to find the four rows that matter.
-    engineGaps: engineTarget ? unsupportedFor(engineTarget, mapping) : null,
+    // THIS EFFECT'S gaps, not the catalog's. See collectUsedEngineIds.
+    engineGaps: engineTarget
+      ? unsupportedFor(engineTarget, mapping, collectUsedEngineIds(compiled.ir))
+      : null,
     references,
     warnings
   };
