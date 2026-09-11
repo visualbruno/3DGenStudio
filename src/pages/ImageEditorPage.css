@@ -531,7 +531,53 @@
   }
 }
 
+/* ---- Right column -------------------------------------------------------- */
+
+/* Was just the Layers panel; now a stack, so a tool can pin a panel of its own
+ * beside the canvas. The whole column is a fixed-height grid cell, so the
+ * stack must not grow — the Layers list takes the slack and scrolls inside
+ * itself, and the tool panel keeps its natural height at the bottom. */
+.image-editor-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.image-editor-side > .image-editor-layers-panel {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
 /* ---- Seamless (tileable) tool ------------------------------------------- */
+
+/* The tiled preview, pinned in the right column instead of sitting at the top
+ * of the tool's own scrolling panel where it was out of view by the time you
+ * reached the sliders it was judging. Matches the Layers panel's card so the
+ * column reads as one stack. */
+.seamless-preview-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid rgba(71, 72, 74, 0.18);
+  background: rgba(18, 19, 21, 0.92);
+  border-radius: var(--radius-xl);
+}
+
+.seamless-preview-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.seamless-preview-panel__title {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
 
 /* Both previews show the texture tiled 2x2: a seam is invisible on a single
  * image and unmistakable the moment it repeats. */
@@ -581,6 +627,45 @@
   font-size: 11px;
   line-height: 1.4;
   color: var(--on-surface-variant);
+}
+
+/* Warnings that belong to a specific slider position, so they sit inside the
+ * hint rather than taking a row of their own and shifting the panel every time
+ * the slider crosses the threshold. */
+.seamless-warn {
+  color: #e08b4a;
+  font-weight: 500;
+}
+
+/* The stamping controls are a second, independent fix with its own on/off, and
+ * the rule is there to say so — without it the panel reads as one long
+ * undifferentiated run of sliders. */
+.seamless-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid rgba(143, 245, 255, 0.22);
+}
+
+/* Seed keeps its dice button on the same row: rerolling is the move you make
+ * most often in this group, and it should not be a scroll away from the value
+ * it changes. */
+.seamless-seed {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+}
+
+.seamless-seed .image-editor-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.seamless-seed .image-editor-btn {
+  flex: 0 0 auto;
+  padding: 0.3rem 0.5rem;
+  line-height: 1.2;
 }
 
 .image-editor-toggle {

@@ -25,6 +25,7 @@ import {
 import ImageEditorToolbar from '../components/imageEditor/ImageEditorToolbar'
 import ToolSidebar from '../components/imageEditor/ToolSidebar'
 import LayersPanel from '../components/imageEditor/LayersPanel'
+import SeamlessPreview from '../components/imageEditor/SeamlessPreview'
 import CropControls from '../components/imageEditor/controls/CropControls'
 import ResizeControls from '../components/imageEditor/controls/ResizeControls'
 import AdjustControls from '../components/imageEditor/controls/AdjustControls'
@@ -1903,8 +1904,6 @@ export default function ImageEditorPage() {
           seamlessValues={seamlessValues}
           setSeamlessValues={setSeamlessValues}
           setSeamlessPreviewDirty={setSeamlessPreviewDirty}
-          getSourceCanvas={getSeamlessSourceCanvas}
-          sourceRevision={renderRevision}
           onReset={handleResetSeamless}
           onApply={handleApplySeamless}
         />
@@ -2073,16 +2072,29 @@ export default function ImageEditorPage() {
               )}
             </div>
 
-            <LayersPanel
-              layers={layers}
-              selectedLayerId={selectedLayerId}
-              setSelectedLayerId={setSelectedLayerId}
-              loading={loading}
-              onAddLayer={handleAddLayer}
-              onUpdateLayer={handleUpdateLayer}
-              onMoveLayer={handleMoveLayer}
-              onDeleteLayer={handleDeleteLayer}
-            />
+            {/* Right column. The Seamless preview lives down here rather than in
+                its own control panel because it is the only way to judge the
+                settings, and up there it scrolled out of view as soon as you
+                reached the sliders it was meant to be showing you. */}
+            <div className="image-editor-side">
+              <LayersPanel
+                layers={layers}
+                selectedLayerId={selectedLayerId}
+                setSelectedLayerId={setSelectedLayerId}
+                loading={loading}
+                onAddLayer={handleAddLayer}
+                onUpdateLayer={handleUpdateLayer}
+                onMoveLayer={handleMoveLayer}
+                onDeleteLayer={handleDeleteLayer}
+              />
+              {toolGroup === 'edit' && toolId === 'seamless' && (
+                <SeamlessPreview
+                  seamlessValues={seamlessValues}
+                  getSourceCanvas={getSeamlessSourceCanvas}
+                  sourceRevision={renderRevision}
+                />
+              )}
+            </div>
           </div>
         </section>
       </main>

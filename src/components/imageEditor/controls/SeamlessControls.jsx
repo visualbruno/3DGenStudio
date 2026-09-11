@@ -1,55 +1,24 @@
 // Seamless (tileable texture) tool control panel.
 //
-// The tiled preview is the point of this panel, not decoration. A seam is
-// invisible on the texture itself and obvious the moment it repeats, so judging
-// the result on the ordinary single-image canvas is guesswork — you have to see
-// it tiled to know whether the tool worked.
-import { useEffect, useRef, useState } from 'react'
-import {
-  applySeamlessToCanvas, describeSeam, describeTiling, drawTiledPreview, measureSeam,
-} from '../../../utils/seamlessTexture'
-
-// Fallback only. The canvases are sized from their real laid-out box below,
-// because the CSS stretches them to the panel width — a fixed backing store
-// gets magnified by the browser and the preview looks soft for reasons that
-// have nothing to do with the texture, which is a bad way to judge a tool whose
-// whole job is sharpness at a join.
-const PREVIEW_PX = 220
-// The preview is computed from a downscaled copy. A 4K texture would otherwise
-// be reprocessed on every slider tick to fill a small box.
-const PREVIEW_SOURCE_MAX = 384
-
-function downscale(canvas, maxSize) {
-  if (!canvas?.width) return null
-  const scale = Math.min(1, maxSize / Math.max(canvas.width, canvas.height))
-  if (scale >= 1) return canvas
-  const small = document.createElement('canvas')
-  small.width = Math.max(8, Math.round(canvas.width * scale))
-  small.height = Math.max(8, Math.round(canvas.height * scale))
-  const context = small.getContext('2d')
-  context.imageSmoothingEnabled = true
-  context.imageSmoothingQuality = 'high'
-  context.drawImage(canvas, 0, 0, small.width, small.height)
-  return small
-}
+// The tiled preview that judges these settings is NOT here — it lives in the
+// right column (`SeamlessPreview`), pinned where it cannot scroll away. This
+// panel is long enough that anything at the top of it is out of view by the
+// time you reach the stamp sliders, and a preview you have to scroll back to is
+// a preview you stop looking at.
+//
+// The panel is in two halves because the tool is: the JOIN makes the opposite
+// edges continuous, and the STAMPS break up the straight line the join leaves
+// behind. Either half can do the whole job alone — overlap 0 is stamps only,
+// and stamping off is the join only — which is why both are switchable rather
+// than merged into one "strength" slider.
 
 export default function SeamlessControls({
   seamlessValues,
   setSeamlessValues,
   setSeamlessPreviewDirty,
-  getSourceCanvas,
-  sourceRevision,
   onReset,
   onApply,
 }) {
-  const beforeRef = useRef(null)
-  const afterRef = useRef(null)
-  const beforeVerdictRef = useRef(null)
-  const afterVerdictRef = useRef(null)
-  const beforeTilingRef = useRef(null)
-  const afterTilingRef = useRef(null)
-  const [displayRevision, setDisplayRevision] = useState(0)
-
   const handleChange = key => event => {
     const raw = event.target.value
     const value = event.target.type === 'checkbox'
@@ -59,87 +28,21 @@ export default function SeamlessControls({
     setSeamlessPreviewDirty(true)
   }
 
-  // The layer canvas lives in a ref on the page, so it is resolved here inside
-  // the effect rather than passed down as a prop — reading a ref during render
-  // is exactly what React warns about. `sourceRevision` is what re-runs this
-  // when the layer's pixels change underneath us.
-  //
-  // The verdicts are written straight into their nodes rather than held in
-  // state: this whole block is imperative canvas drawing already, and routing
-  // one string back through a state update just to re-render the same effect is
-  // both a render loop waiting to happen and a lint error.
-  // Match each canvas's backing store to the pixels it actually occupies on
-  // this display, so the tiled preview is not itself being upscaled.
-  useEffect(() => {
-    const nodes = [beforeRef.current, afterRef.current].filter(Boolean)
-    if (!nodes.length || typeof ResizeObserver === 'undefined') return undefined
-    const observer = new ResizeObserver(() => setDisplayRevision(value => value + 1))
-    nodes.forEach(node => observer.observe(node))
-    return () => observer.disconnect()
-  }, [])
+  // Always lands on a different seed, so the dice never looks broken.
+  const rollSeed = () => {
+    setSeamlessValues(prev => {
+      let next = prev.seed
+      while (next === prev.seed) next = Math.round(-50 + Math.random() * 100)
+      return { ...prev, seed: next }
+    })
+    setSeamlessPreviewDirty(true)
+  }
 
-  useEffect(() => {
-    const ratio = window.devicePixelRatio || 1
-    const fit = node => {
-      if (!node) return
-      const box = node.getBoundingClientRect()
-      const size = Math.max(64, Math.round((box.width || PREVIEW_PX) * ratio))
-      if (node.width !== size) node.width = size
-      if (node.height !== size) node.height = size
-    }
-    fit(beforeRef.current)
-    fit(afterRef.current)
-
-    const previewSource = downscale(getSourceCanvas?.(), PREVIEW_SOURCE_MAX)
-    const processed = previewSource ? applySeamlessToCanvas(previewSource, seamlessValues) : null
-
-    if (previewSource && beforeRef.current) drawTiledPreview(beforeRef.current, previewSource, 2)
-    if (processed && afterRef.current) drawTiledPreview(afterRef.current, processed, 2)
-
-    // Two verdicts, because there are two ways to fail. The seam verdict only
-    // ever looks at the join; a texture that fades from light to dark scores
-    // "invisible" on it and still reads as a grid the moment it repeats, so the
-    // tiling verdict reports that separately.
-    const label = (node, verdict) => {
-      if (!node) return
-      node.textContent = verdict ? ` · ${verdict}` : ''
-      node.dataset.verdict = verdict
-    }
-    const measure = canvas => (canvas ? measureSeam(canvas) : null)
-    const before = measure(previewSource)
-    const after = measure(processed)
-    label(beforeVerdictRef.current, before ? describeSeam(before.ratio) : '')
-    label(afterVerdictRef.current, after ? describeSeam(after.ratio) : '')
-    label(beforeTilingRef.current, before ? describeTiling(before.bias) : '')
-    label(afterTilingRef.current, after ? describeTiling(after.bias) : '')
-  }, [getSourceCanvas, sourceRevision, seamlessValues, displayRevision])
+  const joins = seamlessValues.mode !== 'mirror' && seamlessValues.overlap > 0
+  const stamping = seamlessValues.stamp !== false
 
   return (
     <div className="image-editor-controls">
-      <div className="seamless-preview">
-        <figure>
-          <canvas ref={beforeRef} width={PREVIEW_PX} height={PREVIEW_PX} />
-          <figcaption>
-            Before
-            <span className="seamless-verdict" ref={beforeVerdictRef} />
-            <span className="seamless-verdict" ref={beforeTilingRef} />
-          </figcaption>
-        </figure>
-        <figure>
-          <canvas ref={afterRef} width={PREVIEW_PX} height={PREVIEW_PX} />
-          <figcaption>
-            After
-            <span className="seamless-verdict" ref={afterVerdictRef} />
-            <span className="seamless-verdict" ref={afterTilingRef} />
-          </figcaption>
-        </figure>
-      </div>
-      <p className="seamless-hint">
-        Each preview is the texture tiled 2×2 — a seam shows as a cross through the middle. The
-        first verdict is the join; the second is whether the tile is evenly lit. A texture needs
-        both before it stops looking tiled.
-      </p>
-
       <label className="image-editor-label">
         Method
         <select
@@ -153,19 +56,51 @@ export default function SeamlessControls({
         </select>
       </label>
 
+      {/* Mirror has no say in this: folding the image tiles it both ways whether
+          you asked for it or not, so offering the choice would be a lie. */}
       {seamlessValues.mode !== 'mirror' && (
         <>
           <label className="image-editor-label">
-            Overlap ({seamlessValues.overlap}%)
+            Dimensions to loop
+            <select
+              className="image-editor-input"
+              value={seamlessValues.loopAxis || 'xy'}
+              onChange={handleChange('loopAxis')}
+            >
+              <option value="xy">XY — tile in both directions</option>
+              <option value="x">X — left and right edges only</option>
+              <option value="y">Y — top and bottom edges only</option>
+            </select>
+          </label>
+          <p className="seamless-hint">
+            Leave a pair of edges alone when nothing will ever butt against them — a wall strip
+            that repeats sideways but is capped top and bottom keeps its real top and bottom this
+            way, instead of spending them on a join nobody sees.
+          </p>
+
+          <label className="image-editor-label">
+            Overlap ({seamlessValues.overlap === 0 ? 'off' : `${seamlessValues.overlap}%`})
             <input
               className="image-editor-input"
               type="range"
-              min="4"
+              min="0"
               max="40"
               value={seamlessValues.overlap}
               onChange={handleChange('overlap')}
             />
           </label>
+          {seamlessValues.overlap === 0 && (
+            <p className="seamless-hint">
+              No join at all — the stamps below do the whole job. Nothing is resampled and no
+              strip of the texture is spent, so the pixels stay exactly as they were everywhere a
+              stamp did not land. Needs stamping switched on to do anything.
+            </p>
+          )}
+        </>
+      )}
+
+      {joins && (
+        <>
           <label className="image-editor-label">
             Softness ({seamlessValues.feather}px)
             <input
@@ -180,6 +115,20 @@ export default function SeamlessControls({
           <p className="seamless-hint">
             Quoted for a 1K texture and scaled from there, so the preview softens the join by the
             same amount, relative to the picture, as the full-size result will.
+          </p>
+
+          <label className="image-editor-toggle">
+            <input
+              type="checkbox"
+              checked={seamlessValues.keepSize !== false}
+              onChange={handleChange('keepSize')}
+            />
+            <span>Keep original size</span>
+          </label>
+          <p className="seamless-hint">
+            Joining spends the overlap, so keeping the original size means resampling — at a 17%
+            overlap that is a 1.17× magnification of everything, not just the edges. Turn it off
+            for a slightly smaller but pixel-exact texture.
           </p>
         </>
       )}
@@ -201,19 +150,154 @@ export default function SeamlessControls({
         amount of overlap fixes that. Turn it down if you want to keep the photo&apos;s own lighting.
       </p>
 
+      {/* ---- Stamping ---------------------------------------------------- */}
+
       <label className="image-editor-toggle">
         <input
           type="checkbox"
-          checked={seamlessValues.keepSize !== false}
-          onChange={handleChange('keepSize')}
+          checked={stamping}
+          onChange={handleChange('stamp')}
         />
-        <span>Keep original size</span>
+        <span>Stamp the seam</span>
       </label>
       <p className="seamless-hint">
-        Joining spends the overlap, so keeping the original size means resampling — at a 17%
-        overlap that is a 1.17× magnification of everything, not just the edges. Turn it off for
-        a slightly smaller but pixel-exact texture.
+        Scatters round patches of the texture across the seam, each one wrapping around the edge
+        so it stays continuous. A join alone leaves one ruler-straight line through the tile, and
+        on bark, planks or stone courses the eye finds it even when the pixels match perfectly —
+        this is what makes that line ragged.
       </p>
+
+      {stamping && (
+        <div className="seamless-group">
+          <div className="seamless-seed">
+            <label className="image-editor-label">
+              Seed ({seamlessValues.seed})
+              <input
+                className="image-editor-input"
+                type="range"
+                min="-50"
+                max="50"
+                step="1"
+                value={seamlessValues.seed}
+                onChange={handleChange('seed')}
+              />
+            </label>
+            <button
+              type="button"
+              className="image-editor-btn"
+              onClick={rollSeed}
+              title="Pick a different set of stamps"
+            >
+              🎲
+            </button>
+          </div>
+          <p className="seamless-hint">
+            Which patches get picked and where they land. Everything else held still, this is the
+            reroll button — if one stamp has dropped something recognisable onto the seam, step
+            the seed rather than fighting it with the other sliders.
+          </p>
+
+          <label className="image-editor-label">
+            Stamp Radius ({seamlessValues.stampRadius.toFixed(2)})
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={seamlessValues.stampRadius}
+              onChange={handleChange('stampRadius')}
+            />
+          </label>
+          <label className="image-editor-label">
+            Stamp Density ({seamlessValues.stampDensity.toFixed(2)})
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={seamlessValues.stampDensity}
+              onChange={handleChange('stampDensity')}
+            />
+          </label>
+          <label className="image-editor-label">
+            Hardness ({seamlessValues.hardness.toFixed(2)})
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={seamlessValues.hardness}
+              onChange={handleChange('hardness')}
+            />
+          </label>
+          <p className="seamless-hint">
+            Radius is 5–30% of the texture; density is how far consecutive stamps overlap.
+            Hardness is how far the patch stays fully opaque before it starts fading — hard
+            patches read as their own thing, soft ones dissolve into what is underneath.
+          </p>
+
+          <label className="image-editor-label">
+            Stamp Noise ({seamlessValues.stampNoise.toFixed(2)})
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="2"
+              step="0.01"
+              value={seamlessValues.stampNoise}
+              onChange={handleChange('stampNoise')}
+            />
+          </label>
+          <p className="seamless-hint">
+            Eats the stamp&apos;s edge away with noise so it lands as an irregular blotch instead
+            of a circle.
+            {seamlessValues.stampNoise > 1.35 && (
+              <strong className="seamless-warn">
+                {' '}Above 1 the noise starts punching holes through the middle of the stamp,
+                which can re-expose the seam it was covering.
+              </strong>
+            )}
+          </p>
+
+          <label className="image-editor-label">
+            Randomize ({seamlessValues.randomize.toFixed(2)})
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="0.5"
+              step="0.01"
+              value={seamlessValues.randomize}
+              onChange={handleChange('randomize')}
+            />
+          </label>
+          <label className="image-editor-label">
+            Rotate ({seamlessValues.stampRotate}°)
+            <input
+              className="image-editor-input"
+              type="range"
+              min="0"
+              max="360"
+              step="1"
+              value={seamlessValues.stampRotate}
+              onChange={handleChange('stampRotate')}
+            />
+          </label>
+          <p className="seamless-hint">
+            Randomize varies each stamp&apos;s size and nudges it off the seam line; Rotate turns
+            it, which breaks up a texture with an obvious grain direction.
+            {seamlessValues.stampRotate > 1 && (
+              <strong className="seamless-warn">
+                {' '}Rotation above 1° resamples each stamp pixel-by-pixel, so fine detail inside
+                it comes back slightly less precise.
+              </strong>
+            )}
+          </p>
+        </div>
+      )}
 
       <div className="image-editor-toggle-row">
         <button type="button" className="image-editor-btn" onClick={onReset}>

@@ -532,6 +532,298 @@ function mirrorTile(canvas) {
 }
 
 // ---------------------------------------------------------------------------
+// 4. Stamping the seam
+// ---------------------------------------------------------------------------
+//
+// Joining the overlap makes the two edges continuous, and it still leaves ONE
+// perfectly straight line of continuity through the tile. On anything with
+// large-scale structure — bark running vertically, planks, stone courses — the
+// eye finds that line anyway, because everything else in the picture is
+// irregular and that one thing is ruler-straight.
+//
+// Stamping breaks it up. Round patches lifted from elsewhere in the same
+// texture are pasted ACROSS the seam with a soft, noise-eaten edge; each patch
+// is written through a wrapping index, so the half that falls off the left
+// comes back on the right and the patch is continuous around the wrap by
+// construction. The straight line becomes a ragged one made of the texture's
+// own detail.
+//
+// Because every stamp wraps, stamping can never re-open a seam — it composes
+// with whatever ran before it, cut, blend or mirror, and with `overlap` at 0 it
+// is the entire fix on its own. The algorithm and the parameter ranges are
+// ported from the FImpossible Creations "Seamless Texture Generator" Unity
+// tool, whose defaults are reproduced here so a setting that works there works
+// here.
+
+function clamp01(value) {
+  return value < 0 ? 0 : (value > 1 ? 1 : value)
+}
+
+function lerpUnclamped(from, to, t) {
+  return from + (to - from) * t
+}
+
+function lerp(from, to, t) {
+  return lerpUnclamped(from, to, clamp01(t))
+}
+
+// Seeded PRNG (mulberry32). The seed has to produce the same stamps every time
+// or the tool is unusable: the whole workflow is nudging a slider and watching
+// the preview, and a result that reshuffles itself on every keystroke cannot be
+// judged, let alone reproduced at full resolution.
+function makeRandom(seed) {
+  let state = (Math.imul(Math.trunc(seed) | 0, 0x9e3779b1) ^ 0x85ebca6b) >>> 0
+  return function next() {
+    state = (state + 0x6d2b79f5) >>> 0
+    let t = state
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+// Draws exactly one value from `random` even when the range is empty, so the
+// preview and the full-size run stay in step: they differ in pixel dimensions,
+// which changes the ranges, and a range that collapsed at one size but not the
+// other would desynchronise every stamp after it.
+function randomInt(random, from, to) {
+  return from + Math.floor(random() * Math.abs(to - from))
+}
+
+// --- perlin ----------------------------------------------------------------
+
+// Classic 2D perlin with a fixed permutation, standing in for Unity's
+// Mathf.PerlinNoise. It does not need to match that function value for value —
+// it needs to be coherent noise in 0..1 at the same frequency, which is all the
+// stamp mask asks of it.
+const PERLIN_PERMUTATION = (() => {
+  const table = new Uint8Array(512)
+  const base = new Uint8Array(256)
+  for (let i = 0; i < 256; i += 1) base[i] = i
+  const random = makeRandom(1337)
+  for (let i = 255; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1))
+    const swap = base[i]
+    base[i] = base[j]
+    base[j] = swap
+  }
+  for (let i = 0; i < 512; i += 1) table[i] = base[i & 255]
+  return table
+})()
+
+function perlinFade(t) {
+  return t * t * t * (t * (t * 6 - 15) + 10)
+}
+
+function perlinGradient(hash, x, y) {
+  switch (hash & 3) {
+    case 0: return x + y
+    case 1: return y - x
+    case 2: return x - y
+    default: return -x - y
+  }
+}
+
+function perlin2(x, y) {
+  const xf = Math.floor(x)
+  const yf = Math.floor(y)
+  const xi = xf & 255
+  const yi = yf & 255
+  const dx = x - xf
+  const dy = y - yf
+  const u = perlinFade(dx)
+  const v = perlinFade(dy)
+  const a = PERLIN_PERMUTATION[xi] + yi
+  const b = PERLIN_PERMUTATION[xi + 1] + yi
+  const top = perlinGradient(PERLIN_PERMUTATION[a], dx, dy) * (1 - u)
+    + perlinGradient(PERLIN_PERMUTATION[b], dx - 1, dy) * u
+  const bottom = perlinGradient(PERLIN_PERMUTATION[a + 1], dx, dy - 1) * (1 - u)
+    + perlinGradient(PERLIN_PERMUTATION[b + 1], dx - 1, dy - 1) * u
+  return clamp01((top * (1 - v) + bottom * v) * 0.5 + 0.5)
+}
+
+// --- one stamp -------------------------------------------------------------
+
+function clampIndex(value, size) {
+  return value < 0 ? 0 : (value >= size ? size - 1 : value)
+}
+
+// Nearest-neighbour rotation about the centre, zero-filling what rotates in
+// from outside. Zero alpha is what makes that safe: the corners the rotation
+// empties are outside the stamp's disc anyway, and a zero-alpha pixel writes
+// nothing when the stamp is pasted.
+function rotateStamp(data, size, angle) {
+  if (!angle) return
+  const source = new Uint8ClampedArray(data)
+  const phi = (Math.PI / 180) * angle
+  const sin = Math.sin(phi)
+  const cos = Math.cos(phi)
+  const centre = size / 2
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const d = (y * size + x) * 4
+      const sx = Math.trunc(cos * (x - centre) + sin * (y - centre) + centre)
+      const sy = Math.trunc(cos * (y - centre) - sin * (x - centre) + centre)
+      if (sx < 0 || sx >= size || sy < 0 || sy >= size) {
+        data[d] = 0
+        data[d + 1] = 0
+        data[d + 2] = 0
+        data[d + 3] = 0
+        continue
+      }
+      const s = (sy * size + sx) * 4
+      data[d] = source[s]
+      data[d + 1] = source[s + 1]
+      data[d + 2] = source[s + 2]
+      data[d + 3] = source[s + 3]
+    }
+  }
+}
+
+// Lift one round patch from a random spot in `source` and give it a soft,
+// noise-eaten alpha mask.
+//
+// `hardness` does not scale that mask, it overshoots it: peak alpha is
+// 255 + hardness * 215 and then clipped at 255, so a hard stamp stays opaque
+// well past its centre and only fades over the last stretch, while a soft one
+// fades the whole way. That is the difference between a stamp that reads as a
+// patch of its own and one that dissolves into what is underneath.
+function buildStamp(source, sourceWidth, sourceHeight, baseRadius, settings, random) {
+  const { hardness, stampNoise, randomize, stampRotate } = settings
+
+  // Size jitter is skewed (-0.2..1.0, not -0.6..0.6): stamps come out larger
+  // than the nominal radius more often than smaller, which keeps coverage
+  // complete when the placement jitter has pulled one off the seam.
+  let radius = baseRadius
+  if (randomize > 0) radius = Math.round(baseRadius * (1 + (-0.2 + random() * 1.2) * randomize))
+  radius = Math.max(1, Math.min(radius, Math.floor(Math.min(sourceWidth, sourceHeight) / 2)))
+
+  const size = radius * 2
+  const data = new Uint8ClampedArray(size * size * 4)
+  const originX = randomInt(random, radius, sourceWidth - radius)
+  const originY = randomInt(random, radius, sourceHeight - radius)
+  const noiseOffset = random() * 512
+
+  const peak = 255 + hardness * 215
+  const falloff = radius * 0.95
+  // Above this the mask is solid and no amount of noise shows through, so the
+  // perlin lookup — by far the expensive part — is skipped for the whole core.
+  const noiseCeiling = 235 + hardness * 15 + stampNoise * 10
+
+  for (let y = 0; y < size; y += 1) {
+    const dy = y - radius
+    const row = clampIndex(originY + dy, sourceHeight) * sourceWidth
+    for (let x = 0; x < size; x += 1) {
+      const dx = x - radius
+      const i = (y * size + x) * 4
+      const s = (row + clampIndex(originX + dx, sourceWidth)) * 4
+      data[i] = source[s]
+      data[i + 1] = source[s + 1]
+      data[i + 2] = source[s + 2]
+
+      const fade = Math.sqrt(dx * dx + dy * dy) / falloff
+      let alpha = Math.min(255, lerp(peak, 0, fade))
+      if (alpha <= 0) {
+        data[i + 3] = 0
+        continue
+      }
+
+      if (stampNoise > 0 && alpha < noiseCeiling) {
+        const noise = perlin2((x / radius) * 3 + noiseOffset, (y / radius) * 3 + noiseOffset)
+        let spread = clamp01(alpha / 255)
+        let mask = stampNoise
+
+        // Past 1 the noise stops being confined to the fading rim and starts
+        // eating into the solid core: the mask is recomputed as if the stamp
+        // were softer than it is, so holes open in the middle of it. Good for
+        // scattering, and the setting that can punch a hole big enough to
+        // expose the seam it was meant to be covering.
+        if (mask > 1) {
+          spread = clamp01(lerp(255 + lerpUnclamped(hardness * 215, 0, mask - 1), 0, fade) / 255)
+          mask -= 1
+        }
+
+        let noiseAlpha = lerpUnclamped(1, noise, mask * 0.95)
+        noiseAlpha = lerp(noiseAlpha, noiseAlpha * noiseAlpha, mask - 0.5)
+        noiseAlpha = lerp(1, noiseAlpha, 1 - spread)
+        alpha = spread * noiseAlpha * 255
+      }
+      data[i + 3] = alpha
+    }
+  }
+
+  if (stampRotate >= 1) rotateStamp(data, size, randomInt(random, 0, stampRotate))
+  return { size, data }
+}
+
+// Paste a stamp centred on (originX, originY), wrapping at every edge. The wrap
+// is the entire point — it is what lets a patch sit half on one side of the
+// seam and half on the other and still be one continuous patch when the texture
+// repeats.
+function pasteStamp(target, width, height, stamp, originX, originY) {
+  const { size, data } = stamp
+  const half = size / 2
+  for (let y = 0; y < size; y += 1) {
+    const ty = (((originY - half + y) % height) + height) % height
+    for (let x = 0; x < size; x += 1) {
+      const i = (y * size + x) * 4
+      const alpha = data[i + 3]
+      if (alpha === 0) continue
+      const tx = (((originX - half + x) % width) + width) % width
+      const t = (ty * width + tx) * 4
+      const mix = alpha / 255
+      const inv = 1 - mix
+      target[t] = target[t] * inv + data[i] * mix
+      target[t + 1] = target[t + 1] * inv + data[i + 1] * mix
+      target[t + 2] = target[t + 2] * inv + data[i + 2] * mix
+      // The destination's own alpha is left alone on purpose: a stamp is a
+      // patch of colour, not a hole punched through the layer.
+    }
+  }
+}
+
+// Run a line of stamps along each seam that is being made to loop.
+function stampSeams(canvas, settings, loopX, loopY) {
+  const { width, height } = canvas
+  const image = canvasToImageData(canvas)
+  const target = image.data
+  // Stamps are lifted from a frozen copy, never from the running result:
+  // sampling the destination lets one stamp feed the next, and the seam turns
+  // into a smear of itself after a few of them.
+  const source = new Uint8ClampedArray(target)
+  const random = makeRandom(settings.seed)
+
+  const radiusX = Math.max(1, Math.round(width * lerpUnclamped(0.05, 0.3, settings.stampRadius)))
+  const radiusY = Math.max(1, Math.round(height * lerpUnclamped(0.05, 0.3, settings.stampRadius)))
+  const stepX = Math.max(1, radiusX * lerpUnclamped(1.45, 0.45, settings.stampDensity))
+  const stepY = Math.max(1, radiusY * lerpUnclamped(1.45, 0.45, settings.stampDensity))
+
+  // Which line belongs to which axis is the one genuinely confusing part: a ROW
+  // of stamps runs along X and sits on the horizontal seam, and the horizontal
+  // seam is what stops the texture looping VERTICALLY. So the row belongs to
+  // loopY, and the column to loopX.
+  if (loopY) {
+    const count = Math.floor(width / stepX)
+    for (let i = 0; i <= count; i += 1) {
+      const stamp = buildStamp(source, width, height, radiusX, settings, random)
+      const jitter = Math.round(radiusY * (-1 + random() * 2) * settings.randomize)
+      pasteStamp(target, width, height, stamp, Math.round(i * stepX), jitter)
+    }
+  }
+
+  if (loopX) {
+    const count = Math.floor(height / stepY)
+    for (let i = 0; i <= count; i += 1) {
+      const stamp = buildStamp(source, width, height, radiusY, settings, random)
+      const jitter = Math.round(radiusX * (-1 + random() * 2) * settings.randomize)
+      pasteStamp(target, width, height, stamp, jitter, Math.round(i * stepY))
+    }
+  }
+
+  return imageDataToCanvas(image)
+}
+
+// ---------------------------------------------------------------------------
 // public
 // ---------------------------------------------------------------------------
 
@@ -542,10 +834,21 @@ const FEATHER_REFERENCE = 1024
 
 export const DEFAULT_SEAMLESS_VALUES = {
   mode: 'cut',
-  overlap: 12,        // % of the shorter side
+  overlap: 12,        // % of the shorter side; 0 = do not join at all
   feather: 2,         // px of softening either side of the cut, at 1K
   flatten: 55,        // % lighting flatten
   keepSize: true,     // scale back to the original dimensions
+  loopAxis: 'xy',     // which edges to make continuous: 'xy' | 'x' | 'y'
+  // Stamping. Defaults are the Unity tool's, so a recipe that works there
+  // transfers unchanged.
+  stamp: true,        // break the straight seam with clone stamps
+  seed: 11,           // -50..50, which stamps get picked
+  stampRadius: 0.45,  // 0..1, mapped to 5%..30% of the texture
+  stampDensity: 0.4,  // 0..1, how far consecutive stamps overlap
+  hardness: 0.6,      // 0..1, how solid the stamp's core is
+  stampNoise: 1,      // 0..2, perlin break-up of the stamp's edge
+  randomize: 0.25,    // 0..0.5, size and placement jitter
+  stampRotate: 1,     // 0..360, degrees of random rotation per stamp
 }
 
 /**
@@ -559,6 +862,15 @@ export function applySeamlessToCanvas(sourceCanvas, values = DEFAULT_SEAMLESS_VA
   const originalWidth = sourceCanvas.width
   const originalHeight = sourceCanvas.height
 
+  // 'x' means "make the left and right edges meet", i.e. loop along X — which
+  // is the horizontal join and the COLUMN of stamps.
+  const loopX = settings.loopAxis !== 'y'
+  const loopY = settings.loopAxis !== 'x'
+
+  const stamp = (canvas, x = loopX, y = loopY) => (
+    settings.stamp ? stampSeams(canvas, settings, x, y) : canvas
+  )
+
   if (settings.mode === 'mirror') {
     // Never rescaled: mirrored edges are the same pixels, and a resample would
     // blend each edge with a clamped neighbour and break that exactness. For
@@ -569,7 +881,19 @@ export function applySeamlessToCanvas(sourceCanvas, values = DEFAULT_SEAMLESS_VA
     // grid gives the two edges the same gain. (Only exactly so when the grid
     // divides the width evenly; otherwise the residual is a fraction of a
     // percent of gain, which is nothing next to what it is removing.)
-    return flattenLighting(mirrorTile(sourceCanvas), settings.flatten)
+    //
+    // Stamping is safe here too, and is usually what you want: a mirror tiles
+    // perfectly and looks like a butterfly, and scattered stamps are the
+    // cheapest way to hide the symmetry without touching the tiling. It does
+    // cost the one thing mirror had that nothing else does — opposite edges
+    // that are the SAME pixels rather than merely continuous ones — so the
+    // measured seam goes from exactly zero to the texture's own noise floor.
+    // Invisible either way; worth knowing before reading the verdict.
+    //
+    // Both axes, regardless of loopAxis: a mirror fold tiles in both directions
+    // whether you asked for it or not, so there is no such thing as a mirror
+    // seam that is only worth stamping on one axis.
+    return stamp(flattenLighting(mirrorTile(sourceCanvas), settings.flatten), true, true)
   }
 
   let working = sourceCanvas
@@ -577,32 +901,59 @@ export function applySeamlessToCanvas(sourceCanvas, values = DEFAULT_SEAMLESS_VA
   // Band is a fraction of the SHORTER side so a long thin texture does not get a
   // band wider than its own height.
   const shortest = Math.min(originalWidth, originalHeight)
-  const band = Math.max(2, Math.min(
-    Math.floor(shortest * (settings.overlap / 100)),
-    Math.floor(originalWidth / 2) - 1,
-    Math.floor(originalHeight / 2) - 1,
-  ))
-  if (band < 2) return null
+  const band = settings.overlap > 0
+    ? Math.max(2, Math.min(
+      Math.floor(shortest * (settings.overlap / 100)),
+      Math.floor(originalWidth / 2) - 1,
+      Math.floor(originalHeight / 2) - 1,
+    ))
+    : 0
+  // Overlap 0 is a real setting, not a degenerate one: it skips the join
+  // entirely and leaves the stamps to do the whole job, which is how the Unity
+  // tool works. The join costs a strip of the texture and a resample of
+  // everything else to win it back, and on a busy photo the stamps alone can be
+  // enough. Only a band that collapsed because the IMAGE is too small is a
+  // failure.
+  if (settings.overlap > 0 && band < 2) return null
 
-  // Joining consumes `band` pixels per axis. To land back on the original size,
-  // resample BEFORE joining rather than after.
-  //
-  // Rescaling the finished tile is the obvious move and it is wrong: a bilinear
-  // resample clamps at the image border instead of wrapping, so it blends the
-  // outermost pixels with themselves and re-opens the seam the join just closed.
-  // Measured on a bark photo, that cost more than half the improvement (1.11x
-  // the interior noise floor, degraded to 1.49x). Growing the source first means
-  // the only resample happens on an image whose edges do not matter yet.
-  if (settings.keepSize) {
-    working = rescale(working, originalWidth + band, originalHeight + band)
+  if (band > 0) {
+    // Joining consumes `band` pixels per joined axis. To land back on the
+    // original size, resample BEFORE joining rather than after.
+    //
+    // Rescaling the finished tile is the obvious move and it is wrong: a
+    // bilinear resample clamps at the image border instead of wrapping, so it
+    // blends the outermost pixels with themselves and re-opens the seam the
+    // join just closed. Measured on a bark photo, that cost more than half the
+    // improvement (1.11x the interior noise floor, degraded to 1.49x). Growing
+    // the source first means the only resample happens on an image whose edges
+    // do not matter yet.
+    if (settings.keepSize) {
+      working = rescale(
+        working,
+        originalWidth + (loopX ? band : 0),
+        originalHeight + (loopY ? band : 0),
+      )
+    }
+
+    const feather = settings.feather * (shortest / FEATHER_REFERENCE)
+    let data = canvasToImageData(working)
+    if (loopX) data = joinAxis(data, band, settings.mode, feather)
+    // `closed` only matters when the horizontal pass has already made the image
+    // loop left-to-right and this pass must not break it, so it tracks loopX.
+    if (loopY) data = transpose(joinAxis(transpose(data), band, settings.mode, feather, loopX))
+    working = imageDataToCanvas(data)
   }
 
-  const feather = settings.feather * (shortest / FEATHER_REFERENCE)
-  let data = canvasToImageData(working)
-  data = joinAxis(data, band, settings.mode, feather)                              // horizontal
-  data = transpose(joinAxis(transpose(data), band, settings.mode, feather, true))  // vertical
-  return flattenLighting(imageDataToCanvas(data), settings.flatten)
+  const result = stamp(flattenLighting(working, settings.flatten))
+  if (result !== sourceCanvas) return result
+
+  // Every stage was a no-op (no join, no flatten, no stamps). Hand back a copy
+  // rather than the caller's own canvas, which it is entitled to draw over.
+  const copy = makeCanvas(originalWidth, originalHeight)
+  copy.getContext('2d').drawImage(sourceCanvas, 0, 0)
+  return copy
 }
+
 
 function rescale(canvas, width, height) {
   if (canvas.width === width && canvas.height === height) return canvas
