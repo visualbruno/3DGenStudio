@@ -1,13 +1,25 @@
 # The Unity and Unreal importer plugins
 
-**Unity: built and verified.** **Unreal: specified, not built.** This document
-is what a plugin author needs before starting, and what the IR was designed
-against. Everything measured rather than recalled has its spike script and
-raw output committed under `plugins/unity/Spikes/`.
+**Both are built and verified** against real exported bundles: Unity against
+Unity 6000.6.0f1, Unreal against UE 5.8.2. This document is what a plugin author
+needs before starting, and what the IR was designed against. Everything measured
+rather than recalled has its spike script and raw output committed under
+`plugins/unity/Spikes/` and `plugins/unreal/Spikes/`.
 
-Both are **importers**. They read a bundle and build engine assets from
-pre-authored templates plus parameter binding. Neither synthesises a graph node
-by node. Effekseer (MIT) is the precedent for this whole split.
+Both are **importers**: they read a bundle and build engine assets. The
+direction differs, and the difference is forced by the engines rather than
+chosen.
+
+- **Unity builds a Shuriken particle system**, module by module, because
+  Shuriken's modules are all public and writable. VFX Graph's graph model is
+  `internal` and cannot be authored from script at all.
+- **Unreal builds a Niagara system structurally** — real emitters, real module
+  stacks, real module inputs — through `UNiagaraExternalEditUtilities`. The plan
+  assumed this would have to be template-binding the way Unity's VFX Graph
+  forces; it does not, which is why an imported effect opens as something an
+  author can edit rather than as a black box with knobs.
+
+Neither synthesises shader code. Effekseer (MIT) is the precedent for the split.
 
 The direction of the work is **inward**: this app produces a bundle, and
 engine-side plugins consume it. Nothing here generates engine-native assets.
@@ -78,15 +90,38 @@ Notable mappings, all measured rather than assumed:
   `integrate.semiImplicit`) carry no `srcBlockType` and are skipped; Shuriken
   ages and integrates itself.
 
-## Unreal: emitter inheritance plus User Parameters
+## Unreal: a Niagara system built module by module
 
-Niagara supports emitter inheritance and User Parameters, so the plugin ships
-**parent emitters** and generates a System that inherits from them and
-overrides. This is a better fit than Unity's and needs fewer tiers.
+**No templates and no inheritance.** `UNiagaraExternalEditUtilities` can create
+a system, add emitters from a stock template, add modules to their stacks, and
+set any module input — including data interfaces, dynamic inputs and static
+switches. So each IR system becomes one emitter cloned from Niagara's `Minimal`
+template and then filled in. It is C++ only: that header carries zero
+`UFUNCTION` macros, so Python and Blueprint cannot reach it despite the class
+deriving from `UBlueprintFunctionLibrary`.
 
-A Niagara caveat with no equivalent on the Unity side: several location modules
-(splines especially) read from a **scene component**, which a bundle cannot
-carry. Those import as baked values.
+Two engine behaviours decide whether the mapping works at all, both measured
+and both silent when got wrong — see `plugins/unreal/Spikes/probe-niagara-schema-5.8.2.txt`:
+
+1. **Enum entries must be resolved by display name at runtime.** Niagara's mode
+   enums are user-defined assets whose internal entry names are
+   `NewEnumerator0`, `NewEnumerator1`… **and the numbering does not follow the
+   display order** — in `ENiagara_SizeScaleMode`, "Uniform" is `NewEnumerator3`.
+2. **A static switch does not reveal the inputs it governs until the edit
+   context is rebuilt.** The write succeeds and reads back correctly; the
+   revealed inputs stay hidden, so the next twenty writes are refused. Waiting
+   for compilation does nothing. A new `FNiagaraExternalEditContext` on the same
+   system fixes it.
+
+The old caveat in this document — that a spline emitter must read from a scene
+component a bundle cannot carry — **was wrong, and the curve emitter is where
+Unreal now beats Unity.** A path does not need a level spline: it becomes a
+**Vector Curve data interface** living inside the asset, keyed by cumulative
+distance along the path, sampled per particle on `Position`. Tangent speed
+becomes a second curve of unit tangents driving Add Velocity, sampled at the
+*same* per-particle value, so a particle sits on the path and travels along it.
+Shuriken has no bending shape at all, so the same block degrades there to the
+straight chord between its end points.
 
 ## Five spikes that constrain the IR
 
@@ -180,8 +215,20 @@ Compatibility is already surfaced at **author** time — every block carries its
 flags in the editor and setting a target raises a diagnostic — so an import
 should confirm what the author already saw, never surprise them.
 
-The known gaps today, from the generated table: Niagara has no direct equivalent
-for curl-noise turbulence, a point attractor, a speed limit or a line emitter
-(all four import as approximations), and no free-form expression graph inside a
-module, so a wired operator chain imports as a baked constant or a User
-Parameter. Unity takes everything in the catalog natively.
+The known gaps today, from the generated table. **Neither engine takes
+everything**, and the earlier claim in this document that Unity did was wrong.
+
+- **Unreal** approximates turbulence (Curl Noise Force is the same kind of
+  noise, scaled differently), the point attractor (same shape of falloff,
+  different strength at a given distance) and the speed limit (the clamp lives
+  inside Solve Forces and Velocity rather than in its own module). It has no
+  free-form expression graph inside a module, so a wired operator chain imports
+  as a baked constant or a User Parameter.
+- **Unity** approximates the line and curve emitters (Shuriken has no shape that
+  bends, so both become boxes or chords), turbulence (its noise module is value
+  noise, not curl noise, so the motion swirls differently at the same strength),
+  random velocity, and any gradient that is HDR or has more than eight keys per
+  rail, because `Gradient` is LDR and capped.
+
+The two engines are furthest apart on the **curve emitter**: native in Unreal,
+a straight chord in Unity.

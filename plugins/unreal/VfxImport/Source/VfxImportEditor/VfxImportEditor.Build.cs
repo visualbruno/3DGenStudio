@@ -31,6 +31,11 @@ public class VfxImportEditor : ModuleRules
 			// otherwise. Linking against this module is the whole reason this
 			// plugin is C++ rather than a Python script.
 			"NiagaraEditor",
+			// The menu entry and its folder picker.
+			"ToolMenus",
+			"DesktopPlatform",
+			"Slate",
+			"SlateCore",
 		});
 	}
 }

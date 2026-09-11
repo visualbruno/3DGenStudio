@@ -17,8 +17,8 @@ real diagnostic - so nothing here should be a surprise at import time.
 
 | Engine | Native | Approximate | Unsupported |
 |---|---|---|---|
-| Unity VFX Graph | 47 | 1 | 0 |
-| Unreal Niagara | 43 | 5 | 0 |
+| Unity VFX Graph | 45 | 3 | 0 |
+| Unreal Niagara | 45 | 3 | 0 |
 
 ## What survives, and what does not
 
@@ -64,8 +64,8 @@ Not surviving:
 | Position in Box | `initialize.positionBox` | yes | yes | Unity: Position (AABox). Niagara: Box Location. |
 | Position in Circle | `initialize.positionCircle` | yes | yes | Unity: Position (Circle). Niagara: Cylinder/Ring Location. |
 | Position: Point | `initialize.positionPoint` | yes | yes | Unity: Set Position (plus Position (Sphere) for the jitter). Niagara: Add Position / Sphere Location with a small radius. |
-| Position: Line | `initialize.positionLine` | yes | approx | Unity: Position (Line), which has the same Random/Sequential choice. Niagara has no dedicated line module - it imports as a lerp between two vectors on Position, which reproduces Random and Even but not Fixed spacing. |
-| Position: Curve | `initialize.positionCurve` | approx | approx | Neither engine has a spline emitter a plugin can build without help. Unity's shape module has no curve at all, so the importer approximates it with the straight chord through the end points and says so. Niagara can sample a spline, but only one that already exists as a component in the level - an importer cannot fabricate it - so it lands the same way. Bake the effect to a sprite sheet if the curve itself is the point. |
+| Position: Line | `initialize.positionLine` | approx | yes | Shuriken has no line shape, so the Unity importer lays a thin box along the segment - the right span, but particles scatter across its girth rather than sitting on the line. Unreal takes it exactly: a line is a two-point path, so it goes down the same road as the Curve emitter and becomes a Vector Curve on Position. Fixed spacing is the one mode neither engine reproduces; it becomes an even spread. |
+| Position: Curve | `initialize.positionCurve` | approx | yes | The two engines are furthest apart on this block. Unity's shape module has no curve at all - the full list is Sphere, Cone, Box, Circle, Donut and Mesh, none of which bends - so the importer approximates the path with the straight chord through its end points and says so; bake a sprite sheet if the bend itself is the point. Unreal carries it whole: the path becomes a Vector Curve data interface keyed by distance along the curve, sampled per particle, and Tangent speed becomes a second curve of unit tangents driving Add Velocity - so particles both sit on the path and travel it. Thickness is the one part Niagara does not take; add a Jitter Position module to scatter them around the line. |
 | Position: Mesh | `initialize.positionMesh` | yes | yes | Unity: Position (Mesh), which offers the same Surface/Vertex choice. Niagara: Static Mesh Location, which needs the mesh assigned on the emitter as well. Asset slots: mesh (mesh). |
 | Velocity Outward | `initialize.velocityRadial` | yes | yes | Unity: Velocity from Direction & Speed (Direction = position). Niagara: Add Velocity in Cone / radial. |
 | Velocity in Direction | `initialize.velocityDirection` | yes | yes | Unity: Velocity from Direction & Speed. Niagara: Add Velocity in Cone. |
@@ -79,13 +79,13 @@ Not surviving:
 |---|---|---|---|---|
 | Add Gravity | `update.gravity` | yes | yes | Unity: Gravity. Niagara: Gravity Force. |
 | Add Drag | `update.drag` | yes | yes | Unity: Linear Drag. Niagara: Drag. |
-| Add Turbulence | `update.turbulence` | yes | approx | Unity: Turbulence. Niagara: Curl Noise Force, whose amplitude and frequency are scaled differently - the motion will be similar but not identical. |
+| Add Turbulence | `update.turbulence` | approx | approx | Unreal is the closer of the two here: Niagara's Curl Noise Force is curl noise, the same divergence-free field this preview uses, so the CHARACTER of the motion matches and only the amplitude and frequency scaling differ. Unity's noise module is VALUE noise, which swirls differently at the same strength - the importer says so rather than letting it pass as an exact match. |
 | Size Over Life | `update.sizeOverLife` | yes | yes | Unity: Set Size over Life. Niagara: Scale Sprite Size with a float curve. |
 | Colour Over Life | `update.colorOverLife` | yes | yes | Unity: Set Color over Life. Niagara: Color module with a colour curve. |
 | Spin | `update.spin` | yes | yes |  |
 | Attract to Point | `update.attractor` | yes | approx | Niagara has Point Attraction Force, but its falloff curve differs - the shape is the same, the exact strength at a given distance is not. |
 | Vortex | `update.vortex` | yes | yes | Unity: Vortex Force. Niagara: Vortex Force. |
-| Speed Limit | `update.speedLimit` | yes | approx | Niagara has no single speed clamp; the importer builds one from a Scale Velocity with a curve. |
+| Speed Limit | `update.speedLimit` | yes | approx | Niagara clamps speed INSIDE Solve Forces and Velocity rather than as its own module, so the importer reports the value to set on that module's Speed Limit instead of adding anything. Clamping anywhere else would clamp last frame's velocity while this frame's acceleration immediately exceeds it again. |
 | Collide with Floor | `update.collidePlane` | yes | yes | Unity: Collide with Plane. Niagara: Collision (Plane). |
 | Collide with Sphere | `update.collideSphere` | yes | yes | Unity: Collide with Sphere. Niagara: Collision (Analytical, sphere). |
 | Collide with Box | `update.collideBox` | yes | yes | Unity: Collide with AABox. Niagara: Collision (Analytical, box). |

@@ -481,9 +481,18 @@ function record(result) {
   check('engine notes are silent with no target chosen',
     !codesOf(noTarget).includes('I_ENGINE_APPROX'));
 
+  // TURBULENCE IS APPROXIMATED ON BOTH, and this check used to assert the
+  // opposite. Unity's noise module is VALUE noise while the preview and Niagara
+  // both use curl noise, so the motion swirls differently at the same strength
+  // - which the Unity importer has always reported at import time. The catalog
+  // claiming "native" meant the editor badge and the import report disagreed,
+  // and the badge is the one the author sees while there is still time to act.
   const unityView = compile(fixtures.stagedExplosion(), { engineTarget: 'unity' });
-  check('  and turbulence is native on Unity',
-    !codesOf(unityView).includes('I_ENGINE_APPROX'), codesOf(unityView).join(' '));
+  const unityApprox = unityView.diagnostics.find((d) => d.code === 'I_ENGINE_APPROX');
+  check('  and Unity is warned about it too', Boolean(unityApprox),
+    codesOf(unityView).join(' '));
+  check('  naming value noise as the difference',
+    /value noise/i.test(unityApprox?.hint || ''), unityApprox?.hint.slice(0, 80));
 }
 
 {

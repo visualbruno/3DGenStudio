@@ -5,10 +5,13 @@ from it — real emitters and module stacks, not parameters bound onto a templat
 
 Editor-only. Nothing ships in a packaged game.
 
-> **Status: scaffold.** The plugin currently contains the module and a probe
-> commandlet that proves the Niagara authoring API is reachable and works. The
-> IR → Niagara mapping is not written yet, so installing it today gives you a
-> `VfxImport` commandlet and no menu entry.
+> **Status: working, with gaps.** The IR → Niagara mapping is written and
+> verified against a real exported bundle: emitter state, spawn rate and bursts,
+> lifetime, size, colour, mass, rotation, the shape emitters, velocity, the
+> forces, colour-over-life, size-over-life, the floor plane, kill volumes — and
+> the **curve/spline emitter**, which Unreal carries better than Unity does.
+> **Textures and meshes are not imported yet**, so an imported effect has the
+> right motion and a default material; the report says so every time.
 
 ## Requirements
 
@@ -87,6 +90,102 @@ Headlessly:
 "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" ^
   "C:\path\to\YourProject.uproject" -run=VfxImport -unattended -nosplash -nopause -stdout
 ```
+
+## Importing an effect
+
+In the editor: **Tools → 3D Gen Studio → Import VFX Bundle…**, pick the folder
+the export wrote (the one holding `manifest.json`), and the system lands in
+`/Game/ImportedVfx`. A dialog gives the counts; the full report is in the Output
+Log under `LogVfxImport`.
+
+From the command line, which is what a build step wants:
+
+```bat
+UnrealEditor-Cmd.exe "C:\path\to\YourProject.uproject" ^
+  -run=VfxImport -bundle="C:\path\to\Bundles\Magic Bolt" ^
+  -path=/Game/ImportedVfx -report=import.txt ^
+  -unattended -nosplash -nopause -stdout
+```
+
+Exit code 0 means the system was built and saved. Re-importing over an existing
+asset overwrites it in place.
+
+### Read the report
+
+Every block lands in exactly one of three buckets, and they mean what they say:
+
+| | |
+|---|---|
+| **NATIVE** | Niagara does this, the same way the preview does. |
+| **APPROXIMATED** | something survived, but not exactly — the note says how it differs and what to do about it. |
+| **DROPPED** | nothing survived, and the note says what to do instead. |
+
+The same three buckets as the Unity importer, deliberately: an author exporting
+to both engines is comparing two reports, and different wording would read as a
+difference in the effect.
+
+## What survives, and what does not
+
+**The curve/spline emitter is the place Unreal beats Unity.** Shuriken has no
+bending shape at all, so there the path degrades to the straight chord between
+its end points. Niagara holds the whole thing:
+
+- the path becomes a **Vector Curve** data interface — one key per authored
+  point, on `Position`, with cubic auto tangents, which *are* Catmull-Rom
+  tangents, so the imported curve bends the way the drawn one does;
+- keys are timed by **cumulative distance along the path**, not by point index,
+  so an even spread is evenly *spaced* rather than evenly *indexed*;
+- **Tangent speed** becomes a second vector curve of unit tangents driving Add
+  Velocity, so particles both sit on the path and travel along it;
+- position and tangent are sampled at the *same* value per particle — the
+  normalized execution index, or a hash of the particle id — so a particle never
+  appears at one point on the curve and flies off along another;
+- and the result is ordinary editable Niagara: open the system and drag the
+  curve keys.
+
+The gaps, all of them reported at import time rather than discovered later:
+
+| Not carried | Why, and what to do |
+|---|---|
+| Textures and meshes | Not imported yet. Import them and assign them to the emitter's material and renderer. |
+| Blend mode | In Unreal this is a property of the **material**, not of the renderer. Assign a material with the blend mode you want. |
+| Mesh and ribbon renderers | The emitter keeps its sprite renderer. |
+| Path thickness | Particles sit exactly on the curve; add a Jitter Position module to scatter them. |
+| Fixed spacing along a path | Niagara has no walk-along-at-a-distance mode, so it becomes an even spread. |
+| Multiple timeline clips on one track | Emitter State has a single loop delay, so only the first start time survives. Split the track into separate systems. |
+| Per-particle exact randomness | Neither engine lets us inject our PCG32. Seeds travel and engine output is reproducible — it just is not the *same* stream. |
+
+## Diagnosing it against a new engine version
+
+The mapping is written against names that were **measured, not guessed** — module
+paths, input names, and above all enum entry names. `plugins/unreal/Spikes/probe-niagara-schema-5.8.2.txt`
+is that survey, and the `VfxProbe` commandlet is what produced it:
+
+```bat
+UnrealEditor-Cmd.exe "YourProject.uproject" -run=VfxProbe -unattended -nosplash -stdout
+```
+
+It also has a verify mode, which reads a built asset back off disk and prints
+what it actually contains — including the curve keys:
+
+```bat
+UnrealEditor-Cmd.exe "YourProject.uproject" -run=VfxProbe ^
+  -system=/Game/ImportedVfx/Magic_Bolt -unattended -nosplash -stdout
+```
+
+Two traps that survey found, both of which fail *silently* if you get them wrong:
+
+1. **Enum entries are resolved by display name, at runtime.** Niagara's shape,
+   lifetime and colour modes are user-defined enums whose internal entry names
+   are `NewEnumerator0`, `NewEnumerator1`… **and the numbering does not follow
+   the display order** — in `ENiagara_SizeScaleMode`, "Uniform" is
+   `NewEnumerator3`. A hard-coded internal name picks the wrong mode quietly.
+2. **A static switch does not reveal its inputs until the edit context is
+   rebuilt.** Writing `Lifetime Mode = Random` succeeds and reads back correctly,
+   and `Lifetime Min` stays hidden — so the next write is refused as "hidden by
+   static-switch logic". Waiting for compilation changes nothing; a *new*
+   `FNiagaraExternalEditContext` on the same system reveals it immediately. The
+   builder rebuilds the context after every enum and every dynamic-input write.
 
 ## Distributing it without a compiler
 

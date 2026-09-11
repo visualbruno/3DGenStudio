@@ -1,5 +1,4 @@
-// The editor module, plus a commandlet that proves the Niagara authoring API is
-// reachable from here.
+// The editor module, and the menu item an author actually uses.
 //
 // WHY A C++ PLUGIN AND NOT A PYTHON SCRIPT. Phase 0 measured it (see
 // plugins/unreal/Spikes/): `UNiagaraExternalEditUtilities` is the API that can
@@ -15,145 +14,104 @@
 // authored structurally, so an imported effect gets real emitters and real
 // module stacks rather than parameters bound onto a template.
 #include "Modules/ModuleManager.h"
-#include "Commandlets/Commandlet.h"
 #include "Misc/Paths.h"
-#include "UObject/SavePackage.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "FileHelpers.h"
+#include "Misc/MessageDialog.h"
+#include "ToolMenus.h"
+#include "DesktopPlatformModule.h"
+#include "IDesktopPlatform.h"
+#include "Framework/Application/SlateApplication.h"
 
-#include "NiagaraSystem.h"
-#include "NiagaraEmitter.h"
-#include "NiagaraExternalSystemEditorUtilities.h"
+#include "VfxBundleImporter.h"
+#include "VfxImportReport.h"
 
-#include "VfxImportCommandlet.h"
+#define LOCTEXT_NAMESPACE "VfxImport"
 
 DEFINE_LOG_CATEGORY_STATIC(LogVfxImport, Log, All);
+
+namespace
+{
+	void ImportBundleInteractively()
+	{
+		IDesktopPlatform* Desktop = FDesktopPlatformModule::Get();
+		if (Desktop == nullptr) { return; }
+
+		const void* ParentWindow = FSlateApplication::IsInitialized()
+			&& FSlateApplication::Get().GetActiveTopLevelWindow().IsValid()
+			? FSlateApplication::Get().GetActiveTopLevelWindow()->GetNativeWindow()->GetOSWindowHandle()
+			: nullptr;
+
+		// A FOLDER, not a file. The bundle is a folder holding manifest.json
+		// plus an assets tree, and asking for the .json would let someone pick
+		// one out of its folder and lose the assets beside it.
+		FString Folder;
+		if (!Desktop->OpenDirectoryDialog(ParentWindow,
+			TEXT("Choose an exported VFX bundle folder"), FPaths::ProjectDir(), Folder))
+		{
+			return;
+		}
+
+		FVfxImportReport Report;
+		FString AssetPath;
+		const bool bOk = FVfxBundleImporter::Import(Folder, TEXT("/Game/ImportedVfx"),
+			Report, AssetPath);
+
+		TArray<FString> Lines;
+		Report.ToText().ParseIntoArrayLines(Lines, /*bCullEmpty*/ false);
+		for (const FString& Line : Lines)
+		{
+			UE_LOG(LogVfxImport, Display, TEXT("%s"), *Line);
+		}
+
+		// THE REPORT IS SHOWN, not just logged. An author who is told "imported"
+		// and nothing else has no way to know that their mesh renderer, their
+		// blend mode and their textures did not come across - and will conclude
+		// the effect is broken rather than incomplete.
+		const FText Message = FText::FromString(FString::Printf(
+			TEXT("%s\n\n%s\n\nThe full report is in the Output Log under LogVfxImport."),
+			bOk ? *FString::Printf(TEXT("Imported to %s"), *AssetPath)
+				: TEXT("Import failed."),
+			*Report.Summary()));
+		FMessageDialog::Open(EAppMsgType::Ok, Message,
+			LOCTEXT("VfxImportTitle", "Import VFX Bundle"));
+	}
+
+	void RegisterMenu()
+	{
+		FToolMenuOwnerScoped Owner(TEXT("VfxImport"));
+		UToolMenu* Menu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools"));
+		if (Menu == nullptr) { return; }
+
+		FToolMenuSection& Section = Menu->FindOrAddSection(TEXT("VfxImport"),
+			LOCTEXT("VfxSection", "3D Gen Studio"));
+		Section.AddMenuEntry(
+			TEXT("ImportVfxBundle"),
+			LOCTEXT("ImportVfxBundle", "Import VFX Bundle..."),
+			LOCTEXT("ImportVfxBundleTip",
+				"Build a Niagara system from a VFX bundle exported by 3D Gen Studio."),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateStatic(&ImportBundleInteractively)));
+	}
+}
 
 class FVfxImportEditorModule : public IModuleInterface
 {
 public:
 	virtual void StartupModule() override
 	{
+		// Deferred: tool menus are not registered yet at module startup, and
+		// extending one now would silently do nothing.
+		UToolMenus::RegisterStartupCallback(
+			FSimpleMulticastDelegate::FDelegate::CreateStatic(&RegisterMenu));
 		UE_LOG(LogVfxImport, Log, TEXT("VfxImportEditor loaded"));
 	}
 
-	virtual void ShutdownModule() override {}
+	virtual void ShutdownModule() override
+	{
+		UToolMenus::UnRegisterStartupCallback(this);
+		UToolMenus::UnregisterOwner(this);
+	}
 };
 
 IMPLEMENT_MODULE(FVfxImportEditorModule, VfxImportEditor);
 
-// ---------------------------------------------------------------------------
-// The reachability probe.
-//
-// Deliberately small: create a system, add one emitter from a stock template,
-// and report what the API said. If this links and runs, every other call in
-// UNiagaraExternalEditUtilities is available too, and the mapping table is
-// ordinary work. If it does not, no amount of mapping table matters.
-// ---------------------------------------------------------------------------
-int32 UVfxImportCommandlet::Main(const FString& Params)
-{
-	TArray<FString> Tokens;
-	TArray<FString> Switches;
-	TMap<FString, FString> Arguments;
-	ParseCommandLine(*Params, Tokens, Switches, Arguments);
-
-	const FString AssetName = Arguments.Contains(TEXT("name"))
-		? Arguments[TEXT("name")]
-		: TEXT("VfxProbeSystem");
-	const FString AssetPath = Arguments.Contains(TEXT("path"))
-		? Arguments[TEXT("path")]
-		: TEXT("/Game/VfxProbe");
-
-	// A DEFAULT-CONSTRUCTED CONTEXT HAS NO SYSTEM AND THEREFORE NO VIEW MODEL.
-	// Every stack-editing call resolves through FNiagaraSystemViewModel - the
-	// editor's edit session for a system - so with a default context AddEmitter
-	// fails with "System view model is invalid", which reads like a broken
-	// asset rather than a missing constructor argument. Creation is the one
-	// call that legitimately has no system yet.
-	FNiagaraExternalEditContext CreateContext;
-
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE creating %s in %s"), *AssetName, *AssetPath);
-	UNiagaraSystem* System = UNiagaraExternalEditUtilities::CreateNiagaraSystem(
-		AssetName, AssetPath, /*TemplateSystem*/ nullptr, CreateContext);
-
-	for (const FText& Error : CreateContext.Errors)
-	{
-		UE_LOG(LogVfxImport, Warning, TEXT("PROBE createError %s"), *Error.ToString());
-	}
-
-	if (System == nullptr)
-	{
-		UE_LOG(LogVfxImport, Error, TEXT("PROBE RESULT create=failed"));
-		return 1;
-	}
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE create=ok %s"), *System->GetPathName());
-
-	// Bound to the system, which is what gives the context a view model.
-	FNiagaraExternalEditContext Context(System);
-
-	// The system has to be the one being edited for the stack calls to have a
-	// target; GetSystemSummary is the cheapest way to confirm the context can
-	// see it at all.
-	Context.Errors.Reset();
-	FNiagaraExt_SystemSummary Summary;
-	UNiagaraExternalEditUtilities::GetSystemSummary(System, Summary, Context);
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE summary emitters=%d errors=%d"),
-		Summary.Emitters.Num(), Context.Errors.Num());
-
-	// A stock template emitter, so AddEmitter has something to clone. Niagara
-	// ships fourteen of these; `Minimal` is the smallest honest starting point.
-	Context.Errors.Reset();
-	UNiagaraEmitter* Template = LoadObject<UNiagaraEmitter>(
-		nullptr, TEXT("/Niagara/DefaultAssets/Templates/Emitters/Minimal.Minimal"));
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE template=%s"),
-		Template ? *Template->GetPathName() : TEXT("NOT FOUND"));
-
-	if (Template != nullptr)
-	{
-		FNiagaraExt_EmitterTopology Topology;
-		UNiagaraExternalEditUtilities::AddEmitter(
-			Template, FName(TEXT("Probe")), Topology, Context);
-		for (const FText& Error : Context.Errors)
-		{
-			UE_LOG(LogVfxImport, Warning, TEXT("PROBE addEmitterError %s"), *Error.ToString());
-		}
-		UE_LOG(LogVfxImport, Display, TEXT("PROBE addEmitter errors=%d"), Context.Errors.Num());
-
-		// DID IT LAND? "AddEmitter reported no errors" and "the system has an
-		// emitter" are different claims, and only the second one matters.
-		Context.Errors.Reset();
-		FNiagaraExt_SystemSummary After;
-		UNiagaraExternalEditUtilities::GetSystemSummary(System, After, Context);
-		UE_LOG(LogVfxImport, Display, TEXT("PROBE afterAdd emitters=%d"), After.Emitters.Num());
-	}
-
-	// Saved, because an asset that exists only in memory proves nothing about
-	// what an author would end up with.
-	UPackage* Package = System->GetOutermost();
-	Package->MarkPackageDirty();
-	FSavePackageArgs SaveArgs;
-	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
-	const FString FileName = FPackageName::LongPackageNameToFilename(
-		Package->GetName(), FPackageName::GetAssetPackageExtension());
-	const bool bSaved = UPackage::SavePackage(Package, System, *FileName, SaveArgs);
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE save=%s %s"),
-		bSaved ? TEXT("ok") : TEXT("failed"), *FileName);
-
-	// Reloaded from disk under a fresh context, which is the only version of
-	// this question an author cares about.
-	const FString ObjectPath = AssetPath / AssetName + TEXT(".") + AssetName;
-	UNiagaraSystem* Reloaded = LoadObject<UNiagaraSystem>(nullptr, *ObjectPath);
-	int32 ReloadedEmitters = -1;
-	if (Reloaded != nullptr)
-	{
-		FNiagaraExternalEditContext ReloadContext(Reloaded);
-		FNiagaraExt_SystemSummary ReloadedSummary;
-		UNiagaraExternalEditUtilities::GetSystemSummary(Reloaded, ReloadedSummary, ReloadContext);
-		ReloadedEmitters = ReloadedSummary.Emitters.Num();
-	}
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE reloaded emitters=%d"), ReloadedEmitters);
-
-	UE_LOG(LogVfxImport, Display, TEXT("PROBE RESULT create=ok save=%s emittersOnDisk=%d"),
-		bSaved ? TEXT("ok") : TEXT("failed"), ReloadedEmitters);
-	return (bSaved && ReloadedEmitters == 1) ? 0 : 1;
-}
+#undef LOCTEXT_NAMESPACE

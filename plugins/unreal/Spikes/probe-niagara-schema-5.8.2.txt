@@ -1,0 +1,5204 @@
+======== ENUMS ========
+  ENUM /Niagara/Enums/Location/ENiagara_LocationShapes.ENiagara_LocationShapes
+    ENTRY NewEnumerator0 = Sphere
+    ENTRY NewEnumerator1 = Cylinder
+    ENTRY NewEnumerator2 = Box / Plane
+    ENTRY NewEnumerator3 = Torus
+    ENTRY NewEnumerator4 = Ring / Disc
+    ENTRY NewEnumerator5 = Cone
+  ENUM /Niagara/Enums/Location/ENiagara_BoxPlaneMode.ENiagara_BoxPlaneMode
+    ENTRY NewEnumerator0 = Box
+    ENTRY NewEnumerator1 = Plane
+  ENUM /Niagara/Enums/Location/ENiagara_ConeMode.ENiagara_ConeMode
+    ENTRY NewEnumerator0 = Spherical Cone
+    ENTRY NewEnumerator1 = Spherical Wedge
+  ENUM /Niagara/Enums/Location/ENiagaraRingDiscMode.ENiagaraRingDiscMode
+    ENTRY NewEnumerator0 = Circle
+    ENTRY NewEnumerator1 = Hexagon
+  ENUM /Niagara/Enums/ENiagara_LifetimeMode.ENiagara_LifetimeMode
+    ENTRY NewEnumerator0 = Direct Set
+    ENTRY NewEnumerator1 = Random
+  ENUM /Niagara/Enums/ENiagara_ColorInitializationMode.ENiagara_ColorInitializationMode
+    ENTRY NewEnumerator0 = Unset
+    ENTRY NewEnumerator1 = Direct Set
+    ENTRY NewEnumerator2 = Random Range
+    ENTRY NewEnumerator3 = Random Hue/Saturation/Value
+  ENUM /Niagara/Enums/ENiagara_PositionInitializationMode.ENiagara_PositionInitializationMode
+    ENTRY NewEnumerator0 = Unset
+    ENTRY NewEnumerator1 = Direct Set
+    ENTRY NewEnumerator2 = Simulation Position
+  ENUM /Niagara/Enums/ENiagara_SizeScaleMode.ENiagara_SizeScaleMode
+    ENTRY NewEnumerator0 = Unset
+    ENTRY NewEnumerator3 = Uniform
+    ENTRY NewEnumerator1 = Random Uniform
+    ENTRY NewEnumerator4 = Non-Uniform
+    ENTRY NewEnumerator2 = Random Non-Uniform
+  ENUM /Niagara/Enums/ENiagara_SpriteRotationMode.ENiagara_SpriteRotationMode
+    ENTRY NewEnumerator3 = Unset
+    ENTRY NewEnumerator2 = Random
+    ENTRY NewEnumerator0 = Direct Angle (Degrees)
+    ENTRY NewEnumerator1 = Direct Normalized Angle (0-1)
+  ENUM /Niagara/Enums/ENiagara_MassInitializationMode.ENiagara_MassInitializationMode
+    ENTRY NewEnumerator0 = Unset / (Mass of 1)
+    ENTRY NewEnumerator1 = Direct Set
+    ENTRY NewEnumerator3 = Random
+  ENUM /Niagara/Enums/ENiagaraScaleColorMode.ENiagaraScaleColorMode
+    ENTRY NewEnumerator0 = RGB and Alpha Separately
+    ENTRY NewEnumerator1 = RGBA Together
+    ENTRY NewEnumerator2 = RGBA Linear Color Curve
+  ENUM /Niagara/Enums/ENiagaraEmitterLifeCycleMode.ENiagaraEmitterLifeCycleMode
+    ENTRY NewEnumerator0 = System
+    ENTRY NewEnumerator1 = Self
+  ENUM /Niagara/Enums/ENiagara_EmitterStateOptions.ENiagara_EmitterStateOptions
+    ENTRY NewEnumerator0 = Infinite
+    ENTRY NewEnumerator1 = Once
+    ENTRY NewEnumerator2 = Multiple
+  ENUM /Niagara/Enums/ENiagaraCoordinateSpace.ENiagaraCoordinateSpace
+    ENTRY NewEnumerator0 = Simulation
+    ENTRY NewEnumerator1 = World
+    ENTRY NewEnumerator2 = Local
+  ENUM /Niagara/Enums/ENiagaraSphereDistributionMode.ENiagaraSphereDistributionMode
+    ENTRY NewEnumerator0 = Random
+    ENTRY NewEnumerator1 = Direct
+    ENTRY NewEnumerator3 = Uniform
+  ENUM /Niagara/Enums/ENiagara_AttributeSamplingApplyOutput.ENiagara_AttributeSamplingApplyOutput
+    ENTRY NewEnumerator0 = Apply
+    ENTRY NewEnumerator1 = Output
+  ENUM /Niagara/Enums/ENiagara_SizeScaleMode.ENiagara_SizeScaleMode
+    ENTRY NewEnumerator0 = Unset
+    ENTRY NewEnumerator3 = Uniform
+    ENTRY NewEnumerator1 = Random Uniform
+    ENTRY NewEnumerator4 = Non-Uniform
+    ENTRY NewEnumerator2 = Random Non-Uniform
+======== MODULE SCHEMAS ========
+  MODULE /Niagara/Modules/Emitter/EmitterState.EmitterState
+    INPUT Loop Duration : NiagaraFloat [expr]
+    INPUT Loop Delay : NiagaraFloat [expr]
+    INPUT Recalculate Duration Each Loop : NiagaraBool [expr]
+  MODULE /Niagara/Modules/Emitter/SpawnRate.SpawnRate
+    INPUT SpawnRate : NiagaraFloat [expr]
+    INPUT SpawnGroup : NiagaraInt32 [expr]
+    INPUT Spawn Probability : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Emitter/SpawnBurst_Instantaneous.SpawnBurst_Instantaneous
+    INPUT Spawn Count : NiagaraInt32 [expr]
+    INPUT Spawn Time : NiagaraFloat [expr]
+    INPUT Age : NiagaraFloat [expr]
+    INPUT Spawn Probability : NiagaraFloat [expr]
+    INPUT Loop Count Limit : NiagaraInt32 [expr]
+    INPUT Spawn Group : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Initialization/InitializeParticle.InitializeParticle
+    INPUT Write Material Random : NiagaraBool [expr]
+    INPUT Material Random : NiagaraFloat [expr]
+    INPUT Write Lifetime : NiagaraBool [expr]
+    INPUT Lifetime : NiagaraFloat [expr]
+    INPUT Write Color : NiagaraBool [expr]
+    INPUT Color : LinearColor [expr]
+    INPUT Write Mass : NiagaraBool [expr]
+    INPUT Mass : NiagaraFloat [expr]
+    INPUT Write SpriteSize : NiagaraBool [expr]
+    INPUT Sprite Size : Vector2f [expr]
+    INPUT Write SpriteRotation : NiagaraBool [expr]
+    INPUT Sprite Rotation : NiagaraFloat [expr]
+    INPUT Write Scale : NiagaraBool [expr]
+    INPUT Mesh Scale : Vector3f [expr]
+    INPUT Write Position : NiagaraBool [expr]
+    INPUT Position : NiagaraPosition [expr]
+  MODULE /Niagara/Modules/Spawn/Location/SphereLocation.SphereLocation
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Surface Only Band Thickness : NiagaraFloat [expr]
+    INPUT Sphere Radius : NiagaraFloat [expr]
+    INPUT Surface Expansion Mode : ENiagaraExpansionMode [expr]
+    INPUT Normalize Thickness : NiagaraBool [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+    INPUT Hemisphere X : NiagaraBool [expr]
+    INPUT Hemisphere Y : NiagaraBool [expr]
+    INPUT Hemisphere Z : NiagaraBool [expr]
+    INPUT Non Uniform Scale : Vector3f [expr]
+    INPUT Sphere Origin : NiagaraPosition [expr]
+    INPUT Offset : Vector3f [expr]
+    INPUT Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Location/BoxLocation.BoxLocation
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Surface Only Band Thickness : NiagaraFloat [expr]
+    INPUT Box Size : Vector3f [expr]
+    INPUT Surface Expansion Mode : ENiagaraExpansionMode [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+    INPUT Box Offset : Vector3f [expr]
+    INPUT Normalized Box Rotation Angle : NiagaraFloat [expr]
+    INPUT Rotate Box On Axis : Vector3f [expr]
+    INPUT Box Origin : NiagaraPosition [expr]
+    INPUT Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Location/ConeLocation.ConeLocation
+    INPUT Cone Axis : Vector3f [expr]
+    INPUT Cone Angle : NiagaraFloat [expr]
+    INPUT Point Distribution : NiagaraFloat [expr]
+    INPUT Flatten Endcaps : NiagaraBool [expr]
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+    INPUT Enable Wedge : NiagaraBool [expr]
+    INPUT Wedge Horizontal Angle : NiagaraFloat [expr]
+    INPUT Wedge Vertical Angle : NiagaraFloat [expr]
+    INPUT Cone Origin : NiagaraPosition [expr]
+    INPUT Offset : Vector3f [expr]
+    INPUT Cone Length : NiagaraFloat [expr]
+    INPUT Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Location/CylinderLocation.CylinderLocation
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Cylinder Radius : NiagaraFloat [expr]
+    INPUT Cylinder Height : NiagaraFloat [expr]
+    INPUT Non Uniform Scale : Vector3f [expr]
+    INPUT Cylinder Height Midpoint : NiagaraFloat [expr]
+    INPUT Apply Owner Scale : Vector3f [expr]
+    INPUT Offset : Vector3f [expr]
+    INPUT Offset Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Rotation Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Cylinder Origin : NiagaraPosition [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Location/TorusLocation.TorusLocation
+    INPUT Surface Position : NiagaraFloat [expr]
+    INPUT U Distribution : NiagaraFloat [expr]
+    INPUT V Distribution : NiagaraFloat [expr]
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+    INPUT Handle Radius : NiagaraFloat [expr]
+    INPUT Large Radius : NiagaraFloat [expr]
+    INPUT EnableScale : NiagaraBool [expr]
+    INPUT Non Uniform Scale : Vector3f [expr]
+    INPUT Torus Axis : Vector3f [expr]
+    INPUT Normalized Angle Around Torus Axis : NiagaraFloat [expr]
+    INPUT Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Offset : Vector3f [expr]
+    INPUT Torus Origin : NiagaraPosition [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+  MODULE /Niagara/Modules/Spawn/Location/StaticMeshLocation.StaticMeshLocation
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Static Mesh : NiagaraDataInterfaceStaticMesh [expr]
+    INPUT Sampled UV Index : NiagaraInt32 [expr]
+    INPUT Spawn Group Mask : NiagaraInt32 [expr]
+    INPUT Write To Particle Position : NiagaraBool [expr]
+    INPUT Sampled Position Offset : Vector3f [expr]
+    INPUT Offset Position Along Sampled Normal : NiagaraFloat [expr]
+    INPUT Inherit Velocity (Scale) : NiagaraFloat [expr]
+    INPUT Inherited Velocity Speed Limit : NiagaraFloat [expr]
+    INPUT RGBA Color Application Mask : Vector4f [expr]
+  MODULE /Niagara/Modules/Spawn/Velocity/AddVelocity.AddVelocity
+    INPUT Velocity : Vector3f [expr]
+    INPUT Velocity Speed Scale : NiagaraFloat [expr]
+    INPUT Rotation Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Yaw / Pitch / Roll : Vector3f [expr]
+    INPUT Rotation Axis : Vector3f [expr]
+    INPUT Rotation Angle : NiagaraFloat [expr]
+    INPUT Rotation Quaternion : Quat4f [expr]
+    INPUT Invert Rotation Quaternion : NiagaraBool [expr]
+    INPUT Additional Yaw / Pitch / Roll : Vector3f [expr]
+    INPUT Rotation Matrix : NiagaraMatrix [expr]
+  MODULE /Niagara/Modules/Spawn/Velocity/AddVelocityInCone.AddVelocityInCone
+    INPUT Cone Angle : NiagaraFloat [expr]
+    INPUT Velocity Distribution Along Cone Axis : NiagaraFloat [expr]
+    INPUT Cone Axis : Vector3f [expr]
+    INPUT Cone Axis Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Velocity Strength : NiagaraFloat [expr]
+    INPUT Use Velocity Falloff On Cone Axis : NiagaraBool [expr]
+    INPUT Velocity Falloff Away From Cone Axis : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Spawn/Velocity/AddVelocityFromPoint.AddVelocityFromPoint
+    INPUT Origin Offset : Vector3f [expr]
+    INPUT Origin Offset Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Velocity Origin : Vector3f [expr]
+    INPUT Default Position : Vector3f [expr]
+    INPUT Velocity Falloff Distance : NiagaraFloat [expr]
+    INPUT Invert Velocity Falloff : NiagaraBool [expr]
+    INPUT Use Falloff Distance : NiagaraBool [expr]
+    INPUT Velocity Strength : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Forces/GravityForce.GravityForce
+    INPUT Gravity : Vector3f [expr]
+  MODULE /Niagara/Modules/Update/Forces/Drag.Drag
+    INPUT Drag : NiagaraFloat [expr]
+    INPUT Rotational Drag : NiagaraFloat [expr]
+    INPUT Ignore Mass : NiagaraBool [expr]
+  MODULE /Niagara/Modules/Update/Forces/CurlNoiseForce.CurlNoiseForce
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Sample Position : Vector3f [expr]
+    INPUT Noise Frequency : NiagaraFloat [expr]
+    INPUT Pan Noise Field : Vector3f [expr]
+    INPUT Curl Noise Cone Mask Angle : NiagaraFloat [expr]
+    INPUT Curl Noise Cone Mask Falloff Angle : NiagaraFloat [expr]
+    INPUT Curl Noise Cone Mask Axis : Vector3f [expr]
+    INPUT Noise Strength : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Forces/PointAttractionForce.PointAttractionForce
+    INPUT AttractorPosition : Vector3f [expr]
+    INPUT Attraction Radius : NiagaraFloat [expr]
+    INPUT AttractionStrength : NiagaraFloat [expr]
+    INPUT Use Falloff : NiagaraBool [expr]
+    INPUT Falloff Exponent : NiagaraFloat [expr]
+    INPUT Kill Within Radius : NiagaraBool [expr]
+    INPUT Kill Radius : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Forces/VortexForce.VortexForce
+    INPUT Vortex Origin : NiagaraPosition [expr]
+    INPUT Vortex Influence Position : NiagaraPosition [expr]
+    INPUT Vortex Origin Offset : Vector3f [expr]
+    INPUT Influence Falloff Radius : NiagaraFloat [expr]
+    INPUT Vortex Axis : Vector3f [expr]
+    INPUT Vortex Axis Coordinate Space : ENiagaraCoordinateSpace [expr]
+    INPUT Vortex Force Amount : NiagaraFloat [expr]
+    INPUT Origin Pull Amount : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Forces/WindForce.WindForce
+    INPUT Position : NiagaraPosition [expr]
+    INPUT Wind Speed Scale : NiagaraFloat [expr]
+    INPUT Wind Speed : Vector3f [expr]
+  MODULE /Niagara/Modules/Update/Forces/LimitForce.LimitForce
+    INPUT Force Limit : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Size/ScaleSpriteSize.ScaleSpriteSize
+    INPUT Initial Sprite Size : Vector2f [expr]
+    INPUT Uniform Scale Factor : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Color/ScaleColor.ScaleColor
+    INPUT Color Value To Scale : LinearColor [expr]
+    INPUT Scale RGB : Vector3f [expr]
+    INPUT Scale Alpha : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Color/Color.Color
+    INPUT Color : LinearColor [expr]
+    INPUT Scale Color : Vector3f [expr]
+    INPUT Scale Alpha : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/SubUV/SubUVAnimation.SubUVAnimation
+    INPUT SubUV Lookup Index : NiagaraFloat [expr]
+    INPUT Number Of Frames : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Update/Position/ConstrainPositionToPlane.ConstrainPositionToPlane
+    INPUT Position : NiagaraPosition [expr]
+    INPUT Plane Position : NiagaraPosition [expr]
+    INPUT Plane Normal : Vector3f [expr]
+  MODULE /Niagara/Modules/Update/Lifetime/KillParticlesInVolume.KillParticlesInVolume
+    INPUT Invert Volume : NiagaraBool [expr]
+    INPUT Kill Volume Enabled : NiagaraBool [expr]
+    INPUT Origin Offset : Vector3f [expr]
+    INPUT Volume Origin : Vector3f [expr]
+    INPUT Box Size : Vector3f [expr]
+    INPUT Sphere Radius : NiagaraFloat [expr]
+    INPUT Position : NiagaraPosition [expr]
+    INPUT Plane Normal : Vector3f [expr]
+    INPUT Slab Axis : Vector3f [expr]
+    INPUT Slab Width : NiagaraFloat [expr]
+    INPUT Cone Axis : Vector3f [expr]
+    INPUT Cone Angle : NiagaraFloat [expr]
+    INPUT Cone Length : NiagaraFloat [expr]
+  MODULE /Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity
+    INPUT DeltaTime : NiagaraFloat [expr]
+    INPUT Force : Vector3f [expr]
+    INPUT Velocity : Vector3f [expr]
+    INPUT Mass : NiagaraFloat [expr]
+    INPUT Position : NiagaraPosition [expr]
+    INPUT Speed Limit : NiagaraFloat [expr]
+    INPUT PreviousVelocity : Vector3f [expr]
+    INPUT Acceleration Limit : NiagaraFloat [expr]
+    INPUT Write to Intrinsic Properties : NiagaraBool [expr]
+    INPUT Manually Enable Rotational Solver : NiagaraBool [expr]
+======== DYNAMIC INPUT SCHEMAS ========
+  MODULE /Niagara/DynamicInputs/ValueFromCurve/VectorFromCurve.VectorFromCurve
+    INPUT VectorCurve : NiagaraDataInterfaceVectorCurve [expr]
+    INPUT CurveIndex : NiagaraFloat [expr]
+    INPUT Scale Curve : Vector3f [expr]
+  MODULE /Niagara/DynamicInputs/ValueFromCurve/FloatFromCurve.FloatFromCurve
+    INPUT FloatCurve : NiagaraDataInterfaceCurve [expr]
+    INPUT CurveIndex : NiagaraFloat [expr]
+    INPUT Scale Curve : NiagaraFloat [expr]
+  MODULE /Niagara/DynamicInputs/ValueFromCurve/ColorFromCurve.ColorFromCurve
+    INPUT ColorCurve : NiagaraDataInterfaceColorCurve [expr]
+    INPUT CurveIndex : NiagaraFloat [expr]
+  MODULE /Niagara/DynamicInputs/Execution/ReturnNormalizedExecIndex.ReturnNormalizedExecIndex
+    INPUT Normalized Index Includes One : NiagaraBool [expr]
+    INPUT Normalized Index Scale : NiagaraFloat [expr]
+  MODULE /Niagara/DynamicInputs/Random/FixedSeedRandomFloat.FixedSeedRandomFloat
+    INPUT Seed : NiagaraFloat [expr]
+    INPUT Range : Vector2f [expr]
+  MODULE /Niagara/DynamicInputs/UniformRange/UniformRangedFloat.UniformRangedFloat
+    INPUT Minimum : NiagaraFloat [expr]
+    INPUT Maximum : NiagaraFloat [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+  MODULE /Niagara/DynamicInputs/UniformRange/UniformRangedVector.UniformRangedVector
+    INPUT Minimum : Vector3f [expr]
+    INPUT Maximum : Vector3f [expr]
+    INPUT Random Seed : NiagaraInt32 [expr]
+    INPUT Override Randomness : NiagaraBool [expr]
+    INPUT Randomness Mode : ENiagaraRandomnessMode [expr]
+    INPUT Override Seed : NiagaraBool [expr]
+    INPUT Fixed Random Seed : NiagaraBool [expr]
+======== EMITTER TEMPLATES ========
+TEMPLATE /Niagara/DefaultAssets/Templates/Emitters/Minimal.Minimal  as Probe0  renderers=1
+  SCRIPT EmitterSpawnScript
+  SCRIPT EmitterUpdateScript
+    STACKMODULE EmitterState  asset=/Niagara/Modules/Emitter/EmitterState.EmitterState setParams=0
+      IN Life Cycle Mode : ENiagaraEmitterLifeCycleMode
+      IN Inactive Response : ENiagaraInactiveMode [hidden]
+      IN Loop Behavior : ENiagara_EmitterStateOptions [hidden]
+      IN Loop Duration Mode : ENiagara_InfiniteLoopDuration [hidden]
+      IN Loop Count : NiagaraInt32 [hidden]
+      IN Loop Duration : NiagaraFloat [hidden]
+      IN Recalculate Duration Each Loop : NiagaraBool [hidden]
+      IN UseLoopDelay : NiagaraBool [hidden]
+      IN Loop Delay : NiagaraFloat [hidden]
+      IN Delay First Loop Only : NiagaraBool [hidden]
+      IN Scalability Mode : ENiagaraEmitterScalabilityMode_Limited
+      IN Enable Distance Culling : NiagaraBool [hidden]
+      IN MinDistance : NiagaraFloat [hidden]
+      IN Min Distance Response : ENiagaraExecutionStateManagement [hidden]
+      IN MaxDistance : NiagaraFloat [hidden]
+      IN Max Distance Response : ENiagaraExecutionStateManagement [hidden]
+      IN Scale Spawn Count : NiagaraBool [hidden]
+      IN Spawn Count Scale : NiagaraFloat [hidden]
+      IN Spawn Count Scale By Distance : NiagaraDataInterfaceCurve [hidden]
+      IN Enable Visibility Culling : NiagaraBool [hidden]
+      IN Visibility Cull Response : ENiagaraExecutionStateManagement [hidden]
+      IN Visibility Cull Delay : NiagaraFloat [hidden]
+      IN Reset Age On Awaken : NiagaraBool [hidden]
+  SCRIPT ParticleSpawnScript
+    STACKMODULE InitializeParticle  asset=/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle setParams=0
+      IN Lifetime Mode : ENiagara_LifetimeMode
+      IN Lifetime Min : NiagaraFloat [hidden]
+      IN Lifetime : NiagaraFloat
+      IN Lifetime Max : NiagaraFloat [hidden]
+      IN Lifetime Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Color Mode : ENiagara_ColorInitializationMode
+      IN Color Minimum : LinearColor [hidden]
+      IN Color : LinearColor [hidden]
+      IN AdjustHue : NiagaraBool [hidden]
+      IN Hue Shift Range : Vector2f [hidden]
+      IN Color Maximum : LinearColor [hidden]
+      IN AdjustSaturation : NiagaraBool [hidden]
+      IN Saturation Range : Vector2f [hidden]
+      IN AdjustValue : NiagaraBool [hidden]
+      IN Value Range : Vector2f [hidden]
+      IN AdjustAlpha : NiagaraBool [hidden]
+      IN Alpha Scale Range : Vector2f [hidden]
+      IN Color Channel Mode : ENiagaraChannelCorrelation [hidden]
+      IN Color Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Position Mode : ENiagara_PositionInitializationMode
+      IN Position : NiagaraPosition [hidden]
+      IN UsePositionOffset : NiagaraBool
+      IN Position Offset : Vector3f
+      IN Position Offset Coordinate Space : ENiagaraCoordinateSpace [hidden]
+      IN Mass Mode : ENiagara_MassInitializationMode
+      IN Mass Min : NiagaraFloat [hidden]
+      IN Mass : NiagaraFloat [hidden]
+      IN Mass Max : NiagaraFloat [hidden]
+      IN Mass Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Write Material Random : NiagaraBool
+      IN Material Random : NiagaraFloat
+      IN Sprite Size Mode : ENiagara_SizeScaleMode
+      IN Sprite Size : Vector2f [hidden]
+      IN Uniform Sprite Size : NiagaraFloat [hidden]
+      IN Uniform Sprite Size Min : NiagaraFloat [hidden]
+      IN Sprite Size Min : Vector2f [hidden]
+      IN Sprite Size Max : Vector2f [hidden]
+      IN Uniform Sprite Size Max : NiagaraFloat [hidden]
+      IN Sprite Size Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Sprite Rotation Mode : ENiagara_SpriteRotationMode
+      IN Sprite Rotation Angle Min : NiagaraFloat [hidden]
+      IN Sprite Rotation Angle : NiagaraFloat [hidden]
+      IN Sprite Rotation Angle Max : NiagaraFloat [hidden]
+      IN Sprite Rotation Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Sprite UV Mode : ENiagara_UVFlippingMode
+      IN Sprite UV Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Sprite UV Scale : Vector2f [hidden]
+      IN Mesh Scale Mode : ENiagara_SizeScaleMode
+      IN Mesh Uniform Scale Min : NiagaraFloat [hidden]
+      IN Mesh Uniform Scale : NiagaraFloat [hidden]
+      IN Mesh Scale Min : Vector3f [hidden]
+      IN Mesh Scale : Vector3f [hidden]
+      IN Mesh Scale Max : Vector3f [hidden]
+      IN Mesh Uniform Scale Max : NiagaraFloat [hidden]
+      IN Mesh Scale Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Mesh Renderer Array Visibility Mode : ENiagara_UnsetDirectSetRandom
+      IN Mesh Renderer Mesh Index : NiagaraInt32 [hidden]
+      IN Wrap Index By Mesh Count : NiagaraBool [hidden]
+      IN Mesh Renderer Info : NiagaraDataInterfaceMeshRendererInfo [hidden]
+      IN Mesh Renderer Random Seed : NiagaraInt32 [hidden]
+      IN Ribbon Width Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Width : NiagaraFloat [hidden]
+      IN Ribbon Facing Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Facing Vector : Vector3f [hidden]
+      IN Ribbon Twist Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Twist  : NiagaraFloat [hidden]
+  SCRIPT ParticleUpdateScript
+    STACKMODULE ParticleState  asset=/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState setParams=0
+      IN Kill Particles When Lifetime Has Elapsed : NiagaraBool
+      IN Loop Particles Lifetime : NiagaraBool [hidden]
+      IN Let Infinitely Lived Particles Die When Emitter Deactivates : NiagaraBool [hidden]
+      IN Lifetime : NiagaraFloat
+      IN DeltaTime : NiagaraFloat
+TEMPLATE /Niagara/DefaultAssets/Templates/Emitters/Fountain.Fountain  as Probe1  renderers=1
+  SCRIPT EmitterSpawnScript
+  SCRIPT EmitterUpdateScript
+    STACKMODULE EmitterState  asset=/Niagara/Modules/Emitter/EmitterState.EmitterState setParams=0
+      IN Life Cycle Mode : ENiagaraEmitterLifeCycleMode
+      IN Inactive Response : ENiagaraInactiveMode
+      IN Loop Behavior : ENiagara_EmitterStateOptions
+      IN Loop Duration Mode : ENiagara_InfiniteLoopDuration [hidden]
+      IN Loop Count : NiagaraInt32 [hidden]
+      IN Loop Duration : NiagaraFloat
+      IN Recalculate Duration Each Loop : NiagaraBool
+      IN UseLoopDelay : NiagaraBool
+      IN Loop Delay : NiagaraFloat
+      IN Delay First Loop Only : NiagaraBool [hidden]
+      IN Scalability Mode : ENiagaraEmitterScalabilityMode_Limited
+      IN Enable Distance Culling : NiagaraBool [hidden]
+      IN MinDistance : NiagaraFloat [hidden]
+      IN Min Distance Response : ENiagaraExecutionStateManagement [hidden]
+      IN MaxDistance : NiagaraFloat [hidden]
+      IN Max Distance Response : ENiagaraExecutionStateManagement [hidden]
+      IN Scale Spawn Count : NiagaraBool [hidden]
+      IN Spawn Count Scale : NiagaraFloat [hidden]
+      IN Spawn Count Scale By Distance : NiagaraDataInterfaceCurve [hidden]
+      IN Enable Visibility Culling : NiagaraBool [hidden]
+      IN Visibility Cull Response : ENiagaraExecutionStateManagement [hidden]
+      IN Visibility Cull Delay : NiagaraFloat [hidden]
+      IN Reset Age On Awaken : NiagaraBool [hidden]
+    STACKMODULE SpawnRate  asset=/Niagara/Modules/Emitter/SpawnRate.SpawnRate setParams=0
+      IN SpawnRate : NiagaraFloat
+      IN Use Spawn Probability : NiagaraBool
+      IN Spawn Probability : NiagaraFloat
+      IN SpawnGroup : NiagaraInt32
+  SCRIPT ParticleSpawnScript
+    STACKMODULE InitializeParticle  asset=/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle setParams=0
+      IN Lifetime Mode : ENiagara_LifetimeMode
+      IN Lifetime Min : NiagaraFloat
+      IN Lifetime : NiagaraFloat [hidden]
+      IN Lifetime Max : NiagaraFloat
+      IN Lifetime Randomness Mode : ENiagaraRandomnessMode
+      IN Color Mode : ENiagara_ColorInitializationMode
+      IN Color Minimum : LinearColor [hidden]
+      IN Color : LinearColor
+      IN AdjustHue : NiagaraBool [hidden]
+      IN Hue Shift Range : Vector2f [hidden]
+      IN Color Maximum : LinearColor [hidden]
+      IN AdjustSaturation : NiagaraBool [hidden]
+      IN Saturation Range : Vector2f [hidden]
+      IN AdjustValue : NiagaraBool [hidden]
+      IN Value Range : Vector2f [hidden]
+      IN AdjustAlpha : NiagaraBool [hidden]
+      IN Alpha Scale Range : Vector2f [hidden]
+      IN Color Channel Mode : ENiagaraChannelCorrelation [hidden]
+      IN Color Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Position Mode : ENiagara_PositionInitializationMode
+      IN Position : NiagaraPosition [hidden]
+      IN UsePositionOffset : NiagaraBool
+      IN Position Offset : Vector3f
+      IN Position Offset Coordinate Space : ENiagaraCoordinateSpace [hidden]
+      IN Mass Mode : ENiagara_MassInitializationMode
+      IN Mass Min : NiagaraFloat
+      IN Mass : NiagaraFloat [hidden]
+      IN Mass Max : NiagaraFloat
+      IN Mass Randomness Mode : ENiagaraRandomnessMode
+      IN Write Material Random : NiagaraBool
+      IN Material Random : NiagaraFloat
+      IN Sprite Size Mode : ENiagara_SizeScaleMode
+      IN Sprite Size : Vector2f [hidden]
+      IN Uniform Sprite Size : NiagaraFloat [hidden]
+      IN Uniform Sprite Size Min : NiagaraFloat
+      IN Sprite Size Min : Vector2f [hidden]
+      IN Sprite Size Max : Vector2f [hidden]
+      IN Uniform Sprite Size Max : NiagaraFloat
+      IN Sprite Size Randomness Mode : ENiagaraRandomnessMode
+      IN Sprite Rotation Mode : ENiagara_SpriteRotationMode
+      IN Sprite Rotation Angle Min : NiagaraFloat
+      IN Sprite Rotation Angle : NiagaraFloat [hidden]
+      IN Sprite Rotation Angle Max : NiagaraFloat
+      IN Sprite Rotation Randomness Mode : ENiagaraRandomnessMode
+      IN Sprite UV Mode : ENiagara_UVFlippingMode
+      IN Sprite UV Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Sprite UV Scale : Vector2f [hidden]
+      IN Mesh Scale Mode : ENiagara_SizeScaleMode
+      IN Mesh Uniform Scale Min : NiagaraFloat [hidden]
+      IN Mesh Uniform Scale : NiagaraFloat [hidden]
+      IN Mesh Scale Min : Vector3f [hidden]
+      IN Mesh Scale : Vector3f [hidden]
+      IN Mesh Scale Max : Vector3f [hidden]
+      IN Mesh Uniform Scale Max : NiagaraFloat [hidden]
+      IN Mesh Scale Randomness Mode : ENiagaraRandomnessMode [hidden]
+      IN Mesh Renderer Array Visibility Mode : ENiagara_UnsetDirectSetRandom
+      IN Mesh Renderer Mesh Index : NiagaraInt32 [hidden]
+      IN Wrap Index By Mesh Count : NiagaraBool [hidden]
+      IN Mesh Renderer Info : NiagaraDataInterfaceMeshRendererInfo [hidden]
+      IN Mesh Renderer Random Seed : NiagaraInt32 [hidden]
+      IN Ribbon Width Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Width : NiagaraFloat [hidden]
+      IN Ribbon Facing Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Facing Vector : Vector3f [hidden]
+      IN Ribbon Twist Mode : ENiagara_UnsetDirectSet
+      IN Ribbon Twist  : NiagaraFloat [hidden]
+    STACKMODULE ShapeLocation  asset=/Niagara/Modules/Spawn/Location/V2/ShapeLocation.ShapeLocation setParams=0
+      IN Shape Primitive : ENiagara_LocationShapes
+      IN Box / Plane Mode : ENiagara_BoxPlaneMode [hidden]
+      IN Cone Mode : ENiagara_ConeMode [hidden]
+      IN Cylinder Height : NiagaraFloat [hidden]
+      IN Sphere Radius : NiagaraFloat
+      IN Ring / Disc Mode : ENiagaraRingDiscMode [hidden]
+      IN Torus Mode : ENiagaraShapeTorusMode [hidden]
+      IN Knot Ring Loops : NiagaraInt32 [hidden]
+      IN Knot Helix Loops : NiagaraInt32 [hidden]
+      IN Enable Torus Knot Radius : NiagaraBool [hidden]
+      IN Torus Knot Tube Radius : NiagaraFloat [hidden]
+      IN Cylinder Radius : NiagaraFloat [hidden]
+      IN Cylinder Height Midpoint : NiagaraFloat [hidden]
+      IN Ring Radius : NiagaraFloat [hidden]
+      IN Box Size : Vector3f [hidden]
+      IN Box Midpoint : Vector3f [hidden]
+      IN Cone Length : NiagaraFloat [hidden]
+      IN Plane Size : Vector2f [hidden]
+      IN Wedge Horizontal Angle : NiagaraFloat [hidden]
+      IN Large Radius : NiagaraFloat [hidden]
+      IN Plane Midpoint : Vector2f [hidden]
+      IN Wedge Vertical Angle : NiagaraFloat [hidden]
+      IN Cone Angle : NiagaraFloat [hidden]
+      IN Handle Radius : NiagaraFloat [hidden]
+      IN Cone Inner Angle : NiagaraFloat [hidden]
+      IN Cone Radial Angle : NiagaraFloat [hidden]
+      IN Cone Angle Type : ENiagara_AngleInput [hidden]
+      IN Flatten Endcaps : NiagaraBool [hidden]
+      IN Apply To Particle Position : ENiagara_AttributeSamplingApplyOutput
+      IN Cone Surface Distribution : NiagaraFloat [hidden]
+      IN Ring / Disc Distribution Mode : ENiagaraSphereDistributionMode [hidden]
+      IN Sphere Distribution : ENiagaraSphereDistributionMode
+      IN Torus Distribution Mode : ENiagaraTorusDistributionMode [hidden]
+      IN Sphere Surface Distribution : NiagaraFloat
+      IN Hemisphere Distribution : Vector2f
+      IN Cylinder Distribution : ENiagara_CylinderMode [hidden]
+      IN Surface Only : NiagaraBool [hidden]
+      IN Surface Only Band Thickness : NiagaraFloat [hidden]
+      IN Use Endcaps In Surface Only Mode : NiagaraBool [hidden]
+      IN Hemicircle X : NiagaraBool [hidden]
+      IN Hemicircle Y : NiagaraBool [hidden]
+      IN Disc Coverage : NiagaraFloat [hidden]
+      IN Hemicircle Internal Cap : NiagaraBool [hidden]
+      IN U Position : NiagaraFloat [hidden]
+      IN Enable Lathe Profile : NiagaraBool [hidden]
+      IN Lathe Profile : NiagaraDataInterfaceCurve [hidden]
+      IN Surface Distribution : NiagaraFloat [hidden]
+      IN Surface Expansion Mode : ENiagaraExpansionMode [hidden]
+      IN U Distribution : NiagaraFloat [hidden]
+      IN V Position : NiagaraFloat [hidden]
+      IN Radius Position : NiagaraFloat [hidden]
+      IN Sphere Radius Position : NiagaraFloat [hidden]
+      IN V Distribution : NiagaraFloat [hidden]
+      IN Evaluation Type : ENiagaraRandomnessEvaluation [hidden]
+      IN Uniform Distribution : NiagaraFloat [hidden]
+      IN Uniform Spiral Amount : NiagaraFloat [hidden]
+      IN Uniform Spiral Falloff : NiagaraFloat [hidden]
+      IN Uniform Count : NiagaraInt32 [hidden]
+      IN Uniform Particle Index : NiagaraInt32 [hidden]
+      IN Hemisphere Angle Type : ENiagara_AngleInput
+      IN Uniform Endpoint Offset : NiagaraFloat [hidden]
+      IN MaskSpawnGroup : NiagaraBool
+      IN Spawn Group Mask : NiagaraInt32
+      IN Spawn Group : NiagaraInt32 [hidden]
+      IN Randomness Mode : ENiagaraRandomnessMode
+      IN Override Seed : NiagaraBool
+      IN Random Seed : NiagaraInt32
+      IN Fixed Random Seed : NiagaraBool [hidden]
+      IN Transform Order : ENiagara_TransformOrder
+      IN Scale Mode : ENiagara_ScaleMode
+      IN Non Uniform Scale : Vector3f
+      IN UseOwnerScale : NiagaraBool
+      IN Apply Owner Scale : Vector3f
+      IN Rotation Mode : ENiagara_RotationMode
+      IN Rotation Axis : Vector3f [hidden]
+      IN Rotation Matrix : NiagaraMatrix [hidden]
+      IN Rotation Quaternion : Quat4f [hidden]
+      IN Yaw / Pitch / Roll : Vector3f [hidden]
+      IN Rotation Angle : NiagaraFloat [hidden]
+      IN Invert Rotation Quaternion : NiagaraBool [hidden]
+      IN Additional Quaternion Rotation : NiagaraBool [hidden]
+      IN Additional Yaw / Pitch / Roll : Vector3f [hidden]
+      IN Rotation Angle Type : ENiagara_AngleInput [hidden]
+      IN Rotation Coordinate Space : ENiagaraCoordinateSpace
+      IN Offset Mode : ENiagara_OffsetMode
+      IN Shape Origin : NiagaraPosition
+      IN Offset : Vector3f [hidden]
+      IN Offset Coordinate Space : ENiagaraCoordinateSpace [hidden]
+      IN Custom Transform Matrix : NiagaraMatrix [hidden]
+      IN Transform Method : ENiagara_TransformType
+    STACKMODULE AddVelocity  asset=/Niagara/Modules/Spawn/Velocity/AddVelocity.AddVelocity setParams=0
+      IN Velocity Mode : ENiagara_VelocityMode
+      IN Velocity : Vector3f [hidden]
+      IN Velocity Speed : NiagaraFloat [dynamic]
+      IN Velocity Speed Scale : NiagaraFloat [hidden]
+      IN Constrain To Radius : NiagaraFloat [hidden]
+      IN Module.UseVelDistribution : NiagaraBool
+      IN Distribution Along Cone Axis : NiagaraFloat
+      IN Radius Falloff Near / Far : Vector2f [hidden]
+      IN Radius Falloff Exponent : NiagaraFloat [hidden]
+      IN Module.UseConeFalloff : NiagaraBool
+      IN Speed Falloff From Cone Axis : NiagaraFloat
+      IN Invert Velocity Falloff : NiagaraBool [hidden]
+      IN Override Seed : NiagaraBool
+      IN Random Seed : NiagaraInt32
+      IN Fixed Random Seed : NiagaraBool [hidden]
+      IN Randomness Mode : ENiagaraRandomnessMode
+      IN Cone Axis : Vector3f
+      IN Cone Angle : NiagaraFloat
+      IN Inner Cone Angle : NiagaraFloat
+      IN Cone Angle Mode : ENiagara_AngleInput
+      IN Rotation Mode : ENiagara_RotationMode
+      IN Rotation Axis : Vector3f [hidden]
+      IN Yaw / Pitch / Roll : Vector3f [hidden]
+      IN Rotation Quaternion : Quat4f [hidden]
+      IN Rotation Matrix : NiagaraMatrix [hidden]
+      IN Rotation Angle : NiagaraFloat [hidden]
+      IN Invert Rotation Quaternion : NiagaraBool [hidden]
+      IN Additional Quaternion Rotation : NiagaraBool [hidden]
+      IN Additional Yaw / Pitch / Roll : Vector3f [hidden]
+      IN Rotation Angle Type : ENiagara_AngleInput [hidden]
+      IN Rotation Coordinate Space : ENiagaraCoordinateSpace
+      IN Velocity Origin : NiagaraPosition [hidden]
+      IN Origin Offset : Vector3f [hidden]
+      IN Origin Offset Coordinate Space : ENiagaraCoordinateSpace [hidden]
+      IN Default Position : NiagaraPosition [hidden]
+  SCRIPT ParticleUpdateScript
+    STACKMODULE ParticleState  asset=/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState setParams=0
+      IN Kill Particles When Lifetime Has Elapsed : NiagaraBool
+      IN Loop Particles Lifetime : NiagaraBool [hidden]
+      IN Let Infinitely Lived Particles Die When Emitter Deactivates : NiagaraBool [hidden]
+      IN Lifetime : NiagaraFloat
+      IN DeltaTime : NiagaraFloat
+    STACKMODULE GravityForce  asset=/Niagara/Modules/Update/Forces/GravityForce.GravityForce setParams=0
+      IN Gravity : Vector3f
+      IN Coordinate Space : ENiagaraCoordinateSpace
+    STACKMODULE Drag  asset=/Niagara/Modules/Update/Forces/Drag.Drag setParams=0
+      IN Use Linear Drag : NiagaraBool
+      IN Drag : NiagaraFloat
+      IN Use Rotational Drag : NiagaraBool
+      IN Rotational Drag : NiagaraFloat
+      IN Ignore Mass : NiagaraBool
+    STACKMODULE ScaleColor  asset=/Niagara/Modules/Update/Color/ScaleColor.ScaleColor setParams=0
+      IN Scale Mode : ENiagaraScaleColorMode
+      IN Linear Color Curve : NiagaraDataInterfaceColorCurve [hidden]
+      IN ScaleRGB : NiagaraBool
+      IN Scale RGB : Vector3f
+      IN ScaleRGBA : NiagaraBool [hidden]
+      IN Scale RGBA : Vector4f [hidden]
+      IN Curve Index : NiagaraFloat [hidden]
+      IN ScaleA : NiagaraBool
+      IN Scale Alpha : NiagaraFloat [dynamic]
+      IN Color Value To Scale : LinearColor
+    STACKMODULE SolveForcesAndVelocity  asset=/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity setParams=0
+      IN Clamp Velocity : NiagaraBool
+      IN Speed Limit : NiagaraFloat
+      IN Limit Acceleration : NiagaraBool
+      IN Acceleration Limit : NiagaraFloat
+      IN Manually Enable Rotational Solver : NiagaraBool
+      IN Write to Intrinsic Properties : NiagaraBool
+      IN Write to Presolve Properties : NiagaraBool
+      IN DeltaTime : NiagaraFloat
+      IN Mass : NiagaraFloat
+      IN Position : NiagaraPosition
+      IN Velocity : Vector3f
+      IN PreviousVelocity : Vector3f
+      IN Force : Vector3f
+      IN Mesh Orientation : Quat4f [hidden]
+      IN Rotational Velocity : Vector3f [hidden]
+      IN Rotational Force : Vector3f [hidden]
+      IN Rotational Inertia : NiagaraFloat [hidden]
+======== RENDERER SCHEMAS ========
+  RENDERER NiagaraSpriteRendererProperties schema=19577 chars
+{
+	"material":
+	{
+		"type": "string",
+		"title": "MaterialInterface"
+	},
+	"mICMaterial":
+	{
+	},
+	"materialUserParamBinding":
+	{
+		"title": "NiagaraUserParameterBinding",
+		"type": "object",
+		"properties":
+		{
+			"parameter":
+			{
+				"title": "NiagaraVariable",
+				"type": "object",
+				"properties":
+				{
+					"varData":
+					{
+					},
+					"name":
+					{
+						"type": "string"
+					},
+					"typeDefHandle":
+					{
+						"title": "NiagaraTypeDefinitionHandle",
+						"type": "object",
+						"properties":
+						{
+							"registeredTypeIndex":
+							{
+							}
+						},
+						"required": [
+							"registeredTypeIndex"
+						]
+					}
+				},
+				"required": [
+					"varData",
+					"name",
+					"typeDefHandle"
+				]
+			}
+		},
+		"required": [
+			"parameter"
+		]
+	},
+	"sourceMode":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererSourceDataMode",
+		"enum": [
+			"Particles",
+			"Emitter"
+		]
+	},
+	"alignment":
+	{
+		"type": "string",
+		"title": "ENiagaraSpriteAlignment",
+		"enum": [
+			"Unaligned",
+			"VelocityAligned",
+			"CustomAlignment",
+			"Automatic"
+		]
+	},
+	"facingMode":
+	{
+		"type": "string",
+		"title": "ENiagaraSpriteFacingMode",
+		"enum": [
+			"FaceCamera",
+			"FaceCameraPlane",
+			"CustomFacingVector",
+			"FaceCameraPosition",
+			"FaceCameraDistanceBlend",
+			"Automatic"
+		]
+	},
+	"sortMode":
+	{
+		"type": "string",
+		"title": "ENiagaraSortMode",
+		"enum": [
+			"None",
+			"ViewDepth",
+			"ViewDistance",
+			"CustomAscending",
+			"CustomDecending"
+		]
+	},
+	"macroUVRadius":
+	{
+		"type": "number"
+	},
+	"pivotInUVSpace":
+	{
+		"title": "Vector2D",
+		"type": "object",
+		"properties":
+		{
+			"x":
+			{
+				"type": "number"
+			},
+			"y":
+			{
+				"type": "number"
+			}
+		},
+		"required": [
+			"x",
+			"y"
+		]
+	},
+	"subImageSize":
+	{
+		"title": "Vector2D",
+		"type": "object",
+		"properties":
+		{
+			"x":
+			{
+				"type": "number"
+			},
+			"y":
+			{
+				"type": "number"
+			}
+		},
+		"required": [
+			"x",
+			"y"
+		]
+	},
+	"bSubImageBlend":
+	{
+		"type": "boolean"
+	},
+	"bRemoveHMDRollInVR":
+	{
+		"type": "boolean"
+	},
+	"bSortOnlyWhenTranslucent":
+	{
+		"type": "boolean"
+	},
+	"bEnableCameraDistanceCulling":
+	{
+		"type": "boolean"
+	},
+	"bCastShadows":
+	{
+		"type": "boolean"
+	},
+	"bIncludeInHitProxy":
+	{
+		"type": "boolean"
+	},
+	"sortPrecision":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererSortPrecision",
+		"enum": [
+			"Default",
+			"Low",
+			"High"
+		]
+	},
+	"gpuTranslucentLatency":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererGpuTranslucentLatency",
+		"enum": [
+			"ProjectDefault",
+			"Immediate",
+			"Latent"
+		]
+	},
+	"pixelCoverageMode":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererPixelCoverageMode",
+		"enum": [
+			"Automatic",
+			"Disabled",
+			"Enabled",
+			"Enabled_RGBA",
+			"Enabled_RGB",
+			"Enabled_A"
+		]
+	},
+	"pixelCoverageBlend":
+	{
+		"type": "number"
+	},
+	"minFacingCameraBlendDistance":
+	{
+		"type": "number"
+	},
+	"maxFacingCameraBlendDistance":
+	{
+		"type": "number"
+	},
+	"minCameraDistance":
+	{
+		"type": "number"
+	},
+	"maxCameraDistance":
+	{
+		"type": "number"
+	},
+	"rendererVisibility":
+	{
+		"type": "integer"
+	},
+	"positionBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"colorBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"velocityBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"spriteRotationBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"spriteSizeBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"spriteFacingBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"spriteAlignmentBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"subImageIndexBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterialBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial1Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial2Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial3Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"cameraOffsetBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"uVScaleBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"pivotOffsetBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialRandomBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"customSortingBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"normalizedAgeBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"rendererVisibilityTagBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialParameters":
+	{
+		"title": "NiagaraRendererMaterialParameters",
+		"type": "object",
+		"properties":
+		{
+			"attributeBindings":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"scalarParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"vectorParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"textureParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"staticBoolParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			}
+		},
+		"required": [
+			"attributeBindings",
+			"scalarParameters",
+			"vectorParameters",
+			"textureParameters",
+			"staticBoolParameters"
+		]
+	},
+	"prevPositionBinding":
+	{
+	},
+	"prevVelocityBinding":
+	{
+	},
+	"prevSpriteRotationBinding":
+	{
+	},
+	"prevSpriteSizeBinding":
+	{
+	},
+	"prevSpriteFacingBinding":
+	{
+	},
+	"prevSpriteAlignmentBinding":
+	{
+	},
+	"prevCameraOffsetBinding":
+	{
+	},
+	"prevPivotOffsetBinding":
+	{
+	},
+	"bUseMaterialCutoutTexture":
+	{
+		"type": "boolean"
+	},
+	"bCutoutIgnoreSubUV":
+	{
+		"type": "boolean"
+	},
+	"cutoutTexture":
+	{
+		"type": "string",
+		"title": "Texture2D"
+	},
+	"boundingMode":
+	{
+		"type": "string",
+		"title": "ESubUVBoundingVertexCount",
+		"enum": [
+			"BVC_FourVertices",
+			"BVC_EightVertices"
+		]
+	},
+	"opacitySourceMode":
+	{
+		"type": "string",
+		"title": "EOpacitySourceMode",
+		"enum": [
+			"OSM_Alpha",
+			"OSM_ColorBrightness",
+			"OSM_RedChannel",
+			"OSM_GreenChannel",
+			"OSM_BlueChannel"
+		]
+	},
+	"alphaThreshold":
+	{
+		"type": "number"
+	},
+	"materialParamValidMask":
+	{
+	},
+	"platforms":
+	{
+		"title": "NiagaraPlatformSet",
+		"type": "object",
+		"properties":
+		{
+			"deviceProfileStates":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"cVarConditions":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"qualityLevelMask":
+			{
+				"type": "integer"
+			}
+		},
+		"required": [
+			"deviceProfileStates",
+			"cVarConditions",
+			"qualityLevelMask"
+		]
+	},
+	"sortOrderHint":
+	{
+		"type": "integer"
+	},
+	"motionVectorSetting":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererMotionVectorSetting",
+		"enum": [
+			"AutoDetect",
+			"Precise",
+			"Approximate",
+			"Disable"
+		]
+	},
+	"bIsEnabled":
+	{
+		"type": "boolean"
+	},
+	"bAllowInCullProxies":
+	{
+		"type": "boolean"
+	},
+	"rendererEnabledBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"outerEmitterVersion":
+	{
+	},
+	"bDebugDrawEnabled":
+	{
+	},
+	"mergeId":
+	{
+	}
+}
+  RENDERER NiagaraMeshRendererProperties schema=17250 chars
+{
+	"meshes":
+	{
+		"type": "array",
+		"items":
+		{
+		}
+	},
+	"meshesBinding":
+	{
+		"title": "NiagaraParameterBinding",
+		"type": "object",
+		"properties":
+		{
+			"resolvedParameter":
+			{
+				"title": "NiagaraVariableBase",
+				"type": "object",
+				"properties":
+				{
+					"name":
+					{
+						"type": "string"
+					},
+					"typeDefHandle":
+					{
+						"title": "NiagaraTypeDefinitionHandle",
+						"type": "object",
+						"properties":
+						{
+							"registeredTypeIndex":
+							{
+							}
+						},
+						"required": [
+							"registeredTypeIndex"
+						]
+					}
+				},
+				"required": [
+					"name",
+					"typeDefHandle"
+				]
+			},
+			"aliasedParameter":
+			{
+			},
+			"allowedDataInterfaces":
+			{
+			},
+			"allowedObjects":
+			{
+			},
+			"allowedInterfaces":
+			{
+			}
+		},
+		"required": [
+			"resolvedParameter",
+			"aliasedParameter",
+			"allowedDataInterfaces",
+			"allowedObjects",
+			"allowedInterfaces"
+		]
+	},
+	"sourceMode":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererSourceDataMode",
+		"enum": [
+			"Particles",
+			"Emitter"
+		]
+	},
+	"sortMode":
+	{
+		"type": "string",
+		"title": "ENiagaraSortMode",
+		"enum": [
+			"None",
+			"ViewDepth",
+			"ViewDistance",
+			"CustomAscending",
+			"CustomDecending"
+		]
+	},
+	"sortPrecision":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererSortPrecision",
+		"enum": [
+			"Default",
+			"Low",
+			"High"
+		]
+	},
+	"gpuTranslucentLatency":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererGpuTranslucentLatency",
+		"enum": [
+			"ProjectDefault",
+			"Immediate",
+			"Latent"
+		]
+	},
+	"bOverrideMaterials":
+	{
+		"type": "boolean"
+	},
+	"bSortOnlyWhenTranslucent":
+	{
+		"type": "boolean"
+	},
+	"bSubImageBlend":
+	{
+		"type": "boolean"
+	},
+	"bEnableFrustumCulling":
+	{
+		"type": "boolean"
+	},
+	"bEnableCameraDistanceCulling":
+	{
+		"type": "boolean"
+	},
+	"bEnableMeshFlipbook":
+	{
+		"type": "boolean"
+	},
+	"bLockedAxisEnable":
+	{
+		"type": "boolean"
+	},
+	"bCastShadows":
+	{
+		"type": "boolean"
+	},
+	"bIncludeInHitProxy":
+	{
+		"type": "boolean"
+	},
+	"overrideMaterials":
+	{
+		"type": "array",
+		"items":
+		{
+		}
+	},
+	"mICOverrideMaterials":
+	{
+	},
+	"subImageSize":
+	{
+		"title": "Vector2D",
+		"type": "object",
+		"properties":
+		{
+			"x":
+			{
+				"type": "number"
+			},
+			"y":
+			{
+				"type": "number"
+			}
+		},
+		"required": [
+			"x",
+			"y"
+		]
+	},
+	"lockedAxis":
+	{
+		"title": "Vector",
+		"type": "object",
+		"properties":
+		{
+			"x":
+			{
+				"type": "number"
+			},
+			"y":
+			{
+				"type": "number"
+			},
+			"z":
+			{
+				"type": "number"
+			}
+		},
+		"required": [
+			"x",
+			"y",
+			"z"
+		]
+	},
+	"meshBoundsScale":
+	{
+		"title": "Vector",
+		"type": "object",
+		"properties":
+		{
+			"x":
+			{
+				"type": "number"
+			},
+			"y":
+			{
+				"type": "number"
+			},
+			"z":
+			{
+				"type": "number"
+			}
+		},
+		"required": [
+			"x",
+			"y",
+			"z"
+		]
+	},
+	"facingMode":
+	{
+		"type": "string",
+		"title": "ENiagaraMeshFacingMode",
+		"enum": [
+			"Default",
+			"Velocity",
+			"CameraPosition",
+			"CameraPlane"
+		]
+	},
+	"lockedAxisSpace":
+	{
+		"type": "string",
+		"title": "ENiagaraMeshLockedAxisSpace",
+		"enum": [
+			"Simulation",
+			"World",
+			"Local"
+		]
+	},
+	"minCameraDistance":
+	{
+		"type": "number"
+	},
+	"maxCameraDistance":
+	{
+		"type": "number"
+	},
+	"rendererVisibility":
+	{
+		"type": "integer"
+	},
+	"positionBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"colorBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"velocityBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"meshOrientationBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"scaleBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"subImageIndexBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterialBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial1Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial2Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial3Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialRandomBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"customSortingBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"normalizedAgeBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"cameraOffsetBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"rendererVisibilityTagBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"meshIndexBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialParameters":
+	{
+		"title": "NiagaraRendererMaterialParameters",
+		"type": "object",
+		"properties":
+		{
+			"attributeBindings":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"scalarParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"vectorParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"textureParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"staticBoolParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			}
+		},
+		"required": [
+			"attributeBindings",
+			"scalarParameters",
+			"vectorParameters",
+			"textureParameters",
+			"staticBoolParameters"
+		]
+	},
+	"prevPositionBinding":
+	{
+	},
+	"prevScaleBinding":
+	{
+	},
+	"prevMeshOrientationBinding":
+	{
+	},
+	"prevCameraOffsetBinding":
+	{
+	},
+	"prevVelocityBinding":
+	{
+	},
+	"firstFlipbookFrame":
+	{
+		"type": "string",
+		"title": "StaticMesh"
+	},
+	"flipbookSuffixFormat":
+	{
+		"type": "string"
+	},
+	"flipbookSuffixNumDigits":
+	{
+		"type": "integer"
+	},
+	"numFlipbookFrames":
+	{
+		"type": "integer"
+	},
+	"materialParamValidMask":
+	{
+	},
+	"platforms":
+	{
+		"title": "NiagaraPlatformSet",
+		"type": "object",
+		"properties":
+		{
+			"deviceProfileStates":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"cVarConditions":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"qualityLevelMask":
+			{
+				"type": "integer"
+			}
+		},
+		"required": [
+			"deviceProfileStates",
+			"cVarConditions",
+			"qualityLevelMask"
+		]
+	},
+	"sortOrderHint":
+	{
+		"type": "integer"
+	},
+	"motionVectorSetting":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererMotionVectorSetting",
+		"enum": [
+			"AutoDetect",
+			"Precise",
+			"Approximate",
+			"Disable"
+		]
+	},
+	"bIsEnabled":
+	{
+		"type": "boolean"
+	},
+	"bAllowInCullProxies":
+	{
+		"type": "boolean"
+	},
+	"rendererEnabledBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"outerEmitterVersion":
+	{
+	},
+	"bDebugDrawEnabled":
+	{
+	},
+	"mergeId":
+	{
+	}
+}
+  RENDERER NiagaraRibbonRendererProperties schema=21145 chars
+{
+	"material":
+	{
+		"type": "string",
+		"title": "MaterialInterface"
+	},
+	"mICMaterial":
+	{
+	},
+	"materialUserParamBinding":
+	{
+		"title": "NiagaraUserParameterBinding",
+		"type": "object",
+		"properties":
+		{
+			"parameter":
+			{
+				"title": "NiagaraVariable",
+				"type": "object",
+				"properties":
+				{
+					"varData":
+					{
+					},
+					"name":
+					{
+						"type": "string"
+					},
+					"typeDefHandle":
+					{
+						"title": "NiagaraTypeDefinitionHandle",
+						"type": "object",
+						"properties":
+						{
+							"registeredTypeIndex":
+							{
+							}
+						},
+						"required": [
+							"registeredTypeIndex"
+						]
+					}
+				},
+				"required": [
+					"varData",
+					"name",
+					"typeDefHandle"
+				]
+			}
+		},
+		"required": [
+			"parameter"
+		]
+	},
+	"uV0Settings":
+	{
+		"title": "NiagaraRibbonUVSettings",
+		"type": "object",
+		"properties":
+		{
+			"distributionMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVDistributionMode",
+				"enum": [
+					"ScaledUniformly",
+					"ScaledUsingRibbonSegmentLength",
+					"TiledOverRibbonLength",
+					"TiledFromStartOverRibbonLength"
+				]
+			},
+			"leadingEdgeMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVEdgeMode",
+				"enum": [
+					"SmoothTransition",
+					"Locked"
+				]
+			},
+			"trailingEdgeMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVEdgeMode",
+				"enum": [
+					"SmoothTransition",
+					"Locked"
+				]
+			},
+			"bEnablePerParticleUOverride":
+			{
+				"type": "boolean"
+			},
+			"bEnablePerParticleVRangeOverride":
+			{
+				"type": "boolean"
+			},
+			"tilingLength":
+			{
+				"type": "number"
+			},
+			"offset":
+			{
+				"title": "Vector2D",
+				"type": "object",
+				"properties":
+				{
+					"x":
+					{
+						"type": "number"
+					},
+					"y":
+					{
+						"type": "number"
+					}
+				},
+				"required": [
+					"x",
+					"y"
+				]
+			},
+			"scale":
+			{
+				"title": "Vector2D",
+				"type": "object",
+				"properties":
+				{
+					"x":
+					{
+						"type": "number"
+					},
+					"y":
+					{
+						"type": "number"
+					}
+				},
+				"required": [
+					"x",
+					"y"
+				]
+			}
+		},
+		"required": [
+			"distributionMode",
+			"leadingEdgeMode",
+			"trailingEdgeMode",
+			"bEnablePerParticleUOverride",
+			"bEnablePerParticleVRangeOverride",
+			"tilingLength",
+			"offset",
+			"scale"
+		]
+	},
+	"uV1Settings":
+	{
+		"title": "NiagaraRibbonUVSettings",
+		"type": "object",
+		"properties":
+		{
+			"distributionMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVDistributionMode",
+				"enum": [
+					"ScaledUniformly",
+					"ScaledUsingRibbonSegmentLength",
+					"TiledOverRibbonLength",
+					"TiledFromStartOverRibbonLength"
+				]
+			},
+			"leadingEdgeMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVEdgeMode",
+				"enum": [
+					"SmoothTransition",
+					"Locked"
+				]
+			},
+			"trailingEdgeMode":
+			{
+				"type": "string",
+				"title": "ENiagaraRibbonUVEdgeMode",
+				"enum": [
+					"SmoothTransition",
+					"Locked"
+				]
+			},
+			"bEnablePerParticleUOverride":
+			{
+				"type": "boolean"
+			},
+			"bEnablePerParticleVRangeOverride":
+			{
+				"type": "boolean"
+			},
+			"tilingLength":
+			{
+				"type": "number"
+			},
+			"offset":
+			{
+				"title": "Vector2D",
+				"type": "object",
+				"properties":
+				{
+					"x":
+					{
+						"type": "number"
+					},
+					"y":
+					{
+						"type": "number"
+					}
+				},
+				"required": [
+					"x",
+					"y"
+				]
+			},
+			"scale":
+			{
+				"title": "Vector2D",
+				"type": "object",
+				"properties":
+				{
+					"x":
+					{
+						"type": "number"
+					},
+					"y":
+					{
+						"type": "number"
+					}
+				},
+				"required": [
+					"x",
+					"y"
+				]
+			}
+		},
+		"required": [
+			"distributionMode",
+			"leadingEdgeMode",
+			"trailingEdgeMode",
+			"bEnablePerParticleUOverride",
+			"bEnablePerParticleVRangeOverride",
+			"tilingLength",
+			"offset",
+			"scale"
+		]
+	},
+	"facingMode":
+	{
+		"type": "string",
+		"title": "ENiagaraRibbonFacingMode",
+		"enum": [
+			"Screen",
+			"Custom",
+			"CustomSideVector"
+		]
+	},
+	"maxNumRibbons":
+	{
+		"type": "integer"
+	},
+	"drawDirection":
+	{
+		"type": "string",
+		"title": "ENiagaraRibbonDrawDirection",
+		"enum": [
+			"FrontToBack",
+			"BackToFront"
+		]
+	},
+	"shape":
+	{
+		"type": "string",
+		"title": "ENiagaraRibbonShapeMode",
+		"enum": [
+			"Plane",
+			"MultiPlane",
+			"Tube",
+			"Custom"
+		]
+	},
+	"bEnableAccurateGeometry":
+	{
+		"type": "boolean"
+	},
+	"bUseMaterialBackfaceCulling":
+	{
+		"type": "boolean"
+	},
+	"bUseGeometryNormals":
+	{
+		"type": "boolean"
+	},
+	"bUseGPUInit":
+	{
+		"type": "boolean"
+	},
+	"bUseConstantFactor":
+	{
+		"type": "boolean"
+	},
+	"bScreenSpaceTessellation":
+	{
+		"type": "boolean"
+	},
+	"bLinkOrderUseUniqueId":
+	{
+	},
+	"bCastShadows":
+	{
+		"type": "boolean"
+	},
+	"bIncludeInHitProxy":
+	{
+		"type": "boolean"
+	},
+	"widthSegmentationCount":
+	{
+		"type": "integer"
+	},
+	"multiPlaneCount":
+	{
+		"type": "integer"
+	},
+	"tubeSubdivisions":
+	{
+		"type": "integer"
+	},
+	"customVertices":
+	{
+		"type": "array",
+		"items":
+		{
+		}
+	},
+	"tessellationMode":
+	{
+		"type": "string",
+		"title": "ENiagaraRibbonTessellationMode",
+		"enum": [
+			"Automatic",
+			"Custom",
+			"Disabled"
+		]
+	},
+	"curveTension":
+	{
+		"type": "number"
+	},
+	"tessellationFactor":
+	{
+		"type": "integer"
+	},
+	"tessellationAngle":
+	{
+		"type": "number"
+	},
+	"positionBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"colorBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"velocityBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"normalizedAgeBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonTwistBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonWidthBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonFacingBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonIdBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonLinkOrderBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialRandomBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterialBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial1Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial2Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"dynamicMaterial3Binding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"ribbonUVDistance":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"u0OverrideBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"v0RangeOverrideBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"u1OverrideBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"v1RangeOverrideBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"materialParameters":
+	{
+		"title": "NiagaraRendererMaterialParameters",
+		"type": "object",
+		"properties":
+		{
+			"attributeBindings":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"scalarParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"vectorParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"textureParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"staticBoolParameters":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			}
+		},
+		"required": [
+			"attributeBindings",
+			"scalarParameters",
+			"vectorParameters",
+			"textureParameters",
+			"staticBoolParameters"
+		]
+	},
+	"prevPositionBinding":
+	{
+	},
+	"prevRibbonWidthBinding":
+	{
+	},
+	"prevRibbonFacingBinding":
+	{
+	},
+	"prevRibbonTwistBinding":
+	{
+	},
+	"materialParamValidMask":
+	{
+	},
+	"platforms":
+	{
+		"title": "NiagaraPlatformSet",
+		"type": "object",
+		"properties":
+		{
+			"deviceProfileStates":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"cVarConditions":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"qualityLevelMask":
+			{
+				"type": "integer"
+			}
+		},
+		"required": [
+			"deviceProfileStates",
+			"cVarConditions",
+			"qualityLevelMask"
+		]
+	},
+	"sortOrderHint":
+	{
+		"type": "integer"
+	},
+	"motionVectorSetting":
+	{
+		"type": "string",
+		"title": "ENiagaraRendererMotionVectorSetting",
+		"enum": [
+			"AutoDetect",
+			"Precise",
+			"Approximate",
+			"Disable"
+		]
+	},
+	"bIsEnabled":
+	{
+		"type": "boolean"
+	},
+	"bAllowInCullProxies":
+	{
+		"type": "boolean"
+	},
+	"rendererEnabledBinding":
+	{
+		"title": "NiagaraVariableAttributeBinding",
+		"type": "object",
+		"properties":
+		{
+			"rootName":
+			{
+			},
+			"paramMapVariable":
+			{
+			},
+			"dataSetName":
+			{
+			},
+			"boundVariable":
+			{
+			},
+			"defaultValue":
+			{
+			},
+			"cachedDisplayName":
+			{
+			},
+			"bindingSourceMode":
+			{
+			},
+			"bBindingExistsOnSource":
+			{
+			},
+			"bIsCachedParticleValue":
+			{
+			}
+		},
+		"required": [
+			"rootName",
+			"paramMapVariable",
+			"dataSetName",
+			"boundVariable",
+			"defaultValue",
+			"cachedDisplayName",
+			"bindingSourceMode",
+			"bBindingExistsOnSource",
+			"bIsCachedParticleValue"
+		]
+	},
+	"outerEmitterVersion":
+	{
+	},
+	"bDebugDrawEnabled":
+	{
+	},
+	"mergeId":
+	{
+	}
+}
+======== DATA INTERFACE SCHEMAS ========
+  DI /Script/Niagara.NiagaraDataInterfaceVectorCurve
+{
+	"xCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"yCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"zCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"xCurveCookedEditorCache":
+	{
+	},
+	"yCurveCookedEditorCache":
+	{
+	},
+	"zCurveCookedEditorCache":
+	{
+	},
+	"shaderLUT":
+	{
+	},
+	"lUTMinTime":
+	{
+	},
+	"lUTMaxTime":
+	{
+	},
+	"lUTInvTimeRange":
+	{
+	},
+	"lUTNumSamplesMinusOne":
+	{
+	},
+	"curveAsset":
+	{
+		"type": "string",
+		"title": "CurveBase"
+	},
+	"bUseLUT":
+	{
+		"type": "boolean"
+	},
+	"bExposeCurve":
+	{
+		"type": "boolean"
+	},
+	"bOptimizeLUT":
+	{
+		"type": "boolean"
+	},
+	"bOverrideOptimizeThreshold":
+	{
+		"type": "boolean"
+	},
+	"hasEditorData":
+	{
+	},
+	"optimizeThreshold":
+	{
+		"type": "number"
+	},
+	"exposedName":
+	{
+		"type": "string"
+	},
+	"exposedTexture":
+	{
+	}
+}
+  DEFAULT {
+}
+  DI /Script/Niagara.NiagaraDataInterfaceCurve
+{
+	"curve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"curveCookedEditorCache":
+	{
+	},
+	"shaderLUT":
+	{
+	},
+	"lUTMinTime":
+	{
+	},
+	"lUTMaxTime":
+	{
+	},
+	"lUTInvTimeRange":
+	{
+	},
+	"lUTNumSamplesMinusOne":
+	{
+	},
+	"curveAsset":
+	{
+		"type": "string",
+		"title": "CurveBase"
+	},
+	"bUseLUT":
+	{
+		"type": "boolean"
+	},
+	"bExposeCurve":
+	{
+		"type": "boolean"
+	},
+	"bOptimizeLUT":
+	{
+		"type": "boolean"
+	},
+	"bOverrideOptimizeThreshold":
+	{
+		"type": "boolean"
+	},
+	"hasEditorData":
+	{
+	},
+	"optimizeThreshold":
+	{
+		"type": "number"
+	},
+	"exposedName":
+	{
+		"type": "string"
+	},
+	"exposedTexture":
+	{
+	}
+}
+  DEFAULT {
+}
+  DI /Script/Niagara.NiagaraDataInterfaceColorCurve
+{
+	"redCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"greenCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"blueCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"alphaCurve":
+	{
+		"title": "RichCurve",
+		"type": "object",
+		"properties":
+		{
+			"keys":
+			{
+				"type": "array",
+				"items":
+				{
+				}
+			},
+			"defaultValue":
+			{
+				"type": "number"
+			},
+			"preInfinityExtrap":
+			{
+			},
+			"postInfinityExtrap":
+			{
+			},
+			"keyHandlesToIndices":
+			{
+			}
+		},
+		"required": [
+			"keys",
+			"defaultValue",
+			"preInfinityExtrap",
+			"postInfinityExtrap",
+			"keyHandlesToIndices"
+		]
+	},
+	"redCurveCookedEditorCache":
+	{
+	},
+	"greenCurveCookedEditorCache":
+	{
+	},
+	"blueCurveCookedEditorCache":
+	{
+	},
+	"alphaCurveCookedEditorCache":
+	{
+	},
+	"shaderLUT":
+	{
+	},
+	"lUTMinTime":
+	{
+	},
+	"lUTMaxTime":
+	{
+	},
+	"lUTInvTimeRange":
+	{
+	},
+	"lUTNumSamplesMinusOne":
+	{
+	},
+	"curveAsset":
+	{
+		"type": "string",
+		"title": "CurveBase"
+	},
+	"bUseLUT":
+	{
+		"type": "boolean"
+	},
+	"bExposeCurve":
+	{
+		"type": "boolean"
+	},
+	"bOptimizeLUT":
+	{
+		"type": "boolean"
+	},
+	"bOverrideOptimizeThreshold":
+	{
+		"type": "boolean"
+	},
+	"hasEditorData":
+	{
+	},
+	"optimizeThreshold":
+	{
+		"type": "number"
+	},
+	"exposedName":
+	{
+		"type": "string"
+	},
+	"exposedTexture":
+	{
+	}
+}
+  DEFAULT {
+}
+======== VECTOR CURVE ROUND TRIP ========
+{
+	"xCurve":
+	{
+		"keys": [
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 0,
+				"value": -1,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			},
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 1,
+				"value": 1,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			}
+		],
+		"defaultValue": 3.4028234663852886e+38,
+		"preInfinityExtrap": "RCCE_Constant",
+		"postInfinityExtrap": "RCCE_Constant"
+	},
+	"yCurve":
+	{
+		"keys": [
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 0,
+				"value": 0,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			},
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 1,
+				"value": 2,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			}
+		],
+		"defaultValue": 3.4028234663852886e+38,
+		"preInfinityExtrap": "RCCE_Constant",
+		"postInfinityExtrap": "RCCE_Constant"
+	},
+	"zCurve":
+	{
+		"keys": [
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 0,
+				"value": 0.5,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			},
+			{
+				"interpMode": "RCIM_Cubic",
+				"tangentMode": "RCTM_Auto",
+				"tangentWeightMode": "RCTWM_WeightedNone",
+				"time": 1,
+				"value": -0.5,
+				"arriveTangent": 0,
+				"arriveTangentWeight": 0,
+				"leaveTangent": 0,
+				"leaveTangentWeight": 0
+			}
+		],
+		"defaultValue": 3.4028234663852886e+38,
+		"preInfinityExtrap": "RCCE_Constant",
+		"postInfinityExtrap": "RCCE_Constant"
+	}
+}
+PROBE DONE

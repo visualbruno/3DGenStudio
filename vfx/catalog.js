@@ -689,9 +689,9 @@ const BLOCK_LIST = [
     },
     kernel: 'force.curlNoise',
     engines: {
-      unity: ENGINE_SUPPORT.NATIVE,
+      unity: ENGINE_SUPPORT.APPROX,
       unreal: ENGINE_SUPPORT.APPROX,
-      note: 'Unity: Turbulence. Niagara: Curl Noise Force, whose amplitude and frequency are scaled differently - the motion will be similar but not identical.',
+      note: 'Unreal is the closer of the two here: Niagara\'s Curl Noise Force is curl noise, the same divergence-free field this preview uses, so the CHARACTER of the motion matches and only the amplitude and frequency scaling differ. Unity\'s noise module is VALUE noise, which swirls differently at the same strength - the importer says so rather than letting it pass as an exact match.',
     },
     attributes: ['velocity'],
   },
@@ -945,9 +945,9 @@ const BLOCK_LIST = [
     },
     kernel: 'shape.position.line',
     engines: {
-      unity: ENGINE_SUPPORT.NATIVE,
-      unreal: ENGINE_SUPPORT.APPROX,
-      note: 'Unity: Position (Line), which has the same Random/Sequential choice. Niagara has no dedicated line module - it imports as a lerp between two vectors on Position, which reproduces Random and Even but not Fixed spacing.',
+      unity: ENGINE_SUPPORT.APPROX,
+      unreal: ENGINE_SUPPORT.NATIVE,
+      note: 'Shuriken has no line shape, so the Unity importer lays a thin box along the segment - the right span, but particles scatter across its girth rather than sitting on the line. Unreal takes it exactly: a line is a two-point path, so it goes down the same road as the Curve emitter and becomes a Vector Curve on Position. Fixed spacing is the one mode neither engine reproduces; it becomes an even spread.',
     },
     // spawnIndex is what makes Fixed spacing possible: the particle has to know
     // WHICH particle it is to sit a fixed distance along from the last one.
@@ -1027,8 +1027,8 @@ const BLOCK_LIST = [
     kernel: 'shape.position.curve',
     engines: {
       unity: ENGINE_SUPPORT.APPROX,
-      unreal: ENGINE_SUPPORT.APPROX,
-      note: 'Neither engine has a spline emitter a plugin can build without help. Unity\'s shape module has no curve at all, so the importer approximates it with the straight chord through the end points and says so. Niagara can sample a spline, but only one that already exists as a component in the level - an importer cannot fabricate it - so it lands the same way. Bake the effect to a sprite sheet if the curve itself is the point.',
+      unreal: ENGINE_SUPPORT.NATIVE,
+      note: 'The two engines are furthest apart on this block. Unity\'s shape module has no curve at all - the full list is Sphere, Cone, Box, Circle, Donut and Mesh, none of which bends - so the importer approximates the path with the straight chord through its end points and says so; bake a sprite sheet if the bend itself is the point. Unreal carries it whole: the path becomes a Vector Curve data interface keyed by distance along the curve, sampled per particle, and Tangent speed becomes a second curve of unit tangents driving Add Velocity - so particles both sit on the path and travel it. Thickness is the one part Niagara does not take; add a Jitter Position module to scatter them around the line.',
     },
     // spawnIndex for Fixed spacing, and velocity because Tangent speed writes
     // it - a shape block that launches particles has to declare that.
@@ -1413,7 +1413,7 @@ const BLOCK_LIST = [
     engines: {
       unity: ENGINE_SUPPORT.NATIVE,
       unreal: ENGINE_SUPPORT.APPROX,
-      note: 'Niagara has no single speed clamp; the importer builds one from a Scale Velocity with a curve.',
+      note: 'Niagara clamps speed INSIDE Solve Forces and Velocity rather than as its own module, so the importer reports the value to set on that module\'s Speed Limit instead of adding anything. Clamping anywhere else would clamp last frame\'s velocity while this frame\'s acceleration immediately exceeds it again.',
     },
     attributes: ['velocity'],
   },
