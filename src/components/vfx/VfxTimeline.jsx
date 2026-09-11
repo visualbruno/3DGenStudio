@@ -513,7 +513,11 @@ export default function VfxTimeline({
                     const width = clipWidth(clip.duration, pps, CLIP_SIZES)
                     // See HANDLE_MIN_CLIP_PX: a clip too narrow to hold both
                     // handles and a grabbable middle is all body.
-                    const { start: canTrimStart, end: canTrimEnd } = clipHandles(clip.duration, width)
+                    const {
+                      start: canTrimStart,
+                      end: canTrimEnd,
+                      toolsInside,
+                    } = clipHandles(clip.duration, width)
                     return (
                       <div
                         key={clip.id}
@@ -522,6 +526,10 @@ export default function VfxTimeline({
                           'vfx-timeline__clip',
                           burst ? 'is-burst' : '',
                           clip.loop ? 'is-loop' : '',
+                          // Too narrow to hold its own buttons: they go outside,
+                          // or they cover the clip and it can never be grabbed
+                          // again. See TOOLS_MIN_CLIP_PX.
+                          toolsInside ? '' : 'has-outside-tools',
                         ].filter(Boolean).join(' ')}
                         style={{
                           // The document's geometry, which the stylesheet adds

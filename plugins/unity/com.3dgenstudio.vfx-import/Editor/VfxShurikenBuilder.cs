@@ -216,8 +216,12 @@ namespace GenStudio3D.VfxImport
             if (rate <= 0f) return;
 
             // ONE OPEN-ENDED CLIP AT ZERO is the common case - the default
-            // schedule - and it is a plain constant rate.
-            if (clips.Count == 1 && clips[0].OpenEnded && clips[0].At <= 1e-4f)
+            // schedule - and it is a plain constant rate. So is a single clip
+            // that happens to span the whole duration: gating it would build a
+            // two-key curve that is on for all of it, which is the same effect
+            // written less clearly and one more thing to go wrong.
+            if (clips.Count == 1 && clips[0].At <= 1e-4f
+                && (clips[0].OpenEnded || clips[0].Seconds >= duration - 1e-4f))
             {
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(rate);
                 _report.Native(name, "spawn.rate", rate.ToString("F0") + "/s");
@@ -242,28 +246,48 @@ namespace GenStudio3D.VfxImport
             // separate spawn windows survive natively - no burst approximation
             // and no template slot to run out of, which is the thing VFX Graph
             // could not have done.
-            var curve = new AnimationCurve();
-            AddStep(curve, 0f, 0f);
-            foreach (var clip in clips)
-            {
-                var openAt = Mathf.Clamp01(clip.At / duration);
-                AddStep(curve, openAt, 1f);
-                if (!clip.OpenEnded)
-                {
-                    AddStep(curve, Mathf.Clamp01((clip.At + clip.Seconds) / duration), 0f);
-                }
-            }
-            emission.rateOverTime = new ParticleSystem.MinMaxCurve(rate, curve);
+            emission.rateOverTime = new ParticleSystem.MinMaxCurve(rate, BuildRateGate(clips, duration));
             _report.Native(name, "spawn.rate",
                 $"{rate:F0}/s gated by a {clips.Count}-window curve");
         }
 
-        private struct Clip
+        internal struct Clip
         {
             public float At;
             public float Seconds;
             public bool OpenEnded;
             public bool Loop;
+        }
+
+        /// <summary>
+        /// The on/off curve that gates a rate by the timeline's clips.
+        ///
+        /// Normalised 0..1 across the system's duration, which is what
+        /// rateOverTime's curve mode means. Stepped keys make each window a
+        /// hard on/off, so N separate spawn windows survive natively - no burst
+        /// approximation and no template slot to run out of, which is the thing
+        /// VFX Graph could not have done.
+        ///
+        /// Internal so it can be tested without building a whole bundle: this
+        /// is where an effect silently stopped emitting, and the failure was
+        /// invisible from the outside - the report said "70/s gated by a
+        /// 1-window curve" while the curve was flat zero.
+        /// </summary>
+        internal static AnimationCurve BuildRateGate(IReadOnlyList<Clip> clips, float duration)
+        {
+            var safeDuration = Mathf.Max(0.01f, duration);
+            var curve = new AnimationCurve();
+            // Off before the first window opens.
+            AddStep(curve, 0f, 0f);
+            foreach (var clip in clips)
+            {
+                AddStep(curve, Mathf.Clamp01(clip.At / safeDuration), 1f);
+                if (!clip.OpenEnded)
+                {
+                    AddStep(curve, Mathf.Clamp01((clip.At + clip.Seconds) / safeDuration), 0f);
+                }
+            }
+            return curve;
         }
 
         /// <summary>
@@ -273,9 +297,33 @@ namespace GenStudio3D.VfxImport
         /// rate ramps between windows and particles trickle out during what is
         /// supposed to be silence.
         /// </summary>
-        private static void AddStep(AnimationCurve curve, float time, float value)
+        internal static void AddStep(AnimationCurve curve, float time, float value)
         {
-            curve.AddKey(new Keyframe(time, value, float.PositiveInfinity, float.PositiveInfinity));
+            var key = new Keyframe(time, value, float.PositiveInfinity, float.PositiveInfinity);
+
+            // ADDKEY SILENTLY DOES NOTHING WHEN A KEY ALREADY EXISTS AT THAT
+            // TIME. It returns -1 and leaves the curve alone - no exception, no
+            // warning - and that one line of Unity behaviour turned every
+            // scheduled effect into a system that emitted nothing.
+            //
+            // The curve starts with a closing key at t=0, because a rate curve
+            // has to be off before the first window opens. A clip that starts
+            // at zero - which is most of them - then tries to OPEN at t=0 too,
+            // that key is dropped, and what is left is a curve of nothing but
+            // zeros. Rate over Time reads 70 with a flat line at 0, which looks
+            // like the rate was imported and the emitter is broken, rather than
+            // like the gate never opened.
+            //
+            // When two steps land on the same instant the LATER one is the
+            // state from that instant onward, so it replaces rather than being
+            // discarded.
+            for (var i = 0; i < curve.length; i++)
+            {
+                if (!Mathf.Approximately(curve[i].time, time)) continue;
+                curve.MoveKey(i, key);
+                return;
+            }
+            curve.AddKey(key);
         }
 
         // ------------------------------------------------------------------

@@ -111,11 +111,28 @@ export const MIN_BODY_PX = 6;
 export const HANDLE_MIN_CLIP_PX = 34;
 
 /**
+ * The narrowest clip that can hold its loop and delete buttons INSIDE itself.
+ *
+ * THE SAME BUG AS THE HANDLES, ONE LAYER OUT. The two tool buttons are about
+ * 18px each; against a clip trimmed to its minimum they cover it completely, so
+ * every press lands on a button and the clip can no longer be moved, widened or
+ * grabbed at all - the one state from which an author cannot recover by
+ * dragging. A burst already dodged this by sitting its tools outside, but a
+ * burst is `duration === 0`, and a clip trimmed to its smallest WINDOW is not a
+ * burst, so it kept them inside and trapped itself.
+ *
+ * Two buttons, plus both trim handles, plus something grabbable between them.
+ */
+export const TOOL_WIDTH_PX = 18;
+export const TOOLS_MIN_CLIP_PX =
+  2 * TOOL_WIDTH_PX + 2 * HANDLE_WIDTH_PX + MIN_BODY_PX + 8;
+
+/**
  * Which parts of a clip are interactive at a given pixel width.
  *
  * @param {number} clipDuration seconds; zero is a one-shot burst
  * @param {number} widthPx the clip's rendered width
- * @returns {{start: boolean, end: boolean, bodyPx: number}}
+ * @returns {{start: boolean, end: boolean, bodyPx: number, toolsInside: boolean}}
  */
 export function clipHandles(clipDuration, widthPx) {
   const burst = !(clipDuration > 0);
@@ -128,6 +145,9 @@ export function clipHandles(clipDuration, widthPx) {
     start: trimmable,
     end: trimmable || burst,
     bodyPx: Math.max(MIN_BODY_PX, widthPx - handles * HANDLE_WIDTH_PX),
+    // A burst has no inside to speak of, so its tools have always sat outside;
+    // a narrow window now joins it rather than swallowing itself.
+    toolsInside: !burst && widthPx >= TOOLS_MIN_CLIP_PX,
   };
 }
 

@@ -1,0 +1,76 @@
+.vfx-viewmenu {
+  position: relative;
+}
+
+.vfx-viewmenu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--surface-container-highest, #1f2226);
+  color: var(--on-surface-variant);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  font-family: var(--font-label);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.vfx-viewmenu__trigger:hover,
+.vfx-viewmenu__trigger.is-open {
+  color: var(--on-surface);
+  border-color: var(--primary, #7aa2f7);
+}
+
+.vfx-viewmenu__trigger .material-symbols-outlined {
+  font-size: 1rem;
+}
+
+.vfx-viewmenu__count {
+  min-width: 1.1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--surface-container, #15171c);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.vfx-viewmenu__chevron {
+  opacity: 0.7;
+}
+
+.vfx-viewmenu__panel {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 11rem;
+  padding: 0.4rem;
+  /* OPAQUE. No backdrop-filter anywhere that can sit over the live WebGL
+     canvas - AssemblyPage.css and TreeGenPage.css both record what that costs
+     in the Electron build. */
+  background: #1b1e24;
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 45%);
+}
+
+.vfx-viewmenu__panel label {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.35rem;
+  border-radius: var(--radius-sm, 6px);
+  color: var(--on-surface-variant);
+  font-family: var(--font-label);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.vfx-viewmenu__panel label:hover {
+  background: var(--surface-container-highest, #1f2226);
+  color: var(--on-surface);
+}

@@ -42,6 +42,7 @@ import {
   HANDLE_WIDTH_PX,
   MIN_BODY_PX,
   clipHandles,
+  TOOL_WIDTH_PX,
   clipWidth,
   resolveClipDrag,
   snapToStep,
@@ -1208,6 +1209,59 @@ section('Dragging a timeline clip');
   }
   check('no clip width leaves the handles eating the whole clip',
     unusable.length === 0, unusable.slice(0, 5).join(', '));
+
+  // --- and the buttons cannot swallow the clip either ----------------------
+  //
+  // THE SAME BUG ONE LAYER OUT, reported after the handles were fixed. The loop
+  // and delete buttons sat INSIDE the clip, keyed on "is this a burst" - and a
+  // clip trimmed to its smallest WINDOW is not a burst, so it kept them. Two
+  // ~18px buttons over a ~10px clip cover it completely: every press lands on a
+  // button, so the clip can no longer be moved, widened or grabbed at all. That
+  // is the one state an author cannot drag their way out of, which is what
+  // makes it worse than the handle version.
+  const tight = clipHandles(0.001, clipWidth(0.001, 500, sizes));
+  check('a minimum-width clip puts its buttons OUTSIDE itself',
+    tight.toolsInside === false, String(tight.toolsInside));
+  check('  and so does a burst, as it always did',
+    clipHandles(0, 8).toolsInside === false);
+  check('  while a wide clip keeps them inside', clipHandles(0.65, 325).toolsInside === true);
+
+  // The threshold is not a guess: inside is only allowed when the buttons, both
+  // handles and a grabbable remainder all fit. Swept rather than spot-checked,
+  // because the failure is a RANGE of widths, not one.
+  const swallowed = [];
+  for (let px = 8; px <= 300; px += 1) {
+    const parts = clipHandles(0.5, px);
+    if (!parts.toolsInside) continue;
+    const consumed = (parts.start ? HANDLE_WIDTH_PX : 0) + (parts.end ? HANDLE_WIDTH_PX : 0)
+      + 2 * TOOL_WIDTH_PX;
+    if (px - consumed < MIN_BODY_PX) swallowed.push(px);
+  }
+  check('no width lets the buttons cover the whole clip',
+    swallowed.length === 0, swallowed.slice(0, 5).join(', '));
+
+  // Below the threshold there is always a real drag target left, which is the
+  // property that actually matters: the clip stays recoverable.
+  //
+  // Swept from the NARROWEST WIDTH THE TIMELINE CAN ACTUALLY RENDER rather than
+  // from zero, and that floor is checked here rather than assumed - a sweep
+  // that starts below it reports failures at widths no clip can have, which is
+  // a test lying about a bug instead of finding one.
+  const floorPx = Math.min(
+    clipWidth(0, 500, sizes),
+    ...[0.0001, 0.001, 0.01, 0.5, 3].map((d) => clipWidth(d, 500, sizes)),
+  );
+  check('no clip renders narrower than its floor', floorPx >= 8, `${floorPx}px`);
+
+  const trapped = [];
+  for (let px = floorPx; px <= 300; px += 1) {
+    const parts = clipHandles(0.5, px);
+    const tools = parts.toolsInside ? 2 * TOOL_WIDTH_PX : 0;
+    const handles = (parts.start ? HANDLE_WIDTH_PX : 0) + (parts.end ? HANDLE_WIDTH_PX : 0);
+    if (px - handles - tools < MIN_BODY_PX) trapped.push(px);
+  }
+  check('every clip width keeps something grabbable', trapped.length === 0,
+    trapped.slice(0, 5).join(', '));
 
   // --- and the whole gesture, through the document ------------------------
   // The unit above proves the patch is right; this proves the patch reaching

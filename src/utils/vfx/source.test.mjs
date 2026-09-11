@@ -13,7 +13,7 @@
 //
 // So: read the bytes, assert on the text, import nothing.
 
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 
 let failures = 0;
 
@@ -25,6 +25,7 @@ function check(label, ok, detail = '') {
 // The character this file is about, named rather than written, so the checks
 // are not themselves a way to break the file that holds them.
 import { indexInstalledPackAssets, presetAssetName } from '../../../vfx/preset.js';
+import { exportAction } from './actionGates.js';
 
 const BACKTICK = String.fromCharCode(96);
 
@@ -903,6 +904,129 @@ console.log('\n--- The asset pack ships and is gated ---');
   // this emitter had before the path became a list.
   check('every axis is sampled with the path\'s real length',
     (viewport.match(/catmullRom\(\w+, count, t\)/g) || []).length === 3);
+}
+
+
+// --- The importers agree with the exporter about the bundle's shape ---------
+//
+// THE EXPORT HAS ONE JSON FILE. `manifest.json` carries the IR inline as
+// `manifest.ir`, beside an `assets/<kind>/` tree - there is no ir.json and
+// never has been. An early guess at the layout said otherwise, and the Unity
+// importer's MENU kept that guess as a pre-flight check long after the loader
+// beside it had been rewritten against a real export. The result was the worst
+// kind of bug: a correct bundle refused by a dialog naming a file the app does
+// not write, while every headless test passed - because the smoke harness calls
+// the loader directly and never goes through the menu.
+//
+// A source check, because the thing being guarded is a guard.
+{
+  console.log('\n--- The bundle has one manifest and no ir.json ---');
+
+  // The WRITE route, which is the half kept local by serverMode.js so the
+  // bundle lands where the user is rather than where the database is.
+  const written = await readFile(new URL('../../../server.js', import.meta.url), 'utf8');
+  check('the exporter writes manifest.json',
+    /path\.join\(bundleDir, 'manifest\.json'\)/.test(written));
+  check('  and never an ir.json',
+    !/['"`]ir\.json['"`]/.test(written));
+
+  // Every shipped C# file, so a second copy of the guess cannot hide in one.
+  const unityDir = new URL('../../../plugins/unity/com.3dgenstudio.vfx-import/Editor/',
+    import.meta.url);
+  const names = (await readdir(unityDir)).filter((name) => name.endsWith('.cs'));
+  const offenders = [];
+  for (const name of names) {
+    const text = await readFile(new URL(name, unityDir), 'utf8');
+    // A comment explaining that there is no ir.json is the point, not a bug -
+    // so only code that names the file as a path is counted.
+    if (/Combine\([^)]*["']ir\.json["']|Exists\([^)]*["']ir\.json["']/.test(text)) {
+      offenders.push(name);
+    }
+  }
+  check('no Unity source looks for ir.json', offenders.length === 0, offenders.join(' '));
+
+  const menu = await readFile(new URL('VfxImportMenu.cs', unityDir), 'utf8');
+  check('the menu gates on manifest.json instead',
+    /File\.Exists\(Path\.Combine\(folder, "manifest\.json"\)\)/.test(menu));
+  // And its DIALOG must not name a file the app does not write, or the author
+  // goes looking for one. Scoped to the message rather than the whole file:
+  // the comment above the guard explains the old mistake on purpose.
+  const dialog = menu.slice(menu.indexOf('DisplayDialog'));
+  check('  and its refusal names only files that exist',
+    !/ir\.json/.test(dialog.slice(0, 600)), dialog.slice(0, 120).replace(/\s+/g, ' '));
+
+  const unrealDir = new URL('../../../plugins/unreal/VfxImport/Source/VfxImportEditor/Private/',
+    import.meta.url);
+  const importer = await readFile(new URL('VfxBundleImporter.cpp', unrealDir), 'utf8');
+  check('the Unreal importer gates on the same file',
+    /manifest\.json/.test(importer) && !/ir\.json/.test(importer));
+}
+
+
+// --- Export works from wherever the author is -------------------------------
+//
+// TWO WRONG ANSWERS CAME BEFORE THIS ONE. First the button was wrapped in
+// `assetId != null &&`, so it was never rendered on an effect that had not been
+// saved - which is the state you are in every time you open a preset. The
+// reported bug was "Export is missing" and the first guess, mine, was that the
+// toolbar had run out of room; it had not, and no amount of looking at the
+// toolbar would have found it.
+//
+// Then it was rendered but DISABLED with an explanation. Honest, and still
+// wrong: the reason a save is needed - the bundle is built on the server from
+// the saved FILE - is a fact about the app's plumbing, not a chore to hand to
+// the author. So the button now says "Save & Export..." and does both.
+{
+  console.log('\n--- Export works from wherever the author is ---');
+
+  const fresh = exportAction({ assetId: null, dirty: true, status: 'idle' });
+  check('a preset that was never saved can still export', fresh.disabled === false);
+  check('  by saving first', fresh.needsSave === true);
+  check('  and the button SAYS so, rather than doing it silently',
+    fresh.label === 'Save & Export...', fresh.label);
+  // The save has a real consequence - the effect appears in the library - so
+  // announcing it is the point. Announcing is not the same as making someone
+  // do it themselves.
+  check('  naming the library, since that is the consequence',
+    /library/i.test(fresh.hint), fresh.hint);
+
+  const edited = exportAction({ assetId: 12, dirty: true, status: 'idle' });
+  check('a saved effect with edits saves first too', edited.needsSave === true);
+  check('  with the other wording', /not from what is on screen/.test(edited.hint), edited.hint);
+  // An unsaved effect is ALSO dirty, so the order inside the rule matters:
+  // "save your changes first" reads as the save you just did not counting.
+  check('  and the two differ', edited.hint !== fresh.hint);
+
+  const clean = exportAction({ assetId: 12, dirty: false, status: 'idle' });
+  check('an already-saved, unchanged effect exports directly',
+    clean.needsSave === false && clean.label === 'Export...', clean.label);
+
+  // The ONLY genuinely unavailable case: a save is already in flight and a
+  // second one would race it.
+  const saving = exportAction({ assetId: 12, dirty: false, status: 'saving' });
+  check('a save in flight is the one thing that disables it', saving.disabled === true);
+  check('  and nothing else is ever disabled',
+    [fresh, edited, clean].every((a) => a.disabled === false));
+
+  // And the page must RENDER it regardless of state. A behavioural check on the
+  // rule cannot see a button that was never mounted, which is exactly how the
+  // first version got through.
+  const page = await readFile(new URL('../../pages/VfxEditorPage.jsx', import.meta.url), 'utf8');
+  const exportAt = page.indexOf('exportAvailability.label');
+  check('the page has an Export button', exportAt > 0);
+  const before = page.slice(Math.max(0, exportAt - 700), exportAt);
+  check('  that is not hidden behind an assetId check',
+    !/\{assetId != null && \($/m.test(before.trimEnd()),
+    before.slice(-80).replace(/\s+/g, ' '));
+  check('  and takes its label and reason from the shared rule',
+    /disabled=\{exportAvailability\.disabled\}/.test(before)
+    && /title=\{exportAvailability\.hint\}/.test(before));
+  // The save has to happen BEFORE the dialog opens, or the bundle is built
+  // from the previous save while the newest edits play in the preview.
+  check('  and saves before opening the dialog',
+    /needsSave\)\s*\{\s*const saved = await handleSave\(\)/.test(page));
+  check('  refusing to export when that save fails',
+    /if \(!saved\?\.id\) return/.test(page));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

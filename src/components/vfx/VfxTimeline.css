@@ -496,13 +496,29 @@
   opacity: 1;
 }
 
-/* A burst is too narrow to hold its own buttons, so they sit outside it. */
-.vfx-timeline__clip.is-burst {
+/* Too narrow to hold its own buttons, so they sit outside it.
+ *
+ * KEYED ON WIDTH, NOT ON "IS IT A BURST". A burst is duration zero and was the
+ * only case handled here, but a clip TRIMMED to its smallest window is not a
+ * burst - it kept its buttons inside, they covered the whole clip, and every
+ * press landed on a button. The clip could then never be moved or widened
+ * again, which is the one state a drag cannot get you out of. The React side
+ * decides with TOOLS_MIN_CLIP_PX so the threshold is testable. */
+.vfx-timeline__clip.is-burst,
+.vfx-timeline__clip.has-outside-tools {
   overflow: visible;
 }
 
-.vfx-timeline__clip.is-burst .vfx-timeline__clip-tools {
-  right: -34px;
+.vfx-timeline__clip.is-burst .vfx-timeline__clip-tools,
+.vfx-timeline__clip.has-outside-tools .vfx-timeline__clip-tools {
+  right: -40px;
+}
+
+/* And they stay reachable while the pointer is on them, not only while it is
+   over the clip - otherwise a button sitting outside a 10px clip vanishes the
+   moment you move towards it. */
+.vfx-timeline__clip-tools:hover {
+  opacity: 1;
 }
 
 .vfx-timeline__clip-tools button {

@@ -24,12 +24,22 @@ namespace GenStudio3D.VfxImport
             if (string.IsNullOrEmpty(folder)) return;
             EditorPrefs.SetString(LastFolderKey, folder);
 
-            if (!File.Exists(Path.Combine(folder, "ir.json")))
+            // MANIFEST.JSON, NOT ir.json. The bundle has ONE file: the IR is
+            // embedded in the manifest as `manifest.ir`. This guard used to
+            // demand a separate ir.json, which the exporter has never written -
+            // a layout guessed before the first real export existed. The
+            // importer itself was rewritten against a real bundle; this check
+            // was not, so it refused every correct bundle before the working
+            // loader ever ran, and told the author that the file the app DOES
+            // write is not enough. A guard stricter than the code it guards is
+            // worse than no guard at all.
+            if (!File.Exists(Path.Combine(folder, "manifest.json")))
             {
                 EditorUtility.DisplayDialog(
                     "Not a VFX bundle",
-                    $"{folder} has no ir.json in it.\n\nChoose the folder the app wrote, the one "
-                    + "containing manifest.json and ir.json.",
+                    $"{folder} has no manifest.json in it.\n\nChoose the folder the app wrote - "
+                    + "the one holding manifest.json, plus an assets folder if the effect uses "
+                    + "any textures or meshes.",
                     "OK");
                 return;
             }

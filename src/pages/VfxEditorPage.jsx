@@ -49,6 +49,8 @@ import VfxPreviewHud from '../components/vfx/VfxPreviewHud'
 import VfxBoard from '../components/vfx/VfxBoard'
 import VfxParamsPanel from '../components/vfx/VfxParamsPanel'
 import VfxTimeline from '../components/vfx/VfxTimeline'
+import VfxViewMenu from '../components/vfx/VfxViewMenu'
+import { exportAction } from '../utils/vfx/actionGates'
 import VfxSplitter from '../components/vfx/VfxSplitter'
 import VfxEmptyOverlay from '../components/vfx/VfxEmptyOverlay'
 import useVfxRuntime from '../hooks/useVfxRuntime'
@@ -123,6 +125,7 @@ export default function VfxEditorPage() {
   const [showEmitters, setShowEmitters] = useState(false)
   const [showStats, setShowStats] = useState(true)
   const [orthographic, setOrthographic] = useState(false)
+  const [viewMenuOpen, setViewMenuOpen] = useState(false)
   const [engineTarget, setEngineTarget] = useState('')
   const [level, setLevel] = useState(readLevel)
   const [libraryImages, setLibraryImages] = useState([])
@@ -310,6 +313,49 @@ export default function VfxEditorPage() {
   // has already folded a constant radius into an index by the time the IR sees
   // it. The mesh slot is resolved here because this is the only layer that
   // knows how references work.
+  // The viewport toggles, as data - so the menu stays a dumb list and the
+  // hints keep living next to the thing they explain.
+  const viewItems = useMemo(() => [
+    { key: 'grid', label: 'Grid', value: showGrid, onChange: setShowGrid },
+    {
+      key: 'scale',
+      label: 'Scale references',
+      value: showScale,
+      onChange: setShowScale,
+      hint: 'A 1.8 m capsule and a 1 m cube, to judge scale against. They are references, not emitters, and never export.',
+    },
+    {
+      key: 'emitters',
+      label: 'Emitter shapes',
+      value: showEmitters,
+      onChange: setShowEmitters,
+      hint: "Draw every system's emitter shape in wireframe - where particles are born, before anything moves them.",
+    },
+    {
+      key: 'stats',
+      label: 'Stats panel',
+      value: showStats,
+      onChange: setShowStats,
+      hint: 'The alive / spawned / dropped and timing panel over the preview.',
+    },
+    {
+      key: 'ortho',
+      label: 'Orthographic',
+      value: orthographic,
+      onChange: setOrthographic,
+      hint: 'No perspective, so sizes can be compared across depth.',
+    },
+    {
+      key: 'profile',
+      label: 'Profiler',
+      value: profile,
+      onChange: setProfile,
+      hint: 'Per-kernel timing. Adds a little overhead of its own.',
+    },
+  ], [showGrid, showScale, showEmitters, showStats, orthographic, profile])
+
+  const exportAvailability = exportAction({ assetId, dirty, status })
+
   const gizmos = useMemo(() => (showEmitters
     ? emitterGizmos(doc).map(gizmo => (gizmo.kind === 'mesh'
       ? { ...gizmo, assetId: gizmoMeshAssetId(doc, gizmo.slot) }
@@ -887,6 +933,23 @@ export default function VfxEditorPage() {
     }
   }
 
+  // Export, saving first when there is something to save.
+  //
+  // THE SAVE IS NOT A SIDE EFFECT, it is half of what the button says it does -
+  // see exportAction. It comes first because the bundle is built on the server
+  // from the saved file, so exporting without it would either fail or, worse,
+  // quietly ship the previous save while the author watches their newest edits
+  // in the preview.
+  const handleExport = async () => {
+    if (exportAvailability.needsSave) {
+      const saved = await handleSave()
+      // A failed save has already told the author why; opening the dialog on
+      // top of that would export the wrong thing or nothing at all.
+      if (!saved?.id) return
+    }
+    setExporting(true)
+  }
+
   // How many systems are currently silenced, which is the overlay's way of
   // telling "the graph is broken" apart from "you left a solo on". Solo wins:
   // when anything is soloed, everything else is silenced.
@@ -975,23 +1038,21 @@ export default function VfxEditorPage() {
               Save as new
             </button>
           )}
-          {/* SAVED EFFECTS ONLY. The bundle is built from the FILE on the
-              server, so there is nothing to export until the document has been
-              written - offering it on an unsaved effect would export the last
-              saved state and look like the button ignoring recent edits. */}
-          {assetId != null && (
-            <button
-              type="button"
-              className="is-quiet"
-              onClick={() => setExporting(true)}
-              disabled={status === 'saving' || dirty}
-              title={dirty
-                ? 'Save first - the bundle is built from the saved file, not from what is on screen.'
-                : 'Write an engine bundle: the graph, the compiled IR, the compatibility table and every texture and mesh this effect uses.'}
-            >
-              Export...
-            </button>
-          )}
+          {/* ALWAYS RENDERED, sometimes disabled. The bundle is built from the
+              FILE on the server, so there is genuinely nothing to export until
+              the effect has been saved - but this used to be expressed by
+              HIDING the button, and a preset opens unsaved, so Export simply
+              was not there. "Missing feature" and "not yet available, here is
+              why" look identical when the answer is absence. */}
+          <button
+            type="button"
+            className="is-quiet"
+            onClick={handleExport}
+            disabled={exportAvailability.disabled}
+            title={exportAvailability.hint}
+          >
+            {exportAvailability.label}
+          </button>
           {/* The starter library. This replaced a row of twelve buttons
               wired to in-code templates: fifty-odd effects do not fit in a
               toolbar, and the ones worth having are the ones nobody has
@@ -1055,30 +1116,15 @@ export default function VfxEditorPage() {
         </div>
 
         <div className="vfx-page__toggles">
-          <label>
-            <input type="checkbox" checked={showGrid} onChange={e => setShowGrid(e.target.checked)} />
-            Grid
-          </label>
-          <label title="A 1.8 m capsule and a 1 m cube, to judge scale against. They are references, not emitters, and never export.">
-            <input type="checkbox" checked={showScale} onChange={e => setShowScale(e.target.checked)} />
-            Scale
-          </label>
-          <label title="Draw every system's emitter shape in wireframe - where particles are born, before anything moves them.">
-            <input type="checkbox" checked={showEmitters} onChange={e => setShowEmitters(e.target.checked)} />
-            Emitters
-          </label>
-          <label title="The alive / spawned / dropped and timing panel over the preview.">
-            <input type="checkbox" checked={showStats} onChange={e => setShowStats(e.target.checked)} />
-            Stats
-          </label>
-          <label>
-            <input type="checkbox" checked={orthographic} onChange={e => setOrthographic(e.target.checked)} />
-            Ortho
-          </label>
-          <label title="Per-kernel timing. Adds a little overhead of its own.">
-            <input type="checkbox" checked={profile} onChange={e => setProfile(e.target.checked)} />
-            Profile
-          </label>
+          {/* SIX CHECKBOXES BEHIND ONE BUTTON. Spelled out, they were wide
+              enough to push Export off the visible row on an existing effect -
+              which has two more buttons than a new one - so the button existed
+              and could not be found. */}
+          <VfxViewMenu
+            open={viewMenuOpen}
+            onOpenChange={setViewMenuOpen}
+            items={viewItems}
+          />
           {/* Labelled "Detail" rather than beginner/advanced: a developer will
               pick the wrong one out of pride. */}
           <select
