@@ -37,6 +37,29 @@ namespace GenStudio3D.VfxImport
         public readonly List<VfxImportNote> Notes = new List<VfxImportNote>();
         public readonly List<string> Errors = new List<string>();
 
+        /// <summary>
+        /// Things the SCENE has to provide that no prefab can carry.
+        ///
+        /// A FOURTH CATEGORY because the other three are all about the import,
+        /// and this is not: the effect arrived intact and still looks wrong
+        /// until something outside it changes. The case that forced it is tone
+        /// mapping - the app previews through ACES Filmic, so an author tunes a
+        /// core at 16x intensity knowing it will roll off, and URP's default
+        /// volume profile ships with Tonemapping set to None, which clips that
+        /// same core to a flat white slab. Filed as "approximated" it read as
+        /// import damage and sent people editing gradients; it belongs at the
+        /// top of the report, stated once, as a thing to go and switch on.
+        ///
+        /// Deduplicated on the way in: every system with an HDR gradient wants
+        /// to say the same sentence, and six copies of it is noise.
+        /// </summary>
+        public readonly List<string> SceneRequirements = new List<string>();
+
+        public void SceneRequirement(string requirement)
+        {
+            if (!SceneRequirements.Contains(requirement)) SceneRequirements.Add(requirement);
+        }
+
         public void Native(string system, string feature, string detail = null) =>
             Notes.Add(new VfxImportNote
             {
@@ -82,6 +105,13 @@ namespace GenStudio3D.VfxImport
             var sb = new StringBuilder();
             sb.AppendLine(Summary());
             foreach (var error in Errors) sb.AppendLine("  ERROR        " + error);
+
+            if (SceneRequirements.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("THE SCENE HAS TO PROVIDE");
+                foreach (var requirement in SceneRequirements) sb.AppendLine("  - " + requirement);
+            }
 
             // Problems first: an author scanning this wants what changed, and
             // the native list is reference material below it.

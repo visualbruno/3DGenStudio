@@ -124,14 +124,25 @@ namespace GenStudio3D.VfxImport
                     if (filter != null && filter.sharedMesh != null) meshes[pair.Key] = filter.sharedMesh;
                 }
             }
-            var materials = new Dictionary<string, Material>();
+            var materials = new Dictionary<(string, Texture2D), Material>();
+            var blendCounts = new Dictionary<string, int>();
+
+            // Built ON DEMAND rather than up front: most effects texture every
+            // system and never need the sprite, and an unused VfxDefaultSprite
+            // .png appearing in every import folder is clutter that invites the
+            // question "is this mine?".
+            Texture2D defaultSprite = null;
+            Mesh defaultMesh = null;
 
             var builder = new VfxShurikenBuilder(
                 ir,
                 report,
                 assetId => textures.TryGetValue(assetId, out var texture) ? texture : null,
                 assetId => meshes.TryGetValue(assetId, out var mesh) ? mesh : null,
-                blend => MaterialFor(blend, effectName, destinationFolder, materials, report));
+                (blend, texture) => MaterialFor(
+                    blend, texture, effectName, destinationFolder, materials, blendCounts, report),
+                () => defaultSprite ?? (defaultSprite = VfxBuiltins.CreateSprite(destinationFolder, report)),
+                () => defaultMesh ?? (defaultMesh = VfxBuiltins.CreateParticleMesh(destinationFolder, report)));
 
             var root = builder.Build(effectName);
 
@@ -280,7 +291,13 @@ namespace GenStudio3D.VfxImport
         }
 
         /// <summary>
-        /// A particle material for a blend mode, created once per import.
+        /// A particle material for one blend mode AND one texture.
+        ///
+        /// KEYED ON BOTH, which it was not. A material carries the texture, so
+        /// caching on the blend alone means every additive system in an effect
+        /// shares one material and the LAST texture written wins - silently,
+        /// and only when an effect happens to mix textures within a blend,
+        /// which is the combination that ships looking nearly right.
         ///
         /// URP's particle shader first, the built-in one second. Neither is
         /// guaranteed: a project on HDRP has different shaders again, and one
@@ -289,10 +306,19 @@ namespace GenStudio3D.VfxImport
         /// failing the whole import.
         /// </summary>
         private static Material MaterialFor(
-            string blend, string effectName, string destinationFolder,
-            Dictionary<string, Material> cache, VfxImportReport report)
+            string blend, Texture2D texture, string effectName, string destinationFolder,
+            Dictionary<(string, Texture2D), Material> cache, Dictionary<string, int> blendCounts,
+            VfxImportReport report)
         {
-            if (cache.TryGetValue(blend, out var existing)) return existing;
+            // THE TEXTURE ITSELF IS THE KEY, not an id derived from it. The
+            // obvious spelling - GetInstanceID() - is obsolete in Unity 6.6,
+            // and its replacement GetEntityId does not exist in 6000.0, which
+            // this package declares support for; there is no id accessor that
+            // compiles on both. A tuple key sidesteps the question entirely and
+            // says what it means, since reference equality IS the thing being
+            // asked: same blend, same texture object, same material.
+            var key = (blend, texture);
+            if (cache.TryGetValue(key, out var existing)) return existing;
 
             var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit")
                       ?? Shader.Find("Particles/Standard Unlit")
@@ -301,11 +327,21 @@ namespace GenStudio3D.VfxImport
             if (shader == null)
             {
                 report.Dropped(null, "material", "no particle shader is available in this project");
-                cache[blend] = null;
+                cache[key] = null;
                 return null;
             }
 
-            var material = new Material(shader) { name = effectName + "_" + blend };
+            // The first material for a blend keeps the plain name, so the
+            // common one-texture-per-blend effect reads exactly as it did
+            // before; only a blend that genuinely needs a second material gets
+            // a suffix.
+            blendCounts.TryGetValue(blend, out var seen);
+            blendCounts[blend] = seen + 1;
+            var materialName = seen == 0
+                ? effectName + "_" + blend
+                : effectName + "_" + blend + "_" + (seen + 1);
+
+            var material = new Material(shader) { name = materialName };
 
             // URP's Unlit particle shader spells its blending as _Surface (0
             // opaque, 1 transparent) plus _Blend (0 alpha, 1 premultiply, 2
@@ -333,10 +369,19 @@ namespace GenStudio3D.VfxImport
                 material.SetFloat("_ZWrite", 0f);
             }
 
+            // _BaseMap on URP's particle shaders, _MainTex on the built-in
+            // ones. Setting both is cheaper than deciding which pipeline is
+            // active, and an unknown property is a no-op rather than an error.
+            if (texture != null)
+            {
+                if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", texture);
+                if (material.HasProperty("_MainTex")) material.SetTexture("_MainTex", texture);
+            }
+
             var path = AssetDatabase.GenerateUniqueAssetPath(
                 Path.Combine(destinationFolder, material.name + ".mat").Replace('\\', '/'));
             AssetDatabase.CreateAsset(material, path);
-            cache[blend] = material;
+            cache[key] = material;
             return material;
         }
 

@@ -38,24 +38,29 @@ namespace GenStudio3D.VfxImport
 
         // The system being built, pre-scanned. An Initialize block has to know
         // what the Update stage will do - see DragDecayCurve.
-        private float _systemDrag;
         private float _systemLifetime = 1f;
         private readonly Func<int, Texture2D> _texture;
         private readonly Func<int, Mesh> _mesh;
-        private readonly Func<string, Material> _material;
+        private readonly Func<string, Texture2D, Material> _material;
+        private readonly Func<Texture2D> _defaultSprite;
+        private readonly Func<Mesh> _defaultMesh;
 
         public VfxShurikenBuilder(
             VfxJson ir,
             VfxImportReport report,
             Func<int, Texture2D> textureForAsset,
             Func<int, Mesh> meshForAsset,
-            Func<string, Material> materialForBlend)
+            Func<string, Texture2D, Material> materialForBlendAndTexture,
+            Func<Texture2D> defaultSprite = null,
+            Func<Mesh> defaultMesh = null)
         {
             _ir = ir;
             _report = report;
             _texture = textureForAsset;
             _mesh = meshForAsset;
-            _material = materialForBlend;
+            _material = materialForBlendAndTexture;
+            _defaultSprite = defaultSprite;
+            _defaultMesh = defaultMesh;
         }
 
         /// <summary>
@@ -101,19 +106,10 @@ namespace GenStudio3D.VfxImport
             var name = system["name"].AsString("System");
             var main = ps.main;
 
-            // PRE-SCANNED, because an Initialize block needs to know what the
-            // Update stage does. Specifically: a start velocity has to be told
-            // how fast drag will bleed it away, and drag lives in a block that
-            // has not been visited yet when the velocity block is converted.
-            _systemDrag = 0f;
+            // PRE-SCANNED, because update.drag builds its decay curve over the
+            // particle's lifetime and setLifetime lives in the Initialize
+            // stage, which has not been walked yet when Update is converted.
             _systemLifetime = 1f;
-            foreach (var block in system["update"].Items)
-            {
-                if (block["srcBlockType"].AsString() == "update.drag")
-                {
-                    _systemDrag = Mathf.Max(0f, Binding(block, "drag").Constant);
-                }
-            }
             foreach (var block in system["init"].Items)
             {
                 if (block["srcBlockType"].AsString() == "initialize.setLifetime")
@@ -318,27 +314,41 @@ namespace GenStudio3D.VfxImport
         }
 
         /// <summary>
-        /// A random-between-two velocity that decays with the system's drag.
+        /// A per-particle random between two values, as TWO FLAT CURVES.
         ///
-        /// Unity's two-CONSTANT mode draws once per particle and then holds the
-        /// value forever; two CURVES draw once per particle and then follow the
-        /// shape. Same randomness, and it actually slows down.
+        /// NOT `new MinMaxCurve(min, max)`, which is the obvious spelling and
+        /// is the two-CONSTANT mode. On velocityOverLifetime that mode yields
+        /// exactly ZERO - measured: a stem given a constant 12 climbed to
+        /// 10.39m, and the same stem given the range 9-15 climbed to 0.00m, with
+        /// and without a speed modifier. The prefab looks right either way, so
+        /// there is nothing to see in the inspector: minMaxState 3, minScalar 9,
+        /// scalar 15, and no motion.
+        ///
+        /// Two flat curves with a multiplier of 1 carry the same per-particle
+        /// draw and do move. The multiplier is 1 rather than derived from the
+        /// ends because a symmetric range would derive zero and silently kill
+        /// the velocity a second way.
+        ///
+        /// ALWAYS TWO CURVES, even for a degenerate range where a plain
+        /// constant would be simpler and read better. A 3D module keeps ONE
+        /// curve mode for x, y and z together, so returning Constant for the
+        /// zero axes of an upward velocity - which is every straight-up
+        /// emitter - puts x and z in Constant mode and y in TwoCurves, and
+        /// Unity resolves the disagreement by evaluating y as ZERO. That is
+        /// the whole stem: authored to rise at 9-15 m/s, serialized with all
+        /// the right numbers, and standing perfectly still.
         /// </summary>
-        private ParticleSystem.MinMaxCurve RangedDecay(float lo, float hi)
+        internal static ParticleSystem.MinMaxCurve Ranged(float lo, float hi)
         {
             var low = Mathf.Min(lo, hi);
             var high = Mathf.Max(lo, hi);
-            var shape = DragDecayCurve(_systemDrag, _systemLifetime);
+
             var lowCurve = new AnimationCurve();
+            lowCurve.AddKey(0f, low);
+            lowCurve.AddKey(1f, low);
             var highCurve = new AnimationCurve();
-            foreach (var key in shape.keys)
-            {
-                lowCurve.AddKey(key.time, key.value * low);
-                highCurve.AddKey(key.time, key.value * high);
-            }
-            // Multiplier 1: the curves already carry the magnitudes, and a
-            // multiplier of zero - which a symmetric range would produce if it
-            // were derived from the ends - would silently zero the velocity.
+            highCurve.AddKey(0f, high);
+            highCurve.AddKey(1f, high);
             return new ParticleSystem.MinMaxCurve(1f, lowCurve, highCurve);
         }
 
@@ -378,10 +388,19 @@ namespace GenStudio3D.VfxImport
                 curve.AddKey(1f, 1f);
                 return curve;
             }
-            const int Samples = 12;
+            // 24 SAMPLES, SQUARE-SPACED. An exponential does nearly all of its
+            // falling in the first fraction of the curve, and the more drag
+            // there is the earlier that happens - so uniform samples resolve
+            // the flat tail beautifully and miss the part that matters. At
+            // drag 7 the uniform 12-sample version overshot the analytic
+            // distance by 47%; square spacing puts most of the keys where the
+            // curve is actually bending and brings that inside a few percent,
+            // at the cost of a dozen keyframes nobody pays for at runtime.
+            const int Samples = 24;
             for (var i = 0; i <= Samples; i++)
             {
                 var u = i / (float)Samples;
+                u *= u;
                 curve.AddKey(u, Mathf.Exp(-drag * u * lifetime));
             }
             for (var i = 0; i < curve.length; i++) curve.SmoothTangents(i, 0f);
@@ -479,7 +498,7 @@ namespace GenStudio3D.VfxImport
                     shape.angle = Binding(block, "angle").Constant;
                     shape.radius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
-                    shape.rotation = VfxConvert.Euler(Binding(block, "rotation").Vector);
+                    shape.rotation = ShapeRotation(block);
                     // The cone block carries its own speed, unlike the other
                     // shapes - it is an emitter and a velocity in one.
                     var speed = Curve(block, "speed");
@@ -502,16 +521,31 @@ namespace GenStudio3D.VfxImport
                     return;
 
                 case "initialize.positionCircle":
+                {
                     shape.enabled = true;
                     shape.shapeType = ParticleSystemShapeType.Circle;
-                    shape.radius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
-                    // The IR's `thickness` is 1 for a filled disc and 0 for a
-                    // rim; Unity's radiusThickness is the same convention.
-                    shape.radiusThickness = Mathf.Clamp01(Binding(block, "thickness").Constant);
+                    var circleRadius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
+                    shape.radius = circleRadius;
+                    // THE IR'S `thickness` IS A BAND WIDTH IN METRES, not a
+                    // fraction. The kernel reads `inner = max(0, radius -
+                    // thickness)` (shape.position.circle in kernels.js), so a
+                    // radius of 2 with a thickness of 0.5 is a ring from 1.5 to
+                    // 2. Unity's radiusThickness is the fraction of the radius
+                    // the band covers, so the conversion is a DIVISION that was
+                    // missing: Clamp01(0.5) called that same ring 1.0 to 2.0,
+                    // twice as wide as authored, and Clamp01 quietly flattened
+                    // every thickness above 1 - which is most of them, since a
+                    // filled disc is spelled thickness == radius.
+                    shape.radiusThickness = Mathf.Clamp01(
+                        Binding(block, "thickness").Constant / circleRadius);
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
-                    shape.rotation = VfxConvert.Euler(Binding(block, "rotation").Vector);
-                    _report.Native(name, type);
+                    shape.rotation = ShapeRotation(block);
+                    _report.Native(name, type,
+                        "ring " + (shape.radiusThickness >= 0.999f
+                            ? "filled"
+                            : $"{circleRadius * (1f - shape.radiusThickness):F2}-{circleRadius:F2}"));
                     return;
+                }
 
                 case "initialize.positionPoint":
                 {
@@ -558,20 +592,29 @@ namespace GenStudio3D.VfxImport
                     velocity.enabled = true;
                     velocity.space = ParticleSystemSimulationSpace.Local;
                     var direction = VfxConvert.Vector(Binding(block, "direction").Vector).normalized;
-                    var speed = Binding(block, "speed").Constant;
-                    // FADED BY THE SYSTEM'S OWN DRAG rather than held constant -
-                    // see DragDecayCurve for what a constant one did to a
-                    // mushroom cloud.
-                    var decay = DragDecayCurve(_systemDrag, _systemLifetime);
-                    velocity.x = new ParticleSystem.MinMaxCurve(direction.x * speed, decay);
-                    velocity.y = new ParticleSystem.MinMaxCurve(direction.y * speed, decay);
-                    velocity.z = new ParticleSystem.MinMaxCurve(direction.z * speed, decay);
+                    var bound = Binding(block, "speed");
+                    // RAW, NOT PRE-FADED. The decay used to be baked into these
+                    // three curves, because Unity's drag was believed unable to
+                    // touch an imposed velocity. It can: update.drag now writes
+                    // velocityOverLifetime.speedModifier, which scales this
+                    // velocity too - measured. Baking it here as well applied
+                    // the same drag twice and left the stem at 5.4m when it had
+                    // to reach the cap at 11.5m.
+                    //
+                    // THE RANGE SURVIVES, which it did not: Binding().Constant
+                    // collapses a random to its midpoint, so a stem authored to
+                    // rise at 9-15 m/s launched every particle at exactly 12 -
+                    // one rigid column of identical speeds where the preview
+                    // has a ragged one.
+                    var lo = bound.IsRandom ? bound.Low : bound.Constant;
+                    var hi = bound.IsRandom ? bound.High : bound.Constant;
+                    velocity.x = Ranged(direction.x * lo, direction.x * hi);
+                    velocity.y = Ranged(direction.y * lo, direction.y * hi);
+                    velocity.z = Ranged(direction.z * lo, direction.z * hi);
                     _report.Approximated(name, type,
-                        _systemDrag > 0f
-                            ? $"became a velocity over life, faded by this system's drag ({_systemDrag:F2}) "
-                              + "so it slows the way the preview does; the spread is not carried"
-                            : "became a constant velocity over life - correct here, since this system "
-                              + "has no drag to slow it - but the spread is not carried");
+                        "became a velocity over life - imposed every frame rather than set once at "
+                        + "birth, and this system's drag fades it through speedModifier; the "
+                        + "spread is not carried");
                     return;
                 }
 
@@ -582,22 +625,16 @@ namespace GenStudio3D.VfxImport
                     velocity.space = ParticleSystemSimulationSpace.Local;
                     var lo = VfxConvert.Vector(Binding(block, "min").Vector);
                     var hi = VfxConvert.Vector(Binding(block, "max").Vector);
-                    // TWO CURVES, NOT TWO CONSTANTS, for the same reason the
-                    // directional case needs one: Unity re-imposes this
-                    // velocity every frame and its drag cannot touch it, so a
-                    // constant travels at full speed forever. A pair of decay
-                    // curves keeps the per-particle random draw AND slows it.
-                    velocity.x = RangedDecay(lo.x, hi.x);
-                    velocity.y = RangedDecay(lo.y, hi.y);
-                    velocity.z = RangedDecay(lo.z, hi.z);
+                    // Raw, like the directional case: update.drag's
+                    // speedModifier is what fades these, and baking a decay in
+                    // here as well would apply the same drag twice.
+                    velocity.x = Ranged(lo.x, hi.x);
+                    velocity.y = Ranged(lo.y, hi.y);
+                    velocity.z = Ranged(lo.z, hi.z);
                     _report.Approximated(name, type,
-                        _systemDrag > 0f
-                            ? $"became a random velocity over life, faded by this system's drag "
-                              + $"({_systemDrag:F2}); it is drawn per particle but re-applied every "
-                              + "frame, so gravity reads slightly differently"
-                            : "became a random velocity over life; it is re-applied every frame "
-                              + "rather than drawn once at birth, so gravity reads slightly "
-                              + "differently");
+                        "became a random velocity over life; it is drawn per particle but "
+                        + "re-applied every frame rather than set once at birth, so gravity reads "
+                        + "slightly differently");
                     return;
                 }
 
@@ -672,6 +709,44 @@ namespace GenStudio3D.VfxImport
             }
         }
 
+        /// <summary>
+        /// A shape's rotation, with Unity's own default orientation corrected.
+        ///
+        /// THE TWO ENGINES POINT THEIR SHAPES DIFFERENT WAYS, and nothing in
+        /// the IR says so because within the app there is nothing to say.
+        ///
+        ///   - The app's Circle lies in the XZ plane, normal +Y: a ring ON THE
+        ///     GROUND. kernels.js says so outright - "XZ rather than XY because
+        ///     Y is up everywhere else in this runtime" - and its Rotation of
+        ///     (90,0,0) is documented as the way to stand one up against a wall.
+        ///   - The app's Cone sprays up +Y from a mouth in XZ.
+        ///   - UNITY'S Circle lies in XY and its Cone fires along +Z. Both are
+        ///     the shape's local forward, which is how every Shuriken emitter
+        ///     is built.
+        ///
+        /// So an IR rotation of zero - by far the most common case - was
+        /// imported as a ring standing VERTICALLY. On this nuclear blast that
+        /// silently broke three systems at once: the shockwave expanded in a
+        /// vertical disc instead of racing outward along the ground, the ground
+        /// dust rose in a wall instead of spreading into a skirt, and the stem
+        /// was emitted from a vertical slot. Measured: the shockwave's
+        /// particles were climbing to y=2.4 with no horizontal spread at all.
+        ///
+        /// Nothing LOOKED broken - there were particles, they moved, the
+        /// colours were right - which is exactly the "nearly right" failure the
+        /// report is built to prevent, and it was invisible to it because the
+        /// block imported natively.
+        ///
+        /// -90 about X takes Unity's +Z forward onto +Y. The IR's own rotation
+        /// composes on the OUTSIDE, because it is expressed in the app's frame
+        /// and so applies after the frames have been reconciled.
+        /// </summary>
+        private Vector3 ShapeRotation(VfxJson block)
+        {
+            var authored = Quaternion.Euler(VfxConvert.Euler(Binding(block, "rotation").Vector));
+            return (authored * Quaternion.Euler(-90f, 0f, 0f)).eulerAngles;
+        }
+
         // ------------------------------------------------------------------
         // Update
         // ------------------------------------------------------------------
@@ -710,11 +785,35 @@ namespace GenStudio3D.VfxImport
 
                 case "update.drag":
                 {
-                    var limit = ps.limitVelocityOverLifetime;
-                    limit.enabled = true;
-                    limit.drag = new ParticleSystem.MinMaxCurve(Binding(block, "drag").Constant);
-                    limit.dampen = 0f;
-                    _report.Native(name, type, "limitVelocityOverLifetime.drag");
+                    // NOT limitVelocityOverLifetime.drag, which is the obvious
+                    // field and cannot express this. MEASURED, with a one
+                    // particle probe at a known speed and coefficient:
+                    //
+                    //   multiplyDragByParticleVelocity ON  -> 1/v is linear in
+                    //     t, i.e. dv/dt = -k*v^2. QUADRATIC.
+                    //   multiplyDragByParticleVelocity OFF -> v falls by k m/s
+                    //     every second. CONSTANT deceleration.
+                    //
+                    // The app's is `accel -= velocity * k` (kernels.js
+                    // 'force.drag') - dv/dt = -k*v, LINEAR - and Shuriken's
+                    // drag has no setting for it. The error is not subtle: a
+                    // shockwave at 25 m/s with k=7 should travel 3.6m, the
+                    // quadratic setting moved it 0.01m and the constant one
+                    // 35.9m. One stopped dead, the other never stopped.
+                    //
+                    // speedModifier IS linear drag, because it is not a force
+                    // at all - it multiplies the particle's speed by a curve,
+                    // so a curve of exp(-k*t) integrates to exactly the
+                    // trajectory the preview produces. Measured against the
+                    // analytic distance it lands within a few percent, and it
+                    // scales an IMPOSED velocityOverLifetime too - which is the
+                    // property that lets one mechanism serve radial starts,
+                    // directional starts and vortices alike.
+                    var vol = ps.velocityOverLifetime;
+                    vol.enabled = true;
+                    vol.speedModifier = new ParticleSystem.MinMaxCurve(
+                        1f, DragDecayCurve(Binding(block, "drag").Constant, _systemLifetime));
+                    _report.Native(name, type, "velocityOverLifetime.speedModifier (linear drag)");
                     return;
                 }
 
@@ -765,6 +864,11 @@ namespace GenStudio3D.VfxImport
                     var limit = ps.limitVelocityOverLifetime;
                     limit.enabled = true;
                     limit.limit = new ParticleSystem.MinMaxCurve(Binding(block, "speed").Constant);
+                    // Fully dampened, which is what a hard speed cap means: the
+                    // app's kernel clamps the magnitude outright rather than
+                    // easing towards the cap. Without this the limit is stored
+                    // and ignored - see update.drag.
+                    limit.dampen = 1f;
                     _report.Native(name, type);
                     return;
                 }
@@ -824,10 +928,49 @@ namespace GenStudio3D.VfxImport
                     return;
 
                 case "update.killOnBounds":
-                    _report.Dropped(name, type,
-                        "Shuriken kills on lifetime only; the effect will keep particles that the "
-                        + "preview culls, so raise maxParticles or shorten the lifetime");
+                {
+                    // THE TRIGGER MODULE IS AN EXACT MATCH, which the previous
+                    // "Shuriken kills on lifetime only" gave up on too early.
+                    // `outside = Kill` against a box collider is precisely the
+                    // kernel in src/utils/vfx/kernels.js ('kill.bounds'): a box
+                    // centred on the system's origin with half-extents of
+                    // size/2, killing anything past it.
+                    //
+                    // It is worth the collider. Dropping this on the nuclear
+                    // blast let its debris keep flying: the preview culls a
+                    // chip once it passes 8m, Unity's kept going to 25m, and
+                    // the effect grew a halo of specks streaking off into the
+                    // distance long after the blast was over. It also blew up
+                    // the effect's bounds, which is what every auto-framing
+                    // camera and culling volume reads.
+                    var size = VfxConvert.Vector(Binding(block, "size").Vector);
+                    size = new Vector3(
+                        Mathf.Max(0.01f, Mathf.Abs(size.x)),
+                        Mathf.Max(0.01f, Mathf.Abs(size.y)),
+                        Mathf.Max(0.01f, Mathf.Abs(size.z)));
+
+                    var box = new GameObject("KillBounds");
+                    box.transform.SetParent(ps.transform, false);
+                    var collider = box.AddComponent<BoxCollider>();
+                    collider.size = size;
+                    // A TRIGGER, not a solid. The particle trigger module reads
+                    // the volume either way, but a solid box of this size
+                    // dropped into the user's scene would block their character
+                    // controller - a side effect of importing a VFX that nobody
+                    // would connect to the import.
+                    collider.isTrigger = true;
+
+                    var trigger = ps.trigger;
+                    trigger.enabled = true;
+                    trigger.SetCollider(0, collider);
+                    trigger.outside = ParticleSystemOverlapAction.Kill;
+                    trigger.inside = ParticleSystemOverlapAction.Ignore;
+                    trigger.enter = ParticleSystemOverlapAction.Ignore;
+                    trigger.exit = ParticleSystemOverlapAction.Ignore;
+                    _report.Native(name, type,
+                        $"trigger module, killing outside a {size.x:F0}x{size.y:F0}x{size.z:F0} box");
                     return;
+                }
 
                 case "update.flipbook":
                     // Configured by the output's tile counts; this block only
@@ -883,8 +1026,37 @@ namespace GenStudio3D.VfxImport
                 ? ParticleSystemSortMode.Distance
                 : ParticleSystemSortMode.None;
 
+            // THE TEXTURE IS RESOLVED BEFORE THE MATERIAL, and that ordering is
+            // the fix for two separate bugs.
+            //
+            // One: the material cache is keyed on the blend mode AND the
+            // texture. It used to be keyed on the blend alone, and the texture
+            // was then written onto whatever material came back - so two
+            // systems sharing a blend but not a texture fought over one
+            // material and the last one imported won.
+            //
+            // Two: a system with NO texture block at all never reached the
+            // assignment, so its material kept a null _BaseMap - and URP's
+            // particle shader samples that as WHITE, drawing a full opaque
+            // quad. On an additive blend that is a solid bright square, which
+            // is what a nuclear blast's flash, fireball and shockwave all
+            // became. See VfxBuiltins: the app has never drawn an untextured
+            // particle, and neither should this.
+            VfxJson textureBlock = null;
+            VfxJson meshBlock = null;
+            foreach (var block in output["blocks"].Items)
+            {
+                var type = block["srcBlockType"].AsString();
+                if (type == "output.setMainTexture") textureBlock = block;
+                else if (type == "output.setMesh") meshBlock = block;
+            }
+
+            var texture = textureBlock == null ? null : TextureFor(textureBlock, "texture");
+            var textureIsAuthored = texture != null;
+            if (texture == null) texture = _defaultSprite?.Invoke();
+
             var blend = output["blend"].AsString("additive");
-            var material = _material?.Invoke(blend);
+            var material = _material?.Invoke(blend, texture);
             if (material != null)
             {
                 renderer.sharedMaterial = material;
@@ -895,52 +1067,63 @@ namespace GenStudio3D.VfxImport
                 _report.Dropped(name, "output.blend", "no particle shader found for " + blend);
             }
 
-            // The texture and the mesh come off the output's blocks.
-            foreach (var block in output["blocks"].Items)
+            if (textureIsAuthored)
             {
-                var type = block["srcBlockType"].AsString();
-                if (type == "output.setMainTexture")
+                _report.Native(name, "output.setMainTexture", texture.name);
+            }
+            else if (texture != null)
+            {
+                // NATIVE, not approximated: drawing an untextured particle with
+                // a built-in soft blob is what the app itself does - see the
+                // header of src/utils/vfx/assets.js, where it is a deliberate
+                // product decision rather than a fallback. Matching it IS
+                // fidelity; a hard quad is the divergence.
+                _report.Native(name,
+                    textureBlock == null ? "output.texture" : "output.setMainTexture",
+                    textureBlock == null
+                        ? "no texture set, so the built-in soft sprite is used - the same "
+                          + "stand-in the app's preview draws"
+                        : "the bundle has no texture for this slot, so the built-in soft sprite "
+                          + "is used - the same stand-in the app's preview draws");
+            }
+
+            if (mode == "mesh")
+            {
+                // A MESH RENDERER WITH NO MESH DRAWS UNITY'S FALLBACK QUAD, not
+                // nothing, so this slot can never be left empty. It used to
+                // switch the renderer off instead, which made the system vanish
+                // outright - a nuclear blast imported with its entire debris
+                // burst missing, and "not drawn" in a report nobody reads at
+                // that point.
+                //
+                // The app resolves the same gap with a built-in tetrahedron
+                // (getDefaultParticleMesh), for the same reason it has a
+                // built-in sprite, so using one here matches the preview rather
+                // than inventing a third behaviour.
+                var mesh = meshBlock == null ? null : MeshFor(meshBlock, "mesh");
+                if (mesh != null)
                 {
-                    var texture = TextureFor(block, "texture");
-                    if (texture != null && material != null)
-                    {
-                        // _BaseMap on URP's particle shaders, _MainTex on the
-                        // built-in ones. Setting both is cheaper than deciding
-                        // which pipeline is active, and an unknown property is
-                        // a no-op rather than an error.
-                        if (material.HasProperty("_BaseMap")) material.SetTexture("_BaseMap", texture);
-                        if (material.HasProperty("_MainTex")) material.SetTexture("_MainTex", texture);
-                        _report.Native(name, type, texture.name);
-                    }
-                    else if (texture == null)
-                    {
-                        _report.Dropped(name, type, "the bundle has no texture for this slot");
-                    }
+                    renderer.mesh = mesh;
+                    _report.Native(name, "output.setMesh", mesh.name);
                 }
-                else if (type == "output.setMesh")
+                else
                 {
-                    var mesh = MeshFor(block, "mesh");
-                    if (mesh != null)
+                    var fallback = _defaultMesh?.Invoke();
+                    if (fallback != null)
                     {
-                        renderer.mesh = mesh;
-                        _report.Native(name, type, mesh.name);
+                        renderer.mesh = fallback;
+                        _report.Approximated(name, "output.setMesh",
+                            "the bundle has no mesh for this slot, so the built-in tetrahedron is "
+                            + "used - the same stand-in the app's preview draws. Assign the real "
+                            + "model on this system's renderer to replace it. (Unity has no glTF "
+                            + "importer; add com.unity.cloud.gltfast or export the mesh as FBX.)");
                     }
                     else
                     {
-                        // A MESH RENDERER WITH NO MESH DRAWS UNITY'S FALLBACK,
-                        // not nothing - a hard-edged quad wearing whatever
-                        // material the system asked for. On a debris burst with
-                        // an opaque material that is a scatter of solid squares
-                        // sitting in the middle of the effect, and it reads as
-                        // a broken importer rather than as a missing asset.
-                        //
-                        // Switched off instead. The drop is already reported;
-                        // absence matches the report, and corruption does not.
                         renderer.enabled = false;
-                        _report.Dropped(name, type,
-                            "the bundle has no mesh for this slot, so this system is not drawn - "
-                            + "assign a mesh to its renderer and re-enable it. (Unity has no glTF "
-                            + "importer; add com.unity.cloud.gltfast or export the mesh as FBX.)");
+                        _report.Dropped(name, "output.setMesh",
+                            "the bundle has no mesh for this slot and no stand-in was available, "
+                            + "so this system is not drawn");
                     }
                 }
             }
@@ -1095,9 +1278,36 @@ namespace GenStudio3D.VfxImport
                 var gradient = VfxConvert.GradientFrom(bound.Gradient, out var peak);
                 if (peak > 1.01f)
                 {
-                    _report.Approximated(name, "gradient HDR",
-                        $"a key at {peak:F1}x intensity was folded into an LDR colour; Unity's "
-                        + "Gradient has no HDR channel, so use the material's emission for the glow");
+                    // NOT A LOSS, which is what this used to claim. Unity's
+                    // Gradient keys are float Colors and a saved prefab really
+                    // does carry `key0: {r: 3, ...}` - verified in a written
+                    // prefab, not assumed - so the intensity survives the fold
+                    // intact and there is nothing to route through emission.
+                    //
+                    // What does NOT survive is the TONEMAPPER. The app renders
+                    // through ACES Filmic (see the header of VfxViewport.jsx,
+                    // where it is deliberate), so a 16x core rolls off into a
+                    // soft white bloom. URP tonemaps only when a Volume says
+                    // to, and the default profile ships with Tonemapping set to
+                    // None - so the same 16x core CLIPS to a flat white slab.
+                    // Reported as native with the scene requirement attached,
+                    // because the fidelity gap is in the scene, not the import.
+                    _report.Native(name, "gradient HDR",
+                        $"a key at {peak:F1}x intensity was carried across intact");
+                    // NO PEAK VALUE IN THIS STRING, deliberately: the list
+                    // deduplicates on the text, and a six-system effect whose
+                    // gradients peak at 16x, 9x, 5x, 3x, 2.3x and 2x wrote the
+                    // same paragraph six times over. Which system is how hot is
+                    // already on its own Native line above; the requirement is
+                    // one thing to go and switch on, so it is said once.
+                    _report.SceneRequirement(
+                        "TONE MAPPING. This effect authors colour above 1.0. The app previews "
+                        + "through ACES Filmic, which rolls a hot core off into a soft glow; URP "
+                        + "tone maps only when a Volume says to, and the default profile ships "
+                        + "with Tonemapping set to None - so the same core clips to a flat white "
+                        + "slab. Set Tonemapping to ACES on a Volume covering the effect (or on "
+                        + "the project's default volume profile) and tick HDR on the camera and "
+                        + "the URP asset.");
                 }
                 var dropped = VfxConvert.GradientKeysDropped(bound.Gradient);
                 if (dropped > 0)

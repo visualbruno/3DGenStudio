@@ -5,6 +5,7 @@
 // effect is, and every choice this importer makes it makes because the IR or
 // the engine forces it. A window full of options nobody understands is how an
 // importer becomes something people avoid.
+using System;
 using System.IO;
 using UnityEditor;
 using UnityEngine;
@@ -14,6 +15,64 @@ namespace GenStudio3D.VfxImport
     public static class VfxImportMenu
     {
         private const string LastFolderKey = "GenStudio3D.VfxImport.LastBundleFolder";
+
+        /// <summary>
+        /// Import without the folder picker, for batch mode and CI:
+        ///
+        ///   unity run &lt;project&gt; -- -executeMethod \
+        ///     GenStudio3D.VfxImport.VfxImportMenu.ImportBundleFromCommandLine \
+        ///     -vfxBundle &lt;bundle folder&gt; [-vfxDestination Assets/...]
+        ///
+        /// Exits non-zero on failure so a script can tell. The interactive path
+        /// above cannot be reused: OpenFolderPanel blocks forever with no GUI,
+        /// and DisplayDialog in -batchmode throws.
+        /// </summary>
+        public static void ImportBundleFromCommandLine()
+        {
+            var bundle = ArgumentValue("-vfxBundle");
+            if (string.IsNullOrEmpty(bundle) || !File.Exists(Path.Combine(bundle, "manifest.json")))
+            {
+                Debug.LogError("[VFX Import] pass -vfxBundle <folder holding manifest.json>");
+                EditorApplication.Exit(1);
+                return;
+            }
+
+            var destination = ArgumentValue("-vfxDestination")
+                ?? Path.Combine("Assets", "ImportedVfx", new DirectoryInfo(bundle).Name);
+
+            // Replaced, not stacked. The interactive path deliberately lands
+            // beside an earlier import so nobody loses hand-edited materials;
+            // a scripted reimport of the same effect means "make this current",
+            // and twenty ImportedVfx/Nuclear Blast 1..20 folders is what the
+            // other behaviour produces in a loop.
+            if (Directory.Exists(destination))
+            {
+                AssetDatabase.DeleteAsset(destination.Replace('\\', '/'));
+                AssetDatabase.Refresh();
+            }
+
+            var result = VfxBundleImporter.Import(bundle, destination);
+            Debug.Log("[VFX Import] " + result.Report.ToText());
+            if (result.Report.Failed || result.Prefab == null)
+            {
+                Debug.LogError("[VFX Import] failed: " + result.Report.Summary());
+                EditorApplication.Exit(1);
+                return;
+            }
+
+            Debug.Log($"[VFX Import] {result.Report.Summary()} -> {result.PrefabPath}");
+            EditorApplication.Exit(0);
+        }
+
+        private static string ArgumentValue(string flag)
+        {
+            var args = Environment.GetCommandLineArgs();
+            for (var i = 0; i < args.Length - 1; i++)
+            {
+                if (args[i] == flag) return args[i + 1];
+            }
+            return null;
+        }
 
         [MenuItem("Assets/Import VFX Bundle...", false, 20)]
         public static void ImportBundle()
