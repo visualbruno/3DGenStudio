@@ -97,7 +97,7 @@ export function linearToSrgb(c) {
 // --- camera ------------------------------------------------------------------
 
 /**
- * A camera that frames the given bounds.
+ * Where a camera framing these bounds should sit, and what it looks at.
  *
  * ORBITS THE BOUNDS CENTRE rather than the origin, because an effect authored
  * ten metres up - a rain volume, a ceiling drip - would otherwise be framed on
@@ -106,9 +106,9 @@ export function linearToSrgb(c) {
  * @param {number[]} min
  * @param {number[]} max
  * @param {Object} [view] DEFAULT_VIEW overrides
- * @returns {Object} an opaque camera for `renderFrame`
+ * @returns {{eye: number[], target: number[], fov: number, radius: number}}
  */
-export function frameBounds(min, max, view = {}) {
+export function cameraPlacement(min, max, view = {}) {
   const settings = { ...DEFAULT_VIEW, ...view };
   const centre = [
     (min[0] + max[0]) / 2,
@@ -123,11 +123,38 @@ export function frameBounds(min, max, view = {}) {
   const az = (settings.azimuth * Math.PI) / 180;
   const el = (settings.elevation * Math.PI) / 180;
   const dist = radius * settings.distance;
-  const eye = [
-    centre[0] + dist * Math.cos(el) * Math.sin(az),
-    centre[1] + dist * Math.sin(el),
-    centre[2] + dist * Math.cos(el) * Math.cos(az),
-  ];
+  return {
+    eye: [
+      centre[0] + dist * Math.cos(el) * Math.sin(az),
+      centre[1] + dist * Math.sin(el),
+      centre[2] + dist * Math.cos(el) * Math.cos(az),
+    ],
+    target: centre,
+    fov: settings.fov,
+    radius,
+  };
+}
+
+/**
+ * A camera that frames the given bounds.
+ *
+ * ORBITS THE BOUNDS CENTRE rather than the origin, because an effect authored
+ * ten metres up - a rain volume, a ceiling drip - would otherwise be framed on
+ * empty ground and read as "nothing is being emitted".
+ *
+ * @param {number[]} min
+ * @param {number[]} max
+ * @param {Object} [view] DEFAULT_VIEW overrides
+ * @returns {Object} an opaque camera for `renderFrame`
+ */
+export function frameBounds(min, max, view = {}) {
+  // SPLIT SO THE BROWSER CAN SHARE IT. The sprite-sheet bake needs a real
+  // THREE.PerspectiveCamera, which this module must not construct - it is the
+  // pure layer and ships to the server. cameraPlacement returns where the
+  // camera GOES; each side builds its own camera from that, so a sheet and a
+  // headless preview of the same effect frame identically.
+  const { eye, target, fov, radius } = cameraPlacement(min, max, view);
+  const centre = target;
 
   // A right-handed look-at, matching the IR's space so no conversion is needed.
   const fz = [centre[0] - eye[0], centre[1] - eye[1], centre[2] - eye[2]];
@@ -147,49 +174,193 @@ export function frameBounds(min, max, view = {}) {
     right[0] * f[1] - right[1] * f[0],
   ];
 
-  return { eye, right, up, forward: f, fov: settings.fov, radius, centre };
+  return { eye, right, up, forward: f, fov, radius, centre };
 }
 
 /**
- * Where the particles actually are, right now.
+ * How far a particle reaches from its centre, as it is actually DRAWN.
  *
- * FRAMING THE DECLARED BOUNDS IS NOT ENOUGH. `effect.boundsMin/Max` is what the
- * author said the effect would occupy - a safe over-estimate used for culling -
- * and a candle flame declared inside a four-metre box renders as a speck in the
- * middle of an empty frame. That reads as "almost nothing is being emitted",
- * which is the single wrong conclusion this whole feature exists to prevent.
+ * NOT size/2. The quad's corners sit at +/-0.5 in both axes and the shader
+ * scales them by `size`, so a corner is size * sqrt(2)/2 from the centre -
+ * 41% further than the half-width. A billboard always faces the camera, so
+ * that corner can point in any direction in the view plane and the honest
+ * world-space figure is the half-DIAGONAL, whether or not the sprite rotates.
  *
- * Returns null when nothing is alive, so the caller can fall back to the
- * declared bounds rather than framing an empty point.
+ * Stretched particles are longer still: the shader grows the along-velocity
+ * axis to `size * (1 + speed * stretch)`, so a fast spark reaches much further
+ * than its size suggests. Under-reporting here is how a bounding box clips the
+ * very particles that define an effect's silhouette.
+ *
+ * @param {number} size
+ * @param {number} speed metres per second, for stretched modes
+ * @param {string} mode the output render mode
+ * @param {number} stretch the output's stretch factor
+ * @returns {number} radius in world units
+ */
+export function drawnRadius(size, speed, mode, stretch = 0) {
+  const half = Math.max(0, size) * 0.5;
+  if (mode === 'stretched') {
+    const along = half * (1 + Math.max(0, speed) * Math.max(0, stretch));
+    return Math.hypot(along, half);
+  }
+  // Mesh particles are normalised to a unit cube by the loader, so `size` is
+  // the edge and the corner is again the half-diagonal - of a cube this time.
+  if (mode === 'mesh') return half * Math.sqrt(3);
+  // The half-diagonal of the quad: half * sqrt(2).
+  return half * Math.SQRT2;
+}
+
+/**
+ * Every live particle, as (centre, radius, weight) triples.
+ *
+ * Weight is screen area times opacity - size^2 * alpha - because that is what
+ * decides whether something is VISUALLY part of the effect. A fully
+ * transparent particle weighs nothing, which correctly ignores fade-in and
+ * fade-out tails rather than letting them drag a box open.
+ */
+function sampleParticles(emitters) {
+  const samples = [];
+  for (const emitter of emitters || []) {
+    if (emitter.muted) continue;
+    const pool = emitter.pool;
+    const position = pool?.planes?.position;
+    if (!position) continue;
+    const size = pool?.planes?.size;
+    const colour = pool?.planes?.color;
+    const velocity = pool?.planes?.velocity;
+    const output = emitter.irSystem?.outputs?.[0] || {};
+    const mode = output.mode || 'billboard';
+    const stretch = Number.isFinite(output.stretch) ? output.stretch : 1;
+
+    for (let i = 0; i < (pool?.count || 0); i += 1) {
+      const x = position[i * 3];
+      const y = position[i * 3 + 1];
+      const z = position[i * 3 + 2];
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+
+      const s = size ? size[i] : 0.1;
+      const speed = velocity
+        ? Math.hypot(velocity[i * 3], velocity[i * 3 + 1], velocity[i * 3 + 2])
+        : 0;
+      const alpha = colour ? Math.max(0, Math.min(1, colour[i * 4 + 3])) : 1;
+      samples.push({
+        x, y, z,
+        r: drawnRadius(s, speed, mode, stretch),
+        w: s * s * alpha,
+      });
+    }
+  }
+  return samples;
+}
+
+/**
+ * Where the particles actually are, right now - ALL of them.
+ *
+ * The conservative box: nothing an effect draws falls outside it. This is what
+ * culling and an engine's emitter bounds want, because a particle that leaves
+ * the box pops the whole effect off screen, and being generous costs nothing.
+ *
+ * FRAMING THE DECLARED BOUNDS IS NOT ENOUGH, which is why this exists at all.
+ * `effect.boundsMin/Max` is what the author SAID the effect would occupy - a
+ * safe over-estimate - and a candle flame declared inside a four-metre box
+ * renders as a speck in an empty frame.
+ *
+ * Returns null when nothing is alive, so the caller can fall back rather than
+ * framing an empty point.
  *
  * @param {Array} emitters
  * @returns {{min: number[], max: number[]}|null}
  */
 export function boundsOfEmitters(emitters) {
+  const samples = sampleParticles(emitters);
+  if (samples.length === 0) return null;
+
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
-  let seen = 0;
-
-  for (const emitter of emitters || []) {
-    if (emitter.muted) continue;
-    const pool = emitter.pool;
-    const position = pool?.planes?.position;
-    const size = pool?.planes?.size;
-    for (let i = 0; i < (pool?.count || 0); i += 1) {
-      // The particle's EXTENT, not its centre: a big soft puff whose centre is
-      // inside the box still needs its edges in frame.
-      const r = (size ? size[i] : 0) * 0.5;
-      for (let axis = 0; axis < 3; axis += 1) {
-        const v = position[i * 3 + axis];
-        if (!Number.isFinite(v)) continue;
-        if (v - r < min[axis]) min[axis] = v - r;
-        if (v + r > max[axis]) max[axis] = v + r;
-      }
-      seen += 1;
+  for (const p of samples) {
+    const centre = [p.x, p.y, p.z];
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (centre[axis] - p.r < min[axis]) min[axis] = centre[axis] - p.r;
+      if (centre[axis] + p.r > max[axis]) max[axis] = centre[axis] + p.r;
     }
   }
-  if (!seen || !Number.isFinite(min[0])) return null;
   return { min, max };
+}
+
+/**
+ * The box worth FRAMING on - the visual mass, not the extremes.
+ *
+ * THE CONSERVATIVE BOX IS THE WRONG ONE FOR A CAMERA, and this is the whole
+ * point. Eighty debris specks thrown at thirty metres a second drag a total
+ * bounding box open by tens of metres; frame on that and the mushroom cloud
+ * everyone came to look at shrinks to a third of the cell. The same box that
+ * is correct for culling is useless for a picture.
+ *
+ * SO: trim by WEIGHT, not by count. Each particle counts for its screen area
+ * times its opacity, and the outermost `1 - percentile` of that weight is
+ * dropped from each end of each axis. A few small fast specks weigh almost
+ * nothing and fall outside; two hundred dust motes that genuinely make up the
+ * effect do not, because together they weigh a lot. A plain percentile of
+ * particle COUNT would get this backwards - it lets numerous small things
+ * outvote the thing you are looking at.
+ *
+ * @param {Array} emitters
+ * @param {Object} [options]
+ * @param {number} [options.percentile] weight to keep per end, default 0.98
+ * @param {number} [options.pad] fraction of the result added back, default 0.04
+ * @returns {{min: number[], max: number[], trimmed: number}|null}
+ */
+export function focusBounds(emitters, { percentile = 0.98, pad = 0.04 } = {}) {
+  const samples = sampleParticles(emitters);
+  if (samples.length === 0) return null;
+
+  const totalWeight = samples.reduce((sum, p) => sum + p.w, 0);
+  // Every particle fully transparent: weight cannot decide anything, so fall
+  // back to the honest total rather than returning a degenerate point.
+  if (!(totalWeight > 0)) return { ...boundsOfEmitters(emitters), trimmed: 0 };
+
+  const drop = totalWeight * (1 - percentile);
+  const axes = ['x', 'y', 'z'];
+  const min = [0, 0, 0];
+  const max = [0, 0, 0];
+  let trimmed = 0;
+
+  for (let axis = 0; axis < 3; axis += 1) {
+    const key = axes[axis];
+
+    // The low end: walk inward from the furthest-out particle, shedding weight
+    // until the budget is spent. Where we stop IS the bound.
+    const lows = samples.map((p) => ({ v: p[key] - p.r, w: p.w }))
+      .sort((a, b) => a.v - b.v);
+    let shed = 0;
+    let at = 0;
+    while (at < lows.length - 1 && shed + lows[at].w <= drop) {
+      shed += lows[at].w;
+      at += 1;
+      trimmed += 1;
+    }
+    min[axis] = lows[at].v;
+
+    const highs = samples.map((p) => ({ v: p[key] + p.r, w: p.w }))
+      .sort((a, b) => b.v - a.v);
+    shed = 0;
+    at = 0;
+    while (at < highs.length - 1 && shed + highs[at].w <= drop) {
+      shed += highs[at].w;
+      at += 1;
+      trimmed += 1;
+    }
+    max[axis] = highs[at].v;
+  }
+
+  // A little back, so the particles right at the percentile are not clipped by
+  // the frame edge they define.
+  for (let axis = 0; axis < 3; axis += 1) {
+    const span = Math.max(1e-4, max[axis] - min[axis]);
+    min[axis] -= span * pad;
+    max[axis] += span * pad;
+  }
+  return { min, max, trimmed };
 }
 
 // --- rasteriser ---------------------------------------------------------------

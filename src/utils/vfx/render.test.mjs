@@ -27,6 +27,13 @@ import {
   encodePng,
   matteOnCheckerboard,
 } from '../../../vfx/png.js';
+import {
+  boundsOfEmitters,
+  cameraPlacement,
+  drawnRadius,
+  focusBounds,
+  frameBounds,
+} from '../../../vfx/preview.js';
 import { compileVfxGraph } from '../../../vfx/compile.js';
 import { normalizeVfxDoc } from '../../../vfx/doc.js';
 import * as edits from './edits.js';
@@ -1129,6 +1136,103 @@ console.log('\n--- A fresh runtime needs its mesh samplers ---');
   // the caller can say why rather than showing a plausible wrong image.
   check('a non-PNG is refused', decodePng(Buffer.from('not a png at all')) === null);
   check('  and so is a truncated one', decodePng(encodePng(size, source).subarray(0, 30)) === null);
+}
+
+
+// --- What to frame on -------------------------------------------------------
+//
+// THE BOX THAT IS CORRECT FOR CULLING IS THE WRONG ONE FOR A CAMERA, and that
+// is the whole reason there are two. Reported from a nuclear blast: eighty
+// debris specks thrown at thirty metres a second dragged the total bounding box
+// open by tens of metres, so framing on it shrank the mushroom cloud - the
+// thing anyone is looking at - to a third of the cell.
+{
+  console.log('\n--- The focus box ignores outliers, the total box does not ---');
+
+  const emitterOf = (particles, output = { mode: 'billboard' }) => [{
+    pool: {
+      count: particles.length,
+      planes: {
+        position: Float32Array.from(particles.flatMap((p) => p.p)),
+        size: Float32Array.from(particles.map((p) => p.s)),
+        color: Float32Array.from(particles.flatMap((p) => [1, 1, 1, p.a ?? 1])),
+        velocity: Float32Array.from(particles.flatMap((p) => p.v || [0, 0, 0])),
+      },
+    },
+    irSystem: { outputs: [output] },
+  }];
+
+  // A DRAWN PARTICLE REACHES FURTHER THAN size/2. The quad's corners are at
+  // +/-0.5 and the shader scales them by size, so a corner is size*sqrt(2)/2
+  // out - 41% further. Under-reporting clips the very particles that define
+  // the silhouette.
+  check('a billboard is measured to its corner, not its edge',
+    Math.abs(drawnRadius(2, 0, 'billboard') - Math.SQRT2) < 1e-6,
+    drawnRadius(2, 0, 'billboard').toFixed(4));
+  check('  a stretched one grows along its velocity',
+    drawnRadius(1, 10, 'stretched', 1) > 5 && drawnRadius(1, 0, 'stretched', 1) < 1,
+    `${drawnRadius(1, 10, 'stretched', 1).toFixed(2)} fast vs ${drawnRadius(1, 0, 'stretched', 1).toFixed(2)} still`);
+  check('  and a mesh to its cube corner',
+    Math.abs(drawnRadius(2, 0, 'mesh') - Math.sqrt(3)) < 1e-6,
+    drawnRadius(2, 0, 'mesh').toFixed(4));
+
+  // THE REPORTED CASE.
+  const mass = Array.from({ length: 60 }, (_, i) => ({
+    p: [Math.cos(i) * 0.8, 1 + Math.sin(i) * 0.8, Math.sin(i * 2) * 0.8], s: 1.4, a: 0.9,
+  }));
+  const debris = Array.from({ length: 80 }, (_, i) => ({
+    p: [Math.cos(i) * 18, 3 + i * 0.05, Math.sin(i) * 18], s: 0.05, a: 1,
+  }));
+  const blast = emitterOf([...mass, ...debris]);
+
+  const total = boundsOfEmitters(blast);
+  const focus = focusBounds(blast);
+  const spanOf = (b) => b.max[0] - b.min[0];
+
+  check('the total box contains the debris', spanOf(total) > 30, spanOf(total).toFixed(1));
+  check('  and the focus box does not', spanOf(focus) < 6, spanOf(focus).toFixed(1));
+  check('  so the subject is several times larger on screen',
+    spanOf(total) / spanOf(focus) > 4,
+    `${(spanOf(total) / spanOf(focus)).toFixed(1)}x`);
+
+  // WEIGHT, NOT COUNT, and this is the part a plain percentile gets backwards.
+  // Two hundred dust motes that ARE the effect must survive the trim, even
+  // though they outnumber everything; eighty specks that merely fly far must
+  // not. The difference is screen area times opacity, not headcount.
+  const dust = Array.from({ length: 200 }, (_, i) => ({
+    p: [Math.cos(i * 0.7) * 6, 1, Math.sin(i * 0.7) * 6], s: 0.9, a: 0.8,
+  }));
+  const cloud = focusBounds(emitterOf(dust));
+  check('a wide cloud of many real particles is kept', spanOf(cloud) > 10,
+    spanOf(cloud).toFixed(1));
+
+  // A fully transparent particle is not visually part of anything, so it must
+  // not drag the frame open - which is what correctly ignores fade tails.
+  const withGhosts = focusBounds(emitterOf([
+    ...mass,
+    ...Array.from({ length: 40 }, (_, i) => ({ p: [i + 20, 0, 0], s: 3, a: 0 })),
+  ]));
+  check('invisible particles do not widen the frame', spanOf(withGhosts) < 6,
+    spanOf(withGhosts).toFixed(1));
+
+  // Degenerate inputs answer rather than throwing or returning a point.
+  check('nothing alive returns null', focusBounds([]) === null);
+  const single = focusBounds(emitterOf([{ p: [0, 0, 0], s: 1, a: 1 }]));
+  check('a single particle still has extent', spanOf(single) > 1, spanOf(single).toFixed(2));
+  // Every particle transparent: weight cannot decide anything, so it falls back
+  // to the honest total rather than collapsing.
+  const allClear = focusBounds(emitterOf([
+    { p: [-5, 0, 0], s: 1, a: 0 }, { p: [5, 0, 0], s: 1, a: 0 },
+  ]));
+  check('  and an all-transparent effect falls back to the total box',
+    spanOf(allClear) > 9, spanOf(allClear).toFixed(2));
+
+  // The two camera paths must agree, or a sprite sheet and a headless preview
+  // of one effect are framed differently for no reason anyone could find.
+  const place = cameraPlacement([-1, -1, -1], [1, 1, 1]);
+  const camera = frameBounds([-1, -1, -1], [1, 1, 1]);
+  check('both camera paths place the eye identically',
+    JSON.stringify(place.eye) === JSON.stringify(camera.eye), JSON.stringify(place.eye));
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

@@ -21,7 +21,7 @@
 import { compileVfxGraph } from './vfx/compile.js';
 import { normalizeVfxDoc } from './vfx/doc.js';
 import { encodePng } from './vfx/png.js';
-import { boundsOfEmitters, frameBounds, renderFrame } from './vfx/preview.js';
+import { focusBounds, frameBounds, renderFrame } from './vfx/preview.js';
 import { advance, createVfxRuntime, runtimeStats } from './src/utils/vfx/system.js';
 
 /** Frames larger than this are refused: it is a preview, not a render farm. */
@@ -102,7 +102,10 @@ export async function renderVfxFrames(doc, options = {}) {
       guard += 1;
     }
 
-    const live = options.frameOnParticles === false ? null : boundsOfEmitters(runtime.emitters);
+    // THE FOCUS BOX, NOT THE TOTAL ONE. Framing on every last particle lets a
+    // handful of fast specks decide the camera distance and shrinks the thing
+    // being looked at to a fraction of the frame - see focusBounds.
+    const live = options.frameOnParticles === false ? null : focusBounds(runtime.emitters);
     const camera = live
       ? frameBounds(live.min, live.max, options.view)
       : frameBounds(ir.effect.boundsMin, ir.effect.boundsMax, options.view);

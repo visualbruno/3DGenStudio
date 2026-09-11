@@ -39,6 +39,9 @@ import * as THREE from 'three'
 import { createBatches, disposeBatch, writeBatch } from './batch.js'
 import { createVfxRuntime, installMeshSamplers, step } from './system.js'
 import { squareCameraFrom } from '../vfxThumbnail.js'
+// The same placement maths the headless preview uses, so a sheet and a
+// render_vfx_preview frame of one effect are framed identically.
+import { cameraPlacement, focusBounds } from '../../../vfx/preview.js'
 
 /**
  * The largest sheet either dimension may reach.
@@ -124,8 +127,13 @@ export function planSpriteSheet(options) {
  *
  * @param {Object} options
  * @param {Object} options.ir the compiled effect
- * @param {THREE.Camera} options.camera the live preview camera; only its world
- *   transform and vertical field of view are used
+ * @param {THREE.Camera} [options.camera] the live preview camera; only its world
+ *   transform and vertical field of view are used. Required unless `view` is
+ *   given.
+ * @param {Object} [options.view] frame on the effect instead of on a camera:
+ *   {azimuth, elevation, distance, fov} in degrees and effect-radii. This is
+ *   the lever for baking a sheet with no viewport - `boundsAuto` never was one,
+ *   and nothing here reads the declared bounds except as a last resort.
  * @param {Object} options.plan from planSpriteSheet
  * @param {Map<number, THREE.Texture>} [options.textures]
  * @param {Map<number, Object>} [options.meshes]
@@ -134,6 +142,65 @@ export function planSpriteSheet(options) {
  * @param {(done: number, total: number) => void} [options.onProgress]
  * @returns {Promise<Blob>} a PNG
  */
+/**
+ * A camera framed on the effect itself, for a bake with no author watching.
+ *
+ * WHY THIS EXISTS. The bake has always taken the LIVE PREVIEW CAMERA - the one
+ * the author orbited - which is exactly right when a person is looking at the
+ * screen and the only possible answer when they have framed something
+ * deliberately. It is no answer at all for anything driving the bake without a
+ * viewport, which had no lever on framing whatsoever.
+ *
+ * ONE CAMERA FOR THE WHOLE SHEET, SO IT MUST FIT EVERY CELL. An explosion is a
+ * dot in cell 0 and fills the frame by cell 40; framing on either one alone
+ * crops the other. So the boxes of every planned frame are unioned, which costs
+ * a throwaway pre-simulation and is the only honest way to get one camera that
+ * suits all of them.
+ *
+ * The box is the FOCUS box, not the total one - a few fast specks must not be
+ * allowed to decide the distance. See focusBounds.
+ *
+ * @param {Object} ir
+ * @param {Object} plan from planSpriteSheet
+ * @param {Map} meshes
+ * @param {Object} view azimuth / elevation / distance / fov
+ * @returns {THREE.PerspectiveCamera}
+ */
+function autoFramedCamera(ir, plan, meshes, view) {
+  const probe = createVfxRuntime(ir)
+  installMeshSamplers(probe, meshes)
+
+  const min = [Infinity, Infinity, Infinity]
+  const max = [-Infinity, -Infinity, -Infinity]
+  let seen = false
+
+  for (let index = 0; index < plan.count; index += 1) {
+    while (probe.stepIndex < plan.frames[index]) step(probe)
+    const box = focusBounds(probe.emitters)
+    if (!box) continue
+    seen = true
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (box.min[axis] < min[axis]) min[axis] = box.min[axis]
+      if (box.max[axis] > max[axis]) max[axis] = box.max[axis]
+    }
+  }
+
+  // Nothing alive in any cell. The declared bounds are all there is, and a
+  // camera pointed at them beats one pointed at a degenerate point.
+  const place = seen
+    ? cameraPlacement(min, max, view)
+    : cameraPlacement(ir.effect.boundsMin, ir.effect.boundsMax, view)
+
+  // Aspect 1 because cells are square - the same rule squareCameraFrom applies
+  // to a live camera, so an auto-framed sheet and a hand-framed one crop alike.
+  const camera = new THREE.PerspectiveCamera(place.fov, 1, 0.01, Math.max(100, place.radius * 40))
+  camera.position.set(place.eye[0], place.eye[1], place.eye[2])
+  camera.lookAt(place.target[0], place.target[1], place.target[2])
+  camera.updateProjectionMatrix()
+  camera.updateMatrixWorld(true)
+  return camera
+}
+
 export async function captureSpriteSheet(options) {
   const { ir, camera, plan, onProgress } = options
   const textures = options.textures || new Map()
@@ -184,7 +251,11 @@ export async function captureSpriteSheet(options) {
   const scene = new THREE.Scene()
   // Deliberately NO scene.background: a background colour is an opaque clear,
   // which would fill the alpha channel and undo the whole point.
-  const cell = squareCameraFrom(camera)
+  // The author's camera when there is one, otherwise framed on the effect.
+  // `view` wins when both are given, so a caller can override a stale viewport.
+  const cell = options.view
+    ? autoFramedCamera(ir, plan, meshes, options.view)
+    : squareCameraFrom(camera)
   const view = new THREE.Vector3()
   cell.getWorldDirection(view)
 
