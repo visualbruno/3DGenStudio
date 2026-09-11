@@ -20,6 +20,7 @@
 // geometry actually provides.
 import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
+import { paintSheet } from '../../../tools/vfx-asset-writers.mjs';
 import { compileVfxGraph } from '../../../vfx/compile.js';
 import { normalizeVfxDoc } from '../../../vfx/doc.js';
 import * as edits from './edits.js';
@@ -964,6 +965,72 @@ console.log('\n--- A fresh runtime needs its mesh samplers ---');
   check('  and the preview uses the same one rather than its own copy',
     /installMeshSamplers\(runtime, result\.meshes\)/.test(hook)
     && !/buildMeshSampler/.test(hook));
+}
+
+
+// --- The bundled flipbook sheet ---------------------------------------------
+//
+// A FLIPBOOK ATLAS WHOSE CELLS BLEED IS WORSE THAN NO ATLAS. Neighbouring
+// frames ghost into each other at distance - it reads as the effect flickering
+// rather than as a texture problem, which is the same bug class the renderer's
+// ClampToEdge-and-no-mipmaps rule exists to prevent.
+//
+// THIS PINS AN INVARIANT RATHER THAN GUARDING A BUG THAT HAPPENED. The painter
+// is correct today because its supersample offsets sit strictly inside each
+// pixel, so no sample can reach a neighbouring cell. That is quiet and easy to
+// lose: switching to corner sampling looks like an improvement and breaks it.
+// Measured, not assumed - making that change turns the first check below from
+// 16 distinct cell values into 45.
+{
+  console.log('\n--- The flipbook sheet has hard cell edges ---');
+
+  // Each cell painted a flat value equal to its own frame index. Any bleed
+  // shows up as a pixel holding a value no cell was painted with.
+  const cols = 4;
+  const rows = 4;
+  const cell = 16;
+  const { size, rgba } = paintSheet(cell, cols, rows, (u, v, frame) => {
+    const level = (frame + 1) / (cols * rows);
+    return [level, level, level, 1];
+  });
+
+  check('the sheet is square and the right size', size === cell * cols,
+    `${size}px`);
+
+  const levels = new Set();
+  for (let i = 0; i < rgba.length; i += 4) levels.add(rgba[i]);
+  check('every pixel belongs to exactly one cell', levels.size === cols * rows,
+    `${levels.size} distinct values, expected ${cols * rows}`);
+
+  // ROW-MAJOR FROM THE TOP, which is the order the flipbook shader samples in.
+  // Getting this backwards plays the animation upside down, and on a smoke
+  // puff that is subtle enough to ship.
+  const at = (x, y) => rgba[(y * size + x) * 4];
+  const topLeft = at(1, 1);
+  const topRight = at(size - 2, 1);
+  const bottomLeft = at(1, size - 2);
+  check('cell 0 is top-left', topLeft === Math.round((1 / 16) * 255), String(topLeft));
+  check('  cell 3 is top-right', topRight === Math.round((4 / 16) * 255), String(topRight));
+  check('  cell 12 is bottom-left', bottomLeft === Math.round((13 / 16) * 255),
+    String(bottomLeft));
+
+  // The pixels either side of an internal boundary are adjacent cells and
+  // nothing in between - the direct statement of "no bleed".
+  const leftOfSeam = at(cell - 1, cell + 1);
+  const rightOfSeam = at(cell, cell + 1);
+  check('the pixels either side of a seam are two whole cells',
+    leftOfSeam === Math.round((5 / 16) * 255) && rightOfSeam === Math.round((6 / 16) * 255),
+    `${leftOfSeam} | ${rightOfSeam}`);
+
+  // A non-square grid is refused rather than silently producing an atlas whose
+  // UVs are off by a fraction.
+  let refused = false;
+  try {
+    paintSheet(8, 4, 2, () => [1, 1, 1, 1]);
+  } catch {
+    refused = true;
+  }
+  check('a non-square sheet is refused, not quietly wrong', refused);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

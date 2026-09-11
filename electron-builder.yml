@@ -54,6 +54,9 @@ files:
   # meshPivot.js: root-level modules server.js imports have to be named here.
   - meshRigTransfer.js
   - skinTransfer.js
+  # Server-side VFX frame rendering behind /api/vfx/preview (the MCP
+  # render_vfx_preview tool). Same rule as meshPivot.js.
+  - vfxPreview.js
   # Multi-user server mode. Same rule again: server.js imports all five
   # statically, so omitting any one is an instant ERR_MODULE_NOT_FOUND at
   # startup. auth.js (users/JWT), serverMode.js (which routes exist in which
@@ -82,6 +85,16 @@ files:
   # disagree about the format. Same rule as db/ and mcp/: the whole directory
   # ships, because a name-by-name list would look complete and still miss one.
   - vfx/**/*
+  # THE PARTICLE SIMULATION, and the one place src/ ships. The rule everywhere
+  # else is that src/ is browser code and only dist/ is packaged - this subtree
+  # is the exception because it is provably neither: system.js, emitter.js,
+  # pool.js, kernels.js, events.js, stats.js and meshSample.js import nothing
+  # but vfx/ (no React, no three, no DOM, no config), and the headless test
+  # suite has always run them in plain Node. vfxPreview.js needs them on the
+  # SERVER to render an effect without a GPU. Narrow on purpose: a file added
+  # under src/utils/vfx/ that imports a browser API would break the packaged
+  # backend at startup, so keep this subtree pure.
+  - src/utils/vfx/**/*
   - version.json
   - package.json
   # Licences shown in-app. META-LLAMA-3-LICENSE is not documentation: the motion

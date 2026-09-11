@@ -27,6 +27,7 @@ import {
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
+import { renderVfxFrames } from './vfxPreview.js';
 import { transferRig } from './meshRigTransfer.js';
 // The self-managed PostgreSQL for a shared server that is not running Docker.
 import * as pgEmbedded from './pgEmbedded.js';
@@ -1412,6 +1413,41 @@ const PACK_MIME_EXTENSIONS = new Map([
   ['model/gltf-binary', 'glb'],
   ['application/octet-stream', 'glb'],
 ]);
+
+// Render frames of an effect, server-side, with no GPU.
+//
+// DELIBERATELY NOT FORWARDED in shared-server mode, and it needs no entry in
+// serverMode.js to stay that way: it touches no database and no files. The
+// document arrives in the body, the frames go back in the response, and the
+// work is pure CPU - so it belongs wherever the caller is.
+//
+// POST, not GET, because the input is a whole graph document. Effects reach
+// tens of kilobytes and a URL cannot carry one.
+app.post('/api/vfx/preview', async (req, res) => {
+  try {
+    const { graph, ...options } = req.body || {};
+    if (!graph || typeof graph !== 'object') {
+      return res.status(400).json({ error: 'Pass the effect document as `graph`.' });
+    }
+    const result = await renderVfxFrames(graph, options);
+    // Base64 rather than a multipart body: the only callers are JSON ones (the
+    // MCP layer needs base64 anyway to hand an image to a model), and four
+    // small PNGs is a few tens of kilobytes.
+    res.json({
+      ...result,
+      frames: result.frames.map((frame) => ({
+        time: frame.time,
+        alive: frame.alive,
+        drawn: frame.drawn,
+        clipped: frame.clipped,
+        png: frame.png.toString('base64'),
+      })),
+    });
+  } catch (err) {
+    console.error('Failed to render a VFX preview:', err);
+    res.status(500).json({ error: err.message || 'Failed to render a VFX preview' });
+  }
+});
 
 app.get('/api/vfx/preset-assets', async (req, res) => {
   try {

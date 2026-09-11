@@ -67,7 +67,7 @@ ENV NODE_ENV=production \
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json version.json ./
-COPY --chown=node:node server.js storage.js wikiStorage.js auth.js serverMode.js gateway.js dataStore.js uploadQueue.js logs.js meshPivot.js meshRigTransfer.js skinTransfer.js pgEmbedded.js ./
+COPY --chown=node:node server.js storage.js wikiStorage.js auth.js serverMode.js gateway.js dataStore.js uploadQueue.js logs.js meshPivot.js meshRigTransfer.js skinTransfer.js vfxPreview.js pgEmbedded.js ./
 # The SQL engine. db/index.js chooses a driver at startup -- PostgreSQL here,
 # SQLite on a desktop install -- and loads it by dynamic import, so the whole
 # directory ships rather than a name-by-name list that would look complete.
@@ -80,6 +80,11 @@ COPY --chown=node:node db ./db
 COPY --chown=node:node tools/migrate-sqlite-to-postgres.mjs ./tools/
 COPY --chown=node:node mcp ./mcp
 COPY --chown=node:node vfx ./vfx
+# The particle simulation, and the one place src/ is copied. vfxPreview.js needs
+# it to render an effect server-side with no GPU; the subtree imports nothing
+# but vfx/ and has always run in plain Node. See the same note in
+# electron-builder.yml - keep it pure or the backend dies at startup.
+COPY --chown=node:node src/utils/vfx ./src/utils/vfx
 COPY --chown=node:node wiki ./wiki
 # The VFX starter-effect library, served read-only from /api/vfx/presets.
 COPY --chown=node:node resources/vfx ./resources/vfx

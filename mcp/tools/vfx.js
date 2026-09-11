@@ -1,9 +1,15 @@
 import { z } from 'zod';
-import { toolHandler } from '../client.js';
+import { jsonResult, toolHandler } from '../client.js';
 import { normalizeVfxDoc, vfxSignature, vfxAssetDigest } from '../../vfx/doc.js';
 import { compileVfxGraph } from '../../vfx/compile.js';
 import { CATALOG } from '../../vfx/catalog.js';
 import { VFX_IR_FORMAT } from '../../vfx/ir.js';
+import {
+  indexInstalledPackAssets,
+  packAssetDisplayName,
+  presetAssetName,
+} from '../../vfx/preset.js';
+import { Buffer } from 'node:buffer';
 
 // Particle effects: the /vfx editor's documents, reachable from an agent.
 //
@@ -262,6 +268,265 @@ export function registerVfxTools(server, { api, notifyMutation }) {
       ir: includeIr ? compiled.ir : undefined,
     };
   }));
+
+  // -------------------------------------------------------------------------
+  // Sprites
+  //
+  // THE PACK WAS UNREACHABLE FROM HERE, and that is a sharper problem than the
+  // library simply being thin. Nine sprites ship with the app - a soft glow, a
+  // ring, a streak, a smoke puff, a flame wisp and more - but they install
+  // LAZILY, when someone OPENS a preset that names one. An agent authoring from
+  // scratch never triggers that, so it sees whatever the user happened to open
+  // and concludes there is one texture in the world. Every output then falls
+  // back to the built-in blob: fine for fire, wrong for a shockwave ring.
+  //
+  // These two tools are the install-on-open path, made explicit.
+  // -------------------------------------------------------------------------
+
+  server.registerTool('list_vfx_sprites', {
+    title: 'List the bundled VFX sprite pack',
+    description: 'The sprites and debris meshes that ship with the app, ready to use as particle textures. '
+      + 'These are NOT in the asset library until something installs them - call install_vfx_sprite to get an '
+      + 'asset id you can reference. Says which are already installed.',
+    annotations: { readOnlyHint: true },
+  }, toolHandler(async () => {
+    const [pack, library] = await Promise.all([
+      api.apiJson('GET', '/vfx/preset-assets'),
+      api.apiJson('GET', '/assets/library'),
+    ]);
+    const installed = indexInstalledPackAssets([
+      ...(library?.images || []),
+      ...(library?.meshes || []),
+    ]);
+    return {
+      assets: (pack?.assets || []).map((entry) => {
+        const id = installed.get(presetAssetName({ name: packAssetDisplayName(entry.file) })) ?? null;
+        return {
+          file: entry.file,
+          kind: entry.kind,
+          bytes: entry.bytes,
+          installed: id !== null,
+          ...(id !== null ? { assetId: id, ref: `asset:${id}` } : {}),
+        };
+      }),
+      howTo: 'install_vfx_sprite turns one of these into a library asset, then set_vfx_texture points a '
+        + 'graph slot at it. Installing twice is safe - the second call finds the first copy.',
+    };
+  }));
+
+  server.registerTool('install_vfx_sprite', {
+    title: 'Install a bundled sprite into the library',
+    description: 'Copy one bundled sprite or debris mesh into the asset library and return its asset id. '
+      + 'Idempotent: if it is already there the existing id comes back and nothing is uploaded. '
+      + 'This is the same thing that happens when a human opens a preset that uses the file.',
+    inputSchema: {
+      file: z.string().min(1).describe('A `file` value from list_vfx_sprites, e.g. "ring.png".'),
+    },
+  }, toolHandler(async ({ file }) => {
+    const pack = await api.apiJson('GET', '/vfx/preset-assets');
+    const entry = (pack?.assets || []).find((a) => a.file === file);
+    if (!entry) {
+      return {
+        error: `The pack has no file "${file}".`,
+        available: (pack?.assets || []).map((a) => a.file),
+      };
+    }
+
+    // DEDUP BY NAME, because the library listing does not project metadata -
+    // there is nowhere to put a content hash a listing could match on. The
+    // `VFX ` prefix is what stops an asset the user happens to own with the
+    // same name being silently adopted. Same rule as the editor's own install.
+    // Derived exactly as a preset declares it - see packAssetDisplayName.
+    const name = presetAssetName({ name: packAssetDisplayName(file) });
+    const library = await api.apiJson('GET', '/assets/library');
+    const existing = indexInstalledPackAssets([
+      ...(library?.images || []),
+      ...(library?.meshes || []),
+    ]).get(name);
+    if (existing != null) {
+      return { assetId: existing, ref: `asset:${existing}`, name, kind: entry.kind, installed: false };
+    }
+
+    // Straight off the static mount, the way the browser reads it - no route.
+    const res = await fetch(`${api.base}/resources/vfx/assets/${encodeURIComponent(file)}`);
+    if (!res.ok) throw new Error(`Could not read the bundled file "${file}" (HTTP ${res.status})`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+
+    const form = new FormData();
+    form.append('file', new Blob([bytes], { type: entry.kind === 'mesh' ? 'model/gltf-binary' : 'image/png' }), file);
+    form.append('type', entry.kind);
+    form.append('name', name);
+    const saved = await api.apiForm('POST', '/assets/library-upload', form);
+    const assetId = Number(String(saved?.id ?? '').replace('library:', ''));
+    notifyMutation?.('assets');
+    return { assetId, ref: `asset:${assetId}`, name, kind: entry.kind, installed: true };
+  }));
+
+  server.registerTool('set_vfx_texture', {
+    title: 'Point a VFX texture slot at an asset',
+    description: 'Wire an image or mesh asset into a graph, and return the patched graph to pass on to '
+      + 'save_vfx_graph. THIS IS TWO COUPLED EDITS and doing one of them is the common mistake: the block '
+      + 'property holds a SLOT KEY (a short name you choose, never an asset id), and the document\'s '
+      + '`references` table maps that key to `asset:<id>`. A block pointing at a slot the table lacks draws '
+      + 'the built-in blob and says so only as a warning.',
+    inputSchema: {
+      graph: GRAPH_SHAPE.describe('The document to patch. Read one with get_vfx_graph.'),
+      slot: z.string().min(1).max(64).describe('The slot key, e.g. "tex_smoke". Blocks refer to this name.'),
+      assetId: z.number().int().positive().describe('The library asset to point it at (install_vfx_sprite returns one).'),
+      kind: z.enum(['image', 'mesh']).default('image'),
+      colorSpace: z.enum(['srgb', 'linear']).default('srgb')
+        .describe('srgb for anything that is a colour; linear for a mask, a noise field or a LUT.'),
+      blockId: z.string().optional()
+        .describe('Also point this block\'s texture/mesh property at the slot. Omit if the blocks already name it.'),
+      prop: z.string().optional().describe('Which property on that block (default: the block\'s only asset property).'),
+    },
+  }, toolHandler(async ({ graph, slot, assetId, kind, colorSpace, blockId, prop }) => {
+    // A MISSING ASSET IS AN ANSWER, NOT A CRASH. The record route replies with a
+    // plain-text 404, so letting it throw hands the caller a parse error where
+    // "there is no asset 999" would have told them what to do.
+    let record = null;
+    try {
+      record = await api.apiJson('GET', '/assets/record', { query: { assetId } });
+    } catch {
+      record = null;
+    }
+    if (!record || !record.id) {
+      return {
+        error: `No asset ${assetId} in this library.`,
+        hint: 'list_library_assets finds ids; install_vfx_sprite returns one for a bundled sprite.',
+      };
+    }
+
+    const doc = normalizeVfxDoc(graph);
+    const references = { ...(doc.references || {}) };
+    references[slot] = {
+      kind,
+      ref: `asset:${Number(assetId)}`,
+      name: record.name || '',
+      colorSpace,
+    };
+
+    let pointed = null;
+    if (blockId) {
+      for (const system of doc.systems) {
+        for (const context of system.contexts) {
+          for (const block of context.blocks) {
+            if (block.id !== blockId) continue;
+            const def = CATALOG.block(block.type);
+            const assetProps = Object.entries(def?.props || {})
+              .filter(([, p]) => p.type === 'texture' || p.type === 'mesh')
+              .map(([name]) => name);
+            const target = prop || assetProps[0];
+            if (!target) {
+              return {
+                error: `Block "${blockId}" (${block.type}) has no texture or mesh property.`,
+              };
+            }
+            block.props = { ...block.props, [target]: { mode: 'const', v: slot } };
+            pointed = { blockId, prop: target };
+          }
+        }
+      }
+      if (!pointed) return { error: `No block "${blockId}" in this graph.` };
+    }
+
+    const patched = normalizeVfxDoc({ ...doc, references });
+    const compiled = compileVfxGraph(patched);
+    return {
+      graph: patched,
+      slot,
+      ref: references[slot].ref,
+      pointedAt: pointed,
+      // The point of returning these: a slot wired to nothing still compiles,
+      // and the warning is the only thing that says so.
+      diagnostics: compiled.diagnostics
+        .filter((d) => d.severity !== 'info')
+        .map((d) => ({ code: d.code, severity: d.severity, message: d.message })),
+      next: 'Pass `graph` to save_vfx_graph.',
+    };
+  }));
+
+  // -------------------------------------------------------------------------
+  // Seeing it
+  //
+  // THE GAP EVERY OTHER TOOL LEFT OPEN. Authoring worked end to end and every
+  // step reported numbers, and no number answers "does this look like an
+  // explosion". An effect that can only be measured can only be guessed at.
+  // -------------------------------------------------------------------------
+  server.registerTool('render_vfx_preview', {
+    title: 'Render a VFX effect to images',
+    description: 'SEE an effect: simulates it and returns PNG frames, so you can judge what you built instead of '
+      + 'inferring it from particle counts. Defaults to four moments across the effect, because a one-shot is empty '
+      + 'at t=0 and empty again at the end. '
+      + 'NOT THE EDITOR VIEWPORT: no textures (every particle draws as a soft blob), no mesh particles, no trails - '
+      + 'so an effect whose SPRITE is the point looks plainer here. Tone mapping does match, so HDR colours clip the '
+      + 'same way they will on screen.',
+    inputSchema: {
+      graph: GRAPH_SHAPE.optional().describe('The document to render. Omit and pass assetId to render a saved effect.'),
+      assetId: z.number().int().positive().optional().describe('Render a saved effect instead of a document.'),
+      times: z.array(z.number().min(0)).max(8).optional()
+        .describe('Seconds to capture at. Default: four moments spread across the effect duration.'),
+      width: z.number().int().min(64).max(1280).optional().describe('Default 480.'),
+      height: z.number().int().min(64).max(1280).optional().describe('Default 270.'),
+      azimuth: z.number().optional().describe('Camera angle around the effect, degrees. Default 35.'),
+      elevation: z.number().optional().describe('Camera height, degrees. Default 18.'),
+      distance: z.number().min(0.5).max(20).optional()
+        .describe('Multiple of the effect radius. Default 2.6 - raise it if the effect fills the frame.'),
+    },
+    annotations: { readOnlyHint: true },
+  }, async ({ graph, assetId, times, width, height, azimuth, elevation, distance } = {}) => {
+    try {
+      let doc = graph;
+      if (!doc) {
+        if (!assetId) {
+          return jsonResult({ error: 'Pass either `graph` or `assetId`.' });
+        }
+        const record = await api.apiJson('GET', '/assets/record', { query: { assetId } });
+        const file = await fetch(api.assetUrl(record?.filePath));
+        if (!file.ok) return jsonResult({ error: `Could not read effect ${assetId}.` });
+        doc = await file.json();
+      }
+
+      const view = {};
+      if (Number.isFinite(azimuth)) view.azimuth = azimuth;
+      if (Number.isFinite(elevation)) view.elevation = elevation;
+      if (Number.isFinite(distance)) view.distance = distance;
+
+      const result = await api.apiJson('POST', '/vfx/preview', {
+        body: { graph: doc, times, width, height, view },
+      });
+
+      if (result.error) return jsonResult(result);
+
+      // THE NUMBERS TRAVEL WITH THE PICTURES. "0 drawn, 400 clipped" and
+      // "0 drawn, 0 clipped" look identical as a black frame and are different
+      // bugs: the first is framing or scale, the second means nothing is being
+      // emitted at all.
+      const content = [{
+        type: 'text',
+        text: JSON.stringify({
+          stats: result.stats,
+          frames: result.frames.map((f) => ({
+            time: f.time, alive: f.alive, drawn: f.drawn, clipped: f.clipped,
+          })),
+          diagnostics: result.diagnostics,
+          ...(result.frames.every((f) => f.drawn === 0)
+            ? {
+              nothingDrawn: 'No particle reached the frame. If `clipped` is high the camera framing or the '
+                + 'particle sizes are wrong; if it is zero, nothing is being emitted - check the spawn rate '
+                + 'and that a clip covers these times.',
+            }
+            : {}),
+        }, null, 2),
+      }];
+      for (const frame of result.frames) {
+        content.push({ type: 'image', data: frame.png, mimeType: 'image/png' });
+      }
+      return { content };
+    } catch (error) {
+      return jsonResult({ error: error?.message || 'Failed to render a preview' });
+    }
+  });
 
   server.registerTool('save_vfx_graph', {
     title: 'Save a VFX effect',

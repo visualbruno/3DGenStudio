@@ -127,6 +127,29 @@ function normalizeAssetNeed(input) {
 }
 
 /**
+ * The display name a bundled pack file installs under.
+ *
+ * THE TWO INSTALL PATHS MUST AGREE ON THIS. A preset carries its own `name` for
+ * each asset it needs, and every one of them is the title-cased file stem -
+ * "spark-streak.png" is "Spark Streak". Anything installing a pack file WITHOUT
+ * a preset in hand - the MCP tools do exactly that - has to derive the same
+ * string, because dedup is by name: derive it differently and the same file
+ * lands in the library twice, once per path, and a preset opened afterwards
+ * picks whichever it finds first.
+ *
+ * @param {string} file a pack filename, e.g. "smoke-roll-4x4.png"
+ * @returns {string} e.g. "Smoke Roll 4x4"
+ */
+export function packAssetDisplayName(file) {
+  return String(file || '')
+    .replace(/\.[^.]+$/, '')
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
  * The display name a bundled file is installed under.
  *
  * PREFIXED, deliberately. Dedup is by name, so an unprefixed "Flame Wisp" would
@@ -134,7 +157,8 @@ function normalizeAssetNeed(input) {
  * prefix also makes the installed set recognisable and sortable in the library
  * grid, which matters once a dozen of them are in there.
  *
- * @param {Object} need a normalized asset need
+ * @param {Object} need a normalized asset need, or `{name}` from
+ *   packAssetDisplayName when installing a pack file without a preset
  * @returns {string}
  */
 export function presetAssetName(need) {

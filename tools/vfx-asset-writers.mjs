@@ -10,75 +10,12 @@
 // RGBA non-interlaced PNG, and a single-mesh GLB with positions, normals and
 // indices. Neither is a general-purpose encoder and neither should grow into
 // one - if the pack ever needs more, that is the moment to take a dependency.
-import { deflateSync } from 'node:zlib';
 import { Buffer } from 'node:buffer';
+// The PNG encoder moved to vfx/, which both this and the server-side preview
+// renderer can import - see the header there.
+import { encodePng } from '../vfx/png.js';
 
-// --- PNG ---------------------------------------------------------------------
-
-const CRC_TABLE = (() => {
-  const table = new Int32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c;
-  }
-  return table;
-})();
-
-const crc32 = (buffer) => {
-  let c = -1;
-  for (let i = 0; i < buffer.length; i += 1) c = CRC_TABLE[(c ^ buffer[i]) & 0xff] ^ (c >>> 8);
-  return (c ^ -1) >>> 0;
-};
-
-const chunk = (type, data) => {
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body), 0);
-  return Buffer.concat([length, body, crc]);
-};
-
-/**
- * Encode straight-alpha RGBA bytes as a PNG.
- *
- * STRAIGHT ALPHA, NOT PREMULTIPLIED - which is what PNG stores and what the
- * texture loader expects. A sprite premultiplied on the way in would be
- * multiplied by its alpha a second time by the additive blend and the soft edge
- * of every particle would vanish.
- *
- * @param {number} size square side in pixels
- * @param {Uint8Array} rgba size*size*4 bytes
- * @returns {Buffer}
- */
-export function encodePng(size, rgba) {
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(size, 0);
-  header.writeUInt32BE(size, 4);
-  header[8] = 8;   // 8 bits per channel
-  header[9] = 6;   // colour type 6: truecolour with alpha
-  header[10] = 0;  // deflate
-  header[11] = 0;  // adaptive filtering
-  header[12] = 0;  // no interlace
-
-  // One filter byte per scanline. Filter 0 (None) throughout: these sprites are
-  // smooth gradients that deflate well regardless, and None keeps the writer
-  // trivially correct.
-  const raw = Buffer.alloc(size * (size * 4 + 1));
-  for (let y = 0; y < size; y += 1) {
-    const at = y * (size * 4 + 1);
-    raw[at] = 0;
-    Buffer.from(rgba.buffer, rgba.byteOffset + y * size * 4, size * 4).copy(raw, at + 1);
-  }
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    chunk('IDAT', deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
+export { encodePng };
 
 /**
  * Paint a square sprite from a function of position.
@@ -120,6 +57,78 @@ export function paint(size, shade) {
     }
   }
   return rgba;
+}
+
+/**
+ * Paint a flipbook sheet: cols x rows cells, each shaded in its own local space.
+ *
+ * NO SAMPLE MAY CROSS A CELL BOUNDARY. A flipbook atlas whose cells bleed is
+ * the failure the renderer's ClampToEdge-and-no-mipmaps rule exists to avoid:
+ * neighbouring frames ghost into each other at distance, which reads as the
+ * effect flickering rather than as a texture problem.
+ *
+ * Two things together guarantee it, and only together: the cell is chosen from
+ * the PIXEL, and the supersample offsets are strictly INSIDE the pixel -
+ * 1/4, 2/4, 3/4, never 0 or 1. Neither alone is enough, and the second is the
+ * fragile half: switching to corner sampling is an ordinary-looking change that
+ * would silently start averaging two frames into every seam pixel. That is what
+ * the checks in render.test.mjs pin, and they do fail on it - so this comment
+ * describes an invariant being held, not a bug that was found and fixed.
+ *
+ * `shade` receives local u,v in -1..1 within its cell, the frame index, and the
+ * frame's normalized position through the sheet.
+ *
+ * @param {number} cell pixels per cell, square
+ * @param {number} cols
+ * @param {number} rows
+ * @param {(u: number, v: number, frame: number, t: number) => number[]} shade
+ * @returns {{size: number, rgba: Uint8Array}}
+ */
+export function paintSheet(cell, cols, rows, shade) {
+  const width = cell * cols;
+  const height = cell * rows;
+  if (width !== height) {
+    // Not a technical limit here, but the renderer's tile maths assumes a
+    // square atlas and a non-square one fails as a subtle UV offset.
+    throw new Error(`paintSheet: ${cols}x${rows} cells of ${cell}px is not square`);
+  }
+  const rgba = new Uint8Array(width * height * 4);
+  const samples = 3;
+  const step = 1 / (samples + 1);
+  const frames = cols * rows;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const col = Math.floor(x / cell);
+      const row = Math.floor(y / cell);
+      // ROW-MAJOR FROM THE TOP, matching the flipbook shader's tile order.
+      const frame = row * cols + col;
+      const t = frames > 1 ? frame / (frames - 1) : 0;
+      const originX = col * cell;
+      const originY = row * cell;
+
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let a = 0;
+      for (let sy = 1; sy <= samples; sy += 1) {
+        for (let sx = 1; sx <= samples; sx += 1) {
+          const u = ((x - originX + sx * step) / cell) * 2 - 1;
+          const v = ((y - originY + sy * step) / cell) * 2 - 1;
+          const [cr, cg, cb, ca] = shade(u, v, frame, t);
+          r += cr; g += cg; b += cb; a += ca;
+        }
+      }
+      const n = samples * samples;
+      const at = (y * width + x) * 4;
+      const clamp = (value) => Math.max(0, Math.min(255, Math.round((value / n) * 255)));
+      rgba[at] = clamp(r);
+      rgba[at + 1] = clamp(g);
+      rgba[at + 2] = clamp(b);
+      rgba[at + 3] = clamp(a);
+    }
+  }
+  return { size: width, rgba };
 }
 
 // --- GLB ---------------------------------------------------------------------

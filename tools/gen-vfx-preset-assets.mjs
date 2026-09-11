@@ -21,7 +21,13 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { encodeGlb, encodePng, facetedMesh, paint } from './vfx-asset-writers.mjs';
+import {
+  encodeGlb,
+  encodePng,
+  facetedMesh,
+  paint,
+  paintSheet,
+} from './vfx-asset-writers.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const OUT = path.join(ROOT, 'resources', 'vfx', 'assets');
@@ -276,6 +282,53 @@ const put = async (file, bytes, label) => {
   written += 1;
 };
 
+// --- flipbook sheets ---------------------------------------------------------
+//
+// THE ONE THING THE PACK GENUINELY LACKED. The renderer has read `iTile` since
+// phase 4 and the Output block has carried a tile count since phase 8, but no
+// bundled texture was a sheet - so the flipbook path could only be exercised by
+// an author who brought their own atlas, and an agent had nothing to reach for
+// at all. A rolling smoke puff is the case that needs it most: a still puff
+// repeated sixty times reads as bubbles no matter how good the sprite is.
+const SHEETS = [
+  {
+    file: 'smoke-roll-4x4.png',
+    name: 'Smoke Roll 4x4',
+    cell: 128,
+    cols: 4,
+    rows: 4,
+    note: 'A sixteen-frame rolling smoke puff. Set the Output block\'s tiles to 4 x 4 and add Flipbook Over Life, or every particle shows frame one for its whole life and the atlas looks like a cropped texture.',
+    // The puff GROWS and FRAYS across the sheet rather than merely fading:
+    // alpha alone is what the colour ramp already does, so a flipbook that only
+    // faded would add nothing a gradient could not.
+    shade: (u, v, frame, t) => {
+      const r = Math.hypot(u, v);
+      const angle = Math.atan2(v, u);
+      // The noise field is walked with the frame, so successive cells are
+      // related rather than independent - unrelated cells flicker.
+      const walk = t * 1.7;
+      const ragged = (fbm(
+        Math.cos(angle) * 2.0 + 4 + walk,
+        Math.sin(angle) * 2.0 + 4 + walk,
+      ) - 0.5);
+      // Early frames are tight and smooth; later ones are wide and torn.
+      const radius = 0.34 + t * 0.52;
+      const edge = radius + ragged * (0.10 + t * 0.42);
+      const body = smoothstep(edge, edge * (0.30 - t * 0.18), r);
+      const grain = 0.80 + fbm(u * 2.6 + 11 + walk, v * 2.6 + 11 + walk) * (0.34 + t * 0.30);
+      // A gentle overall fade on top of the fraying, so the last cell can end
+      // on nothing without the shape snapping away.
+      const fade = 1 - smoothstep(0.55, 1.0, t) * 0.55;
+      return mono(body * grain * fade - 0.02);
+    },
+  },
+];
+
+for (const sheet of SHEETS) {
+  const { size, rgba } = paintSheet(sheet.cell, sheet.cols, sheet.rows, sheet.shade);
+  await put(sheet.file, encodePng(size, rgba), `${sheet.name} (${sheet.cols}x${sheet.rows})`);
+}
+
 for (const sprite of SPRITES) {
   await put(sprite.file, encodePng(SIZE, paint(SIZE, sprite.shade)), sprite.name);
 }
@@ -289,5 +342,12 @@ console.log(`\n${written} written, ${skipped} skipped`);
 // described in exactly one place.
 export const PRESET_ASSET_PACK = [
   ...SPRITES.map((entry) => ({ ...entry, kind: 'image' })),
+  // Sheets carry their grid, because a flipbook texture is useless without it -
+  // anything consuming this manifest has to be able to say "4 x 4".
+  ...SHEETS.map((entry) => ({
+    ...entry, kind: 'image', tiles: [entry.cols, entry.rows],
+  })),
   ...CHIPS.map((entry) => ({ ...entry, kind: 'mesh' })),
-].map(({ file, name, kind, note }) => ({ file, name, kind, note }));
+].map(({ file, name, kind, note, tiles }) => ({
+  file, name, kind, note, ...(tiles ? { tiles } : {}),
+}));
