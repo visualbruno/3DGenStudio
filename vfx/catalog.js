@@ -36,7 +36,11 @@
 //    kernel to emit, and would let an author wire a curve into something that
 //    cannot vary.
 
-import { CONTEXT_KIND } from './doc.js';
+import {
+  CONTEXT_KIND,
+  MAX_CURVE_POINTS,
+  MIN_CURVE_POINTS,
+} from './doc.js';
 import { VALUE_DOMAIN } from './value.js';
 
 /**
@@ -948,6 +952,87 @@ const BLOCK_LIST = [
     // spawnIndex is what makes Fixed spacing possible: the particle has to know
     // WHICH particle it is to sit a fixed distance along from the last one.
     attributes: ['position', 'spawnIndex'],
+  },
+  {
+    id: 'initialize.positionCurve',
+    label: 'Position: Curve',
+    contexts: [CONTEXT_KIND.INITIALIZE],
+    category: 'Shape',
+    beginner: false,
+    blurb: 'Spreads particles along a smooth curve through any number of points.',
+    teach: 'A line that bends. This is the shape behind a whip crack, a magic bolt arcing to a target, sparks running along a cable, a river of motes, or a trail that has to follow a path rather than a straight run. Add as many points as the path needs - two is a straight line, more make it bend - and they are ON the curve, which passes through every one of them, so placing them is like bending a wire rather than dragging Bezier handles. Set Tangent speed above zero and particles leave ALONG the path, which is what makes it read as flow rather than as a curved sprinkling.',
+    props: {
+      thickness: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Thickness',
+        unit: 'm',
+        min: 0,
+        max: 100,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Radius around the curve, so it reads as a rope rather than a hairline. 0 is exact.',
+      },
+      spacing: {
+        type: PROP_TYPE.FLOAT,
+        default: 0.25,
+        label: 'Spacing',
+        unit: 'm',
+        min: 0.001,
+        max: 100,
+        step: 0.005,
+        modes: M.SCALAR_FIXED,
+        basic: true,
+        hint: 'Distance between consecutive particles, measured ALONG the curve rather than in parameter units - so 0.25 is 0.25 metres of arc wherever the curve bends. Only used when Placement is "Fixed spacing".',
+      },
+      tangentSpeed: {
+        type: PROP_TYPE.FLOAT,
+        default: 0,
+        label: 'Tangent speed',
+        unit: 'm/s',
+        min: -100,
+        max: 100,
+        step: 0.1,
+        modes: M.SCALAR,
+        basic: true,
+        hint: 'Launches each particle along the curve at its birth point. Negative runs the other way. Without it a curve emitter reads as a curved scattering rather than as something flowing along a path.',
+      },
+    },
+    // NO TRANSFORM: the path's own points fix where the curve is and which way
+    // it runs, exactly as the line's two endpoints do. See
+    // SHAPE_TRANSFORM_PROPS.
+    //
+    // A PATH, NOT PROPERTIES. The points are a list the author grows and
+    // shrinks, so they cannot be bindings: a binding is fixed-width, folded
+    // into the constant pool and wireable to an operator, and none of that
+    // survives a length the author changes. Declaring it here is what tells the
+    // parameters panel to render a point editor and the compiler to carry the
+    // list into the IR verbatim.
+    points: {
+      label: 'Path',
+      min: MIN_CURVE_POINTS,
+      max: MAX_CURVE_POINTS,
+      default: [[-1, 0, 0], [-0.35, 0.6, 0], [0.35, -0.6, 0], [1, 0, 0]],
+      hint: 'The points the curve passes through, in order. Two makes a straight line; three or more make it bend. The curve goes THROUGH each point rather than being pulled toward it, so placing them is like bending a wire.',
+    },
+    modes: {
+      placement: {
+        options: ['random', 'even', 'spacing'],
+        default: 'random',
+        label: 'Placement',
+        hint: 'Random scatters along the curve; Even spreads each spawn batch across all of it; Fixed spacing walks along at the Spacing distance.',
+      },
+    },
+    kernel: 'shape.position.curve',
+    engines: {
+      unity: ENGINE_SUPPORT.APPROX,
+      unreal: ENGINE_SUPPORT.APPROX,
+      note: 'Neither engine has a spline emitter a plugin can build without help. Unity\'s shape module has no curve at all, so the importer approximates it with the straight chord through the end points and says so. Niagara can sample a spline, but only one that already exists as a component in the level - an importer cannot fabricate it - so it lands the same way. Bake the effect to a sprite sheet if the curve itself is the point.',
+    },
+    // spawnIndex for Fixed spacing, and velocity because Tangent speed writes
+    // it - a shape block that launches particles has to declare that.
+    attributes: ['position', 'velocity', 'spawnIndex'],
   },
   {
     id: 'initialize.positionMesh',

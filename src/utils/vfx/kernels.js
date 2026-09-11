@@ -64,6 +64,102 @@ const KIND_BY_SRC = {
 };
 
 const TAU = Math.PI * 2;
+
+/**
+ * One axis of a Catmull-Rom spline through N control points.
+ *
+ * EXPORTED FOR THE VIEWPORT'S PATH GIZMO, which must draw exactly the curve
+ * the kernel spawns along. A second implementation there would be a promise
+ * the runtime is not obliged to keep, and the drift would show up as
+ * particles that miss the line drawn for them.
+ *
+ * THE OUTER POINTS ARE DUPLICATED as their own tangent neighbours, so the curve
+ * spans the whole list and passes through every point. The textbook
+ * formulation only draws the segment between the middle pair and treats the
+ * outer two as handles, which for an emitter would mean the first and last
+ * points an author placed have no visible effect - baffling, and the sort of
+ * thing that reads as a bug.
+ *
+ * TWO POINTS IS A STRAIGHT LINE, and that falls out rather than being a special
+ * case: with both neighbours duplicated the Hermite tangents equal the chord,
+ * which is exactly a linear interpolation.
+ *
+ * `t` runs 0..1 across the whole path, mapped onto the N-1 segments.
+ *
+ * @param {ArrayLike<number>} p control values for one axis, length >= 2
+ * @param {number} count how many of them
+ * @param {number} t
+ * @returns {number}
+ */
+export function catmullRom(p, count, t) {
+  const segments = count - 1;
+  const u = Math.min(1, Math.max(0, t)) * segments;
+  const segment = Math.min(segments - 1, Math.floor(u));
+  const f = u - segment;
+  const a = p[Math.max(0, segment - 1)];
+  const b = p[segment];
+  const c = p[segment + 1];
+  const d = p[Math.min(count - 1, segment + 2)];
+  const f2 = f * f;
+  const f3 = f2 * f;
+  return 0.5 * (
+    (2 * b)
+    + (-a + c) * f
+    + (2 * a - 5 * b + 4 * c - d) * f2
+    + (-a + 3 * b - 3 * c + d) * f3
+  );
+}
+
+/**
+ * The derivative of `catmullRom` with respect to t, for the tangent direction.
+ *
+ * Not normalised - the caller normalises across all three axes at once, which
+ * is the only place the length is meaningful.
+ */
+function catmullRomTangent(p, count, t) {
+  const segments = count - 1;
+  const u = Math.min(1, Math.max(0, t)) * segments;
+  const segment = Math.min(segments - 1, Math.floor(u));
+  const f = u - segment;
+  const a = p[Math.max(0, segment - 1)];
+  const b = p[segment];
+  const c = p[segment + 1];
+  const d = p[Math.min(count - 1, segment + 2)];
+  // d/df of the polynomial above, times df/dt = the segment count.
+  return 0.5 * segments * (
+    (-a + c)
+    + 2 * (2 * a - 5 * b + 4 * c - d) * f
+    + 3 * (-a + 3 * b - 3 * c + d) * f * f
+  );
+}
+
+/**
+ * Turn a distance along the curve into the parameter that reaches it.
+ *
+ * This is what makes "spacing" mean METRES. The table holds cumulative length
+ * at evenly spaced parameters; walking it and interpolating inside the segment
+ * inverts that mapping. Without it, even parameter steps bunch particles
+ * wherever the curve bends.
+ *
+ * @param {Float64Array} arc cumulative lengths, arc[0] === 0
+ * @param {number} samples the last index of `arc`
+ * @param {number} total arc[samples], passed in because the caller has it
+ * @param {number} distance
+ * @returns {number} t in 0..1
+ */
+function tForDistance(arc, samples, total, distance) {
+  if (!(total > 0)) return 0;
+  const target = Math.min(total, Math.max(0, distance));
+  // Linear scan: 64 entries, and the access pattern is sequential enough that
+  // a binary search measured no better while being easier to get wrong.
+  let index = 1;
+  while (index < samples && arc[index] < target) index += 1;
+  const lower = arc[index - 1];
+  const upper = arc[index];
+  const within = upper > lower ? (target - lower) / (upper - lower) : 0;
+  return (index - 1 + within) / samples;
+}
+
 const DEG = Math.PI / 180;
 
 // Module-level scratch, the house idiom. These are only used by the paths that
@@ -757,6 +853,158 @@ const KERNELS = {
           // normalise per particle, and at the thicknesses a line emitter is
           // used at - a few centimetres, to stop it reading as a hairline - the
           // two are indistinguishable.
+          const u = pcgFloatAt(seed, slot + 1) * 2 - 1;
+          const theta = pcgFloatAt(seed, slot + 2) * TAU;
+          const r = band * Math.cbrt(pcgFloatAt(seed, slot + 3));
+          const ring = Math.sqrt(Math.max(0, 1 - u * u));
+          x += r * ring * Math.cos(theta);
+          y += r * ring * Math.sin(theta);
+          z += r * u;
+        }
+
+        const o = i * 3;
+        position[o] = x;
+        position[o + 1] = y;
+        position[o + 2] = z;
+      }
+    };
+  },
+
+  /**
+   * Spawn along a smooth curve through four points.
+   *
+   * A CATMULL-ROM SPLINE, so the four control points lie ON the path - placing
+   * them is bending a wire, not dragging Bezier handles, which is what an
+   * author means by "spawn along this curve". The ends are handled by
+   * duplicating the outer points, so the curve spans p0 to p3 rather than only
+   * the middle segment.
+   *
+   * ARC LENGTH IS THE POINT OF THE LUT. Evaluating the spline at even steps of
+   * `t` does NOT give even steps of distance: the parameter moves at whatever
+   * speed the curve happens to have, so particles bunch where it bends and
+   * thin out where it runs straight. "Fixed spacing 0.25" would then mean 0.25
+   * of nothing in particular. The table converts distance back to t, so the
+   * spacing is metres of arc and Even really is even.
+   *
+   * THE CONTROL POINTS ARE READ ONCE PER INVOCATION, not per particle. A curve
+   * whose shape differs for every particle is not a curve, it is noise - and
+   * the arc-length table could not be built for it anyway. They are still
+   * bindings, so an operator can move the whole curve; it just moves it for the
+   * whole batch at once.
+   */
+  'shape.position.curve': (block, env) => {
+    // THE PATH IS BLOCK DATA, NOT A BINDING - see the `points` note in
+    // catalog.js. It is fixed when the effect compiles, so the control points
+    // and the arc-length table are built ONCE here rather than per spawn batch,
+    // which is a straight win over the four-property version this replaced.
+    const path = Array.isArray(block.points) && block.points.length >= 2
+      ? block.points
+      : [[0, 0, 0], [0, 0, 0]];
+    const count = path.length;
+    const px = Float64Array.from(path, (point) => point[0]);
+    const py = Float64Array.from(path, (point) => point[1]);
+    const pz = Float64Array.from(path, (point) => point[2]);
+
+    const thickness = prepareBinding(block.bindings.find((b) => b.prop === 'thickness'), env);
+    const spacingB = prepareBinding(block.bindings.find((b) => b.prop === 'spacing'), env);
+    const tangentB = prepareBinding(block.bindings.find((b) => b.prop === 'tangentSpeed'), env);
+    const placement = block.modes?.placement || 'random';
+    const slot = 0x6d21c40b;
+
+    // THE TABLE IS BUILT ONCE, at compile time. Cumulative chord length at each
+    // sample, so a distance along the path can be turned back into the
+    // parameter that reaches it. Chords rather than a true integral: the error
+    // is a fraction of a percent at this resolution, and resolution scales with
+    // the path so a twenty-point curve is sampled as finely per segment as a
+    // two-point one.
+    const SAMPLES = Math.min(512, Math.max(64, (count - 1) * 24));
+    const arc = new Float64Array(SAMPLES + 1);
+    arc[0] = 0;
+    {
+      let prevX = catmullRom(px, count, 0);
+      let prevY = catmullRom(py, count, 0);
+      let prevZ = catmullRom(pz, count, 0);
+      for (let sample = 1; sample <= SAMPLES; sample += 1) {
+        const t = sample / SAMPLES;
+        const x = catmullRom(px, count, t);
+        const y = catmullRom(py, count, t);
+        const z = catmullRom(pz, count, t);
+        const dx = x - prevX;
+        const dy = y - prevY;
+        const dz = z - prevZ;
+        arc[sample] = arc[sample - 1] + Math.sqrt(dx * dx + dy * dy + dz * dz);
+        prevX = x;
+        prevY = y;
+        prevZ = z;
+      }
+    }
+    const total = arc[SAMPLES];
+
+    return function shapePositionCurve(pool, i0, i1) {
+      if (i1 <= i0) return;
+      const position = pool.planes.position;
+      const velocity = pool.planes.velocity;
+      const seeds = pool.planes.seed;
+      const spawnIndices = pool.planes.spawnIndex;
+
+      const span = Math.max(1, i1 - i0 - 1);
+      const step = spacingB.kind === B_CONST ? spacingB.fixed[0] : 0;
+
+      for (let i = i0; i < i1; i += 1) {
+        const seed = seeds[i];
+
+        // WHERE ALONG THE CURVE, as a distance first and a parameter second.
+        let distance;
+        if (placement === 'even') {
+          distance = total * ((i - i0) / span);
+        } else if (placement === 'spacing') {
+          const gap = spacingB.kind === B_CONST
+            ? step
+            : readChannel(spacingB, pool, i, env, 0);
+          // A degenerate curve or spacing collapses to the start rather than
+          // dividing by zero: one NaN position propagates through every force
+          // and takes the whole system with it.
+          if (!(total > 0) || !(gap > 0)) distance = 0;
+          else {
+            const index = spawnIndices ? spawnIndices[i] : (i - i0);
+            // Wrapped, so the pattern repeats along the curve instead of every
+            // particle after the first pass piling up at the far end.
+            distance = (index * gap) % total;
+          }
+        } else {
+          distance = total * pcgFloatAt(seed, slot);
+        }
+
+        const t = tForDistance(arc, SAMPLES, total, distance);
+        let x = catmullRom(px, count, t);
+        let y = catmullRom(py, count, t);
+        let z = catmullRom(pz, count, t);
+
+        const speed = tangentB.kind === B_CONST
+          ? tangentB.fixed[0]
+          : readChannel(tangentB, pool, i, env, 0);
+        if (speed !== 0) {
+          const tx = catmullRomTangent(px, count, t);
+          const ty = catmullRomTangent(py, count, t);
+          const tz = catmullRomTangent(pz, count, t);
+          const length = Math.sqrt(tx * tx + ty * ty + tz * tz);
+          if (length > 1e-9) {
+            const scale = speed / length;
+            const o3 = i * 3;
+            velocity[o3] += tx * scale;
+            velocity[o3 + 1] += ty * scale;
+            velocity[o3 + 2] += tz * scale;
+          }
+        }
+
+        const band = thickness.kind === B_CONST
+          ? thickness.fixed[0]
+          : readChannel(thickness, pool, i, env, 0);
+        if (band > 0) {
+          // A ball around the point, for the same reason the line emitter uses
+          // one: a perpendicular frame costs a cross product and a normalise
+          // per particle, and at the few centimetres a thickness is actually
+          // used at the two are indistinguishable.
           const u = pcgFloatAt(seed, slot + 1) * 2 - 1;
           const theta = pcgFloatAt(seed, slot + 2) * TAU;
           const r = band * Math.cbrt(pcgFloatAt(seed, slot + 3));

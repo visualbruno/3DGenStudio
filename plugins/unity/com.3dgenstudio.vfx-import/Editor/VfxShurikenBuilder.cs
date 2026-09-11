@@ -454,6 +454,37 @@ namespace GenStudio3D.VfxImport
                     _report.Native(name, type, "start frame randomised by the sheet module");
                     return;
 
+                case "initialize.positionCurve":
+                {
+                    // Shuriken has no spline shape - the full list is Sphere,
+                    // Cone, Box, Circle, Donut, Mesh and their shells, and none
+                    // of them bends. The straight chord through the end points
+                    // is the closest honest stand-in, and saying so matters:
+                    // for an effect whose whole shape IS the curve, baking a
+                    // sprite sheet carries it across where this cannot.
+                    shape.enabled = true;
+                    shape.shapeType = ParticleSystemShapeType.Box;
+                    // The path is block data, not bindings - `points` in the IR
+                    // - and it is any length, so the chord runs from the first
+                    // point to the last.
+                    var path = block["points"];
+                    var from = VfxConvert.Vector(path[0]);
+                    var to = VfxConvert.Vector(path[Math.Max(0, path.Count - 1)]);
+                    var girth = Mathf.Max(0.001f, Binding(block, "thickness").Constant);
+                    shape.position = (from + to) * 0.5f;
+                    shape.scale = new Vector3((to - from).magnitude, girth, girth);
+                    var chord = (to - from).normalized;
+                    if (chord.sqrMagnitude > 0f)
+                    {
+                        shape.rotation = Quaternion.FromToRotation(Vector3.right, chord).eulerAngles;
+                    }
+                    _report.Approximated(name, type,
+                        "Shuriken has no spline emitter; the curve became the straight chord "
+                        + "between its end points, so the bend is lost. Bake a sprite sheet if "
+                        + "the shape of the path is the point of the effect");
+                    return;
+                }
+
                 case "initialize.positionLine":
                     _report.Approximated(name, type,
                         "Shuriken has no line emitter; became a thin box along the segment");

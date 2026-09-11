@@ -25,6 +25,7 @@ import { CONTEXT_KIND } from '../../../vfx/doc.js'
 import { readSpriteSheet } from '../../utils/vfx/edits.js'
 import { normalizeValue } from '../../../vfx/value.js'
 import VfxPropertyField from './VfxPropertyField'
+import VfxPathField from './VfxPathField'
 import './VfxParamsPanel.css'
 
 const SUPPORT_TEXT = {
@@ -279,6 +280,16 @@ function BlockParams({
             </label>
           ))}
         </div>
+      )}
+
+      {/* THE PATH FIRST, because for a curve emitter it IS the shape and
+          everything else - thickness, spacing, tangent speed - modifies it. */}
+      {def.points && (
+        <VfxPathField
+          def={def.points}
+          points={block.points}
+          onChange={next => actions.setBlockPoints(block.id, next)}
+        />
       )}
 
       <div className="vfx-params__props">

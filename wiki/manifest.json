@@ -440,6 +440,96 @@
       "position": 9,
       "createdAt": 1788691984180,
       "updatedAt": 1788691984180
+    },
+    {
+      "id": 50,
+      "parentId": null,
+      "title": "VFX",
+      "icon": "description",
+      "position": 10,
+      "createdAt": 1789074477195,
+      "updatedAt": 1789074487024
+    },
+    {
+      "id": 51,
+      "parentId": 50,
+      "title": "Presets",
+      "icon": "description",
+      "position": 2,
+      "createdAt": 1789074575463,
+      "updatedAt": 1789074595759
+    },
+    {
+      "id": 52,
+      "parentId": 50,
+      "title": "Sprite",
+      "icon": "description",
+      "position": 4,
+      "createdAt": 1789074597783,
+      "updatedAt": 1789074642207
+    },
+    {
+      "id": 53,
+      "parentId": 50,
+      "title": "Sprite Sheet",
+      "icon": "description",
+      "position": 3,
+      "createdAt": 1789074608602,
+      "updatedAt": 1789074670100
+    },
+    {
+      "id": 54,
+      "parentId": 50,
+      "title": "Timeline",
+      "icon": "description",
+      "position": 0,
+      "createdAt": 1789074631564,
+      "updatedAt": 1789074644688
+    },
+    {
+      "id": 55,
+      "parentId": 50,
+      "title": "Nodes",
+      "icon": "description",
+      "position": 1,
+      "createdAt": 1789074661326,
+      "updatedAt": 1789074674967
+    },
+    {
+      "id": 56,
+      "parentId": 55,
+      "title": "Spawn",
+      "icon": "description",
+      "position": 0,
+      "createdAt": 1789074682018,
+      "updatedAt": 1789074688574
+    },
+    {
+      "id": 57,
+      "parentId": 55,
+      "title": "Initialize",
+      "icon": "description",
+      "position": 1,
+      "createdAt": 1789074690410,
+      "updatedAt": 1789074700259
+    },
+    {
+      "id": 58,
+      "parentId": 55,
+      "title": "Update",
+      "icon": "description",
+      "position": 2,
+      "createdAt": 1789074704301,
+      "updatedAt": 1789074712897
+    },
+    {
+      "id": 59,
+      "parentId": 55,
+      "title": "Output",
+      "icon": "description",
+      "position": 3,
+      "createdAt": 1789074716307,
+      "updatedAt": 1789074724416
     }
   ]
 }

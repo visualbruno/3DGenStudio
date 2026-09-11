@@ -17,8 +17,8 @@ real diagnostic - so nothing here should be a surprise at import time.
 
 | Engine | Native | Approximate | Unsupported |
 |---|---|---|---|
-| Unity VFX Graph | 47 | 0 | 0 |
-| Unreal Niagara | 43 | 4 | 0 |
+| Unity VFX Graph | 47 | 1 | 0 |
+| Unreal Niagara | 43 | 5 | 0 |
 
 ## What survives, and what does not
 
@@ -65,6 +65,7 @@ Not surviving:
 | Position in Circle | `initialize.positionCircle` | yes | yes | Unity: Position (Circle). Niagara: Cylinder/Ring Location. |
 | Position: Point | `initialize.positionPoint` | yes | yes | Unity: Set Position (plus Position (Sphere) for the jitter). Niagara: Add Position / Sphere Location with a small radius. |
 | Position: Line | `initialize.positionLine` | yes | approx | Unity: Position (Line), which has the same Random/Sequential choice. Niagara has no dedicated line module - it imports as a lerp between two vectors on Position, which reproduces Random and Even but not Fixed spacing. |
+| Position: Curve | `initialize.positionCurve` | approx | approx | Neither engine has a spline emitter a plugin can build without help. Unity's shape module has no curve at all, so the importer approximates it with the straight chord through the end points and says so. Niagara can sample a spline, but only one that already exists as a component in the level - an importer cannot fabricate it - so it lands the same way. Bake the effect to a sprite sheet if the curve itself is the point. |
 | Position: Mesh | `initialize.positionMesh` | yes | yes | Unity: Position (Mesh), which offers the same Surface/Vertex choice. Niagara: Static Mesh Location, which needs the mesh assigned on the emitter as well. Asset slots: mesh (mesh). |
 | Velocity Outward | `initialize.velocityRadial` | yes | yes | Unity: Velocity from Direction & Speed (Direction = position). Niagara: Add Velocity in Cone / radial. |
 | Velocity in Direction | `initialize.velocityDirection` | yes | yes | Unity: Velocity from Direction & Speed. Niagara: Add Velocity in Cone. |

@@ -876,5 +876,34 @@ console.log('\n--- The asset pack ships and is gated ---');
     && /COPY .*resources\/vfx \.\/resources\/vfx/.test(dockerfile));
 }
 
+
+// --- The path gizmo draws the emitter's own curve ----------------------------
+//
+// THE DRAWN PATH IS A PROMISE about where particles will appear, and it was
+// briefly kept by a second copy of the spline living in the viewport. Two
+// copies of a polynomial is how a drawn curve and a spawned one quietly stop
+// agreeing - and the failure is invisible in a screenshot, because a wrong
+// curve still looks like a curve. A source check rather than a behavioural
+// one, because the component cannot be imported without a DOM.
+{
+  console.log('\n--- The curve gizmo and the curve emitter are one spline ---');
+  const viewport = await readFile(
+    new URL('../../components/vfx/VfxViewport.jsx', import.meta.url), 'utf8');
+  const kernelSrc = await readFile(new URL('./kernels.js', import.meta.url), 'utf8');
+
+  check('the viewport imports the emitter\'s spline',
+    /import \{ catmullRom \} from '\.\.\/\.\.\/utils\/vfx\/kernels'/.test(viewport));
+  check('  rather than defining one of its own',
+    !/function \w*atmullRom\w*\s*\(/.test(viewport));
+  check('  and the kernel exports it deliberately',
+    /export function catmullRom\(p, count, t\)/.test(kernelSrc));
+
+  // The count has to reach it, or a path of any length is drawn as its first
+  // four points with the rest silently ignored - which is exactly the shape
+  // this emitter had before the path became a list.
+  check('every axis is sampled with the path\'s real length',
+    (viewport.match(/catmullRom\(\w+, count, t\)/g) || []).length === 3);
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

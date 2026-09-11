@@ -1808,5 +1808,280 @@ console.log('\n--- Emitter shapes: the transform, Point, Line and Mesh ---');
   }
 }
 
+
+// ---------------------------------------------------------------------------
+console.log('\n--- The curve emitter ---');
+// ---------------------------------------------------------------------------
+//
+// A Catmull-Rom spline through four points. The checks below are against
+// numbers worked out by hand rather than against the kernel's own output:
+// straight, evenly spaced control points make a path of known length 2, so
+// every placement mode has a closed-form answer.
+{
+  let blockId = 0;
+  const curveDoc = (points, props, modes, count = 11) => {
+    const make = (type, p, m, path) => {
+      blockId += 1;
+      const entry = { id: `cb${blockId}`, type, enabled: true, props: p };
+      if (m) entry.modes = m;
+      if (path) entry.points = path;
+      return entry;
+    };
+    const doc = createEmptyVfxDoc({ name: 'Curve' });
+    doc.effect.duration = 2;
+    doc.effect.capacity = 512;
+    doc.effect.loop = false;
+    doc.systems = [{
+      id: 'sysCurve',
+      name: 'Curve',
+      enabled: true,
+      capacity: 128,
+      simulationSpace: 'inherit',
+      contexts: [
+        {
+          id: 'cc1',
+          kind: CONTEXT_KIND.SPAWN,
+          blocks: [make('spawn.burst', { count: constValue(count) })],
+          params: {},
+        },
+        {
+          id: 'cc2',
+          kind: CONTEXT_KIND.INITIALIZE,
+          blocks: [
+            make('initialize.setLifetime', { lifetime: constValue(5) }),
+            make('initialize.setSize', { size: constValue(0.1) }),
+            make('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+            make('initialize.positionCurve', props, modes, points),
+          ],
+          params: {},
+        },
+        { id: 'cc3', kind: CONTEXT_KIND.UPDATE, blocks: [], params: {} },
+        {
+          id: 'cc4',
+          kind: CONTEXT_KIND.OUTPUT,
+          blocks: [],
+          params: { mode: 'billboard', blend: 'additive', sort: 'none' },
+        },
+      ],
+    }];
+    return normalizeVfxDoc(doc);
+  };
+
+  const spawnCurve = (path, props, modes, count) => {
+    const { ir, diagnostics } = compileVfxGraph(curveDoc(path, props, modes, count), {
+      assetIndex: new Set(),
+    });
+    const runtime = createVfxRuntime(ir);
+    step(runtime);
+    const emitter = runtime.emitters[0];
+    const points = [];
+    const velocities = [];
+    for (let i = 0; i < emitter.pool.count; i += 1) {
+      points.push([
+        emitter.pool.planes.position[i * 3],
+        emitter.pool.planes.position[i * 3 + 1],
+        emitter.pool.planes.position[i * 3 + 2],
+      ]);
+      velocities.push([
+        emitter.pool.planes.velocity[i * 3],
+        emitter.pool.planes.velocity[i * 3 + 1],
+        emitter.pool.planes.velocity[i * 3 + 2],
+      ]);
+    }
+    return { points, velocities, diagnostics };
+  };
+
+  const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+  // Four collinear, evenly spaced points: the spline through them is the
+  // straight run from -1 to 1, so its length is exactly 2.
+  const straight = [[-1, 0, 0], [-1 / 3, 0, 0], [1 / 3, 0, 0], [1, 0, 0]];
+
+  const even = spawnCurve(straight, {}, { placement: 'even' });
+  check('a curve emitter compiles and spawns',
+    even.points.length === 11, String(even.points.length));
+  check('  with no errors or warnings',
+    even.diagnostics.every((d) => d.severity === 'info'),
+    even.diagnostics.map((d) => `${d.severity}:${d.code}`).join(' ') || 'none');
+
+  // THE CURVE PASSES THROUGH ITS CONTROL POINTS. This is the difference
+  // between a Catmull-Rom and a Bezier, and it is why the outer points are
+  // duplicated as their own tangent neighbours: the textbook form draws only
+  // the middle segment, which would leave two of the four points an author
+  // placed doing nothing visible.
+  check('the first particle sits exactly on the first point',
+    distance(even.points[0], [-1, 0, 0]) < 1e-9, distance(even.points[0], [-1, 0, 0]).toExponential(1));
+  check('  and the last on the last point',
+    distance(even.points[10], [1, 0, 0]) < 1e-9, distance(even.points[10], [1, 0, 0]).toExponential(1));
+
+  // Even placement over a path of length 2 with 11 particles is a gap of
+  // exactly 0.2. Worked out by hand, not read off the kernel.
+  const evenGaps = even.points.slice(1).map((p, i) => distance(p, even.points[i]));
+  const evenWorst = Math.max(...evenGaps.map((g) => Math.abs(g - 0.2)));
+  check('even placement spaces them by the closed-form gap',
+    evenWorst < 1e-3, `worst error ${evenWorst.toExponential(2)} on a gap of 0.2`);
+
+  // ARC LENGTH, WHICH IS THE WHOLE POINT OF THE LOOKUP TABLE. Stepping the
+  // spline parameter evenly does NOT step distance evenly - the parameter
+  // moves at whatever speed the curve happens to have, so particles bunch
+  // where it bends. On this arch the two differ sharply, so near-equal gaps
+  // can only come from the arc-length inversion.
+  const arch = [[-1, 0, 0], [-0.9, 1.2, 0], [0.9, 1.2, 0], [1, 0, 0]];
+  const bent = spawnCurve(arch, {}, { placement: 'even' });
+  const bentGaps = bent.points.slice(1).map((p, i) => distance(p, bent.points[i]));
+  const mean = bentGaps.reduce((a, b) => a + b, 0) / bentGaps.length;
+  const spread = (Math.max(...bentGaps) - Math.min(...bentGaps)) / mean;
+  check('spacing is measured along the curve, not in parameter units',
+    spread < 0.12, `${(spread * 100).toFixed(1)}% spread across a tight bend`);
+
+  // Sorting these by X would be wrong, and that mistake is worth recording:
+  // the spline overshoots slightly past its end points, so X is NOT monotonic
+  // near the ends and an X-sorted comparison reports a 200% spread on a curve
+  // that is in fact evenly spaced.
+  check('  and the path really does bend (otherwise the check above is vacuous)',
+    Math.max(...bent.points.map((p) => p[1])) > 1, `peak y ${Math.max(...bent.points.map((p) => p[1])).toFixed(2)}`);
+
+  // Fixed spacing means METRES of arc. Every particle must land on the path,
+  // and consecutive ones a gap apart until the pattern wraps.
+  const spaced = spawnCurve(straight, { spacing: constValue(0.25) }, { placement: 'spacing' });
+  const offPath = spaced.points.filter((p) => Math.abs(p[1]) > 1e-6 || Math.abs(p[2]) > 1e-6);
+  check('fixed spacing keeps every particle on the curve',
+    offPath.length === 0, `${offPath.length} off the path`);
+  check('  within the curve’s own extent',
+    spaced.points.every((p) => p[0] >= -1 - 1e-6 && p[0] <= 1 + 1e-6));
+  // The pattern repeats rather than piling every later particle at the far
+  // end, which is what an unwrapped walk would do.
+  const unique = new Set(spaced.points.map((p) => p[0].toFixed(4)));
+  check('  and repeats along the curve rather than stacking at the end',
+    unique.size >= 8, `${unique.size} distinct positions of 11`);
+
+  // Random placement stays on the path too.
+  const random = spawnCurve(straight, {}, { placement: 'random' });
+  check('random placement stays on the curve',
+    random.points.every((p) => Math.abs(p[1]) < 1e-6 && p[0] >= -1.01 && p[0] <= 1.01));
+
+  // TANGENT SPEED launches along the path. On a straight run down +X that is
+  // exactly the speed on X and nothing anywhere else - a closed-form answer.
+  const flowing = spawnCurve(straight, { tangentSpeed: constValue(3) }, { placement: 'even' });
+  check('tangent speed launches particles along the path',
+    flowing.velocities.every((v) => Math.abs(v[0] - 3) < 1e-6),
+    `x velocities ${flowing.velocities[0][0].toFixed(4)} … ${flowing.velocities[10][0].toFixed(4)}`);
+  check('  and adds nothing across it',
+    flowing.velocities.every((v) => Math.abs(v[1]) < 1e-6 && Math.abs(v[2]) < 1e-6));
+  check('  while zero tangent speed leaves velocity alone',
+    even.velocities.every((v) => v[0] === 0 && v[1] === 0 && v[2] === 0));
+
+  // DEGENERATE INPUT MUST NOT WRITE NaN. One NaN position propagates through
+  // every force and takes the whole system with it, so a four-points-in-one-
+  // place curve has to collapse to that place rather than divide by zero.
+  const collapsed = spawnCurve(
+    [[2, 2, 2], [2, 2, 2]],
+    { spacing: constValue(0.25), tangentSpeed: constValue(5) },
+    { placement: 'spacing' },
+  );
+  check('a zero-length curve collapses to a point rather than to NaN',
+    collapsed.points.every((p) => p.every(Number.isFinite)
+      && Math.abs(p[0] - 2) < 1e-9));
+  check('  and writes no NaN velocity either',
+    collapsed.velocities.every((v) => v.every(Number.isFinite)));
+
+  const zeroSpacing = spawnCurve(straight, { spacing: constValue(0) }, { placement: 'spacing' });
+  check('a zero spacing does not divide by zero',
+    zeroSpacing.points.every((p) => p.every(Number.isFinite)));
+
+  // ANY NUMBER OF POINTS, which is what the path being block data rather than
+  // four properties buys.
+
+  // TWO IS A STRAIGHT LINE, and it falls out of the general form rather than
+  // being special-cased: with both neighbours duplicated the Hermite tangents
+  // equal the chord, which is exactly a linear interpolation. Anything off the
+  // axis here would mean the spline is bulging where it must not.
+  const pair = spawnCurve([[-1, 0, 0], [1, 0, 0]], {}, { placement: 'even' });
+  check('two points make an exactly straight line',
+    pair.points.every((q) => Math.abs(q[1]) < 1e-12 && Math.abs(q[2]) < 1e-12));
+  const pairGaps = pair.points.slice(1).map((q, i) => distance(q, pair.points[i]));
+  check('  of the expected length, evenly divided',
+    Math.max(...pairGaps.map((g) => Math.abs(g - 0.2))) < 1e-3,
+    `worst ${Math.max(...pairGaps.map((g) => Math.abs(g - 0.2))).toExponential(2)}`);
+
+  // THREE POINTS, THREE PARTICLES: each lands on a control point, which is the
+  // clearest statement that the curve passes THROUGH its points rather than
+  // being pulled toward them.
+  const trio = spawnCurve([[-1, 0, 0], [0, 1, 0], [1, 0, 0]], {}, { placement: 'even' }, 3);
+  check('three points: the curve passes through every one',
+    distance(trio.points[0], [-1, 0, 0]) < 1e-9
+    && distance(trio.points[1], [0, 1, 0]) < 1e-9
+    && distance(trio.points[2], [1, 0, 0]) < 1e-9,
+    trio.points.map((q) => `(${q.map((v) => v.toFixed(2)).join(',')})`).join(' '));
+
+  // A LONG PATH. The sample count scales with the segment count, so a twelve
+  // point curve is resolved as finely per segment as a two point one - without
+  // that, spacing would degrade as an author added points, which is exactly
+  // when they need it most.
+  const helix = Array.from({ length: 12 }, (_, k) => {
+    const angle = (k / 11) * Math.PI * 2;
+    return [Math.cos(angle), k * 0.15, Math.sin(angle)];
+  });
+  const long = spawnCurve(helix, {}, { placement: 'even' }, 41);
+  const longGaps = long.points.slice(1).map((q, i) => distance(q, long.points[i]));
+  const longMean = longGaps.reduce((a, b) => a + b, 0) / longGaps.length;
+  const longSpread = (Math.max(...longGaps) - Math.min(...longGaps)) / longMean;
+  check('a twelve-point path still spaces evenly',
+    longSpread < 0.05, `${(longSpread * 100).toFixed(1)}% spread`);
+  check('  and still ends on its last point',
+    distance(long.points[40], helix[11]) < 1e-6);
+
+  // THE MIGRATION. The emitter first shipped with p0..p3 as properties, so
+  // documents and presets written then have to keep opening - and the old
+  // properties have to be GONE afterwards, or the compiler reports four
+  // properties the catalog no longer declares.
+  const migrated = normalizeVfxDoc({
+    systems: [{
+      id: 'm',
+      contexts: [{
+        id: 'mc',
+        kind: CONTEXT_KIND.INITIALIZE,
+        blocks: [{
+          id: 'mb',
+          type: 'initialize.positionCurve',
+          props: {
+            p0: constValue([-2, 0, 0]),
+            p1: constValue([0, 3, 0]),
+            p2: constValue([2, 0, 0]),
+            p3: constValue([4, 1, 0]),
+            thickness: constValue(0.1),
+          },
+        }],
+      }],
+    }],
+  });
+  const migratedBlock = migrated.systems[0].contexts[0].blocks[0];
+  check('an old four-property curve migrates to a path',
+    JSON.stringify(migratedBlock.points) === JSON.stringify([[-2, 0, 0], [0, 3, 0], [2, 0, 0], [4, 1, 0]]),
+    JSON.stringify(migratedBlock.points));
+  check('  and the old properties are removed',
+    !('p0' in migratedBlock.props) && !('p3' in migratedBlock.props));
+  check('  while the real properties survive',
+    migratedBlock.props.thickness?.v === 0.1);
+
+  // A path is clamped rather than refused: an author who somehow ends up with
+  // one point gets a degenerate segment they can see and fix, not a block that
+  // silently does nothing.
+  const single = normalizeVfxDoc({
+    systems: [{
+      id: 'p',
+      contexts: [{
+        id: 'pc',
+        kind: CONTEXT_KIND.INITIALIZE,
+        blocks: [{ id: 'pb', type: 'initialize.positionCurve', points: [[1, 2, 3]] }],
+      }],
+    }],
+  }).systems[0].contexts[0].blocks[0];
+  check('a one-point path is padded to the minimum',
+    single.points.length === 2
+    && JSON.stringify(single.points[0]) === JSON.stringify(single.points[1]),
+    JSON.stringify(single.points));
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

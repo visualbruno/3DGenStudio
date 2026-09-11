@@ -245,6 +245,69 @@ function normalizeSchedule(input = {}) {
   return { clips };
 }
 
+/** The fewest points a path can have. Two is a straight line, which is valid. */
+export const MIN_CURVE_POINTS = 2;
+
+/**
+ * The most. Not a technical limit - the arc-length table does not care - but a
+ * point list is edited by hand in a panel, and past a couple of dozen rows that
+ * stops being an editor and starts being a data-entry form. A path that needs
+ * more than this wants a mesh emitter.
+ */
+export const MAX_CURVE_POINTS = 24;
+
+/**
+ * A block's point list: an ordered path, not a property.
+ *
+ * POINTS ARE BLOCK DATA, NOT A PROPERTY, and the distinction is the whole
+ * reason this field exists. A property is a BINDING - fixed width, foldable
+ * into the constant pool, wireable to an operator - and a list whose length the
+ * author changes at will can be none of those. So a path travels beside the
+ * props, the way `modes` and `assetSlots` do.
+ *
+ * ALSO MIGRATES THE FOUR-POINT SHAPE. The curve emitter first shipped with p0,
+ * p1, p2 and p3 as ordinary vec3 properties. Documents and presets written then
+ * are converted here and the old props dropped - left in place they would trip
+ * W_UNKNOWN_PROP, because the catalog no longer declares them.
+ *
+ * @param {any} raw
+ * @param {Object} props the block's properties, consulted only for the migration
+ * @returns {number[][]|null} at least two xyz triples, or null when the block
+ *   has no path at all
+ */
+function normalizePointList(raw, props) {
+  let list = null;
+
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else {
+    // The legacy four-point shape. Read in order and only when at least the
+    // first two are present, so an unrelated block carrying a stray `p0` is
+    // not mistaken for a path.
+    const legacy = ['p0', 'p1', 'p2', 'p3']
+      .map((key) => props[key]?.v)
+      .filter((value) => Array.isArray(value));
+    if (legacy.length >= MIN_CURVE_POINTS) list = legacy;
+  }
+
+  if (!Array.isArray(list)) return null;
+
+  const points = list
+    .map((point) => (Array.isArray(point)
+      ? [asNumber(point[0], 0), asNumber(point[1], 0), asNumber(point[2], 0)]
+      : null))
+    .filter(Boolean)
+    .slice(0, MAX_CURVE_POINTS);
+
+  // Fewer than two is not a path. Rather than refuse the block - which would
+  // lose whatever the author had - it is padded out to a degenerate segment,
+  // which draws as a point and emits from one place.
+  while (points.length < MIN_CURVE_POINTS) {
+    points.push(points.length ? [...points[points.length - 1]] : [0, 0, 0]);
+  }
+  return points;
+}
+
 function normalizeBlock(input = {}) {
   const props = {};
   const rawProps = input.props && typeof input.props === 'object' ? input.props : {};
@@ -263,6 +326,14 @@ function normalizeBlock(input = {}) {
   if (input.modes && typeof input.modes === 'object') {
     block.modes = {};
     for (const [key, value] of Object.entries(input.modes)) block.modes[key] = asString(value);
+  }
+
+  const points = normalizePointList(input.points, props);
+  if (points) {
+    block.points = points;
+    // The migrated properties go, or the compiler reports four properties the
+    // catalog no longer has.
+    for (const key of ['p0', 'p1', 'p2', 'p3']) delete block.props[key];
   }
   return block;
 }

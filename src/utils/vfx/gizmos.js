@@ -63,6 +63,17 @@ const SHAPES = {
     end: vec(props.end, [0.5, 0, 0]),
     radius: num(props.thickness, 0),
   }),
+  'initialize.positionCurve': (props, block) => ({
+    kind: 'curve',
+    // The path as authored, straight off the BLOCK - it is not a property, so
+    // it does not arrive in `props`. The viewport samples the spline itself
+    // rather than being handed a polyline, because how finely to draw a curve
+    // is a drawing decision the document has no opinion about.
+    points: Array.isArray(block?.points) && block.points.length >= 2
+      ? block.points.map((point) => [...point])
+      : [[-1, 0, 0], [1, 0, 0]],
+    radius: num(props.thickness, 0),
+  }),
   'initialize.positionMesh': (props) => ({
     kind: 'mesh',
     scale: num(props.scale, 1),

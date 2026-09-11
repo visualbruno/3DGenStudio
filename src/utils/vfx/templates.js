@@ -47,10 +47,13 @@ let counter = 0
 // EXPORTED FOR THE PRESET SEEDER (tools/vfx-preset-seed.mjs), which authors the
 // rest of the library in the same vocabulary. One DSL, so a preset written
 // today and a template written in phase 8 cannot drift into two dialects.
-export const block = (type, props = {}, modes) => {
+export const block = (type, props = {}, modes, points) => {
   counter += 1
   const entry = { id: `b-${counter.toString(36)}`, type, enabled: true, props }
   if (modes) entry.modes = modes
+  // A path is block data rather than a property - see the `points` note in
+  // vfx/catalog.js - so it cannot travel in `props` with the rest.
+  if (points) entry.points = points
   return entry
 }
 

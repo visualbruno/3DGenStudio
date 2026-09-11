@@ -1,0 +1,573 @@
+{
+  "format": 1,
+  "id": "magic-bolt",
+  "name": "Magic Bolt",
+  "category": "Magic & Energy",
+  "description": "A bolt of energy arcing along a curved path, with motes running the length of it.",
+  "teaches": [
+    "The Curve emitter: four points that the path passes through",
+    "Tangent speed, which makes particles flow along a path rather than sit on it",
+    "Spacing measured in metres of arc, so an even stream stays even through a bend"
+  ],
+  "tags": [
+    "looping",
+    "intermediate",
+    "additive",
+    "stretched"
+  ],
+  "assets": [
+    {
+      "slot": "tex_blk-mtwpl9ls-9_texture",
+      "file": "spark-streak.png",
+      "kind": "image",
+      "name": "Spark Streak"
+    },
+    {
+      "slot": "tex_blk-mtwpl9lu-a_texture",
+      "file": "soft-glow.png",
+      "kind": "image",
+      "name": "Soft Glow"
+    }
+  ],
+  "doc": {
+    "format": 1,
+    "kind": "vfx-graph",
+    "savedAt": 1789116198110,
+    "name": "Magic Bolt",
+    "effect": {
+      "seed": 12345,
+      "duration": 2,
+      "loop": true,
+      "fixedDt": 0.016666666666666666,
+      "maxSubSteps": 4,
+      "simulationSpace": "local",
+      "capacity": 1024,
+      "boundsMin": [
+        -2,
+        -2,
+        -2
+      ],
+      "boundsMax": [
+        2,
+        2,
+        2
+      ],
+      "boundsAuto": true,
+      "prewarm": 0,
+      "timeScale": 1
+    },
+    "systems": [
+      {
+        "id": "sys-9",
+        "name": "Bolt",
+        "enabled": true,
+        "solo": false,
+        "capacity": 512,
+        "simulationSpace": "inherit",
+        "seedOffset": 40503,
+        "contexts": [
+          {
+            "id": "c-spawn-9",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-1",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 320
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-9",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-2",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.3,
+                    "b": 0.55,
+                    "freq": "perParticle",
+                    "v": 0.42500000000000004
+                  }
+                }
+              },
+              {
+                "id": "b-3",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.03,
+                    "b": 0.07,
+                    "freq": "perParticle",
+                    "v": 0.05
+                  }
+                }
+              },
+              {
+                "id": "b-4",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.2,
+                      1.4,
+                      2.6,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-5",
+                "type": "initialize.positionCurve",
+                "enabled": true,
+                "props": {
+                  "thickness": {
+                    "mode": "const",
+                    "v": 0.05
+                  },
+                  "tangentSpeed": {
+                    "mode": "const",
+                    "v": 2.5
+                  }
+                },
+                "modes": {
+                  "placement": "random"
+                },
+                "points": [
+                  [
+                    -1.4,
+                    0,
+                    0
+                  ],
+                  [
+                    -0.5,
+                    1,
+                    0.3
+                  ],
+                  [
+                    0.5,
+                    1,
+                    -0.3
+                  ],
+                  [
+                    1.4,
+                    0,
+                    0
+                  ]
+                ]
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-9",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-6",
+                "type": "update.turbulence",
+                "enabled": true,
+                "props": {
+                  "strength": {
+                    "mode": "const",
+                    "v": 1.4
+                  },
+                  "frequency": {
+                    "mode": "const",
+                    "v": 2.6
+                  }
+                }
+              },
+              {
+                "id": "b-7",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.2
+                  }
+                }
+              },
+              {
+                "id": "b-8",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 6
+                        },
+                        {
+                          "t": 0.35,
+                          "hex": "#9fd8ff",
+                          "intensity": 3
+                        },
+                        {
+                          "t": 1,
+                          "hex": "#2a6bff",
+                          "intensity": 1.4
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.6,
+                          "a": 0.8
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      6,
+                      6,
+                      6,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-9",
+            "kind": "output",
+            "label": "",
+            "blocks": [
+              {
+                "id": "blk-mtwpl9ls-9",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtwpl9ls-9_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
+            "params": {
+              "mode": "stretched",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtwpl9lr-7",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      },
+      {
+        "id": "sys-h",
+        "name": "Motes",
+        "enabled": true,
+        "solo": false,
+        "capacity": 256,
+        "simulationSpace": "inherit",
+        "seedOffset": 81006,
+        "contexts": [
+          {
+            "id": "c-spawn-h",
+            "kind": "spawn",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-a",
+                "type": "spawn.rate",
+                "enabled": true,
+                "props": {
+                  "rate": {
+                    "mode": "const",
+                    "v": 60
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-init-h",
+            "kind": "initialize",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-b",
+                "type": "initialize.setLifetime",
+                "enabled": true,
+                "props": {
+                  "lifetime": {
+                    "mode": "random",
+                    "a": 0.6,
+                    "b": 1.1,
+                    "freq": "perParticle",
+                    "v": 0.8500000000000001
+                  }
+                }
+              },
+              {
+                "id": "b-c",
+                "type": "initialize.setSize",
+                "enabled": true,
+                "props": {
+                  "size": {
+                    "mode": "random",
+                    "a": 0.05,
+                    "b": 0.11,
+                    "freq": "perParticle",
+                    "v": 0.08
+                  }
+                }
+              },
+              {
+                "id": "b-d",
+                "type": "initialize.setColor",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "const",
+                    "v": [
+                      1.6,
+                      1.8,
+                      3,
+                      1
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "b-e",
+                "type": "initialize.positionCurve",
+                "enabled": true,
+                "props": {
+                  "spacing": {
+                    "mode": "const",
+                    "v": 0.35
+                  },
+                  "tangentSpeed": {
+                    "mode": "const",
+                    "v": 1.2
+                  }
+                },
+                "modes": {
+                  "placement": "spacing"
+                },
+                "points": [
+                  [
+                    -1.4,
+                    0,
+                    0
+                  ],
+                  [
+                    -0.5,
+                    1,
+                    0.3
+                  ],
+                  [
+                    0.5,
+                    1,
+                    -0.3
+                  ],
+                  [
+                    1.4,
+                    0,
+                    0
+                  ]
+                ]
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-update-h",
+            "kind": "update",
+            "label": "",
+            "blocks": [
+              {
+                "id": "b-f",
+                "type": "update.sizeOverLife",
+                "enabled": true,
+                "props": {
+                  "scale": {
+                    "mode": "curve",
+                    "curve": {
+                      "keys": [
+                        {
+                          "t": 0,
+                          "v": 1,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        },
+                        {
+                          "t": 1,
+                          "v": 0,
+                          "inTangent": 0,
+                          "outTangent": 0,
+                          "interp": "linear"
+                        }
+                      ],
+                      "preWrap": "clamp",
+                      "postWrap": "clamp"
+                    },
+                    "domain": "life",
+                    "scale": 1.2,
+                    "v": 1.2
+                  }
+                }
+              },
+              {
+                "id": "b-g",
+                "type": "update.colorOverLife",
+                "enabled": true,
+                "props": {
+                  "color": {
+                    "mode": "gradient",
+                    "gradient": {
+                      "colorKeys": [
+                        {
+                          "t": 0,
+                          "hex": "#ffffff",
+                          "intensity": 1
+                        }
+                      ],
+                      "alphaKeys": [
+                        {
+                          "t": 0,
+                          "a": 0
+                        },
+                        {
+                          "t": 0.2,
+                          "a": 1
+                        },
+                        {
+                          "t": 0.8,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
+                        }
+                      ],
+                      "mode": "blend"
+                    },
+                    "domain": "life",
+                    "v": [
+                      1,
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              }
+            ],
+            "params": {}
+          },
+          {
+            "id": "c-out-h",
+            "kind": "output",
+            "label": "",
+            "blocks": [
+              {
+                "id": "blk-mtwpl9lu-a",
+                "type": "output.setMainTexture",
+                "enabled": true,
+                "props": {
+                  "texture": {
+                    "mode": "const",
+                    "v": "tex_blk-mtwpl9lu-a_texture"
+                  },
+                  "blackPoint": {
+                    "mode": "const",
+                    "v": 0
+                  }
+                }
+              }
+            ],
+            "params": {
+              "mode": "billboard",
+              "blend": "additive",
+              "sort": "none"
+            }
+          }
+        ],
+        "schedule": {
+          "clips": [
+            {
+              "id": "clip-mtwpl9lr-8",
+              "at": 0,
+              "duration": 0,
+              "loop": false
+            }
+          ]
+        }
+      }
+    ],
+    "events": [],
+    "operators": [],
+    "edges": [],
+    "exposed": [],
+    "references": {
+      "tex_blk-mtwpl9ls-9_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Spark Streak",
+        "colorSpace": "srgb"
+      },
+      "tex_blk-mtwpl9lu-a_texture": {
+        "kind": "image",
+        "ref": "",
+        "name": "Soft Glow",
+        "colorSpace": "srgb"
+      }
+    },
+    "layout": {
+      "nodes": {},
+      "notes": []
+    }
+  }
+}

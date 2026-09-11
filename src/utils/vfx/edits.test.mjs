@@ -1575,5 +1575,56 @@ section('Sprite sheets, configured in one move');
     edits.readSpriteSheet(clamped, sys(clamped)).playing === false);
 }
 
+
+// --- A new block is USABLE the moment it is placed ---------------------------
+//
+// A path is block data rather than a property, so defaultProps cannot lay it
+// down - and a curve emitter with no path is read by the kernel as a degenerate
+// segment at the origin. Every particle spawns in one spot, the compile is
+// clean, and the panel still draws a path editor: a block that looks placed
+// and does nothing.
+{
+  console.log('\n--- A new curve emitter arrives with a path ---');
+
+  const fresh = edits.createBlock('initialize.positionCurve');
+  const declared = CATALOG.block('initialize.positionCurve').points;
+  check('a new curve block carries a path', Array.isArray(fresh.points),
+    JSON.stringify(fresh.points));
+  check('  which is the catalog\'s own default',
+    JSON.stringify(fresh.points) === JSON.stringify(declared.default));
+  check('  at or above the minimum length',
+    fresh.points.length >= declared.min, `${fresh.points.length} points`);
+  // Copied, not shared: two curve blocks that alias one array would move
+  // together, and the author would have no way to tell why.
+  const second = edits.createBlock('initialize.positionCurve');
+  second.points[0][0] = 99;
+  check('  and copied rather than shared with the catalog',
+    fresh.points[0][0] !== 99 && declared.default[0][0] !== 99);
+
+  // THE REASON IT MATTERS: the path has to survive into the IR, which is what
+  // the kernel and both importer plugins read.
+  // Onto a template rather than an empty document, so the only thing that can
+  // go wrong in the compile below is the block being added.
+  let doc = normalizeVfxDoc(templateById('sparks').build());
+  doc = edits.addBlock(doc, {
+    systemId: doc.systems[0].id,
+    contextKind: CONTEXT_KIND.INITIALIZE,
+    blockType: 'initialize.positionCurve',
+  });
+  const { ir, diagnostics } = compileVfxGraph(doc, { assetIndex: new Set() });
+  const compiled = ir.systems
+    .flatMap((system) => system.init)
+    .find((b) => b.srcBlockType === 'initialize.positionCurve');
+  check('adding one through the palette reaches the IR with its path',
+    JSON.stringify(compiled?.points) === JSON.stringify(declared.default),
+    JSON.stringify(compiled?.points));
+  check('  with no errors', !diagnostics.some((d) => d.severity === 'error'),
+    diagnostics.filter((d) => d.severity === 'error').map((d) => d.code).join(' '));
+
+  // A block WITHOUT a path declaration must not grow one.
+  check('a block with no path declaration gets none',
+    edits.createBlock('initialize.positionSphere').points === undefined);
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);
 process.exit(failures ? 1 : 0);

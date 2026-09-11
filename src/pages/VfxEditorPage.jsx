@@ -439,6 +439,10 @@ export default function VfxEditorPage() {
         d => edits.setBlockMode(d, blockId, mode, value),
         'Change mode',
       ),
+      setBlockPoints: (blockId, points) => edit(
+        d => edits.setBlockPoints(d, blockId, points),
+        'Edit path',
+      ),
 
       // contexts and systems
       setContextParam: (contextId, param, value) => edit(

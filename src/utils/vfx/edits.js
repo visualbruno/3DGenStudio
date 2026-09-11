@@ -136,6 +136,12 @@ export function createBlock(blockType) {
   }
   const modes = defaultModes(def)
   if (Object.keys(modes).length > 0) block.modes = modes
+  // A PATH IS NOT A PROPERTY, so defaultProps does not lay it down - and
+  // without it a new curve emitter has no path at all, which the kernel reads
+  // as a degenerate segment at the origin. Every particle would then spawn in
+  // one spot while the panel drew a line: a block that looks placed and does
+  // nothing, which is the worst thing a palette can hand someone.
+  if (def.points?.default) block.points = def.points.default.map(point => [...point])
   return block
 }
 
@@ -496,6 +502,34 @@ export function setBlockMode(doc, blockId, mode, value) {
     blocks: context.blocks.map(block => (
       block.id === blockId
         ? { ...block, modes: { ...(block.modes || {}), [mode]: String(value) } }
+        : block
+    )),
+  }))
+}
+
+/**
+ * Replace a block's path - the ordered point list a curve emitter spawns along.
+ *
+ * ONE MUTATOR FOR THE WHOLE LIST rather than add/remove/move/set as four. The
+ * panel already holds the array it is editing, the document is snapshotted per
+ * edit anyway, and a path is at most a couple of dozen points - so four
+ * mutators would be four chances for the list to end up in a state
+ * normalizeVfxDoc has to repair.
+ *
+ * The minimum and the point shape are enforced by normalizeVfxDoc, so a caller
+ * cannot write a one-point or ragged path through here.
+ *
+ * @param {Object} doc
+ * @param {string} blockId
+ * @param {number[][]} points
+ */
+export function setBlockPoints(doc, blockId, points) {
+  if (!Array.isArray(points)) return doc
+  return withBlockContext(doc, blockId, context => ({
+    ...context,
+    blocks: context.blocks.map(block => (
+      block.id === blockId
+        ? { ...block, points: points.map(point => [...point]) }
         : block
     )),
   }))

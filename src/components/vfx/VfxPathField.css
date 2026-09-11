@@ -1,0 +1,129 @@
+/* The curve emitter's point list. Sits in the Parameters panel above the
+ * ordinary properties, because the path is the shape and everything else is a
+ * modifier on it. */
+
+.vfx-path {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-md, 8px);
+}
+
+.vfx-path__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vfx-path__label {
+  font-family: var(--font-label);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--on-surface-variant);
+}
+
+.vfx-path__count {
+  font-size: 0.68rem;
+  color: var(--on-surface-variant);
+  opacity: 0.75;
+}
+
+.vfx-path__hint {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.vfx-path__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vfx-path__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vfx-path__index {
+  width: 1.1rem;
+  flex: none;
+  font-size: 0.68rem;
+  color: var(--on-surface-variant);
+  opacity: 0.7;
+  text-align: right;
+}
+
+.vfx-path__axis {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.vfx-path__axis > span {
+  font-size: 0.62rem;
+  color: var(--on-surface-variant);
+  opacity: 0.7;
+}
+
+.vfx-path__axis input {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 4px;
+  background: var(--surface-container-highest, #1f2226);
+  border: 1px solid var(--outline-variant);
+  border-radius: 4px;
+  color: var(--on-surface);
+  font: inherit;
+  font-size: 0.72rem;
+}
+
+.vfx-path__axis input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.vfx-path__actions {
+  display: flex;
+  gap: 1px;
+  flex: none;
+}
+
+.vfx-path__actions button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 3px;
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.vfx-path__actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--on-surface);
+}
+
+.vfx-path__actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.vfx-path__actions .material-symbols-outlined {
+  font-size: 14px;
+}

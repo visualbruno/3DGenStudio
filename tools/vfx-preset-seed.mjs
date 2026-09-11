@@ -213,6 +213,10 @@ export const PRESET_PACK = {
     { system: 'Streaks', file: 'spark-streak.png' },
   ],
   'lightning-motes': [{ system: 'Motes', file: 'spark-streak.png' }],
+  'magic-bolt': [
+    { system: 'Bolt', file: 'spark-streak.png' },
+    { system: 'Motes', file: 'soft-glow.png' },
+  ],
 
   // Weather.
   rain: [{ system: 'Rain', file: 'spark-streak.png' }],
@@ -266,6 +270,17 @@ export const PRESET_PACK = {
 };
 
 // ── The library ────────────────────────────────────────────────────────────
+
+// The magic bolt's arc, shared by its two systems so the beads ride exactly
+// the path the bolt occupies. A path is any length now, so this is a plain
+// array rather than four properties - and sharing it is the point: authoring
+// the same curve twice is how the two systems drift apart.
+const BOLT_PATH = [
+  [-1.4, 0, 0],
+  [-0.5, 1, 0.3],
+  [0.5, 1, -0.3],
+  [1.4, 0, 0],
+];
 
 export const PRESET_SEED = {
   // ---- The twelve originals: metadata only, graphs untouched ---------------
@@ -848,6 +863,64 @@ export const PRESET_SEED = {
       sparkle({
         name: 'Streaks', count: 60, lifetime: [0.25, 0.5], size: [0.03, 0.07],
         speed: [6, 11], rampId: 'magic', capacity: 256, mode: 'stretched',
+      }),
+    ]),
+  },
+
+  'magic-bolt': {
+    name: 'Magic Bolt',
+    category: 'Magic & Energy',
+    description: 'A bolt of energy arcing along a curved path, with motes running the length of it.',
+    teaches: [
+      'The Curve emitter: four points that the path passes through',
+      'Tangent speed, which makes particles flow along a path rather than sit on it',
+      'Spacing measured in metres of arc, so an even stream stays even through a bend',
+    ],
+    tags: ['looping', 'intermediate', 'additive', 'stretched'],
+    build: () => effect('Magic Bolt', { duration: 2, capacity: 1024 }, [
+      makeSystem({
+        name: 'Bolt',
+        capacity: 512,
+        spawn: [block('spawn.rate', { rate: constValue(320) })],
+        init: [
+          block('initialize.setLifetime', { lifetime: randomValue(0.3, 0.55) }),
+          block('initialize.setSize', { size: randomValue(0.03, 0.07) }),
+          block('initialize.setColor', { color: constValue([1.2, 1.4, 2.6, 1]) }),
+          // The points are ON the curve, so this is a bolt that leaves low,
+          // arcs up over the middle and comes down again.
+          block('initialize.positionCurve', {
+            thickness: constValue(0.05),
+            // Along the path, which is what turns a curved scattering into
+            // something that reads as travelling.
+            tangentSpeed: constValue(2.5),
+          }, { placement: 'random' }, BOLT_PATH),
+        ],
+        update: [
+          block('update.turbulence', { strength: constValue(1.4), frequency: constValue(2.6) }),
+          block('update.drag', { drag: constValue(1.2) }),
+          block('update.colorOverLife', { color: ramp('electric') }),
+        ],
+        output: { mode: 'stretched', blend: 'additive', sort: 'none' },
+      }),
+      makeSystem({
+        name: 'Motes',
+        capacity: 256,
+        spawn: [block('spawn.rate', { rate: constValue(60) })],
+        init: [
+          block('initialize.setLifetime', { lifetime: randomValue(0.6, 1.1) }),
+          block('initialize.setSize', { size: randomValue(0.05, 0.11) }),
+          block('initialize.setColor', { color: constValue([1.6, 1.8, 3, 1]) }),
+          // Evenly spaced along the same path: a row of beads travelling it.
+          block('initialize.positionCurve', {
+            spacing: constValue(0.35),
+            tangentSpeed: constValue(1.2),
+          }, { placement: 'spacing' }, BOLT_PATH),
+        ],
+        update: [
+          block('update.sizeOverLife', { scale: curve('rampDown', { scale: 1.2 }) }),
+          block('update.colorOverLife', { color: ramp('fadeInOut') }),
+        ],
+        output: { mode: 'billboard', blend: 'additive', sort: 'none' },
       }),
     ]),
   },

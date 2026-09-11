@@ -957,6 +957,12 @@ export function compileVfxGraph(document, options = {}) {
             modes: { ...(block.modes || {}) },
             bindings,
             ...(Object.keys(assetSlots).length ? { assetSlots } : {}),
+            // The path, carried verbatim. Not a binding - see the `points`
+            // note in catalog.js - so there is nothing to fold, type or
+            // frequency-classify; the kernel reads the list as authored.
+            ...(Array.isArray(block.points) && block.points.length
+              ? { points: block.points.map((point) => point.slice()) }
+              : {}),
             pre: ops,
             // Copied, not aliased. def.attributes is a frozen array shared by
             // every block of this type, and putting it straight into the IR

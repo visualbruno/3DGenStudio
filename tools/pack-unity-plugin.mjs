@@ -1,6 +1,6 @@
 // Rebuild plugins/unity/3dgenstudio-vfx-import.unitypackage.
 //
-//     node tools/pack-unity-plugin.mjs <a Unity project path> [--unity <exe>]
+//     node tools/pack-unity-plugin.mjs <a Unity project path> [--unity <Unity.exe>]
 //
 // REQUIRES UNITY, which is why this is not part of `npm run dist`. A
 // .unitypackage carries .meta files, GUIDs and a specific tar layout that only
@@ -49,17 +49,35 @@ const installedTool = path.join(editorDir, 'VfxPluginPackager.cs');
 await mkdir(editorDir, { recursive: true });
 await copyFile(TOOL, installedTool);
 
+// `--unity` IS THE EDITOR BINARY, not a launcher, and on Windows that is what
+// a Unity Hub install leaves on disk:
+//
+//     C:/Program Files/Unity/Hub/Editor/<version>/Editor/Unity.exe
+//
+// An earlier version of this script passed `run <project> --timeout ...`, which
+// is a launcher's vocabulary and which no editor understands - it had simply
+// never been run, because the drift check is what usually tells you to rebuild
+// and the rebuild is rare.
+//
+// AND NO SHELL. `shell: true` concatenates the arguments into one command line,
+// so the space in "Program Files" split the executable in two and cmd reported
+// a missing 'C:/Program' - the default install path of the very tool this
+// script exists to drive.
 const run = () => new Promise((resolve) => {
   const child = spawn(unity, [
-    'run', project,
-    '--timeout', '900',
-    '--no-banner',
-    '--',
+    '-batchmode', '-nographics', '-quit',
+    '-projectPath', project,
     '-executeMethod', 'VfxPluginPackager.Run',
     '-sourceDir', PACKAGE_DIR,
     '-output', OUTPUT,
     '-logFile', path.join(project, 'pack-unity-plugin.log'),
-  ], { stdio: 'inherit', shell: process.platform === 'win32' });
+  ], { stdio: 'inherit' });
+  child.on('error', (error) => {
+    console.error(`Could not run ${unity}: ${error.message}`);
+    console.error('Point --unity at the editor binary, e.g. '
+      + '"C:/Program Files/Unity/Hub/Editor/<version>/Editor/Unity.exe"');
+    resolve(1);
+  });
   child.on('exit', resolve);
 });
 

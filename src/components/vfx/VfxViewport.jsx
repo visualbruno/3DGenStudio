@@ -28,6 +28,10 @@ import CameraRig from '../meshEditor/CameraRig'
 import ViewportCameras from '../meshEditor/ViewportCameras'
 import ViewGizmo from '../meshEditor/ViewGizmo'
 import VfxSystemView from './VfxSystemView'
+// THE EMITTER'S OWN SPLINE, imported rather than reimplemented: this gizmo is a
+// promise about where particles will appear, and two copies of a polynomial is
+// how a drawn path and a spawned one quietly stop agreeing.
+import { catmullRom } from '../../utils/vfx/kernels'
 
 // Eight corners spanning the effect's bounds, purely so CameraRig has something
 // to frame. Never rendered.
@@ -79,6 +83,7 @@ function ScaleReference({ show }) {
 // R3F's auto-dispose.
 // A stable empty, so a viewport with no gizmos does not re-render on identity.
 const EMPTY_GIZMOS = Object.freeze([])
+
 const GIZMO_COLOR = '#4f8cf5'
 
 function EmitterGizmo({ gizmo, meshes }) {
@@ -117,6 +122,31 @@ function EmitterGizmo({ gizmo, meshes }) {
         ))
         return g
       }
+      case 'curve': {
+        // Sampled here rather than in the descriptor: how finely to draw a
+        // curve is a drawing decision, and this stays a single cheap line at
+        // any zoom a gizmo is looked at.
+        const g = new THREE.BufferGeometry()
+        const count = gizmo.points.length
+        const axis = (k) => gizmo.points.map((point) => point[k])
+        const xs = axis(0)
+        const ys = axis(1)
+        const zs = axis(2)
+        // Scaled with the path, so a twelve-point curve is drawn as smoothly
+        // per segment as a two-point one.
+        const SEGMENTS = Math.min(256, Math.max(24, (count - 1) * 16))
+        const vertices = []
+        for (let i = 0; i <= SEGMENTS; i += 1) {
+          const t = i / SEGMENTS
+          vertices.push(
+            catmullRom(xs, count, t),
+            catmullRom(ys, count, t),
+            catmullRom(zs, count, t),
+          )
+        }
+        g.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+        return g
+      }
       case 'point':
         // A jitter of zero is a true point, which cannot be drawn - so it gets
         // a small fixed marker rather than nothing at all.
@@ -138,14 +168,18 @@ function EmitterGizmo({ gizmo, meshes }) {
     ? meshes?.get(gizmoAssetIdOf(gizmo)) || null
     : null
 
-  const position = gizmo.kind === 'line' ? [0, 0, 0] : gizmo.offset
+  // A line and a curve both carry their own world points, so they are drawn
+  // at the origin rather than at the shape's offset.
+  const position = gizmo.kind === 'line' || gizmo.kind === 'curve'
+    ? [0, 0, 0]
+    : gizmo.offset
   const rotation = useMemo(() => [
     gizmo.rotation[0] * Math.PI / 180,
     gizmo.rotation[1] * Math.PI / 180,
     gizmo.rotation[2] * Math.PI / 180,
   ], [gizmo.rotation])
 
-  if (gizmo.kind === 'line') {
+  if (gizmo.kind === 'line' || gizmo.kind === 'curve') {
     return (
       <line geometry={geometry}>
         <lineBasicMaterial color={GIZMO_COLOR} transparent opacity={0.7} />
