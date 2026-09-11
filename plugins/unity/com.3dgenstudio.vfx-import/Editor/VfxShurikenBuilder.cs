@@ -35,6 +35,11 @@ namespace GenStudio3D.VfxImport
     {
         private readonly VfxJson _ir;
         private readonly VfxImportReport _report;
+
+        // The system being built, pre-scanned. An Initialize block has to know
+        // what the Update stage will do - see DragDecayCurve.
+        private float _systemDrag;
+        private float _systemLifetime = 1f;
         private readonly Func<int, Texture2D> _texture;
         private readonly Func<int, Mesh> _mesh;
         private readonly Func<string, Material> _material;
@@ -95,6 +100,28 @@ namespace GenStudio3D.VfxImport
         {
             var name = system["name"].AsString("System");
             var main = ps.main;
+
+            // PRE-SCANNED, because an Initialize block needs to know what the
+            // Update stage does. Specifically: a start velocity has to be told
+            // how fast drag will bleed it away, and drag lives in a block that
+            // has not been visited yet when the velocity block is converted.
+            _systemDrag = 0f;
+            _systemLifetime = 1f;
+            foreach (var block in system["update"].Items)
+            {
+                if (block["srcBlockType"].AsString() == "update.drag")
+                {
+                    _systemDrag = Mathf.Max(0f, Binding(block, "drag").Constant);
+                }
+            }
+            foreach (var block in system["init"].Items)
+            {
+                if (block["srcBlockType"].AsString() == "initialize.setLifetime")
+                {
+                    var life = Binding(block, "lifetime");
+                    _systemLifetime = Mathf.Max(0.01f, life.IsRandom ? life.High : life.Constant);
+                }
+            }
 
             main.duration = Mathf.Max(0.01f, effect["duration"].AsFloat(2f));
             main.loop = effect["loop"].AsBool(true);
@@ -291,6 +318,77 @@ namespace GenStudio3D.VfxImport
         }
 
         /// <summary>
+        /// A random-between-two velocity that decays with the system's drag.
+        ///
+        /// Unity's two-CONSTANT mode draws once per particle and then holds the
+        /// value forever; two CURVES draw once per particle and then follow the
+        /// shape. Same randomness, and it actually slows down.
+        /// </summary>
+        private ParticleSystem.MinMaxCurve RangedDecay(float lo, float hi)
+        {
+            var low = Mathf.Min(lo, hi);
+            var high = Mathf.Max(lo, hi);
+            var shape = DragDecayCurve(_systemDrag, _systemLifetime);
+            var lowCurve = new AnimationCurve();
+            var highCurve = new AnimationCurve();
+            foreach (var key in shape.keys)
+            {
+                lowCurve.AddKey(key.time, key.value * low);
+                highCurve.AddKey(key.time, key.value * high);
+            }
+            // Multiplier 1: the curves already carry the magnitudes, and a
+            // multiplier of zero - which a symmetric range would produce if it
+            // were derived from the ends - would silently zero the velocity.
+            return new ParticleSystem.MinMaxCurve(1f, lowCurve, highCurve);
+        }
+
+        /// <summary>
+        /// How an initial velocity fades under drag, over a particle's life.
+        ///
+        /// WHY THIS EXISTS. Shuriken has no "fire along this arbitrary vector"
+        /// on the start module, so an authored start velocity becomes Velocity
+        /// over Lifetime - and Unity's Velocity over Lifetime is an IMPOSED
+        /// velocity, re-applied every frame. Unity's drag damps the particle's
+        /// own velocity and cannot touch it. So a constant curve means the
+        /// particle travels at full speed for its entire life and never slows.
+        ///
+        /// MEASURED ON A REAL EFFECT: a nuclear blast's stem starts at 12 m/s
+        /// with drag 1.1 and a lifetime of 2.6s. The app's stem tops out at
+        /// 12.8m - exactly reaching the mushroom cap at 11.5m. Unity's reached
+        /// 33.8m, smearing the same particles over nearly three times the
+        /// height, so the column went thin and the cap appeared to float
+        /// detached above it. Nothing looked broken; it looked badly authored.
+        ///
+        /// An exponential fits it exactly: with linear drag, v(t) = v0*e^(-kt),
+        /// and the distance travelled integrates to the same trajectory the
+        /// preview produces.
+        ///
+        /// The curve is over NORMALIZED life, so a particle whose lifetime is
+        /// shorter than the system's longest decays a little too slowly. That
+        /// is a second-order error next to the one it fixes.
+        /// </summary>
+        internal static AnimationCurve DragDecayCurve(float drag, float lifetime)
+        {
+            var curve = new AnimationCurve();
+            if (drag <= 0f)
+            {
+                // No drag means no decay, which is what a flat curve already
+                // said - and is exactly right rather than an approximation.
+                curve.AddKey(0f, 1f);
+                curve.AddKey(1f, 1f);
+                return curve;
+            }
+            const int Samples = 12;
+            for (var i = 0; i <= Samples; i++)
+            {
+                var u = i / (float)Samples;
+                curve.AddKey(u, Mathf.Exp(-drag * u * lifetime));
+            }
+            for (var i = 0; i < curve.length; i++) curve.SmoothTangents(i, 0f);
+            return curve;
+        }
+
+        /// <summary>
         /// A key that holds its value until the next one.
         ///
         /// Infinite tangents are how Unity spells "stepped". Without them the
@@ -461,12 +559,19 @@ namespace GenStudio3D.VfxImport
                     velocity.space = ParticleSystemSimulationSpace.Local;
                     var direction = VfxConvert.Vector(Binding(block, "direction").Vector).normalized;
                     var speed = Binding(block, "speed").Constant;
-                    velocity.x = new ParticleSystem.MinMaxCurve(direction.x * speed);
-                    velocity.y = new ParticleSystem.MinMaxCurve(direction.y * speed);
-                    velocity.z = new ParticleSystem.MinMaxCurve(direction.z * speed);
+                    // FADED BY THE SYSTEM'S OWN DRAG rather than held constant -
+                    // see DragDecayCurve for what a constant one did to a
+                    // mushroom cloud.
+                    var decay = DragDecayCurve(_systemDrag, _systemLifetime);
+                    velocity.x = new ParticleSystem.MinMaxCurve(direction.x * speed, decay);
+                    velocity.y = new ParticleSystem.MinMaxCurve(direction.y * speed, decay);
+                    velocity.z = new ParticleSystem.MinMaxCurve(direction.z * speed, decay);
                     _report.Approximated(name, type,
-                        "became a constant velocity over life, which keeps pushing rather than "
-                        + "setting an initial speed; spread is not carried");
+                        _systemDrag > 0f
+                            ? $"became a velocity over life, faded by this system's drag ({_systemDrag:F2}) "
+                              + "so it slows the way the preview does; the spread is not carried"
+                            : "became a constant velocity over life - correct here, since this system "
+                              + "has no drag to slow it - but the spread is not carried");
                     return;
                 }
 
@@ -477,12 +582,22 @@ namespace GenStudio3D.VfxImport
                     velocity.space = ParticleSystemSimulationSpace.Local;
                     var lo = VfxConvert.Vector(Binding(block, "min").Vector);
                     var hi = VfxConvert.Vector(Binding(block, "max").Vector);
-                    velocity.x = new ParticleSystem.MinMaxCurve(Mathf.Min(lo.x, hi.x), Mathf.Max(lo.x, hi.x));
-                    velocity.y = new ParticleSystem.MinMaxCurve(Mathf.Min(lo.y, hi.y), Mathf.Max(lo.y, hi.y));
-                    velocity.z = new ParticleSystem.MinMaxCurve(Mathf.Min(lo.z, hi.z), Mathf.Max(lo.z, hi.z));
+                    // TWO CURVES, NOT TWO CONSTANTS, for the same reason the
+                    // directional case needs one: Unity re-imposes this
+                    // velocity every frame and its drag cannot touch it, so a
+                    // constant travels at full speed forever. A pair of decay
+                    // curves keeps the per-particle random draw AND slows it.
+                    velocity.x = RangedDecay(lo.x, hi.x);
+                    velocity.y = RangedDecay(lo.y, hi.y);
+                    velocity.z = RangedDecay(lo.z, hi.z);
                     _report.Approximated(name, type,
-                        "became a random velocity over life; it is re-applied every frame rather "
-                        + "than drawn once at birth, so drag and gravity read slightly differently");
+                        _systemDrag > 0f
+                            ? $"became a random velocity over life, faded by this system's drag "
+                              + $"({_systemDrag:F2}); it is drawn per particle but re-applied every "
+                              + "frame, so gravity reads slightly differently"
+                            : "became a random velocity over life; it is re-applied every frame "
+                              + "rather than drawn once at birth, so gravity reads slightly "
+                              + "differently");
                     return;
                 }
 
@@ -812,7 +927,20 @@ namespace GenStudio3D.VfxImport
                     }
                     else
                     {
-                        _report.Dropped(name, type, "the bundle has no mesh for this slot");
+                        // A MESH RENDERER WITH NO MESH DRAWS UNITY'S FALLBACK,
+                        // not nothing - a hard-edged quad wearing whatever
+                        // material the system asked for. On a debris burst with
+                        // an opaque material that is a scatter of solid squares
+                        // sitting in the middle of the effect, and it reads as
+                        // a broken importer rather than as a missing asset.
+                        //
+                        // Switched off instead. The drop is already reported;
+                        // absence matches the report, and corruption does not.
+                        renderer.enabled = false;
+                        _report.Dropped(name, type,
+                            "the bundle has no mesh for this slot, so this system is not drawn - "
+                            + "assign a mesh to its renderer and re-enable it. (Unity has no glTF "
+                            + "importer; add com.unity.cloud.gltfast or export the mesh as FBX.)");
                     }
                 }
             }
