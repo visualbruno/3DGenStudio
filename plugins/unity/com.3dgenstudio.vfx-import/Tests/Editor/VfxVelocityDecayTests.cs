@@ -115,6 +115,39 @@ namespace GenStudio3D.VfxImport.Tests
         }
 
         [Test]
+        public void ASustainedForceRampsUpToTerminalSpeedRatherThanStartingThere()
+        {
+            // THE MIRROR OF THE DECAY CURVE, and the distinction the mushroom
+            // cap turns on: a launch velocity starts at full speed and bleeds
+            // away, a FORCE starts at nothing and builds to a terminal speed it
+            // then holds for the rest of the particle's life. Using the wrong
+            // one of the two froze the cap at the radius it was born with.
+            const float Accel = 1f;
+            const float Drag = 2f;
+            const float Life = 3.6f;
+            var curve = VfxShurikenBuilder.ForceRampCurve(Accel, Drag, Life);
+
+            Assert.AreEqual(0f, curve.Evaluate(0f), 1e-3f, "a force has done nothing at birth");
+            foreach (var u in new[] { 0.05f, 0.1f, 0.25f, 0.5f, 1f })
+            {
+                var expected = (Accel / Drag) * (1f - Mathf.Exp(-Drag * u * Life));
+                Assert.AreEqual(expected, curve.Evaluate(u), 0.02f,
+                    $"at {u:F2} of life the force should have reached {expected:F3} m/s");
+            }
+            Assert.AreEqual(Accel / Drag, curve.Evaluate(1f), 0.02f,
+                "and it should be holding the terminal speed by the end, not falling off it");
+        }
+
+        [Test]
+        public void AForceWithNoDragJustKeepsAccelerating()
+        {
+            // No drag means no terminal speed: v = a*t, all the way out.
+            var curve = VfxShurikenBuilder.ForceRampCurve(2f, 0f, 3f);
+            Assert.AreEqual(0f, curve.Evaluate(0f), 1e-3f);
+            Assert.AreEqual(6f, curve.Evaluate(1f), 1e-3f, "2 m/s^2 for 3s is 6 m/s");
+        }
+
+        [Test]
         public void ARangedVelocityCarriesBothEnds()
         {
             var ranged = VfxShurikenBuilder.Ranged(9f, 15f);

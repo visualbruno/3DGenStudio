@@ -39,6 +39,8 @@ namespace GenStudio3D.VfxImport
         // The system being built, pre-scanned. An Initialize block has to know
         // what the Update stage will do - see DragDecayCurve.
         private float _systemLifetime = 1f;
+        private float _systemDrag;
+
         private readonly Func<int, Texture2D> _texture;
         private readonly Func<int, Mesh> _mesh;
         private readonly Func<string, Texture2D, Material> _material;
@@ -110,12 +112,23 @@ namespace GenStudio3D.VfxImport
             // particle's lifetime and setLifetime lives in the Initialize
             // stage, which has not been walked yet when Update is converted.
             _systemLifetime = 1f;
+            _systemDrag = 0f;
             foreach (var block in system["init"].Items)
             {
                 if (block["srcBlockType"].AsString() == "initialize.setLifetime")
                 {
                     var life = Binding(block, "lifetime");
                     _systemLifetime = Mathf.Max(0.01f, life.IsRandom ? life.High : life.Constant);
+                }
+            }
+            // The vortex needs the system's drag to work out the terminal
+            // speed its force settles at, and drag is an Update block that has
+            // not been walked yet when the vortex is converted.
+            foreach (var block in system["update"].Items)
+            {
+                if (block["srcBlockType"].AsString() == "update.drag")
+                {
+                    _systemDrag = Mathf.Max(0f, Binding(block, "drag").Constant);
                 }
             }
 
@@ -402,6 +415,46 @@ namespace GenStudio3D.VfxImport
                 var u = i / (float)Samples;
                 u *= u;
                 curve.AddKey(u, Mathf.Exp(-drag * u * lifetime));
+            }
+            for (var i = 0; i < curve.length; i++) curve.SmoothTangents(i, 0f);
+            return curve;
+        }
+
+        /// <summary>
+        /// How fast a sustained force actually pushes a particle, over its life.
+        ///
+        /// THE MIRROR OF DragDecayCurve. That one carries a velocity the
+        /// particle was BORN with, which drag bleeds away: v = v0*e^(-kt).
+        /// This one carries a force applied CONTINUOUSLY, which drag brings to
+        /// a terminal speed instead: v = (a/k)(1 - e^(-kt)).
+        ///
+        /// Getting the difference wrong is visible in both directions. A
+        /// constant a/k from birth makes the cloud jump outward the instant it
+        /// spawns, because the real particle needs about 1/k seconds to get up
+        /// to speed. Treating it as a decaying velocity - which is what
+        /// speedModifier does - makes it stop almost immediately, and a
+        /// mushroom cap that should keep widening for its whole life freezes at
+        /// the radius it was born with.
+        ///
+        /// With no drag the force just accelerates: v = a*t, and the curve is
+        /// the straight line that says so.
+        /// </summary>
+        internal static AnimationCurve ForceRampCurve(float accel, float drag, float lifetime)
+        {
+            var curve = new AnimationCurve();
+            const int Samples = 24;
+            if (drag <= 0f)
+            {
+                curve.AddKey(0f, 0f);
+                curve.AddKey(1f, accel * lifetime);
+                return curve;
+            }
+            var terminal = accel / drag;
+            for (var i = 0; i <= Samples; i++)
+            {
+                var u = i / (float)Samples;
+                u *= u;
+                curve.AddKey(u, terminal * (1f - Mathf.Exp(-drag * u * lifetime)));
             }
             for (var i = 0; i < curve.length; i++) curve.SmoothTangents(i, 0f);
             return curve;
@@ -875,24 +928,79 @@ namespace GenStudio3D.VfxImport
 
                 case "update.vortex":
                 {
-                    // Shuriken's orbital velocity is a rotation about the
-                    // system's own axes through an offset - which is what a
-                    // vortex is, as long as its axis is one of them.
+                    // SHURIKEN'S ORBITAL VELOCITY PINS THE RADIUS, and that one
+                    // fact decides this whole mapping. It is not a force, it is
+                    // a rigid rotation: whatever the particle's radius is when
+                    // the orbit takes hold, that is the radius it keeps.
+                    // Measured on the mushroom cap, whose vortex exists to push
+                    // particles OUT - every orbital rate tried froze the mean
+                    // radius (4.5 -> 1.4, 2.25 -> 1.9) while the preview's grew
+                    // from 1.2 to 3.4, and the cap stayed a ball instead of
+                    // flattening into a cap. Switching the orbit off and
+                    // letting the radial channel work reproduced the growth.
+                    //
+                    // THE PREVIEW'S VORTEX IS TWO FORCES (kernels.js
+                    // 'force.vortex'): a tangential acceleration proportional
+                    // to radius, and a constant radial one of `inward`. With
+                    // drag k the radial one settles at a terminal speed of
+                    // inward/k, reached as v(t) = (a/k)(1 - e^-kt) - so the
+                    // radial channel gets that curve rather than a constant,
+                    // which is also what stops the cloud jumping outward at
+                    // birth.
                     var velocity = ps.velocityOverLifetime;
                     velocity.enabled = true;
                     var axis = VfxConvert.Vector(Binding(block, "axis").Vector).normalized;
                     var strength = Binding(block, "strength").Constant;
                     var centre = VfxConvert.Vector(Binding(block, "position").Vector);
-                    velocity.orbitalX = new ParticleSystem.MinMaxCurve(axis.x * strength);
-                    velocity.orbitalY = new ParticleSystem.MinMaxCurve(axis.y * strength);
-                    velocity.orbitalZ = new ParticleSystem.MinMaxCurve(axis.z * strength);
+                    var inward = Binding(block, "inward").Constant;
+
                     velocity.orbitalOffsetX = new ParticleSystem.MinMaxCurve(centre.x);
                     velocity.orbitalOffsetY = new ParticleSystem.MinMaxCurve(centre.y);
                     velocity.orbitalOffsetZ = new ParticleSystem.MinMaxCurve(centre.z);
-                    velocity.radial = new ParticleSystem.MinMaxCurve(-Binding(block, "inward").Constant);
-                    _report.Approximated(name, type,
-                        "became orbital velocity: the swirl is right but Unity's orbit is a fixed "
-                        + "angular rate rather than a force, so it does not fall off with distance");
+                    velocity.radial = new ParticleSystem.MinMaxCurve(
+                        1f, ForceRampCurve(-inward, _systemDrag, _systemLifetime));
+
+                    // WHICH WAY THE VORTEX PUSHES DECIDES WHETHER THE SWIRL
+                    // SURVIVES, because Unity cannot have both the swirl and
+                    // the spread.
+                    //
+                    //   inward > 0 - the author is PULLING particles in, so a
+                    //     rotation that holds them at a radius is close to what
+                    //     they asked for. The swirl is the point; keep it.
+                    //   inward <= 0 - the author is pushing them OUT, and an
+                    //     orbit would cancel exactly the motion the block was
+                    //     placed for. The spread is the point; drop the orbit.
+                    if (inward > 0f)
+                    {
+                        // strength/drag, not strength: the preview's tangential
+                        // term is an ACCELERATION proportional to radius, so
+                        // with drag it settles at an angular rate of
+                        // strength/drag. Feeding the raw strength in as an
+                        // angular rate spins the effect far too fast.
+                        var rate = _systemDrag > 0f ? strength / _systemDrag : strength;
+                        velocity.orbitalX = new ParticleSystem.MinMaxCurve(axis.x * rate);
+                        velocity.orbitalY = new ParticleSystem.MinMaxCurve(axis.y * rate);
+                        velocity.orbitalZ = new ParticleSystem.MinMaxCurve(axis.z * rate);
+                        _report.Approximated(name, type,
+                            $"became orbital velocity at {rate:F2} rad/s (the preview's tangential "
+                            + "force divided by this system's drag, which is the rate it settles "
+                            + "at) plus an inward radial velocity. Unity's orbit is a rigid "
+                            + "rotation, so particles hold their radius instead of spiralling");
+                    }
+                    else
+                    {
+                        _report.Approximated(name, type,
+                            "became an outward radial velocity, and the swirl is NOT carried. "
+                            + "Shuriken has no force-based vortex: orbital velocity is a rigid "
+                            + "rotation that PINS each particle's radius, and a "
+                            + "ParticleSystemForceField pulls them inward instead - both were "
+                            + "measured, and both cancel the outward push this block exists to "
+                            + "apply. What is left is the radial force alone, so the cloud still "
+                            + "widens but reaches roughly HALF the preview's radius: the preview "
+                            + "spreads because the tangential force keeps feeding a spiral, and "
+                            + "an imposed velocity cannot, since this system's drag damps it. "
+                            + "Lower this system's drag on the imported prefab to widen it");
+                    }
                     return;
                 }
 
