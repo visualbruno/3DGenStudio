@@ -167,6 +167,14 @@ export function planSpriteSheet(options) {
  * @returns {THREE.PerspectiveCamera}
  */
 function autoFramedCamera(ir, plan, meshes, view) {
+  // MANUAL MEANS MANUAL - no simulation needed, and none wanted: the author's
+  // box is the instruction. See boundsMode in vfx/doc.js.
+  if (ir.effect.boundsMode === 'manual') {
+    return cameraFromPlacement(
+      cameraPlacement(ir.effect.boundsMin, ir.effect.boundsMax, view),
+    )
+  }
+
   const probe = createVfxRuntime(ir)
   installMeshSamplers(probe, meshes)
 
@@ -187,12 +195,18 @@ function autoFramedCamera(ir, plan, meshes, view) {
 
   // Nothing alive in any cell. The declared bounds are all there is, and a
   // camera pointed at them beats one pointed at a degenerate point.
-  const place = seen
+  return cameraFromPlacement(seen
     ? cameraPlacement(min, max, view)
-    : cameraPlacement(ir.effect.boundsMin, ir.effect.boundsMax, view)
+    : cameraPlacement(ir.effect.boundsMin, ir.effect.boundsMax, view))
+}
 
-  // Aspect 1 because cells are square - the same rule squareCameraFrom applies
-  // to a live camera, so an auto-framed sheet and a hand-framed one crop alike.
+/**
+ * A square THREE camera from a placement.
+ *
+ * Aspect 1 because cells are square - the same rule squareCameraFrom applies to
+ * a live camera, so an auto-framed sheet and a hand-framed one crop alike.
+ */
+function cameraFromPlacement(place) {
   const camera = new THREE.PerspectiveCamera(place.fov, 1, 0.01, Math.max(100, place.radius * 40))
   camera.position.set(place.eye[0], place.eye[1], place.eye[2])
   camera.lookAt(place.target[0], place.target[1], place.target[2])

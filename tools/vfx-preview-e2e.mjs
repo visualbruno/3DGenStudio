@@ -12,7 +12,7 @@
 // does not compile, and an effect that genuinely emits nothing.
 import express from 'express';
 import fs from 'node:fs';
-import { renderVfxFrames } from '../vfxPreview.js';
+import { previewResponseBody, renderVfxFrames } from '../vfxPreview.js';
 
 const app = express();
 app.use(express.json({ limit: '20mb' }));
@@ -23,13 +23,7 @@ app.post('/api/vfx/preview', async (req, res) => {
       return res.status(400).json({ error: 'Pass the effect document as `graph`.' });
     }
     const result = await renderVfxFrames(graph, options);
-    res.json({
-      ...result,
-      frames: result.frames.map((f) => ({
-        time: f.time, alive: f.alive, drawn: f.drawn, clipped: f.clipped,
-        png: f.png.toString('base64'),
-      })),
-    });
+    res.json(previewResponseBody(result));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -95,6 +89,53 @@ check('an effect that cannot compile says so too',
 check('  and names what is wrong',
   broken.body.diagnostics.some((d) => d.severity === 'error'),
   broken.body.diagnostics.map((d) => d.code).join(' '));
+
+// --- the filmstrip ----------------------------------------------------------
+//
+// WHY NOT AN MP4, which is what was actually asked for: MCP content is text and
+// image only - there is no video type - so a video could be written to disk but
+// never LOOKED AT by the caller that wanted it. Twelve moments tiled into one
+// PNG is the closest thing to watching it play that can actually be seen.
+const strip = await post({ graph: p.doc, filmstrip: true, width: 160, height: 120 });
+check('a filmstrip comes back as one image', Boolean(strip.body.filmstrip?.png),
+  Object.keys(strip.body).join(' '));
+check('  holding more moments than the still mode', strip.body.frames.length >= 8,
+  `${strip.body.frames.length} moments`);
+check('  laid out as a grid', /^\d+x\d+$/.test(
+  `${strip.body.filmstrip.cols}x${strip.body.filmstrip.rows}`),
+  `${strip.body.filmstrip.cols}x${strip.body.filmstrip.rows}`);
+check('  with a time per cell, in cell order',
+  strip.body.filmstrip.times.length === strip.body.frames.length
+  && strip.body.filmstrip.times.every((t, i, a) => i === 0 || t >= a[i - 1]),
+  strip.body.filmstrip.times.join(' '));
+// ONE IMAGE, NOT TWELVE. Sending the cells as well would defeat the point and
+// blow the reply size that the still mode's frame cap exists to protect.
+check('  and the individual frames carry no pixels',
+  strip.body.frames.every((f) => !f.png));
+check('  still inside a sendable size',
+  strip.body.filmstrip.png.length < 900 * 1024,
+  `${(strip.body.filmstrip.png.length / 1024).toFixed(0)}KB base64`);
+
+// --- boundsMode -------------------------------------------------------------
+//
+// `boundsAuto` was a boolean NOTHING read - set it and nothing changed, with no
+// way to discover that. These two modes have to actually do something different
+// or the replacement is the same trap with a new name.
+const withBox = (mode) => ({
+  ...p.doc,
+  effect: {
+    ...p.doc.effect, boundsMode: mode,
+    boundsMin: [-14, -14, -14], boundsMax: [14, 14, 14],
+  },
+});
+const auto = await post({ graph: withBox('auto'), width: 200, height: 200, times: [0.8] });
+const manual = await post({ graph: withBox('manual'), width: 200, height: 200, times: [0.8] });
+check('manual framing differs from auto', manual.body.frames[0].png !== auto.body.frames[0].png);
+// A deliberately huge manual box pushes the camera back, so particles go
+// sub-pixel and stop being drawn - which is the mode being obeyed, not a bug.
+check('  and a large manual box really does zoom out',
+  manual.body.frames[0].drawn < auto.body.frames[0].drawn,
+  `manual ${manual.body.frames[0].drawn} drawn vs auto ${auto.body.frames[0].drawn}`);
 
 // Oversized requests are clamped rather than accepted: this is a preview.
 const huge = await post({ graph: p.doc, width: 9000, height: 9000, times: [0.3] });

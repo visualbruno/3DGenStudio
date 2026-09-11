@@ -1373,6 +1373,10 @@ export function compileVfxGraph(document, options = {}) {
       simulationSpace: doc.effect.simulationSpace,
       boundsMin: doc.effect.boundsMin.slice(),
       boundsMax: doc.effect.boundsMax.slice(),
+      // Carried so a renderer knows whether that box is an instruction or a
+      // fallback, and so the engine importers can set emitter bounds from a
+      // box the author actually stands behind.
+      boundsMode: doc.effect.boundsMode,
       prewarm: doc.effect.prewarm,
       timeScale: doc.effect.timeScale,
     },

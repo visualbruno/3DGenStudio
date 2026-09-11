@@ -187,7 +187,7 @@ export function createEffectSettings() {
     capacity: 4096,
     boundsMin: [-2, -2, -2],
     boundsMax: [2, 2, 2],
-    boundsAuto: true,
+    boundsMode: 'auto',
     prewarm: 0,
     timeScale: 1,
   };
@@ -211,7 +211,23 @@ function normalizeEffectSettings(input = {}) {
     capacity: Math.max(1, Math.round(asNumber(input.capacity, defaults.capacity))),
     boundsMin: vec3(input.boundsMin, defaults.boundsMin),
     boundsMax: vec3(input.boundsMax, defaults.boundsMax),
-    boundsAuto: asBool(input.boundsAuto, defaults.boundsAuto),
+    // MANUAL or AUTO, and the author's box is kept whichever it is.
+    //
+    // This replaces `boundsAuto`, a boolean that NOTHING EVER READ - it was
+    // normalised into the document and consulted by no renderer, no compiler
+    // and no exporter, so an agent that set it to control framing changed
+    // nothing and had no way to discover that. A field that looks like a lever
+    // and is not is worse than an absent one.
+    //
+    // The two modes now mean something concrete to every framing consumer:
+    //   manual - frame on boundsMin/boundsMax exactly as written
+    //   auto   - work it out from the particles that are actually alive
+    // and boundsMin/Max stay the AUTHOR'S box in both, so switching to auto and
+    // back does not destroy what they typed.
+    boundsMode: BOUNDS_MODES.includes(input.boundsMode)
+      ? input.boundsMode
+      // Migrated from the boolean. `false` meant "I set these myself".
+      : (input.boundsAuto === false ? 'manual' : 'auto'),
     prewarm: Math.max(0, asNumber(input.prewarm, defaults.prewarm)),
     timeScale: Math.max(0, asNumber(input.timeScale, defaults.timeScale)),
   };
@@ -307,6 +323,9 @@ function normalizePointList(raw, props) {
   }
   return points;
 }
+
+/** How an effect's bounds are decided. See `boundsMode` in normalizeEffect. */
+export const BOUNDS_MODES = Object.freeze(['manual', 'auto']);
 
 function normalizeBlock(input = {}) {
   const props = {};

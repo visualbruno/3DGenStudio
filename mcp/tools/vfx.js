@@ -458,14 +458,20 @@ export function registerVfxTools(server, { api, notifyMutation }) {
     description: 'SEE an effect: simulates it and returns PNG frames, so you can judge what you built instead of '
       + 'inferring it from particle counts. Defaults to four moments across the effect, because a one-shot is empty '
       + 'at t=0 and empty again at the end. '
+      + 'Pass filmstrip:true to get TWELVE moments tiled into one image instead - the closest thing to watching it '
+      + 'play, and the right choice for judging MOTION (does the debris arc, does the smoke roll) rather than a pose. '
       + 'NOT THE EDITOR VIEWPORT: no textures (every particle draws as a soft blob), no mesh particles, no trails - '
       + 'so an effect whose SPRITE is the point looks plainer here. Tone mapping does match, so HDR colours clip the '
-      + 'same way they will on screen.',
+      + 'same way they will on screen. Framing follows the effect\'s boundsMode: "auto" works it out from the live '
+      + 'particles, "manual" uses the document\'s boundsMin/boundsMax verbatim.',
     inputSchema: {
       graph: GRAPH_SHAPE.optional().describe('The document to render. Omit and pass assetId to render a saved effect.'),
       assetId: z.number().int().positive().optional().describe('Render a saved effect instead of a document.'),
-      times: z.array(z.number().min(0)).max(8).optional()
-        .describe('Seconds to capture at. Default: four moments spread across the effect duration.'),
+      filmstrip: z.boolean().optional()
+        .describe('Tile the moments into ONE image (a 4-wide grid) instead of returning separate frames. '
+          + 'Use it to judge motion: twelve frames in one picture beats four scattered stills.'),
+      times: z.array(z.number().min(0)).max(16).optional()
+        .describe('Seconds to capture at. Default: four moments across the effect, or twelve with filmstrip.'),
       width: z.number().int().min(64).max(1280).optional().describe('Default 480.'),
       height: z.number().int().min(64).max(1280).optional().describe('Default 270.'),
       azimuth: z.number().optional().describe('Camera angle around the effect, degrees. Default 35.'),
@@ -474,7 +480,9 @@ export function registerVfxTools(server, { api, notifyMutation }) {
         .describe('Multiple of the effect radius. Default 2.6 - raise it if the effect fills the frame.'),
     },
     annotations: { readOnlyHint: true },
-  }, async ({ graph, assetId, times, width, height, azimuth, elevation, distance } = {}) => {
+  }, async ({
+    graph, assetId, times, width, height, azimuth, elevation, distance, filmstrip,
+  } = {}) => {
     try {
       let doc = graph;
       if (!doc) {
@@ -493,7 +501,7 @@ export function registerVfxTools(server, { api, notifyMutation }) {
       if (Number.isFinite(distance)) view.distance = distance;
 
       const result = await api.apiJson('POST', '/vfx/preview', {
-        body: { graph: doc, times, width, height, view },
+        body: { graph: doc, times, width, height, view, filmstrip },
       });
 
       if (result.error) return jsonResult(result);
@@ -519,8 +527,23 @@ export function registerVfxTools(server, { api, notifyMutation }) {
             : {}),
         }, null, 2),
       }];
-      for (const frame of result.frames) {
-        content.push({ type: 'image', data: frame.png, mimeType: 'image/png' });
+      if (result.filmstrip) {
+        content[0].text = JSON.stringify({
+          ...JSON.parse(content[0].text),
+          filmstrip: {
+            grid: `${result.filmstrip.cols}x${result.filmstrip.rows}`,
+            // WHICH CELL IS WHICH MOMENT. Without this the strip is twelve
+            // unlabelled pictures and the times below cannot be matched to
+            // them - reading left to right, top to bottom.
+            order: 'left to right, top to bottom',
+            times: result.filmstrip.times,
+          },
+        }, null, 2);
+        content.push({ type: 'image', data: result.filmstrip.png, mimeType: 'image/png' });
+      } else {
+        for (const frame of result.frames) {
+          content.push({ type: 'image', data: frame.png, mimeType: 'image/png' });
+        }
       }
       return { content };
     } catch (error) {

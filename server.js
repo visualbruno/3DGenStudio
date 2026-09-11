@@ -27,7 +27,7 @@ import {
 import { mountMcp } from './mcp/http.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
-import { renderVfxFrames } from './vfxPreview.js';
+import { previewResponseBody, renderVfxFrames } from './vfxPreview.js';
 import { transferRig } from './meshRigTransfer.js';
 // The self-managed PostgreSQL for a shared server that is not running Docker.
 import * as pgEmbedded from './pgEmbedded.js';
@@ -1430,19 +1430,9 @@ app.post('/api/vfx/preview', async (req, res) => {
       return res.status(400).json({ error: 'Pass the effect document as `graph`.' });
     }
     const result = await renderVfxFrames(graph, options);
-    // Base64 rather than a multipart body: the only callers are JSON ones (the
-    // MCP layer needs base64 anyway to hand an image to a model), and four
-    // small PNGs is a few tens of kilobytes.
-    res.json({
-      ...result,
-      frames: result.frames.map((frame) => ({
-        time: frame.time,
-        alive: frame.alive,
-        drawn: frame.drawn,
-        clipped: frame.clipped,
-        png: frame.png.toString('base64'),
-      })),
-    });
+    // Encoded by the same function the e2e harness uses - see
+    // previewResponseBody for why that is not duplicated here.
+    res.json(previewResponseBody(result));
   } catch (err) {
     console.error('Failed to render a VFX preview:', err);
     res.status(500).json({ error: err.message || 'Failed to render a VFX preview' });

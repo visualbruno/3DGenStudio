@@ -146,6 +146,30 @@ function record(result) {
   // the contract and not in one plugin's comment. It travels IN the IR so a
   // plugin can refuse a space it does not recognise rather than import it
   // wrongly.
+  // BOUNDSMODE REPLACES A FIELD NOTHING READ. `boundsAuto` was normalised into
+  // every document and consulted by no renderer, compiler or exporter - so an
+  // agent that set it to control framing changed nothing, with no way to find
+  // that out. The replacement has to reach the IR, or it is the same trap.
+  check('  and how its bounds were decided',
+    ir.effect.boundsMode === 'auto', String(ir.effect.boundsMode));
+  // A GENUINELY OLD DOCUMENT: the legacy boolean and NO boundsMode. Spreading
+  // it onto an already-normalised effect proves nothing, because that effect
+  // already carries boundsMode and the explicit new field rightly wins.
+  const legacy = fixtures.stagedExplosion();
+  const oldEffect = { ...legacy.effect, boundsAuto: false };
+  delete oldEffect.boundsMode;
+  const manual = compile(normalizeVfxDoc({ ...legacy, effect: oldEffect })).ir;
+  check('  migrated from the boolean it replaced',
+    manual.effect.boundsMode === 'manual', String(manual.effect.boundsMode));
+  // And the new field wins when both are present, or an old boolean left in a
+  // document would override a choice the author made since.
+  const both = compile(normalizeVfxDoc({
+    ...legacy,
+    effect: { ...legacy.effect, boundsMode: 'manual', boundsAuto: true },
+  })).ir;
+  check('  with the explicit field winning over the legacy one',
+    both.effect.boundsMode === 'manual', String(both.effect.boundsMode));
+
   check('  and the space its vectors are in',
     ir.space?.handedness === 'right' && ir.space?.up === 'Y' && ir.space?.unit === 'metre',
     JSON.stringify(ir.space));
