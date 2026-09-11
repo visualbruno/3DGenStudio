@@ -417,6 +417,16 @@
   gap: 4px;
 }
 
+/* Leaves added without a stem pivot. A caution, not an error — the builder
+ * auto-orients them — so it reads as a note in the warning colour, not a
+ * blocking red banner. */
+.treegen__slot-warning {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--warning, #e0a458);
+}
+
 /* Clicking a thumbnail removes it — the × is an affordance, not a second
  * target, so the whole tile stays comfortably clickable at 44px. */
 .treegen__thumb-wrap {

@@ -312,27 +312,6 @@ export async function resolveTextureAssetIds(refs, { signal } = {}) {
   return { trunk, branches, leaves, missing }
 }
 
-/**
- * Detect the stem in each leaf image, as normalized {x, y} or null.
- *
- * Used to seed the pivot editor when leaves are added, so the user is nudging a
- * guess rather than placing every point from scratch. Advisory by design — the
- * detector is right most of the time and wrong in ways that are obvious on
- * sight, which is why the point is editable at all.
- */
-export async function detectLeafPivots(imagesBase64, { signal } = {}) {
-  if (!imagesBase64?.length) return []
-  await ensureDesktopService('meshtools')
-  const response = await fetch(`${API_BASE}/tree/leaf-pivots`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ images_b64: imagesBase64 }),
-    signal,
-  })
-  if (!response.ok) throw await readError(response, 'Leaf stem detection failed')
-  return (await response.json()).pivots || []
-}
-
 // ---------------------------------------------------------------------------
 // Tree presets as ASSETS
 // ---------------------------------------------------------------------------

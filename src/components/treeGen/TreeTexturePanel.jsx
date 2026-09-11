@@ -11,7 +11,7 @@
 // bark in two, which is a real cost and so is never done behind the user's back.
 import { useCallback, useState } from 'react'
 import AssetSelectorModal from '../AssetSelectorModal'
-import { assetToTextureEntry, detectLeafPivots, resolveTextureEntry } from '../../utils/treeGen'
+import { assetToTextureEntry } from '../../utils/treeGen'
 import LeafPivotDialog from './LeafPivotDialog'
 
 const SLOTS = [
@@ -44,6 +44,10 @@ function fileToEntry(file) {
 
 function Slot({ slot, value, onChange, onUpload, onPick, onEditPivot }) {
   const entries = slot.multiple ? (value || []) : (value ? [value] : [])
+  // Adding a leaf no longer guesses its stem, so say so rather than let a blank
+  // crosshair pass for a placed one. Not an error: the builder auto-orients a
+  // pivot-less leaf, which is usually fine and always visible in the render.
+  const unpivoted = slot.pivots ? entries.filter(entry => !entry.pivot).length : 0
 
   const handleFiles = event => {
     const files = Array.from(event.target.files || [])
@@ -108,6 +112,13 @@ function Slot({ slot, value, onChange, onUpload, onPick, onEditPivot }) {
           <input type="file" accept="image/*" multiple={slot.multiple} onChange={handleFiles} hidden />
         </label>
       </div>
+
+      {unpivoted > 0 && (
+        <p className="treegen__slot-warning">
+          No pivot point set on {unpivoted} leaf image{unpivoted === 1 ? '' : 's'} — use the ⌖ on a
+          thumbnail to place the stem. Without one the leaf is auto-oriented at build time.
+        </p>
+      )}
     </div>
   )
 }
@@ -116,43 +127,24 @@ export default function TreeTexturePanel({ textures, onChange }) {
   const [picking, setPicking] = useState(null)
   const [editing, setEditing] = useState(null)   // { slotKey, index }
 
-  // Seed each new leaf's pivot from the detector, so the crosshair opens on a
-  // guess instead of a blank. Best-effort: a leaf with no pivot still renders
-  // (the service falls back to its own detection), so a failure here must not
-  // block adding images.
-  const seedPivots = useCallback(async added => {
-    try {
-      const images = await Promise.all(added.map(entry => resolveTextureEntry(entry)))
-      const usable = images.map((image, index) => ({ image, index })).filter(item => item.image)
-      if (!usable.length) return added
-      const detected = await detectLeafPivots(usable.map(item => item.image))
-      const withPivots = [...added]
-      usable.forEach((item, position) => {
-        const pivot = detected[position]
-        if (pivot) withPivots[item.index] = { ...withPivots[item.index], pivot }
-      })
-      return withPivots
-    } catch (error) {
-      console.warn('Could not detect leaf pivots', error)
-      return added
-    }
-  }, [])
-
-  const handlePicked = useCallback(async selection => {
+  // Leaves are added WITHOUT a detected pivot on purpose. Seeding one meant
+  // reading every image back, base64-ing it and round-tripping the whole set
+  // through the Python detector before the thumbnails appeared, which made
+  // picking a handful of leaves take seconds. The slot warns instead, and the
+  // crosshair is there for anyone who wants to place the stem exactly.
+  const handlePicked = useCallback(selection => {
     const slot = picking
     setPicking(null)
     if (!slot) return
     const chosen = Array.isArray(selection) ? selection : [selection]
-    let added = chosen.filter(Boolean).map(assetToTextureEntry)
+    const added = chosen.filter(Boolean).map(assetToTextureEntry)
     if (!added.length) return
-    if (slot.pivots) added = await seedPivots(added)
     onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...added] : added[0])
-  }, [picking, textures, onChange, seedPivots])
+  }, [picking, textures, onChange])
 
-  const handleUploaded = useCallback(async (slot, added) => {
-    const seeded = slot.pivots ? await seedPivots(added) : added
-    onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...seeded] : seeded[0])
-  }, [textures, onChange, seedPivots])
+  const handleUploaded = useCallback((slot, added) => {
+    onChange(slot.key, slot.multiple ? [...(textures[slot.key] || []), ...added] : added[0])
+  }, [textures, onChange])
 
   const editingEntry = editing
     ? (textures[editing.slotKey] || [])[editing.index] || null
