@@ -47,6 +47,12 @@ namespace GenStudio3D.VfxImport
         private readonly Func<Texture2D> _defaultSprite;
         private readonly Func<Mesh> _defaultMesh;
 
+        // The system currently being built. BakeOperators samples across the
+        // duration, and the line shape needs the spawn rate to work out how fast
+        // the emission point has to walk the edge.
+        private float _duration = 1f;
+        private float _spawnRate;
+
         public VfxShurikenBuilder(
             VfxJson ir,
             VfxImportReport report,
@@ -133,6 +139,8 @@ namespace GenStudio3D.VfxImport
             }
 
             main.duration = Mathf.Max(0.01f, effect["duration"].AsFloat(2f));
+            _duration = main.duration;
+            _spawnRate = 0f;
             main.loop = effect["loop"].AsBool(true);
             main.maxParticles = Mathf.Max(1, system["capacity"].AsInt(1000));
             main.playOnAwake = true;
@@ -198,6 +206,10 @@ namespace GenStudio3D.VfxImport
                 if (type == "spawn.rate") rate = Binding(block, "rate").Constant;
                 else if (type == "spawn.burst") burstCount = Binding(block, "count").Constant;
             }
+            // Kept for the line shape, which has to turn "one step per particle"
+            // into Unity's "metres per second". Set here because spawn is built
+            // before the Initialize blocks that need it.
+            _spawnRate = rate;
 
             var fixedDt = Mathf.Max(1e-5f, effect["fixedDt"].AsFloat(1f / 60f));
             var duration = Mathf.Max(0.01f, ps.main.duration);
@@ -513,9 +525,13 @@ namespace GenStudio3D.VfxImport
                     return;
 
                 case "initialize.setSize":
-                    main.startSize = Curve(block, "size");
-                    _report.Native(name, type);
+                {
+                    var size = Curve(block, "size", name);
+                    main.startSize = size;
+                    // Already reported as approximated/dropped when it was wired.
+                    if (!Binding(block, "size").IsRegister) _report.Native(name, type);
                     return;
+                }
 
                 case "initialize.setColor":
                     main.startColor = new ParticleSystem.MinMaxGradient(
@@ -739,22 +755,101 @@ namespace GenStudio3D.VfxImport
                 }
 
                 case "initialize.positionLine":
-                    _report.Approximated(name, type,
-                        "Shuriken has no line emitter; became a thin box along the segment");
+                {
+                    // SHURIKEN DOES HAVE A LINE: ParticleSystemShapeType
+                    // SingleSidedEdge, an edge along the shape's local X of
+                    // 2 * radius. This used to lay down a thin BOX instead,
+                    // which is the right span but scatters particles randomly
+                    // across it - and that threw away the one thing the line's
+                    // placement mode is for. A chain authored with "spacing"
+                    // arrived in Unity as noise.
                     shape.enabled = true;
-                    shape.shapeType = ParticleSystemShapeType.Box;
                     var start = VfxConvert.Vector(Binding(block, "start").Vector);
                     var end = VfxConvert.Vector(Binding(block, "end").Vector);
-                    var thickness = Mathf.Max(0.001f, Binding(block, "thickness").Constant);
+                    var segment = end - start;
+                    var length = segment.magnitude;
+
+                    shape.shapeType = ParticleSystemShapeType.SingleSidedEdge;
+                    shape.radius = Mathf.Max(0.0001f, length * 0.5f);
                     shape.position = (start + end) * 0.5f;
-                    shape.scale = new Vector3((end - start).magnitude, thickness, thickness);
-                    // Aim the box's long axis down the segment.
-                    var along = (end - start).normalized;
-                    if (along.sqrMagnitude > 0f)
+                    if (length > 0f)
                     {
-                        shape.rotation = Quaternion.FromToRotation(Vector3.right, along).eulerAngles;
+                        shape.rotation = Quaternion
+                            .FromToRotation(Vector3.right, segment / length).eulerAngles;
+                    }
+
+                    var placement = block["modes"]["placement"].AsString("random");
+                    if (placement == "spacing" && length > 0f)
+                    {
+                        // The app walks the line by GLOBAL SPAWN INDEX: particle
+                        // N sits at N * spacing metres, wrapping at the far end
+                        // (kernels.js shape.position.line). Unity walks it over
+                        // TIME instead, so the speed has to be derived from the
+                        // spawn rate: one step of `spacing` per particle, and
+                        // `rate` particles a second, is rate * spacing metres a
+                        // second - expressed, as Unity wants it, in edges per
+                        // second. Spread quantises the edge to the same step so
+                        // the particles land ON the slots rather than between
+                        // them.
+                        var spacing = Mathf.Max(0.0001f, Binding(block, "spacing").Constant);
+                        shape.radiusMode = ParticleSystemShapeMultiModeValue.Loop;
+                        // Spread QUANTISES the edge into slots, which sounds
+                        // like the right way to land particles on the app's
+                        // slots and is not. Unity moves the emission point by
+                        // the clock while the app steps it once per particle,
+                        // and a rate that does not divide the frame (8/s at
+                        // 60fps is a particle every 7.5 frames) then drops two
+                        // births into one slot and skips the next - a chain with
+                        // a doubled slab and a hole in it. Left continuous, the
+                        // same births land a smooth spacing apart, off by only
+                        // the frame the emitter rounded to.
+                        shape.radiusSpread = 0f;
+
+                        // MEASURED, not read off the docs: the emission point
+                        // travels 2 * radiusSpeed METRES a second along the
+                        // edge, and that factor does NOT scale with the radius
+                        // (checked at radius 7 and 3.5, same step either way).
+                        // One step of `spacing` per particle at `rate` particles
+                        // a second is spacing * rate metres a second, hence the
+                        // half. Treating radiusSpeed as edges-per-second instead
+                        // left the point crawling and every particle piled on
+                        // the first slot.
+                        var metresPerSecond = spacing * (_spawnRate > 0f ? _spawnRate : 1f);
+                        shape.radiusSpeed = new ParticleSystem.MinMaxCurve(metresPerSecond * 0.5f);
+
+                        // Unity starts the point at the near end and moves it
+                        // continuously, so the first particle - born 1/rate
+                        // seconds in - has already travelled exactly one step
+                        // and the whole chain sits one slot too far out. The app
+                        // puts spawn index 0 ON the start. Shifting the edge back
+                        // one step lines the two up.
+                        shape.position -= segment / length * spacing;
+
+                        _report.Native(name, type,
+                            $"edge, marching {spacing:0.##}m per particle");
+                    }
+                    else if (placement == "even")
+                    {
+                        shape.radiusMode = ParticleSystemShapeMultiModeValue.BurstSpread;
+                        shape.radiusSpread = 0f;
+                        _report.Native(name, type, "edge, one burst spread along it");
+                    }
+                    else
+                    {
+                        shape.radiusMode = ParticleSystemShapeMultiModeValue.Random;
+                        shape.radiusSpread = 0f;
+                        _report.Native(name, type, "edge, scattered along it");
+                    }
+
+                    var thickness = Binding(block, "thickness").Constant;
+                    if (thickness > 0.001f)
+                    {
+                        _report.Approximated(name, type,
+                            $"the line's {thickness:0.##}m thickness is not carried - Unity's edge "
+                            + "emits exactly on the line");
                     }
                     return;
+                }
 
                 default:
                     _report.Dropped(name, type, "no Shuriken equivalent in this importer");
@@ -1331,6 +1426,13 @@ namespace GenStudio3D.VfxImport
             public VfxJson Curve;
             public VfxJson Gradient;
             public float Scale;
+            // An operator-driven property. Without these the `register` source
+            // fell through to `default:` and handed back a Bound whose Constant
+            // is 0 - so a size wired to an operator imported as size 0 and the
+            // system simply never appeared, with nothing in the report saying
+            // why. See BakeOperators.
+            public bool IsRegister;
+            public int Register;
         }
 
         /// <summary>
@@ -1382,6 +1484,10 @@ namespace GenStudio3D.VfxImport
                     case "gradient":
                         bound.Gradient = _ir["tables"][binding["index"].AsInt(0)]["authored"];
                         return bound;
+                    case "register":
+                        bound.IsRegister = true;
+                        bound.Register = binding["index"].AsInt(0);
+                        return bound;
                     default:
                         return bound;
                 }
@@ -1405,7 +1511,35 @@ namespace GenStudio3D.VfxImport
         /// <summary>A binding as a MinMaxCurve, whichever mode it is in.</summary>
         private ParticleSystem.MinMaxCurve Curve(VfxJson block, string prop)
         {
+            return Curve(block, prop, null);
+        }
+
+        private ParticleSystem.MinMaxCurve Curve(VfxJson block, string prop, string reportAs)
+        {
             var bound = Binding(block, prop);
+            if (bound.IsRegister)
+            {
+                if (BakeOperators(block, bound.Register, out var baked, out var why))
+                {
+                    if (reportAs != null)
+                    {
+                        _report.Approximated(reportAs, block["srcBlockType"].AsString(),
+                            "driven by operators, baked into a curve over the system's duration - "
+                            + "exact for anything reading Effect Time, which is what Unity evaluates "
+                            + "a start property's curve against");
+                    }
+                    return new ParticleSystem.MinMaxCurve(1f, baked);
+                }
+                if (reportAs != null)
+                {
+                    _report.Dropped(reportAs, block["srcBlockType"].AsString(),
+                        "it is driven by operators that cannot be baked into a curve - " + why
+                        + "; the property keeps the literal the graph last held");
+                }
+                // The literal the document kept behind the wire. Better than the
+                // zero this used to return, which made the system invisible.
+                return new ParticleSystem.MinMaxCurve(bound.Constant);
+            }
             if (!bound.Curve.IsNull())
             {
                 return new ParticleSystem.MinMaxCurve(bound.Scale, VfxConvert.Curve(bound.Curve));
@@ -1416,6 +1550,104 @@ namespace GenStudio3D.VfxImport
                     Mathf.Min(bound.Low, bound.High), Mathf.Max(bound.Low, bound.High));
             }
             return new ParticleSystem.MinMaxCurve(bound.Constant);
+        }
+
+        /// <summary>
+        /// Bake an operator chain into a curve over the system's duration.
+        ///
+        /// Shuriken has no operator graph, so this is the only way to carry one
+        /// across - but for the common wiring it is not a compromise. Unity
+        /// evaluates a START property's curve over the SYSTEM'S DURATION at the
+        /// instant a particle is born, and `op.time` is seconds since the effect
+        /// started, so the two mean the same thing and the values match sample
+        /// for sample.
+        ///
+        /// The arithmetic mirrors OP_EVALUATORS in kernels.js exactly, including
+        /// the parts that are easy to get subtly wrong: remap CLAMPS its
+        /// normalised input to 0..1 (so a value past the input range holds at
+        /// the far end rather than extrapolating), divide by ~zero yields zero
+        /// rather than Infinity, and sine is sin(x * 2pi), not sin(x).
+        ///
+        /// A chain that reads the PARTICLE rather than the clock - op.random or
+        /// op.getAttribute - has no such equivalent, and is reported rather than
+        /// quietly flattened to one number.
+        /// </summary>
+        private bool BakeOperators(VfxJson block, int register, out AnimationCurve curve, out string why)
+        {
+            curve = null;
+            why = null;
+
+            var ops = new List<VfxJson>(block["pre"].Items);
+            if (ops.Count == 0)
+            {
+                why = "the IR carries no operator chain for it";
+                return false;
+            }
+            foreach (var op in ops)
+            {
+                var kind = op["op"].AsString();
+                if (kind == "attr" || kind == "random")
+                {
+                    why = $"it runs through \"{op["srcType"].AsString()}\", which varies per particle "
+                        + "or per frame rather than over the effect's time";
+                    return false;
+                }
+            }
+
+            const int samples = 33;
+            var duration = Mathf.Max(0.01f, _duration);
+            var keys = new Keyframe[samples];
+            for (var i = 0; i < samples; i++)
+            {
+                var t = i / (float)(samples - 1);
+                keys[i] = new Keyframe(t, EvaluateOps(ops, register, t * duration));
+            }
+            curve = new AnimationCurve(keys);
+            for (var i = 0; i < samples; i++) curve.SmoothTangents(i, 0f);
+            return true;
+        }
+
+        /// <summary>Run one operator chain at a given effect time.</summary>
+        private float EvaluateOps(List<VfxJson> ops, int register, float time)
+        {
+            var registers = new Dictionary<int, float>();
+            foreach (var op in ops)
+            {
+                var inputs = new List<float>();
+                foreach (var input in op["in"].Items)
+                {
+                    var index = input["index"].AsInt(0);
+                    inputs.Add(input["kind"].AsString() == "register"
+                        ? (registers.TryGetValue(index, out var upstream) ? upstream : 0f)
+                        : ConstantAt(index));
+                }
+
+                float In(int i) => i >= 0 && i < inputs.Count ? inputs[i] : 0f;
+                float value;
+                switch (op["op"].AsString())
+                {
+                    case "time": value = time; break;
+                    case "const": value = In(0); break;
+                    case "add": value = In(0) + In(1); break;
+                    case "sub": value = In(0) - In(1); break;
+                    case "mul": value = In(0) * In(1); break;
+                    case "div": value = Mathf.Abs(In(1)) < 1e-9f ? 0f : In(0) / In(1); break;
+                    case "lerp": value = In(0) + (In(1) - In(0)) * In(2); break;
+                    case "clamp": value = Mathf.Clamp(In(0), In(1), In(2)); break;
+                    case "sin": value = Mathf.Sin(In(0) * 2f * Mathf.PI); break;
+                    case "remap":
+                    {
+                        var span = In(2) - In(1);
+                        if (Mathf.Abs(span) < 1e-9f) { value = In(3); break; }
+                        var k = Mathf.Clamp01((In(0) - In(1)) / span);
+                        value = In(3) + (In(4) - In(3)) * k;
+                        break;
+                    }
+                    default: value = 0f; break;
+                }
+                registers[op["out"].AsInt(0)] = value;
+            }
+            return registers.TryGetValue(register, out var result) ? result : 0f;
         }
 
         private ParticleSystem.MinMaxGradient GradientBinding(VfxJson block, string prop, string name)
