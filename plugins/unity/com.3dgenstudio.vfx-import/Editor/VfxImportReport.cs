@@ -100,6 +100,17 @@ namespace GenStudio3D.VfxImport
             return summary;
         }
 
+        /// <summary>
+        /// One report column: padded out to `width`, and when the value is
+        /// longer than that, kept whole with a single space after it so the
+        /// next column never butts up against it.
+        /// </summary>
+        private static string Column(string value, int width)
+        {
+            value ??= string.Empty;
+            return value.Length >= width ? value + " " : value.PadRight(width);
+        }
+
         public string ToText()
         {
             var sb = new StringBuilder();
@@ -124,8 +135,13 @@ namespace GenStudio3D.VfxImport
                 foreach (var note in group)
                 {
                     sb.Append("  ")
-                      .Append((note.System ?? "effect").PadRight(16))
-                      .Append(note.Feature.PadRight(30));
+                      // PadRight does NOT truncate, so a system name longer than
+                      // the column ran straight into the feature with no gap:
+                      // "00 Sphere-Surface + VelRandominitialize.velocityRandom".
+                      // The report is the first thing anyone reads when an
+                      // import looks wrong, so it has to stay in columns.
+                      .Append(Column(note.System ?? "effect", 16))
+                      .Append(Column(note.Feature, 30));
                     // A name longer than the column still needs a gap, or an
                     // asset filename runs straight into its explanation.
                     if (!string.IsNullOrEmpty(note.Detail)) sb.Append(' ').Append(note.Detail);

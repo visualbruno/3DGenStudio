@@ -283,7 +283,9 @@ function spawnFromEvents(emitter, env) {
 
 // Module-level scratch for one event payload, the house idiom. Only one
 // sub-emitter drains at a time.
-const _payload = new Float32Array(7);
+// Float64, NOT Float32: slot 6 is the parent's uint32 seed and a float32
+// rounds it to 24 bits - see readEvent.
+const _payload = new Float64Array(7);
 
 /**
  * Spawn and initialise particles for this step.

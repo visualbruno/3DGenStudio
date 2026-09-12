@@ -38,13 +38,23 @@ const DEFAULT_CAPACITY = 4096;
 export function createEventQueue(options = {}) {
   const capacity = Math.max(1, options.capacity || DEFAULT_CAPACITY);
   const channels = Math.max(1, options.channels || 1);
+  const data = new Float32Array(capacity * channels * STRIDE);
   return {
     capacity,
     channels,
     // One flat buffer for every channel rather than an array of arrays: the
     // channel count is known at build time and a single allocation keeps the
     // records of one frame contiguous.
-    data: new Float32Array(capacity * channels * STRIDE),
+    data,
+    // THE SEED IS NOT A FLOAT. It is a uint32 identity, and a Float32Array
+    // slot has 24 bits of mantissa - so storing one here rounded it to the
+    // nearest multiple of 256 and handed back a seed whose low eight bits
+    // were always zero. Everything hashed from it inherited that: measured
+    // over the bench's death sub-emitter, a per-event probability of 0.5
+    // accepted 36% of events and 0.25 accepted 15%, because the rolls were
+    // drawn from a quantised seed space rather than a uniform one. The same
+    // buffer, read as uint32s, carries the bit pattern intact.
+    seeds: new Uint32Array(data.buffer),
     counts: new Uint32Array(channels),
     dropped: 0,
   };
@@ -85,7 +95,7 @@ export function pushEvent(queue, channel, pool, i) {
   // The parent's seed, so the child's randoms are a hash of a real identity
   // rather than of a counter - which is what keeps a sub-emitter reproducible
   // across replays and independent of how many events happened to fire first.
-  data[o + 6] = planes.seed ? planes.seed[i] : 0;
+  queue.seeds[o + 6] = planes.seed ? planes.seed[i] : 0;
 }
 
 /** How many events a channel holds this frame. */
@@ -99,12 +109,17 @@ export function eventCount(queue, channel) {
  * @param {Object} queue
  * @param {number} channel
  * @param {number} index
- * @param {Float32Array|Float64Array|number[]} out at least 7 long
+ * @param {Float64Array|number[]} out at least 7 long - NOT a Float32Array,
+ *   which cannot hold the seed's uint32 exactly
  * @returns {typeof out}
  */
 export function readEvent(queue, channel, index, out) {
   const o = (channel * queue.capacity + index) * STRIDE;
-  for (let c = 0; c < STRIDE; c += 1) out[c] = queue.data[o + c];
+  for (let c = 0; c < STRIDE - 1; c += 1) out[c] = queue.data[o + c];
+  // Read back through the uint32 view it was written through - see
+  // createEventQueue. `out` has to be wider than a float32 to hold it, which
+  // is why the caller's scratch is a Float64Array.
+  out[STRIDE - 1] = queue.seeds[o + STRIDE - 1];
   return out;
 }
 

@@ -1,4 +1,4 @@
-// Build a Unity particle effect from a 3D Gen Studio VFX IR.
+﻿// Build a Unity particle effect from a 3D Gen Studio VFX IR.
 //
 // WHY SHURIKEN AND NOT VFX GRAPH, which is what the plan originally assumed.
 // Phase 0 measured it (../../Spikes/):
@@ -40,6 +40,10 @@ namespace GenStudio3D.VfxImport
         // what the Update stage will do - see DragDecayCurve.
         private float _systemLifetime = 1f;
         private float _systemDrag;
+        // Whether this system is fed by another system's events. A sub-emitter
+        // inherits its parent PARTICLE's velocity, which is not what Unity's
+        // InheritVelocity module does - see initialize.inheritVelocity.
+        private bool _systemIsSubEmitter;
 
         private readonly Func<int, Texture2D> _texture;
         private readonly Func<int, Mesh> _mesh;
@@ -52,6 +56,31 @@ namespace GenStudio3D.VfxImport
         // the emission point has to walk the edge.
         private float _duration = 1f;
         private float _spawnRate;
+
+        // Block+property pairs already reported as flattened, so a value read
+        // twice while building one module is still only mentioned once.
+        private readonly HashSet<string> _flattened = new HashSet<string>();
+
+        // The flipbook is spread over three blocks - the frame count and timing
+        // on update.flipbook, the start frame on initialize.setFlipbookFrame,
+        // the sheet layout on output.setFlipbook - but Unity keeps all of it in
+        // one module, and the output is applied LAST. So the first two record
+        // what they want here and the output consumes it. Before this they were
+        // pure report lines that configured nothing, which is why every sheet
+        // imported as "play once over lifetime at 30fps, starting at frame 0"
+        // no matter what it was authored as.
+        private int _flipFrames;
+        private float _flipRate;
+        private string _flipTiming = "life";
+        // Held as the AUTHORED FRAME INDEX, converted at the output where the
+        // cell count is known. Unity's startFrame is normalised 0..1 across the
+        // sheet, not an index, so passing a frame number straight through got
+        // clamped: an authored "start at frame 35" arrived as 0.9999 and an
+        // authored 5 would have arrived there too.
+        private bool _flipStartSet;
+        private bool _flipStartRandom;
+        private float _flipStartLow;
+        private float _flipStartHigh;
 
         public VfxShurikenBuilder(
             VfxJson ir,
@@ -119,6 +148,7 @@ namespace GenStudio3D.VfxImport
             // stage, which has not been walked yet when Update is converted.
             _systemLifetime = 1f;
             _systemDrag = 0f;
+            _systemIsSubEmitter = system.Has("listen");
             foreach (var block in system["init"].Items)
             {
                 if (block["srcBlockType"].AsString() == "initialize.setLifetime")
@@ -141,6 +171,13 @@ namespace GenStudio3D.VfxImport
             main.duration = Mathf.Max(0.01f, effect["duration"].AsFloat(2f));
             _duration = main.duration;
             _spawnRate = 0f;
+            _flipFrames = 0;
+            _flipRate = 0f;
+            _flipTiming = "life";
+            _flipStartSet = false;
+            _flipStartRandom = false;
+            _flipStartLow = 0f;
+            _flipStartHigh = 0f;
             main.loop = effect["loop"].AsBool(true);
             main.maxParticles = Mathf.Max(1, system["capacity"].AsInt(1000));
             main.playOnAwake = true;
@@ -166,6 +203,16 @@ namespace GenStudio3D.VfxImport
             main.startColor = new ParticleSystem.MinMaxGradient(Color.white);
             main.startRotation = new ParticleSystem.MinMaxCurve(0f);
             main.gravityModifier = new ParticleSystem.MinMaxCurve(0f);
+            // AND THE SHAPE, which the same reasoning covers and which was
+            // missed: Unity's default shape module is an ENABLED cone of
+            // radius 1, so a system with no position block - every sub-emitter
+            // is one, because a position block would overwrite the point it
+            // inherits - scattered its particles over a one-metre disc around
+            // the spot they were supposed to appear at. In the bench that
+            // turned a death burst 2.1m wide into one 8.7m wide. A position
+            // block below switches the module back on.
+            var defaultShape = ps.shape;
+            defaultShape.enabled = false;
 
             BuildSpawn(ps, system, effect, name);
 
@@ -200,10 +247,11 @@ namespace GenStudio3D.VfxImport
 
             var rate = 0f;
             var burstCount = 0f;
+            VfxJson rateBlock = null;
             foreach (var block in system["spawn"].Items)
             {
                 var type = block["srcBlockType"].AsString();
-                if (type == "spawn.rate") rate = Binding(block, "rate").Constant;
+                if (type == "spawn.rate") { rate = Binding(block, "rate").Constant; rateBlock = block; }
                 else if (type == "spawn.burst") burstCount = Binding(block, "count").Constant;
             }
             // Kept for the line shape, which has to turn "one step per particle"
@@ -261,15 +309,38 @@ namespace GenStudio3D.VfxImport
             }
 
             // --- rate --------------------------------------------------------
-            if (rate <= 0f) return;
+            // A RATE THAT IS NOT A PLAIN NUMBER - wired to an operator, or a
+            // curve over the effect - reads as 0 through Binding().Constant and
+            // used to fall straight out of the guard below: the system emitted
+            // NOTHING and the report said nothing about it. Unity's rateOverTime
+            // is itself a curve over the system's duration, which is exactly
+            // what the app evaluates a spawn curve against, so both have a home.
+            if (rateBlock != null)
+            {
+                var bound = Binding(rateBlock, "rate");
+                if (bound.IsRegister || !bound.Curve.IsNull() || bound.IsRandom)
+                {
+                    ApplyVariableRate(ps, rateBlock, bound, clips, duration, name);
+                    return;
+                }
+            }
+
+            if (rate <= 0f)
+            {
+                if (rateBlock != null)
+                {
+                    _report.Dropped(name, "spawn.rate",
+                        "the rate reads as zero, so this system emits nothing");
+                }
+                return;
+            }
 
             // ONE OPEN-ENDED CLIP AT ZERO is the common case - the default
             // schedule - and it is a plain constant rate. So is a single clip
             // that happens to span the whole duration: gating it would build a
             // two-key curve that is on for all of it, which is the same effect
             // written less clearly and one more thing to go wrong.
-            if (clips.Count == 1 && clips[0].At <= 1e-4f
-                && (clips[0].OpenEnded || clips[0].Seconds >= duration - 1e-4f))
+            if (TrivialSchedule(clips, duration))
             {
                 emission.rateOverTime = new ParticleSystem.MinMaxCurve(rate);
                 _report.Native(name, "spawn.rate", rate.ToString("F0") + "/s");
@@ -562,29 +633,48 @@ namespace GenStudio3D.VfxImport
                 {
                     shape.enabled = true;
                     var surface = block["modes"]["fill"].AsString("volume") == "surface";
-                    shape.shapeType = surface
-                        ? ParticleSystemShapeType.SphereShell
-                        : ParticleSystemShapeType.Sphere;
-                    shape.radius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
+                    // ALWAYS Sphere, never SphereShell. SphereShell is one of
+                    // Unity's deprecated shape types and it IGNORES
+                    // shape.position - measured against a Box built the same
+                    // way in the same prefab: the box emitted at its offset of
+                    // (-3, 0.2, 9) and the shell emitted at the origin, so a
+                    // surface-filled sphere placed anywhere but 0,0,0 silently
+                    // moved. radiusThickness is the supported way to say the
+                    // same thing: 0 is the surface, 1 is the whole volume.
+                    shape.shapeType = ParticleSystemShapeType.Sphere;
+                    shape.radiusThickness = surface ? 0f : 1f;
+                    shape.radius = Mathf.Max(0.0001f, Scalar(block, "radius", name, type));
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
                     shape.rotation = VfxConvert.Euler(Binding(block, "rotation").Vector);
-                    _report.Native(name, type, shape.shapeType.ToString());
+                    _report.Native(name, type, surface ? "Sphere surface" : "Sphere volume");
                     return;
                 }
 
                 case "initialize.positionCone":
                 {
                     shape.enabled = true;
-                    shape.shapeType = ParticleSystemShapeType.ConeVolume;
-                    shape.angle = Binding(block, "angle").Constant;
-                    shape.radius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
+                    // CONE, NOT ConeVolume. The kernel (shape.cone in
+                    // kernels.js) puts the particle on the cone's MOUTH - a
+                    // disc of `radius` at the shape's origin - and spends the
+                    // angle on the VELOCITY. ConeVolume instead scatters the
+                    // position through the cone's body, over `shape.length`,
+                    // which nothing here ever set and Unity defaults to 5: the
+                    // bench's cone emitted over five metres of axis it was
+                    // never given and climbed to y=7.2 where the preview
+                    // reached 3.4. Cone is the base-emitting variant, and it is
+                    // exactly what the kernel does.
+                    shape.shapeType = ParticleSystemShapeType.Cone;
+                    // The mouth is a filled disc, not a ring.
+                    shape.radiusThickness = 1f;
+                    shape.angle = Scalar(block, "angle", name, type);
+                    shape.radius = Mathf.Max(0.0001f, Scalar(block, "radius", name, type));
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
                     shape.rotation = ShapeRotation(block);
                     // The cone block carries its own speed, unlike the other
                     // shapes - it is an emitter and a velocity in one.
                     var speed = Curve(block, "speed");
                     if (speed.constant > 0f || speed.constantMax > 0f) main.startSpeed = speed;
-                    _report.Native(name, type, "ConeVolume");
+                    _report.Native(name, type, "Cone (emits from the mouth)");
                     return;
                 }
 
@@ -605,7 +695,7 @@ namespace GenStudio3D.VfxImport
                 {
                     shape.enabled = true;
                     shape.shapeType = ParticleSystemShapeType.Circle;
-                    var circleRadius = Mathf.Max(0.0001f, Binding(block, "radius").Constant);
+                    var circleRadius = Mathf.Max(0.0001f, Scalar(block, "radius", name, type));
                     shape.radius = circleRadius;
                     // THE IR'S `thickness` IS A BAND WIDTH IN METRES, not a
                     // fraction. The kernel reads `inner = max(0, radius -
@@ -618,7 +708,7 @@ namespace GenStudio3D.VfxImport
                     // every thickness above 1 - which is most of them, since a
                     // filled disc is spelled thickness == radius.
                     shape.radiusThickness = Mathf.Clamp01(
-                        Binding(block, "thickness").Constant / circleRadius);
+                        Scalar(block, "thickness", name, type) / circleRadius);
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
                     shape.rotation = ShapeRotation(block);
                     _report.Native(name, type,
@@ -631,7 +721,7 @@ namespace GenStudio3D.VfxImport
                 case "initialize.positionPoint":
                 {
                     shape.enabled = true;
-                    var jitter = Binding(block, "jitter").Constant;
+                    var jitter = Scalar(block, "jitter", name, type);
                     shape.shapeType = ParticleSystemShapeType.Sphere;
                     shape.radius = Mathf.Max(0.0001f, jitter);
                     shape.position = VfxConvert.Vector(Binding(block, "offset").Vector);
@@ -689,13 +779,67 @@ namespace GenStudio3D.VfxImport
                     // has a ragged one.
                     var lo = bound.IsRandom ? bound.Low : bound.Constant;
                     var hi = bound.IsRandom ? bound.High : bound.Constant;
-                    velocity.x = Ranged(direction.x * lo, direction.x * hi);
-                    velocity.y = Ranged(direction.y * lo, direction.y * hi);
-                    velocity.z = Ranged(direction.z * lo, direction.z * hi);
+
+                    // THE SPREAD, which used to be thrown away entirely. A jet
+                    // authored with a 30 degree cone imported as a rigid line:
+                    // the bench's system 15 spans x 1.7..4.4 in the preview and
+                    // imported spanning 2.8..3.2, a column instead of a plume,
+                    // and every fountain-shaped effect lost its shape the same
+                    // way.
+                    //
+                    // Shuriken cannot express a cone here - velocityOverLifetime
+                    // is three INDEPENDENT axis curves, so the three random
+                    // draws cannot be correlated into one direction. What it can
+                    // do, when the axis is a cardinal one (which is what an
+                    // author writes: up, forward, down), is put the cone's
+                    // lateral reach on the two perpendicular axes as a
+                    // per-particle range. That is a square cross-section where
+                    // the kernel draws a disc, and the corners reach 1.41x -
+                    // but it is the plume, at the right width, instead of a
+                    // line. An oblique direction keeps the old behaviour rather
+                    // than guessing at a basis.
+                    var spread = Mathf.Clamp(Binding(block, "spread").Constant, 0f, 89f);
+                    var axis = Cardinal(direction);
+                    var spreadCarried = spread > 0.01f && axis >= 0;
+
+                    // MATCHED TO THE KERNEL'S MOMENTS, not to the cone's edge.
+                    // vel.direction draws cos(phi) uniformly over the solid
+                    // angle and keeps |v| fixed, so the axial component SHRINKS
+                    // as the cone widens - at a 80 degree half-angle the mean
+                    // particle only carries 0.59 of its speed forward. Leaving
+                    // the axis at full speed and adding the lateral beside it
+                    // builds a particle moving 1.7x faster than it was
+                    // authored to; the bench's wide sub-emitter sprayed twice
+                    // as far as the preview. So: the axis takes the mean
+                    // cos(phi), and each lateral axis takes the range whose
+                    // variance equals the kernel's per-axis variance.
+                    var c = Mathf.Cos(spread * Mathf.Deg2Rad);
+                    var axial = (1f + c) * 0.5f;
+                    var lateralScale = Mathf.Sqrt(Mathf.Max(0f, (2f - c - c * c) * 0.5f));
+                    var reach = Mathf.Max(Mathf.Abs(lo), Mathf.Abs(hi)) * lateralScale;
+
+                    var ranges = new ParticleSystem.MinMaxCurve[3];
+                    for (var a = 0; a < 3; a++)
+                    {
+                        var d = a == 0 ? direction.x : a == 1 ? direction.y : direction.z;
+                        if (spreadCarried && a != axis) { ranges[a] = Ranged(-reach, reach); continue; }
+                        var scale = spreadCarried ? axial : 1f;
+                        ranges[a] = Ranged(d * lo * scale, d * hi * scale);
+                    }
+                    velocity.x = ranges[0];
+                    velocity.y = ranges[1];
+                    velocity.z = ranges[2];
                     _report.Approximated(name, type,
                         "became a velocity over life - imposed every frame rather than set once at "
-                        + "birth, and this system's drag fades it through speedModifier; the "
-                        + "spread is not carried");
+                        + "birth, and this system's drag fades it through speedModifier"
+                        + (spread <= 0.01f
+                            ? ""
+                            : spreadCarried
+                                ? $"; the {spread:F0} degree spread is carried on the two axes across "
+                                  + "the direction, which makes it square rather than round"
+                                : $"; the {spread:F0} degree spread is NOT carried - the direction is "
+                                  + "not a cardinal axis, and Unity's three velocity curves are drawn "
+                                  + "independently, so they cannot be correlated into a cone"));
                     return;
                 }
 
@@ -721,19 +865,48 @@ namespace GenStudio3D.VfxImport
 
                 case "initialize.inheritVelocity":
                 {
+                    // TWO DIFFERENT THINGS WEAR THIS NAME. Unity's
+                    // InheritVelocity module inherits the velocity of the
+                    // emitter's TRANSFORM - a system carried on a moving object.
+                    // The block means that only for a system that spawns on its
+                    // own; on a sub-emitter it means the parent PARTICLE's
+                    // velocity, which in Unity is a property of the sub-emitter
+                    // LINK and is wired in WireEvents.
+                    //
+                    // Leaving the module on for a sub-emitter was not merely
+                    // useless (a prefab standing still has no transform
+                    // velocity) - measured on Fire Storm's debris, the module
+                    // plus the collision plane teleported the occasional
+                    // particle two kilometres away, one stray mesh hanging in
+                    // the distance for the rest of its life.
+                    if (_systemIsSubEmitter)
+                    {
+                        // Reported by WireEvents, which is where it lands.
+                        return;
+                    }
                     var inherit = ps.inheritVelocity;
                     inherit.enabled = true;
                     inherit.mode = ParticleSystemInheritVelocityMode.Initial;
-                    inherit.curve = new ParticleSystem.MinMaxCurve(Binding(block, "scale").Constant);
-                    _report.Native(name, type);
+                    inherit.curve = new ParticleSystem.MinMaxCurve(Scalar(block, "scale", name, type));
+                    _report.Native(name, type, "from the emitter's transform");
                     return;
                 }
 
                 case "initialize.setFlipbookFrame":
-                    // Handled by the texture sheet module, which the output
-                    // block configures. A random start frame is its own toggle.
-                    _report.Native(name, type, "start frame randomised by the sheet module");
+                {
+                    // The AUTHORED value, not a blanket "randomised": a constant
+                    // 0 and a random 0..35 are different effects and both used
+                    // to arrive as 0.
+                    var frame = Binding(block, "flipbookFrame");
+                    _flipStartSet = true;
+                    _flipStartRandom = frame.IsRandom;
+                    _flipStartLow = frame.IsRandom ? Mathf.Min(frame.Low, frame.High) : frame.Constant;
+                    _flipStartHigh = frame.IsRandom ? Mathf.Max(frame.Low, frame.High) : frame.Constant;
+                    _report.Native(name, type, frame.IsRandom
+                        ? $"start frame random {_flipStartLow:F0}-{_flipStartHigh:F0}"
+                        : $"start frame {_flipStartLow:F0}");
                     return;
+                }
 
                 case "initialize.positionCurve":
                 {
@@ -751,7 +924,7 @@ namespace GenStudio3D.VfxImport
                     var path = block["points"];
                     var from = VfxConvert.Vector(path[0]);
                     var to = VfxConvert.Vector(path[Math.Max(0, path.Count - 1)]);
-                    var girth = Mathf.Max(0.001f, Binding(block, "thickness").Constant);
+                    var girth = Mathf.Max(0.001f, Scalar(block, "thickness", name, type));
                     shape.position = (from + to) * 0.5f;
                     shape.scale = new Vector3((to - from).magnitude, girth, girth);
                     var chord = (to - from).normalized;
@@ -803,7 +976,7 @@ namespace GenStudio3D.VfxImport
                         // second. Spread quantises the edge to the same step so
                         // the particles land ON the slots rather than between
                         // them.
-                        var spacing = Mathf.Max(0.0001f, Binding(block, "spacing").Constant);
+                        var spacing = Mathf.Max(0.0001f, Scalar(block, "spacing", name, type));
                         shape.radiusMode = ParticleSystemShapeMultiModeValue.Loop;
                         // Spread QUANTISES the edge into slots, which sounds
                         // like the right way to land particles on the app's
@@ -853,7 +1026,7 @@ namespace GenStudio3D.VfxImport
                         _report.Native(name, type, "edge, scattered along it");
                     }
 
-                    var thickness = Binding(block, "thickness").Constant;
+                    var thickness = Scalar(block, "thickness", name, type);
                     if (thickness > 0.001f)
                     {
                         _report.Approximated(name, type,
@@ -920,6 +1093,34 @@ namespace GenStudio3D.VfxImport
                 case "update.gravity":
                 {
                     var gravity = VfxConvert.Vector(Binding(block, "gravity").Vector);
+                    // DRAG AND GRAVITY TOGETHER ARE NOT TWO INDEPENDENT
+                    // SETTINGS. In the preview they reach a balance: the
+                    // acceleration builds speed, the drag takes it away, and
+                    // the particle settles at g/k and drifts at that rate for
+                    // the rest of its life. Shuriken cannot reproduce that,
+                    // because the drag here is speedModifier, which scales the
+                    // particle's whole displacement - so the drift does not
+                    // settle, it decays to a standstill. The bench's vortex
+                    // rises 1.8m in the preview and stalled after 0.2m.
+                    //
+                    // So the gravity is rescaled to land in the right place:
+                    // the multiplier that makes Unity's drift over the mean
+                    // lifetime equal the preview's. The two paths still differ
+                    // in the middle - the preview's is a straight drift, this
+                    // one slows down - but the particle ends where it belongs
+                    // instead of hanging in the air. Both integrals are per
+                    // unit acceleration, so their ratio is a pure number.
+                    var scale = 1f;
+                    if (_systemDrag > 1e-4f)
+                    {
+                        var k = _systemDrag;
+                        var t = _systemLifetime;
+                        var decay = Mathf.Exp(-k * t);
+                        var preview = (t - (1f - decay) / k) / k;
+                        var shuriken = 1f / (k * k) - decay * (t / k + 1f / (k * k));
+                        if (shuriken > 1e-5f) scale = Mathf.Clamp(preview / shuriken, 1f, 20f);
+                    }
+                    gravity *= scale;
                     // Unity's gravityModifier is a MULTIPLE of Physics.gravity,
                     // which points down. A purely vertical IR gravity maps to it
                     // exactly - including a NEGATIVE multiplier for buoyancy,
@@ -928,7 +1129,12 @@ namespace GenStudio3D.VfxImport
                     {
                         main.gravityModifier = new ParticleSystem.MinMaxCurve(
                             gravity.y / Physics.gravity.y);
-                        _report.Native(name, type, "gravityModifier " + (gravity.y / Physics.gravity.y).ToString("F2"));
+                        _report.Native(name, type, "gravityModifier "
+                            + (gravity.y / Physics.gravity.y).ToString("F2")
+                            + (scale > 1.001f
+                                ? $" - scaled {scale:F1}x so the drift against this system's drag "
+                                  + "covers the same distance it does in the preview"
+                                : ""));
                     }
                     else
                     {
@@ -972,7 +1178,7 @@ namespace GenStudio3D.VfxImport
                     var vol = ps.velocityOverLifetime;
                     vol.enabled = true;
                     vol.speedModifier = new ParticleSystem.MinMaxCurve(
-                        1f, DragDecayCurve(Binding(block, "drag").Constant, _systemLifetime));
+                        1f, DragDecayCurve(Scalar(block, "drag", name, type), _systemLifetime));
                     _report.Native(name, type, "velocityOverLifetime.speedModifier (linear drag)");
                     return;
                 }
@@ -981,8 +1187,8 @@ namespace GenStudio3D.VfxImport
                 {
                     var noise = ps.noise;
                     noise.enabled = true;
-                    noise.strength = new ParticleSystem.MinMaxCurve(Binding(block, "strength").Constant);
-                    noise.frequency = Mathf.Max(0.0001f, Binding(block, "frequency").Constant);
+                    noise.strength = new ParticleSystem.MinMaxCurve(Scalar(block, "strength", name, type));
+                    noise.frequency = Mathf.Max(0.0001f, Scalar(block, "frequency", name, type));
                     noise.quality = ParticleSystemNoiseQuality.Medium;
                     noise.damping = false;
                     _report.Approximated(name, type,
@@ -1027,7 +1233,7 @@ namespace GenStudio3D.VfxImport
                 {
                     var limit = ps.limitVelocityOverLifetime;
                     limit.enabled = true;
-                    limit.limit = new ParticleSystem.MinMaxCurve(Binding(block, "speed").Constant);
+                    limit.limit = new ParticleSystem.MinMaxCurve(Scalar(block, "speed", name, type));
                     // Fully dampened, which is what a hard speed cap means: the
                     // app's kernel clamps the magnitude outright rather than
                     // easing towards the cap. Without this the limit is stored
@@ -1061,9 +1267,9 @@ namespace GenStudio3D.VfxImport
                     var velocity = ps.velocityOverLifetime;
                     velocity.enabled = true;
                     var axis = VfxConvert.Vector(Binding(block, "axis").Vector).normalized;
-                    var strength = Binding(block, "strength").Constant;
+                    var strength = Scalar(block, "strength", name, type);
                     var centre = VfxConvert.Vector(Binding(block, "position").Vector);
-                    var inward = Binding(block, "inward").Constant;
+                    var inward = Scalar(block, "inward", name, type);
 
                     velocity.orbitalOffsetX = new ParticleSystem.MinMaxCurve(centre.x);
                     velocity.orbitalOffsetY = new ParticleSystem.MinMaxCurve(centre.y);
@@ -1096,7 +1302,10 @@ namespace GenStudio3D.VfxImport
                             $"became orbital velocity at {rate:F2} rad/s (the preview's tangential "
                             + "force divided by this system's drag, which is the rate it settles "
                             + "at) plus an inward radial velocity. Unity's orbit is a rigid "
-                            + "rotation, so particles hold their radius instead of spiralling");
+                            + "rotation, so particles hold their radius instead of spiralling - and "
+                            + "its radial pull is toward the centre POINT rather than the axis, so "
+                            + "a ring of particles held above that point also sinks toward it "
+                            + "(measured on the aura's runes: 0.95m down to 0.61m over a life)");
                     }
                     else
                     {
@@ -1120,11 +1329,11 @@ namespace GenStudio3D.VfxImport
                     var collision = ps.collision;
                     collision.enabled = true;
                     collision.type = ParticleSystemCollisionType.Planes;
-                    collision.bounce = new ParticleSystem.MinMaxCurve(Binding(block, "bounce").Constant);
-                    collision.dampen = new ParticleSystem.MinMaxCurve(Binding(block, "friction").Constant);
+                    collision.bounce = new ParticleSystem.MinMaxCurve(Scalar(block, "bounce", name, type));
+                    collision.dampen = new ParticleSystem.MinMaxCurve(Scalar(block, "friction", name, type));
                     // The plane itself is a Transform reference Shuriken cannot
                     // invent, so the importer makes one at the IR's height.
-                    var height = Binding(block, "height").Constant;
+                    var height = Scalar(block, "height", name, type);
                     var plane = new GameObject("CollisionPlane");
                     plane.transform.SetParent(ps.transform, false);
                     plane.transform.localPosition = new Vector3(0f, height, 0f);
@@ -1192,9 +1401,13 @@ namespace GenStudio3D.VfxImport
                 }
 
                 case "update.flipbook":
-                    // Configured by the output's tile counts; this block only
-                    // says how to play it.
-                    _report.Native(name, type, "played by the texture sheet module");
+                    // Recorded for the output, which owns Unity's sheet module.
+                    _flipFrames = Mathf.RoundToInt(Scalar(block, "frames", name, type));
+                    _flipRate = Scalar(block, "rate", name, type);
+                    _flipTiming = block["modes"]["timing"].AsString("life");
+                    _report.Native(name, type, _flipTiming == "rate"
+                        ? $"{_flipFrames} frames at {_flipRate:F0} fps, looping"
+                        : $"{_flipFrames} frames once over each particle's life");
                     return;
 
                 default:
@@ -1230,9 +1443,16 @@ namespace GenStudio3D.VfxImport
                     _report.Approximated(name, "output.mode", "point became a small billboard");
                     break;
                 case "trail":
-                    renderer.renderMode = ParticleSystemRenderMode.Stretch;
+                    // BILLBOARD, to match the app. materials.js falls a trail
+                    // back to a plain billboard and says so with
+                    // I_TRAIL_UNSUPPORTED; importing it as Stretch made Unity
+                    // disagree with the preview while the report claimed the
+                    // two matched. Neither is a trail - but they are now the
+                    // same not-a-trail.
+                    renderer.renderMode = ParticleSystemRenderMode.Billboard;
                     _report.Approximated(name, "output.mode",
-                        "trail became a stretched billboard, which is what the app's preview does too");
+                        "no trail renderer on either side yet, so it became a plain billboard - "
+                        + "the same fallback the app's preview makes, so the two agree");
                     break;
                 default:
                     renderer.renderMode = ParticleSystemRenderMode.Billboard;
@@ -1241,9 +1461,14 @@ namespace GenStudio3D.VfxImport
             }
 
             var sort = output["sort"].AsString("none");
+            // "age" used to fall into the else and become None, silently - the
+            // author asked for sorting and got none. Unity's OldestInFront is
+            // the same ordering the app means by sorting on age.
             renderer.sortMode = sort == "depth"
                 ? ParticleSystemSortMode.Distance
-                : ParticleSystemSortMode.None;
+                : sort == "age"
+                    ? ParticleSystemSortMode.OldestInFront
+                    : ParticleSystemSortMode.None;
 
             // THE TEXTURE IS RESOLVED BEFORE THE MATERIAL, and that ordering is
             // the fix for two separate bugs.
@@ -1355,8 +1580,44 @@ namespace GenStudio3D.VfxImport
                 sheet.numTilesX = Mathf.Max(1, (int)tiles[0]);
                 sheet.numTilesY = Mathf.Max(1, (int)tiles[1]);
                 sheet.animation = ParticleSystemAnimationType.WholeSheet;
-                sheet.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
-                _report.Native(name, "output.flipbook", $"{sheet.numTilesX}x{sheet.numTilesY}");
+                var cells = sheet.numTilesX * sheet.numTilesY;
+                var detail = $"{sheet.numTilesX}x{sheet.numTilesY}";
+
+                if (_flipStartSet)
+                {
+                    // Frame index -> Unity's normalised phase.
+                    var lo = Mathf.Clamp01(_flipStartLow / cells);
+                    var hi = Mathf.Clamp01(_flipStartHigh / cells);
+                    sheet.startFrame = _flipStartRandom
+                        ? new ParticleSystem.MinMaxCurve(lo, hi)
+                        : new ParticleSystem.MinMaxCurve(lo);
+                }
+
+                if (_flipTiming == "rate" && _flipRate > 0f)
+                {
+                    // "Rate" plays at a fixed speed and loops, which is Unity's
+                    // FPS time mode. Hardcoding Lifetime made a looping torch
+                    // sheet play through exactly once instead, at Unity's
+                    // default 30fps rather than the authored rate.
+                    sheet.timeMode = ParticleSystemAnimationTimeMode.FPS;
+                    sheet.fps = _flipRate;
+                    detail += $", {_flipRate:F0} fps looping";
+                }
+                else
+                {
+                    sheet.timeMode = ParticleSystemAnimationTimeMode.Lifetime;
+                    detail += ", once over life";
+                    // A sheet whose frame count is fewer than its cells must
+                    // stop early, or it plays the empty remainder of the grid.
+                    if (_flipFrames > 0 && _flipFrames < cells)
+                    {
+                        sheet.frameOverTime = new ParticleSystem.MinMaxCurve(
+                            _flipFrames / (float)cells,
+                            AnimationCurve.Linear(0f, 0f, 1f, 1f));
+                        detail += $", {_flipFrames} of {cells} cells";
+                    }
+                }
+                _report.Native(name, "output.flipbook", detail);
             }
         }
 
@@ -1418,6 +1679,26 @@ namespace GenStudio3D.VfxImport
                 var subs = source.subEmitters;
                 subs.enabled = true;
                 subs.AddSubEmitter(child, type, ParticleSystemSubEmitterProperties.InheritNothing);
+
+                // WHERE initialize.inheritVelocity LANDS, which is nowhere.
+                // ParticleSystemSubEmitterProperties carries colour, size,
+                // rotation, lifetime and duration - there is no velocity in the
+                // list - and the InheritVelocity MODULE is a different feature:
+                // it reads the emitter TRANSFORM's velocity, which for a prefab
+                // standing still is zero. Enabling it here was worse than
+                // useless: the transform velocity is differenced between frames
+                // and, stepped from the editor, that difference is nonsense for
+                // a frame or two after a restart - Fire Storm's debris had a
+                // particle born two kilometres from its impact, sliding on the
+                // ground for the rest of its life.
+                foreach (var block in system["init"].Items)
+                {
+                    if (block["srcBlockType"].AsString() != "initialize.inheritVelocity") continue;
+                    _report.Dropped(child.name, "initialize.inheritVelocity",
+                        $"a sub-emitter cannot carry the parent particle's velocity in Shuriken, so "
+                        + $"the authored {Binding(block, "scale").Constant:P0} is lost and the child "
+                        + "starts from rest. Give it a velocity of its own if the drift matters");
+                }
                 var probability = Mathf.Clamp01(listen["probability"].AsFloat(1f));
                 if (probability < 1f)
                 {
@@ -1496,19 +1777,96 @@ namespace GenStudio3D.VfxImport
                     case "curve":
                         bound.Curve = _ir["tables"][binding["index"].AsInt(0)]["authored"];
                         bound.Scale = binding["scale"].AsFloat(1f);
+                        bound.Constant = Average(VfxConvert.Curve(bound.Curve)) * bound.Scale;
+                        Broadcast(ref bound, width);
                         return bound;
                     case "gradient":
                         bound.Gradient = _ir["tables"][binding["index"].AsInt(0)]["authored"];
                         return bound;
                     case "register":
+                    {
                         bound.IsRegister = true;
                         bound.Register = binding["index"].AsInt(0);
+                        // A FALLBACK VALUE FOR THE SCALAR FIELDS. Callers that
+                        // can take a curve go through Curve() and get the baked
+                        // chain; the ones that cannot - a shape radius, a noise
+                        // frequency, a speed cap - read Constant, and Constant
+                        // used to be 0 for every wired property. That is not a
+                        // small loss, it is a different effect: a speed LIMIT
+                        // of 0 with full dampening froze every particle in the
+                        // bench's "All Operators" system on the spot, while the
+                        // preview had them flying. The chain's AVERAGE over the
+                        // effect is the honest stand-in - wrong in the same way
+                        // a constant is always wrong about an animation, rather
+                        // than catastrophically wrong about the magnitude.
+                        if (BakeOperators(block, bound.Register, out var chain, out _, out _))
+                        {
+                            bound.Constant = Average(chain);
+                            Broadcast(ref bound, width);
+                        }
                         return bound;
+                    }
                     default:
                         return bound;
                 }
             }
             return bound;
+        }
+
+        /// <summary>
+        /// A binding's representative value, for a Shuriken field that has
+        /// nowhere to put a curve. Reports what it flattened, once per
+        /// block+property, because "your speed cap is now its average" is the
+        /// kind of thing an author has to be told rather than discover.
+        /// </summary>
+        private float Scalar(VfxJson block, string prop, string name, string type)
+        {
+            var bound = Binding(block, prop);
+            if (bound.IsRegister || !bound.Curve.IsNull())
+            {
+                var key = name + "/" + type + "/" + prop;
+                if (_flattened.Add(key))
+                {
+                    _report.Approximated(name, type,
+                        $"\"{prop}\" is {(bound.IsRegister ? "driven by operators" : "a curve")}, and "
+                        + "Unity's field for it takes a single number - flattened to its average "
+                        + $"over the effect, {bound.Constant:F3}");
+                }
+            }
+            return bound.Constant;
+        }
+
+        /// <summary>The mean of a curve over 0..1. See Scalar.</summary>
+        private static float Average(AnimationCurve curve)
+        {
+            if (curve == null || curve.length == 0) return 0f;
+            const int samples = 17;
+            var total = 0f;
+            for (var i = 0; i < samples; i++) total += curve.Evaluate(i / (float)(samples - 1));
+            return total / samples;
+        }
+
+        private static void Broadcast(ref Bound bound, int width)
+        {
+            // The compiler broadcasts a scalar across a vector property, so a
+            // wired offset is (v, v, v) and not (v, 0, 0).
+            if (width <= 1) return;
+            for (var i = 0; i < bound.Vector.Length; i++) bound.Vector[i] = bound.Constant;
+        }
+
+        /// <summary>
+        /// The index of the axis a unit vector points along, or -1 when it
+        /// points somewhere between two of them. See velocityDirection.
+        /// </summary>
+        private static int Cardinal(Vector3 direction)
+        {
+            for (var a = 0; a < 3; a++)
+            {
+                if (Mathf.Abs(Mathf.Abs(direction[a]) - 1f) > 0.001f) continue;
+                var other = Mathf.Abs(direction[(a + 1) % 3]) + Mathf.Abs(direction[(a + 2) % 3]);
+                if (other < 0.001f) return a;
+            }
+            return -1;
         }
 
         private float ConstantAt(int index)
@@ -1535,14 +1893,16 @@ namespace GenStudio3D.VfxImport
             var bound = Binding(block, prop);
             if (bound.IsRegister)
             {
-                if (BakeOperators(block, bound.Register, out var baked, out var why))
+                if (BakeOperators(block, bound.Register, out var baked, out var why, out var flattened))
                 {
                     if (reportAs != null)
                     {
                         _report.Approximated(reportAs, block["srcBlockType"].AsString(),
                             "driven by operators, baked into a curve over the system's duration - "
                             + "exact for anything reading Effect Time, which is what Unity evaluates "
-                            + "a start property's curve against");
+                            + "a start property's curve against"
+                            + (flattened ? "; an op.random in the chain is flattened to its average"
+                                         : ""));
                     }
                     return new ParticleSystem.MinMaxCurve(1f, baked);
                 }
@@ -1569,6 +1929,89 @@ namespace GenStudio3D.VfxImport
         }
 
         /// <summary>
+        /// A spawn rate that varies: a random range, a curve over the effect, or
+        /// an operator chain. Sampled into one rateOverTime curve, multiplied by
+        /// the clip gate where the schedule needs one.
+        /// </summary>
+        private void ApplyVariableRate(ParticleSystem ps, VfxJson block, Bound bound,
+            List<Clip> clips, float duration, string name)
+        {
+            var emission = ps.emission;
+
+            // A plain random range is two constants, which Unity takes directly.
+            if (bound.IsRandom && !bound.IsRegister && bound.Curve.IsNull())
+            {
+                emission.rateOverTime = new ParticleSystem.MinMaxCurve(
+                    Mathf.Min(bound.Low, bound.High), Mathf.Max(bound.Low, bound.High));
+                _report.Native(name, "spawn.rate", $"{bound.Low:F0}-{bound.High:F0}/s");
+                return;
+            }
+
+            AnimationCurve source = null;
+            var ok = true;
+            string why = null;
+            var flattened = false;
+            if (bound.IsRegister) ok = BakeOperators(block, bound.Register, out source, out why, out flattened);
+            else source = VfxConvert.Curve(bound.Curve);
+
+            if (!ok || source == null)
+            {
+                emission.rateOverTime = new ParticleSystem.MinMaxCurve(Mathf.Max(0f, bound.Constant));
+                _report.Dropped(name, "spawn.rate",
+                    "it is driven by operators that cannot be baked into a curve - " + why
+                    + "; the rate falls back to the literal the graph last held");
+                return;
+            }
+
+            const int samples = 33;
+            var gate = TrivialSchedule(clips, duration) ? null : BuildRateGate(clips, duration);
+            var values = new float[samples];
+            var peak = 0f;
+            for (var i = 0; i < samples; i++)
+            {
+                var t = i / (float)(samples - 1);
+                var v = Mathf.Max(0f, source.Evaluate(t) * (bound.IsRegister ? 1f : bound.Scale));
+                if (gate != null) v *= Mathf.Clamp01(gate.Evaluate(t));
+                values[i] = v;
+                peak = Mathf.Max(peak, v);
+            }
+
+            if (peak <= 0f)
+            {
+                _report.Dropped(name, "spawn.rate", "the rate is zero across the whole duration");
+                return;
+            }
+
+            var keys = new Keyframe[samples];
+            for (var i = 0; i < samples; i++)
+            {
+                keys[i] = new Keyframe(i / (float)(samples - 1), values[i] / peak);
+            }
+            emission.rateOverTime = new ParticleSystem.MinMaxCurve(peak, new AnimationCurve(keys));
+            var detail = $"varies, peaking at {peak:F0}/s"
+                + (bound.IsRegister ? ", baked from operators" : ", from a curve")
+                + (gate != null ? $", gated by {clips.Count} window(s)" : "");
+            if (flattened)
+            {
+                _report.Approximated(name, "spawn.rate",
+                    detail + "; an op.random in the chain is flattened to its average, "
+                    + "so the per-frame jitter is not carried");
+            }
+            else
+            {
+                _report.Native(name, "spawn.rate", detail);
+            }
+        }
+
+        /// <summary>
+        /// The schedule that needs no gate: one window, opening at zero, running
+        /// to the end. Shared so the constant and varying rate paths agree.
+        /// </summary>
+        private static bool TrivialSchedule(List<Clip> clips, float duration) =>
+            clips.Count == 1 && clips[0].At <= 1e-4f
+            && (clips[0].OpenEnded || clips[0].Seconds >= duration - 1e-4f);
+
+        /// <summary>
         /// Bake an operator chain into a curve over the system's duration.
         ///
         /// Shuriken has no operator graph, so this is the only way to carry one
@@ -1588,10 +2031,12 @@ namespace GenStudio3D.VfxImport
         /// op.getAttribute - has no such equivalent, and is reported rather than
         /// quietly flattened to one number.
         /// </summary>
-        private bool BakeOperators(VfxJson block, int register, out AnimationCurve curve, out string why)
+        private bool BakeOperators(VfxJson block, int register, out AnimationCurve curve, out string why,
+            out bool randomFlattened)
         {
             curve = null;
             why = null;
+            randomFlattened = false;
 
             var ops = new List<VfxJson>(block["pre"].Items);
             if (ops.Count == 0)
@@ -1599,13 +2044,22 @@ namespace GenStudio3D.VfxImport
                 why = "the IR carries no operator chain for it";
                 return false;
             }
+            // `random` is flattened to the middle of its range rather than
+            // refused. It is per-FRAME noise with no curve equivalent, but
+            // returning false here left the caller with nothing usable - a
+            // spawn rate wired through one imported as 0 and the system emitted
+            // nothing at all, which is far worse than a steady average.
+            // `attr` is different: it is per-PARTICLE, so there is no single
+            // value to stand in for it.
+            randomFlattened = false;
             foreach (var op in ops)
             {
                 var kind = op["op"].AsString();
-                if (kind == "attr" || kind == "random")
+                if (kind == "random") randomFlattened = true;
+                if (kind == "attr")
                 {
                     why = $"it runs through \"{op["srcType"].AsString()}\", which varies per particle "
-                        + "or per frame rather than over the effect's time";
+                        + "rather than over the effect's time";
                     return false;
                 }
             }
@@ -1651,6 +2105,9 @@ namespace GenStudio3D.VfxImport
                     case "lerp": value = In(0) + (In(1) - In(0)) * In(2); break;
                     case "clamp": value = Mathf.Clamp(In(0), In(1), In(2)); break;
                     case "sin": value = Mathf.Sin(In(0) * 2f * Mathf.PI); break;
+                    // The midpoint - see BakeOperators. Per-frame noise has no
+                    // curve to bake into, but its average does.
+                    case "random": value = (In(0) + In(1)) * 0.5f; break;
                     case "remap":
                     {
                         var span = In(2) - In(1);
