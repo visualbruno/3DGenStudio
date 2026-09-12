@@ -263,6 +263,9 @@ function spawnFromEvents(emitter, env) {
         index,
       );
       if (pool.planes.spawnIndex) pool.planes.spawnIndex[i] = index;
+      // As the clip path below: a recycled slot still carries the dead
+      // particle's age, and nothing in the Initialize chain writes age.
+      if (pool.planes.age) pool.planes.age[i] = 0;
       const o = i * 3;
       pool.planes.position[o] = _payload[0];
       pool.planes.position[o + 1] = _payload[1];
@@ -330,7 +333,17 @@ export function spawnStep(emitter, step, dt, env) {
   const lifetime = pool.planes.lifetime;
   const size = pool.planes.size;
   const color = pool.planes.color;
+  const age = pool.planes.age;
   for (let i = i0; i < i1; i += 1) {
+    // Age MUST be cleared, not merely defaulted. claimSlots hands back slots
+    // that swapRemove has freed, still holding the dead particle's age - so a
+    // newborn inherits an age near its predecessor's lifetime and dies within a
+    // frame or two. That empties any steadily-emitting system at t = 2x
+    // lifetime and it never recovers, which reads as "the emitter stopped"
+    // rather than as a stale attribute. Looping presets hid it: resetPool
+    // zeroes everything at the loop point, so only an effect that outlives
+    // 2x lifetime within one play ever shows it.
+    if (age) age[i] = 0;
     lifetime[i] = 1;
     if (size) size[i] = 1;
     if (color) {

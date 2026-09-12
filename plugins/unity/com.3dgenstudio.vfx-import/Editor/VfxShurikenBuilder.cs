@@ -1254,27 +1254,67 @@ namespace GenStudio3D.VfxImport
         // ------------------------------------------------------------------
         private void WireEvents(Dictionary<string, ParticleSystem> byId)
         {
-            foreach (var channel in _ir["eventChannels"].Items)
+            // THE IR DOES NOT HANG LISTENERS OFF THE CHANNEL. `ir.eventChannels`
+            // is a flat list of {sourceSystemId, trigger} - one entry per
+            // (source, trigger) pair - and every listening SYSTEM carries
+            // `listen: {channel, trigger, probability}` whose `channel` indexes
+            // that list. Reading channel["listeners"] found a key that has
+            // never existed, so the loop body never ran and NOT ONE sub-emitter
+            // was wired. Every impact system then kept only the timeline burst
+            // the spawn pass gave it, which fires once at t=0 at the effect
+            // origin - "one impact at the centre and no others", with the
+            // import report showing no sub-emitter lines to say so.
+            var channels = new List<VfxJson>(_ir["eventChannels"].Items);
+
+            foreach (var system in _ir["systems"].Items)
             {
-                var sourceId = channel["sourceSystemId"].AsString();
-                var trigger = channel["trigger"].AsString();
-                if (!byId.TryGetValue(sourceId, out var source)) continue;
+                if (!system.Has("listen")) continue;
+                var listen = system["listen"];
 
-                foreach (var listener in channel["listeners"].Items)
+                var index = listen["channel"].AsInt(-1);
+                if (index < 0 || index >= channels.Count) continue;
+                var channel = channels[index];
+
+                if (!byId.TryGetValue(channel["sourceSystemId"].AsString(), out var source)) continue;
+                if (!byId.TryGetValue(system["id"].AsString(), out var child)) continue;
+
+                // The trigger keeps the DOCUMENT'S spelling - onPlay, onDeath,
+                // onCollide. Comparing against "death" matched nothing, so even
+                // a correctly found listener would have been wired as a Birth
+                // sub-emitter and fired at the wrong moment.
+                var trigger = listen["trigger"].AsString(channel["trigger"].AsString());
+                var type = trigger == "onDeath"
+                    ? ParticleSystemSubEmitterType.Death
+                    : trigger == "onCollide"
+                        ? ParticleSystemSubEmitterType.Collision
+                        : ParticleSystemSubEmitterType.Birth;
+
+                // Unity drives a sub-emitter from its parent and requires it to
+                // be a child of the system that spawns it; built flat under the
+                // root, they are siblings. The local transform is identity on
+                // both, so re-parenting moves nothing.
+                child.transform.SetParent(source.transform, false);
+
+                // DO NOT touch playOnAwake here. Unity already clears it on a
+                // system it accepts as a sub-emitter, and once the child is
+                // parented the property is hierarchy-wide: writing it on the
+                // child lands on the ROOT of the particle hierarchy, which is
+                // the source system - so an explicit `false` here switched
+                // Meteors itself off and the effect played nothing at all.
+                // The child's emission BURSTS stay untouched either way: that
+                // burst is what Unity emits when the trigger fires, so clearing
+                // it would spawn nothing per impact.
+                var subs = source.subEmitters;
+                subs.enabled = true;
+                subs.AddSubEmitter(child, type, ParticleSystemSubEmitterProperties.InheritNothing);
+                var probability = Mathf.Clamp01(listen["probability"].AsFloat(1f));
+                if (probability < 1f)
                 {
-                    var childId = listener["systemId"].AsString(listener.AsString());
-                    if (!byId.TryGetValue(childId, out var child)) continue;
-
-                    var subs = source.subEmitters;
-                    subs.enabled = true;
-                    var type = trigger == "death"
-                        ? ParticleSystemSubEmitterType.Death
-                        : trigger == "collide"
-                            ? ParticleSystemSubEmitterType.Collision
-                            : ParticleSystemSubEmitterType.Birth;
-                    subs.AddSubEmitter(child, type, ParticleSystemSubEmitterProperties.InheritNothing);
-                    _report.Native(source.name, "sub-emitter", $"{trigger} -> {child.name}");
+                    subs.SetSubEmitterEmitProbability(subs.subEmittersCount - 1, probability);
                 }
+                _report.Native(source.name, "sub-emitter",
+                    $"{trigger} -> {child.name}"
+                    + (probability < 1f ? $" at {probability:P0} of events" : ""));
             }
         }
 
