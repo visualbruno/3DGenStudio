@@ -46,7 +46,7 @@ const TYPE_CONFIG = {
 
 const ASSETS_PER_PAGE = 20;
 // Meshes show 3 per row, so 21 (7 full rows) paginates more cleanly than 20.
-const MESHES_PER_PAGE = 21;
+const MESHES_PER_PAGE = 20;
 
 // `multiple` turns the grid into a multi-select and makes onSelect receive an
 // ARRAY. It is opt-in for a reason: six call sites rely on onSelect(oneAsset),

@@ -25,7 +25,7 @@ const THUMBNAIL_SECTIONS = new Set(['meshes', 'trees', 'vfx'])
 const ASSETS_PER_PAGE = 20
 // The mesh grid is 3 columns wide, so 21 (7 full rows) paginates more cleanly
 // than 20 (which leaves a ragged last row).
-const MESHES_PER_PAGE = 21
+const MESHES_PER_PAGE = 20
 const COMFY_VALUE_TYPES = [
   { value: 'string', label: 'String' },
   { value: 'number', label: 'Number' },
