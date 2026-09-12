@@ -161,8 +161,43 @@ export function reset(runtime) {
   // Prewarm: simulate before frame zero, so a looping effect opens mid-flow
   // rather than visibly filling up. Runs after the reset so it is part of the
   // baseline state a seek to t=0 restores.
-  const prewarmSteps = Math.round(runtime.ir.effect.prewarm / runtime.ir.effect.fixedDt);
-  for (let i = 0; i < prewarmSteps; i += 1) step(runtime);
+  //
+  // PREWARM IS PRE-ROLL, NOT A TIME OFFSET, and the clock says so below. It
+  // used to leave `time` at the prewarm value, which is the same bug three
+  // times over: the timeline opened at 4.5s on a 6s effect and the first 4.5s
+  // were unreachable; every seek below the prewarm re-entered this function and
+  // landed back at 4.5s, so dragging the playhead ran a full prewarm per mouse
+  // move and locked the tab; and a seek to 0 could never show frame zero.
+  const { fixedDt, duration, loop } = runtime.ir.effect;
+  let prewarmSteps = Math.round(runtime.ir.effect.prewarm / fixedDt);
+  // Capped BELOW the duration for a looping effect. Past it the effect restarts
+  // - step() calls reset() - which both wipes the pool this is trying to fill
+  // and re-enters here, recursing until the stack gives out. A prewarm longer
+  // than one loop cannot mean anything anyway: the state at duration + n is the
+  // state at n.
+  if (loop && duration > 0) prewarmSteps = Math.min(prewarmSteps, Math.ceil(duration / fixedDt) - 1);
+  if (prewarmSteps <= 0) return;
+
+  for (let i = 0; i < prewarmSteps && !runtime.finished; i += 1) step(runtime);
+
+  // Back to frame zero, carrying the particles forward but not the clock.
+  runtime.time = 0;
+  runtime.stepIndex = 0;
+  runtime.accumulator = 0;
+  runtime.finished = false;
+  runtime.env.time = 0;
+  runtime.env.stepIndex = 0;
+  // The snapshots taken during the prewarm are keyed on step indices that no
+  // longer exist, so a later seek would restore a state from the wrong time.
+  runtime.snapshots.clear();
+  // ...and one at the new frame zero, so seeking back to the start restores it
+  // instead of re-running the whole prewarm. Without this a drag towards 0 pays
+  // for the prewarm on every mouse move, which is what made the tab hang.
+  //
+  // Taken regardless of snapshotStride, unlike the ones maybeSnapshot takes:
+  // the editor never calls enableScrubbing, so stride is 0 there and this would
+  // be exactly the case that needs it most. One pool copy per reset.
+  runtime.snapshots.set(0, captureSnapshot(runtime));
 }
 
 // Solo takes precedence over mute, because the reason to solo is to look at one
@@ -383,7 +418,12 @@ export function enableScrubbing(runtime, spanSeconds) {
   const span = spanSeconds || duration || 2;
   const totalSteps = Math.max(1, Math.ceil(span / fixedDt));
   runtime.snapshotStride = Math.max(1, Math.ceil(totalSteps / runtime.maxSnapshots));
+  // The step-zero baseline survives, because it is not a cache entry - it is the
+  // prewarmed state reset() built, and dropping it would send the next seek to
+  // the start back through the whole prewarm.
+  const baseline = runtime.snapshots.get(0);
   runtime.snapshots.clear();
+  if (baseline) runtime.snapshots.set(0, baseline);
 }
 
 /**
@@ -405,7 +445,12 @@ export function seekTo(runtime, seconds) {
     if (at <= targetStep && (!best || at > best.stepIndex)) best = snapshot;
   }
 
-  if (best && best.stepIndex > 0) {
+  // `>= 0`, not `> 0`: reset() leaves a snapshot at step zero holding the
+  // PREWARMED state, and that is the one a seek back to the start wants. Taking
+  // the reset() branch instead would be correct but would re-run the prewarm,
+  // which on a drag towards 0 is a full simulation per mouse move.
+  const restored = Boolean(best && best.stepIndex >= 0);
+  if (restored) {
     restoreSnapshot(runtime, best);
   } else {
     reset(runtime);
@@ -419,7 +464,7 @@ export function seekTo(runtime, seconds) {
     // here rather than spinning is what keeps a seek past the end from hanging.
     if (runtime.finished) break;
   }
-  return { steps, fromSnapshot: Boolean(best && best.stepIndex > 0) };
+  return { steps, fromSnapshot: restored };
 }
 
 /**

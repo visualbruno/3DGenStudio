@@ -30,8 +30,8 @@
     "name": "Debris Burst",
     "effect": {
       "seed": 12345,
-      "duration": 4,
-      "loop": false,
+      "duration": 4.2,
+      "loop": true,
       "fixedDt": 0.016666666666666666,
       "maxSubSteps": 4,
       "simulationSpace": "local",
@@ -105,10 +105,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.03,
-                    "b": 0.09,
+                    "a": 0.1,
+                    "b": 0.24,
                     "freq": "perParticle",
-                    "v": 0.06
+                    "v": 0.16999999999999998
                   }
                 }
               },
@@ -150,17 +150,17 @@
                   "min": {
                     "mode": "const",
                     "v": [
-                      -6,
+                      -2.6,
                       2,
-                      -6
+                      -2.6
                     ]
                   },
                   "max": {
                     "mode": "const",
                     "v": [
-                      6,
-                      9,
-                      6
+                      2.6,
+                      6.5,
+                      2.6
                     ]
                   }
                 }
@@ -182,9 +182,20 @@
                     "mode": "const",
                     "v": [
                       0,
-                      -14,
+                      -12,
                       0
                     ]
+                  }
+                }
+              },
+              {
+                "id": "b-bj2",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 0.4
                   }
                 }
               },

@@ -47,7 +47,7 @@
         2
       ],
       "boundsAuto": true,
-      "prewarm": 0,
+      "prewarm": 4.0,
       "timeScale": 1
     },
     "systems": [
@@ -105,10 +105,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.008,
-                    "b": 0.018,
+                    "a": 0.035,
+                    "b": 0.07,
                     "freq": "perParticle",
-                    "v": 0.013
+                    "v": 0.052500000000000005
                   }
                 }
               },

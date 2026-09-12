@@ -56,7 +56,7 @@
         "name": "Streak",
         "enabled": true,
         "solo": false,
-        "capacity": 256,
+        "capacity": 512,
         "simulationSpace": "inherit",
         "seedOffset": 40503,
         "contexts": [
@@ -72,7 +72,7 @@
                 "props": {
                   "rate": {
                     "mode": "const",
-                    "v": 300
+                    "v": 900
                   }
                 }
               }
@@ -91,10 +91,10 @@
                 "props": {
                   "lifetime": {
                     "mode": "random",
-                    "a": 0.15,
-                    "b": 0.35,
+                    "a": 0.2,
+                    "b": 0.45,
                     "freq": "perParticle",
-                    "v": 0.25
+                    "v": 0.325
                   }
                 }
               },
@@ -105,10 +105,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.02,
-                    "b": 0.045,
+                    "a": 0.1,
+                    "b": 0.18,
                     "freq": "perParticle",
-                    "v": 0.0325
+                    "v": 0.14
                   }
                 }
               },
@@ -135,11 +135,37 @@
                 "props": {
                   "radius": {
                     "mode": "const",
-                    "v": 0.03
+                    "v": 0.06
                   }
                 },
                 "modes": {
                   "fill": "volume"
+                }
+              },
+              {
+                "id": "b-i7v",
+                "type": "initialize.velocityDirection",
+                "enabled": true,
+                "props": {
+                  "direction": {
+                    "mode": "const",
+                    "v": [
+                      1,
+                      0.06,
+                      0
+                    ]
+                  },
+                  "speed": {
+                    "mode": "random",
+                    "a": 13,
+                    "b": 17,
+                    "freq": "perParticle",
+                    "v": 15.0
+                  },
+                  "spread": {
+                    "mode": "const",
+                    "v": 3
+                  }
                 }
               }
             ],
@@ -150,6 +176,17 @@
             "kind": "update",
             "label": "",
             "blocks": [
+              {
+                "id": "b-i8d",
+                "type": "update.drag",
+                "enabled": true,
+                "props": {
+                  "drag": {
+                    "mode": "const",
+                    "v": 1.6
+                  }
+                }
+              },
               {
                 "id": "b-i8",
                 "type": "update.sizeOverLife",

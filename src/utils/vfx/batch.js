@@ -316,11 +316,18 @@ export function createBatches(ir, emitters, options = {}) {
     const textureBlock = group.output.blocks.find((b) => b.kernel === 'output.texture');
     const slotIndex = textureBlock?.assetSlots?.texture ?? -1;
     const asset = slotIndex >= 0 ? ir.assets[slotIndex] : null;
-    // Always a sprite. An effect with no texture chosen, or whose texture was
-    // deleted, draws with the built-in soft blob rather than with hard squares -
-    // see the header of assets.js for why that is a product decision and not a
-    // convenience.
-    const texture = (asset && textures.get(asset.assetId)) || getDefaultSprite();
+    // Always a sprite FOR A QUAD. An effect with no texture chosen, or whose
+    // texture was deleted, draws with the built-in soft blob rather than with
+    // hard squares - see the header of assets.js for why that is a product
+    // decision and not a convenience.
+    //
+    // A MESH IS THE EXCEPTION, and it has to be. The fragment shader multiplies
+    // by the map, so falling back to the blob here painted a radial fade across
+    // the model's own UVs: under alpha blending the chunks came out almost
+    // transparent, which is why Debris Burst rendered as nothing at all. A mesh
+    // with no texture of its own draws in its particle colour instead.
+    const loaded = asset ? textures.get(asset.assetId) : null;
+    const texture = loaded || (group.output.mode === 'mesh' ? null : getDefaultSprite());
 
     // The model, for a mesh output. As with the texture there is ALWAYS one -
     // an author who switches the mode before choosing an asset sees a chip of

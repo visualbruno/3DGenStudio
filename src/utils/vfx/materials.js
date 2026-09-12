@@ -147,10 +147,19 @@ void main() {
     // The epsilon matters: a particle at rest has no direction, and normalising
     // a zero vector gives NaN, which propagates to gl_Position and makes the
     // whole quad disappear rather than merely pointing the wrong way.
-    vec2 dir = speed > 1e-5 ? vView.xy / speed : vec2(0.0, 1.0);
+    vec2 dir = speed > 1e-5 ? vView.xy / speed : vec2(1.0, 0.0);
     vec2 perp = vec2(-dir.y, dir.x);
     float len = iSize * (1.0 + speed * uStretch);
-    mv.xy += dir * (corner.y * len) + perp * (corner.x * iSize);
+    // THE LONG AXIS IS U (corner.x), NOT V, and that is not arbitrary.
+    //
+    // A stretched billboard is drawn with a streak sprite, and every streak
+    // sprite is authored lying on its side - long in U - because that is what
+    // Unity's Stretched Billboard and Niagara's velocity-aligned sprite both
+    // expect. This shader used to put the elongation on corner.y, which maps
+    // the sprite's SHORT axis along the travel direction: the bundled
+    // spark-streak.png then drew straight-down rain as horizontal dashes, and
+    // every stretched preset in the library was wrong the same way.
+    mv.xy += dir * (corner.x * len) + perp * (corner.y * iSize);
   #elif defined(MODE_POINT)
     // A POINT holds its size on screen however far away it is, which is the
     // one thing that distinguishes it from a billboard - it is for star

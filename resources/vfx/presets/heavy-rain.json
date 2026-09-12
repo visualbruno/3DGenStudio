@@ -47,7 +47,7 @@
         2
       ],
       "boundsAuto": true,
-      "prewarm": 0,
+      "prewarm": 1.2,
       "timeScale": 1
     },
     "systems": [
@@ -72,7 +72,7 @@
                 "props": {
                   "rate": {
                     "mode": "const",
-                    "v": 900
+                    "v": 1200
                   }
                 }
               }
@@ -91,7 +91,7 @@
                 "props": {
                   "lifetime": {
                     "mode": "const",
-                    "v": 1.5
+                    "v": 1.2
                   }
                 }
               },
@@ -102,10 +102,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.012,
-                    "b": 0.022,
+                    "a": 0.055,
+                    "b": 0.1,
                     "freq": "perParticle",
-                    "v": 0.017
+                    "v": 0.0775
                   }
                 }
               },
@@ -133,16 +133,16 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      10,
-                      9,
-                      10
+                      7,
+                      1,
+                      7
                     ]
                   },
                   "offset": {
                     "mode": "const",
                     "v": [
                       0,
-                      4.5,
+                      5.5,
                       0
                     ]
                   }
@@ -156,7 +156,7 @@
                   "direction": {
                     "mode": "const",
                     "v": [
-                      0,
+                      0.08,
                       -1,
                       0
                     ]
@@ -170,7 +170,7 @@
                   },
                   "spread": {
                     "mode": "const",
-                    "v": 0.05
+                    "v": 1.5
                   }
                 }
               }
@@ -227,9 +227,9 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      10,
-                      9,
-                      10
+                      14,
+                      14,
+                      14
                     ]
                   }
                 }

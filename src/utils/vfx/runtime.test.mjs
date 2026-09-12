@@ -71,10 +71,14 @@ const blk = (type, props = {}, modes) => {
  * blocks exist, and a shared fixture that grows a block breaks the arithmetic
  * the physics checks depend on.
  */
-function doc({ spawn, init, update, capacity = 1024, duration = 0, loop = false, clips, outputParams, references }) {
+function doc({
+  spawn, init, update, capacity = 1024, duration = 0, loop = false, prewarm = 0,
+  clips, outputParams, references,
+}) {
   const d = createEmptyVfxDoc({ name: 'Runtime test' });
   d.effect.duration = duration;
   d.effect.loop = loop;
+  d.effect.prewarm = prewarm;
   d.effect.capacity = capacity;
   d.references = {
     tex: { kind: 'image', ref: 'asset:1', name: 't.png', colorSpace: 'srgb' },
@@ -2081,6 +2085,67 @@ console.log('\n--- The curve emitter ---');
     single.points.length === 2
     && JSON.stringify(single.points[0]) === JSON.stringify(single.points[1]),
     JSON.stringify(single.points));
+}
+
+// ---------------------------------------------------------------------------
+// N. Prewarm is pre-roll, not a time offset
+// ---------------------------------------------------------------------------
+// All three of these were live bugs at once, and together they made a prewarmed
+// preset unusable: the timeline opened at the prewarm time with everything
+// before it unreachable, and dragging the playhead towards zero re-entered
+// reset() on every mouse move - each one a full prewarm - until the tab hung.
+{
+  const stream = (extra = {}) => ({
+    spawn: [blk('spawn.rate', { rate: constValue(300) })],
+    init: [
+      blk('initialize.setLifetime', { lifetime: constValue(2) }),
+      blk('initialize.setSize', { size: constValue(0.1) }),
+      blk('initialize.setColor', { color: constValue([1, 1, 1, 1]) }),
+      blk('initialize.velocityDirection', {
+        direction: constValue([0, -1, 0]), speed: constValue(1), spread: constValue(0),
+      }),
+    ],
+    update: [blk('update.gravity', { gravity: constValue([0, -1, 0]) })],
+    capacity: 2048,
+    ...extra,
+  });
+
+  const warm = build(stream({ prewarm: 1.5, duration: 4, loop: true })).runtime;
+  check('a prewarmed effect still opens at t = 0',
+    warm.time === 0 && warm.stepIndex === 0,
+    `t=${warm.time.toFixed(3)} step=${warm.stepIndex}`);
+
+  // ...but with the particles the prewarm produced, or it is just a slow reset.
+  const cold = build(stream({ duration: 4, loop: true })).runtime;
+  check('  carrying the particles the prewarm produced',
+    warm.emitters[0].pool.count > cold.emitters[0].pool.count * 5,
+    `${warm.emitters[0].pool.count} warm vs ${cold.emitters[0].pool.count} cold`);
+
+  // THE HANG. A prewarm at or past the duration of a LOOPING effect used to
+  // recurse: reset() prewarms, step() sees the duration pass and calls reset(),
+  // which prewarms again. Reaching this line at all is the check.
+  const overrun = build(stream({ prewarm: 30, duration: 2, loop: true })).runtime;
+  check('a prewarm longer than the loop terminates',
+    overrun.time === 0 && overrun.emitters[0].pool.count > 0,
+    `${overrun.emitters[0].pool.count} alive`);
+
+  // THE FREEZE. Seeking to the start must restore the prewarmed baseline rather
+  // than re-running the prewarm, because a scrubber does this once per mouse
+  // move. `fromSnapshot` is how the difference is visible from out here.
+  const before = warm.emitters[0].pool.count;
+  for (let i = 0; i < 30; i += 1) step(warm);
+  const home = seekTo(warm, 0);
+  check('  and seeking back to 0 restores it without re-simulating',
+    home.fromSnapshot && home.steps === 0 && warm.emitters[0].pool.count === before,
+    `${home.steps} steps, from snapshot: ${home.fromSnapshot}`);
+
+  // Every time below the prewarm used to be unreachable - the seek landed back
+  // at the prewarm time whatever was asked for.
+  const early = build(stream({ prewarm: 1.5, duration: 4, loop: true })).runtime;
+  seekTo(early, 0.25);
+  check('  and a time inside the old prewarm window is reachable',
+    Math.abs(early.time - 0.25) < early.ir.effect.fixedDt,
+    `asked 0.25, landed ${early.time.toFixed(3)}`);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

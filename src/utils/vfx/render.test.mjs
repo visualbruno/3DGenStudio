@@ -265,6 +265,74 @@ function buildTemplate(id) {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. What the two modes that are NOT a plain textured quad actually draw
+// ---------------------------------------------------------------------------
+// Both of these shipped wrong, and neither was catchable by the sections above:
+// they check that a shader declares what the layout provides, not that the
+// geometry it builds points the way the artwork expects.
+{
+  // A STRETCHED BILLBOARD ELONGATES ALONG U.
+  //
+  // Streak sprites are authored lying on their side, long in U - this repo's own
+  // spark-streak.png is - because that is what Unity's Stretched Billboard and
+  // Niagara's velocity-aligned sprite both expect, and the Unity importer maps
+  // this mode onto exactly that. Putting the length on corner.y instead drew
+  // straight-down rain as horizontal dashes.
+  const layout = buildInstanceLayout({
+    mode: 'stretched',
+    attributes: ['position', 'size', 'color', 'velocity'],
+  });
+  const source = buildVertexShader(layout);
+  const stretch = source.slice(source.indexOf('#ifdef MODE_STRETCHED'));
+  check('a stretched quad takes its length from corner.x',
+    stretch.includes('dir * (corner.x * len)'),
+    stretch.includes('dir * (corner.y * len)') ? 'still elongating along V' : 'ok');
+  check('  and its width from corner.y',
+    stretch.includes('perp * (corner.y * iSize)'));
+
+  // A MESH WITH NO TEXTURE OF ITS OWN BINDS NO MAP.
+  //
+  // The fragment shader multiplies by the map, so falling back to the built-in
+  // soft blob painted a radial fade across the model's own UVs - under alpha
+  // blending that made Debris Burst's chunks all but transparent. A quad still
+  // gets the blob, which is the whole point of section 4.
+  const irOf = (mode, withTexture) => ({
+    systems: [{
+      capacity: 8,
+      outputs: [{
+        batchKey: `k-${mode}-${withTexture}`,
+        mode,
+        blend: 'alpha',
+        sort: 'none',
+        contextId: 'c',
+        instanceLayout: buildInstanceLayout({ mode, attributes: ['position', 'size', 'color'] }),
+        blocks: withTexture
+          ? [{ kernel: 'output.texture', assetSlots: { texture: 0 } }]
+          : [],
+      }],
+    }],
+    assets: [{ assetId: 1, kind: 'image' }],
+  });
+  const emitters = [{ pool: { count: 0, planes: {}, widths: {} } }];
+  const batchOf = (mode, withTexture) => createBatches(
+    irOf(mode, withTexture), emitters, { textures: new Map() },
+  )[0];
+
+  const bareMesh = batchOf('mesh', false);
+  check('an untextured mesh output binds no map',
+    !('USE_MAP' in bareMesh.material.defines) && bareMesh.material.uniforms.uMap.value === null,
+    JSON.stringify(Object.keys(bareMesh.material.defines)));
+
+  const bareQuad = batchOf('billboard', false);
+  check('  while an untextured billboard still gets the built-in sprite',
+    'USE_MAP' in bareQuad.material.defines
+    && bareQuad.material.uniforms.uMap.value === getDefaultSprite());
+
+  disposeBatch(bareMesh);
+  disposeBatch(bareQuad);
+}
+
+// ---------------------------------------------------------------------------
 // 5. The buffer write carries the simulation's data
 // ---------------------------------------------------------------------------
 {

@@ -38,14 +38,14 @@
       "simulationSpace": "local",
       "capacity": 4096,
       "boundsMin": [
-        -8,
-        -1,
-        -8
+        -3,
+        -0.5,
+        -3
       ],
       "boundsMax": [
-        8,
-        12,
-        8
+        3,
+        5,
+        3
       ],
       "boundsAuto": true,
       "prewarm": 0,
@@ -103,7 +103,7 @@
                 "props": {
                   "size": {
                     "mode": "const",
-                    "v": 0.12
+                    "v": 0.2
                   }
                 }
               },
@@ -138,7 +138,7 @@
                   },
                   "speed": {
                     "mode": "const",
-                    "v": 9
+                    "v": 6
                   },
                   "spread": {
                     "mode": "const",
@@ -163,7 +163,7 @@
                     "mode": "const",
                     "v": [
                       0,
-                      -4.5,
+                      -5,
                       0
                     ]
                   }
@@ -305,7 +305,7 @@
                 "props": {
                   "count": {
                     "mode": "const",
-                    "v": 90
+                    "v": 140
                   }
                 }
               }
@@ -338,10 +338,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.03,
-                    "b": 0.07,
+                    "a": 0.14,
+                    "b": 0.26,
                     "freq": "perParticle",
-                    "v": 0.05
+                    "v": 0.2
                   }
                 }
               },
@@ -363,15 +363,24 @@
               },
               {
                 "id": "b-5h",
-                "type": "initialize.velocityRadial",
+                "type": "initialize.velocityRandom",
                 "enabled": true,
                 "props": {
-                  "speed": {
-                    "mode": "random",
-                    "a": 3,
-                    "b": 6.5,
-                    "freq": "perParticle",
-                    "v": 4.75
+                  "min": {
+                    "mode": "const",
+                    "v": [
+                      -13,
+                      -13,
+                      -13
+                    ]
+                  },
+                  "max": {
+                    "mode": "const",
+                    "v": [
+                      13,
+                      13,
+                      13
+                    ]
                   }
                 }
               },
@@ -432,43 +441,51 @@
                         {
                           "t": 0,
                           "hex": "#ff0000",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 0.17,
                           "hex": "#ffff00",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 0.34,
                           "hex": "#00ff00",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 0.5,
                           "hex": "#00ffff",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 0.67,
                           "hex": "#0000ff",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 0.84,
                           "hex": "#ff00ff",
-                          "intensity": 1
+                          "intensity": 3
                         },
                         {
                           "t": 1,
                           "hex": "#ff0000",
-                          "intensity": 1
+                          "intensity": 3
                         }
                       ],
                       "alphaKeys": [
                         {
                           "t": 0,
                           "a": 1
+                        },
+                        {
+                          "t": 0.6,
+                          "a": 1
+                        },
+                        {
+                          "t": 1,
+                          "a": 0
                         }
                       ],
                       "mode": "blend"
@@ -541,7 +558,7 @@
                 "props": {
                   "count": {
                     "mode": "const",
-                    "v": 2
+                    "v": 3
                   }
                 }
               }
@@ -574,10 +591,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.015,
-                    "b": 0.035,
+                    "a": 0.05,
+                    "b": 0.1,
                     "freq": "perParticle",
-                    "v": 0.025
+                    "v": 0.07500000000000001
                   }
                 }
               },

@@ -1530,7 +1530,12 @@ function runSystemDiagnostics(args) {
 
     const textureBlock = context.blocks.find((b) => b.type === 'output.setMainTexture');
     const slot = textureBlock ? normalizeValue(textureBlock.props.texture).v : '';
-    if (!textureBlock || !slot || !doc.references[slot]) {
+    // Not for a mesh output: there is no built-in sprite behind one. A mesh with
+    // no texture draws in its particle colour (see createBatches), so telling
+    // the author it is "drawing with the built-in soft blob" would be false, and
+    // the offered fix - add a Sprite Texture - would paint a radial fade across
+    // their model.
+    if (params.mode !== 'mesh' && (!textureBlock || !slot || !doc.references[slot])) {
       diag.report('I_DEFAULT_SPRITE', { systemId: system.id, contextId: context.id },
         // contextId is in the data as well as the target because the FIX needs
         // it: with no texture block to point at, the fix is to add one to this

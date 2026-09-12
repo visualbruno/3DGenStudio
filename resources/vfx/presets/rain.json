@@ -37,17 +37,17 @@
       "simulationSpace": "local",
       "capacity": 4096,
       "boundsMin": [
-        -16,
-        -7,
-        -16
+        -2,
+        -2,
+        -2
       ],
       "boundsMax": [
-        16,
-        7,
-        16
+        2,
+        2,
+        2
       ],
       "boundsAuto": true,
-      "prewarm": 0,
+      "prewarm": 1.4,
       "timeScale": 1
     },
     "systems": [
@@ -91,7 +91,7 @@
                 "props": {
                   "lifetime": {
                     "mode": "const",
-                    "v": 1.2
+                    "v": 1.4
                   }
                 }
               },
@@ -102,10 +102,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.012,
-                    "b": 0.022,
+                    "a": 0.05,
+                    "b": 0.09,
                     "freq": "perParticle",
-                    "v": 0.017
+                    "v": 0.07
                   }
                 }
               },
@@ -133,9 +133,17 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      14,
+                      8,
                       0.5,
-                      14
+                      8
+                    ]
+                  },
+                  "offset": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      5,
+                      0
                     ]
                   }
                 }
@@ -162,7 +170,7 @@
                   },
                   "spread": {
                     "mode": "const",
-                    "v": 2
+                    "v": 1.5
                   }
                 }
               }
@@ -197,9 +205,9 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      30,
-                      12,
-                      30
+                      14,
+                      14,
+                      14
                     ]
                   }
                 }

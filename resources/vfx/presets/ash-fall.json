@@ -46,7 +46,7 @@
         2
       ],
       "boundsAuto": true,
-      "prewarm": 0,
+      "prewarm": 4.5,
       "timeScale": 1
     },
     "systems": [
@@ -55,7 +55,7 @@
         "name": "Ash",
         "enabled": true,
         "solo": false,
-        "capacity": 1280,
+        "capacity": 1536,
         "simulationSpace": "inherit",
         "seedOffset": 40503,
         "contexts": [
@@ -71,7 +71,7 @@
                 "props": {
                   "rate": {
                     "mode": "const",
-                    "v": 220
+                    "v": 260
                   }
                 }
               }
@@ -90,7 +90,7 @@
                 "props": {
                   "lifetime": {
                     "mode": "const",
-                    "v": 4.5
+                    "v": 5.5
                   }
                 }
               },
@@ -101,10 +101,10 @@
                 "props": {
                   "size": {
                     "mode": "random",
-                    "a": 0.02,
-                    "b": 0.05,
+                    "a": 0.07,
+                    "b": 0.16,
                     "freq": "perParticle",
-                    "v": 0.035
+                    "v": 0.115
                   }
                 }
               },
@@ -132,16 +132,16 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      10,
                       7,
-                      10
+                      1,
+                      7
                     ]
                   },
                   "offset": {
                     "mode": "const",
                     "v": [
                       0,
-                      3.5,
+                      4.5,
                       0
                     ]
                   }
@@ -181,6 +181,21 @@
             "kind": "update",
             "label": "",
             "blocks": [
+              {
+                "id": "b-ew0",
+                "type": "update.gravity",
+                "enabled": true,
+                "props": {
+                  "gravity": {
+                    "mode": "const",
+                    "v": [
+                      0,
+                      -1.6,
+                      0
+                    ]
+                  }
+                }
+              },
               {
                 "id": "b-ew",
                 "type": "update.drag",
@@ -232,17 +247,17 @@
                       "colorKeys": [
                         {
                           "t": 0,
-                          "hex": "#6e6a66",
+                          "hex": "#c9c3bc",
                           "intensity": 1
                         },
                         {
                           "t": 0.5,
-                          "hex": "#4a4744",
+                          "hex": "#8d8781",
                           "intensity": 1
                         },
                         {
                           "t": 1,
-                          "hex": "#2e2c2a",
+                          "hex": "#4f4b47",
                           "intensity": 1
                         }
                       ],
@@ -252,8 +267,12 @@
                           "a": 0
                         },
                         {
-                          "t": 0.2,
-                          "a": 0.55
+                          "t": 0.15,
+                          "a": 0.9
+                        },
+                        {
+                          "t": 0.85,
+                          "a": 0.8
                         },
                         {
                           "t": 1,
@@ -280,9 +299,9 @@
                   "size": {
                     "mode": "const",
                     "v": [
-                      10,
-                      7,
-                      10
+                      12,
+                      12,
+                      12
                     ]
                   }
                 }
