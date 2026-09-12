@@ -540,9 +540,21 @@ namespace GenStudio3D.VfxImport
                     return;
 
                 case "initialize.setRotation":
-                    // Radians in the IR, degrees in Unity.
+                    // DEGREES IN THE IR, RADIANS IN UNITY - this used to say the
+                    // opposite and scale by Rad2Deg, which is the same mistake
+                    // backwards and a factor of 3283 out. The IR keeps the
+                    // authored degrees (kernels.js rot.set and rot.spin both
+                    // multiply by PI/180 themselves), and Unity's SCRIPT api
+                    // takes radians even though its Inspector shows degrees -
+                    // measured, not assumed: startRotation = 90 reads back as
+                    // Particle.rotation 5156.6 degrees, which is 90 * Rad2Deg.
+                    //
+                    // It hid here because a start angle is periodic: the usual
+                    // authoring is a random -180..180, and any angle times 57
+                    // is still just some angle. update.spin below is where it
+                    // shows, because there the error becomes a rate.
                     var rotation = Curve(block, "rotation");
-                    main.startRotation = Scale(rotation, Mathf.Rad2Deg);
+                    main.startRotation = Scale(rotation, Mathf.Deg2Rad);
                     _report.Native(name, type);
                     return;
 
@@ -1002,7 +1014,11 @@ namespace GenStudio3D.VfxImport
                 {
                     var rotation = ps.rotationOverLifetime;
                     rotation.enabled = true;
-                    rotation.z = Scale(Curve(block, "speed"), Mathf.Rad2Deg);
+                    // Degrees per second in the IR, radians per second in
+                    // Unity's script api - see initialize.setRotation above.
+                    // Scaling the wrong way turned an authored 35 deg/s into
+                    // 2005 rad/s: about 320 revolutions a second.
+                    rotation.z = Scale(Curve(block, "speed"), Mathf.Deg2Rad);
                     _report.Native(name, type);
                     return;
                 }
