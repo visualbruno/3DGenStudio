@@ -29,9 +29,12 @@
 // surprised later to find them there.
 import {
   applyPresetAssets,
+  bundlePresetAssets,
+  collectPresetAssetNeeds,
   indexInstalledPackAssets,
   presetAssetName,
 } from '../../../vfx/preset.js'
+import { addVfxPackAsset, indexLibraryAssets, vfxFileUrl } from '../vfxApi.js'
 import { API_BASE, SERVER_ORIGIN } from '../../config.js'
 
 /** Where a bundled pack file is served from. Static, so no route is involved. */
@@ -134,4 +137,142 @@ export async function resolvePresetAssets(preset, options) {
     installed,
     missing: missing.map((need) => ({ ...need, error: reasons.get(need.file) || 'not wired' })),
   }
+}
+
+// ---------------------------------------------------------------------------
+// The save side
+// ---------------------------------------------------------------------------
+// Everything above runs when a preset is OPENED. What follows runs when one is
+// SAVED, and it is the half that was missing: validatePreset refused any
+// document still holding `asset:41` and told the author the Save dialog would
+// offer to bundle it, while the dialog offered nothing of the sort. The pack
+// route existed and only the MCP tools ever called it.
+
+/**
+ * What the author's own asset rows say about the slots a document references.
+ *
+ * Separate from the bundling so the dialog can DRAW the list before anything is
+ * uploaded - an author about to copy three sprites into the shipped pack should
+ * see which three first.
+ *
+ * @param {Object} doc the document being saved
+ * @param {Array<Object>} rows the library listing
+ * @returns {Array<Object>} one entry per referenced slot, `row` null if the
+ *   asset is no longer in the library
+ */
+export function describeDocAssets(doc, rows) {
+  const byId = indexLibraryAssets(rows || [])
+  return collectPresetAssetNeeds(doc).map((need) => {
+    const row = byId.get(need.assetId) || null
+    return {
+      ...need,
+      row,
+      // What the file will be called in the pack, before the author edits it.
+      // The slot's own name first: it is what the params panel shows, so it is
+      // the name they already associate with this texture.
+      suggested: packSlug(need.name || row?.name || `asset-${need.assetId}`),
+      extension: extensionOf(row),
+    }
+  })
+}
+
+/** The filename stem the pack route will derive from a display name. */
+export function packSlug(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48)
+}
+
+function extensionOf(row) {
+  const url = row ? vfxFileUrl(row) : null
+  const match = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(String(url || ''))
+  return match ? match[1].toLowerCase() : ''
+}
+
+/**
+ * Read an asset's bytes as a data URL the pack route will accept.
+ *
+ * THE MIME TYPE COMES FROM THE EXTENSION, not from the response. The route maps
+ * the data URL's declared type to a file extension, and a static mount that
+ * answers `application/octet-stream` for a .png - or a blob with an empty type -
+ * would land the bytes in the pack as a .glb.
+ */
+async function readAssetAsDataUrl(row) {
+  const url = vfxFileUrl(row)
+  if (!url) throw new Error('that asset has no file on this server')
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`could not read its file (${response.status})`)
+  const blob = await response.blob()
+  const extension = extensionOf(row)
+  const mime = MIME[extension] || blob.type || 'application/octet-stream'
+
+  const raw = await new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('could not read its bytes'))
+    reader.readAsDataURL(blob)
+  })
+  return raw.replace(/^data:[^;]*;base64,/, `data:${mime};base64,`)
+}
+
+/**
+ * Copy every library asset a document references into the shipped pack, and
+ * hand back the document with the ids replaced by filenames.
+ *
+ * A NAME CLASH REUSES RATHER THAN OVERWRITES, unless the author says otherwise.
+ * The pack ships with the app and shipped presets name its files, so replacing
+ * one silently would break every preset that names it - which is why the route
+ * answers 409 instead of writing. Reusing is right far more often than not: the
+ * usual clash is an author saving the same effect twice, or using the same
+ * sprite a shipped preset already uses. It is reported either way.
+ *
+ * @param {Object} doc the document being saved
+ * @param {Object} options
+ * @param {() => Promise<Array<Object>>} options.listLibrary
+ * @param {Object} [options.names] slot to author-chosen pack name
+ * @param {Object} [options.replace] slot to true, to overwrite a clashing file
+ * @param {(done: number, total: number) => void} [options.onProgress]
+ * @returns {Promise<{doc: Object, assets: Object[], added: string[],
+ *   reused: string[], failed: Object[]}>}
+ */
+export async function bundleDocAssets(doc, options) {
+  const rows = await options.listLibrary()
+  const entries = describeDocAssets(doc, rows)
+  if (entries.length === 0) return { doc, assets: [], added: [], reused: [], failed: [] }
+
+  const filesBySlot = new Map()
+  const added = []
+  const reused = []
+  const failed = []
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    const name = options.names?.[entry.slot] || entry.suggested
+    try {
+      if (!entry.row) throw new Error('it is no longer in your library')
+      const dataUrl = await readAssetAsDataUrl(entry.row)
+      try {
+        const saved = await addVfxPackAsset({
+          name,
+          dataUrl,
+          overwrite: Boolean(options.replace?.[entry.slot]),
+        })
+        filesBySlot.set(entry.slot, saved.file)
+        added.push(saved.file)
+      } catch (err) {
+        // 409: the name is taken. Wire the slot to the file that is already
+        // there rather than failing the save or clobbering it.
+        if (err?.status !== 409 || !err.file) throw err
+        filesBySlot.set(entry.slot, err.file)
+        reused.push(err.file)
+      }
+    } catch (err) {
+      // NOT FATAL. One sprite that cannot be copied should still let the other
+      // two through - the save then fails validation naming exactly the slot
+      // that is still holding an id, which is a far better error than a whole
+      // save refused for a reason the author has to guess at.
+      failed.push({ ...entry, error: err?.message || 'could not be bundled' })
+    }
+    options.onProgress?.(index + 1, entries.length)
+  }
+
+  return { ...bundlePresetAssets(doc, filesBySlot), added, reused, failed }
 }

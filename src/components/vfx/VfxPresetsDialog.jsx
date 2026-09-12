@@ -27,7 +27,12 @@ import {
 import { compileVfxGraph } from '../../../vfx/compile.js'
 import { normalizeVfxDoc } from '../../../vfx/doc.js'
 import { createVfxThumbnailFile } from '../../utils/vfxThumbnail.js'
-import { resolvePresetAssets } from '../../utils/vfx/presetAssets.js'
+import {
+  bundleDocAssets,
+  describeDocAssets,
+  packSlug,
+  resolvePresetAssets,
+} from '../../utils/vfx/presetAssets.js'
 import {
   deleteVfxPreset,
   getVfxPreset,
@@ -368,6 +373,7 @@ export default function VfxPresetsDialog({
     description: '',
     tags: [],
     teaches: [],
+    assets: [],
     doc: currentDoc,
     isNew: true,
   })
@@ -375,15 +381,70 @@ export default function VfxPresetsDialog({
   const commitEdit = async (draft) => {
     setBusy(true)
     try {
+      // THE BUNDLING STEP, and the reason it is here rather than in the form:
+      // it is the last thing before the write, so an author who cancels has
+      // copied nothing into the shipped pack.
+      //
+      // A preset may not carry `asset:41` - it means nothing on anyone else's
+      // install - so every library sprite and mesh the effect uses is copied
+      // into resources/vfx/assets/ and the slots are rewritten to name the
+      // FILE. validatePreset refuses the save otherwise, and used to do it
+      // while promising this dialog would offer exactly this.
+      const bundled = await bundleDocAssets(draft.doc, {
+        listLibrary,
+        names: draft.assetNames,
+        onProgress: (done, total) => setError(
+          total > 1 ? `Adding assets to the preset pack... ${done} of ${total}` : '',
+        ),
+      })
+      // KEPT, NOT REPLACED. Re-saving an EXISTING preset bundles nothing - its
+      // document already names files rather than ids, so there are no refs to
+      // collect - and taking the empty result as the answer would strip the
+      // declarations it already had, leaving an effect whose slots name
+      // textures nobody installs.
+      const bundledSlots = new Set(bundled.assets.map((need) => need.slot))
+      const assets = [
+        ...bundled.assets,
+        ...(draft.assets || []).filter((need) => !bundledSlots.has(need.slot)),
+      ]
+
+      // STOPPING HERE RATHER THAN SAVING WHAT WORKED. A slot that could not be
+      // bundled still holds a library id, so the save would be refused anyway -
+      // but by validatePreset, naming a slot rather than the sprite, after the
+      // others had already been copied into the shipped pack.
+      if (bundled.failed.length) {
+        setError(
+          `Could not bundle ${bundled.failed.map((f) => `"${f.name || f.slot}" (${f.error})`).join(', ')}.`,
+        )
+        return
+      }
+
       const { warnings } = await saveVfxPreset(draft.id, {
         name: draft.name,
         category: draft.category,
         description: draft.description,
         tags: draft.tags,
         teaches: draft.teaches,
-        doc: draft.doc,
+        assets,
+        doc: bundled.doc,
       })
       setEditing(null)
+      // Said out loud, because both outcomes matter. A file copied into the
+      // pack now ships with the application; a REUSED one means the author's
+      // own sprite was not copied at all - the preset will open with whatever
+      // was already under that name, which is right when it is the same sprite
+      // and wrong if they meant a new one.
+      if (bundled.added.length || bundled.reused.length) {
+        notify?.(
+          [
+            bundled.added.length ? `Bundled ${bundled.added.join(', ')}` : '',
+            bundled.reused.length
+              ? `reused ${bundled.reused.join(', ')} already in the pack`
+              : '',
+          ].filter(Boolean).join('; '),
+          bundled.reused.length ? 'warning' : 'success',
+        )
+      }
       // Warnings do not block the save, but they are the author's problem to
       // fix now rather than a player's to discover later.
       setError(warnings.length ? `Saved, with warnings: ${warnings.join(' ')}` : '')
@@ -544,6 +605,7 @@ export default function VfxPresetsDialog({
           <PresetEditor
             draft={editing}
             busy={busy}
+            listLibrary={listLibrary}
             onCancel={() => setEditing(null)}
             onSave={commitEdit}
           />
@@ -555,7 +617,14 @@ export default function VfxPresetsDialog({
 
 // The author's metadata form. Deliberately plain: it edits the card, not the
 // effect - the effect is edited on the board, which is the whole application.
-function PresetEditor({ draft, busy, onCancel, onSave }) {
+//
+// THE ONE EXCEPTION IS THE ASSET LIST, and it is not metadata. A preset may not
+// store a library asset id, so every sprite and mesh the effect uses has to be
+// copied into the shipped pack under a filename before the preset can be saved
+// at all. That is a real decision - the file ships with the application and
+// other presets can name it - so the author names each one rather than having a
+// slug guessed for them.
+function PresetEditor({ draft, busy, listLibrary, onCancel, onSave }) {
   const [form, setForm] = useState({
     ...draft,
     // Suggested from the name, and only for a NEW preset: an existing id is the
@@ -565,8 +634,41 @@ function PresetEditor({ draft, busy, onCancel, onSave }) {
     tagText: (draft.tags || []).join(', '),
     teachText: (draft.teaches || []).join('\n'),
   })
+  // What the effect references, and what each will be called in the pack. Null
+  // until the library listing lands, so the form can say "checking" rather than
+  // flashing "nothing to bundle" and then contradicting itself.
+  const [needs, setNeeds] = useState(null)
+  const [names, setNames] = useState({})
+
+  useEffect(() => {
+    let live = true
+    Promise.resolve(listLibrary?.() || [])
+      .then((rows) => {
+        if (!live) return
+        const found = describeDocAssets(draft.doc, rows)
+        setNeeds(found)
+        setNames(Object.fromEntries(found.map((need) => [need.slot, need.suggested])))
+      })
+      .catch(() => { if (live) setNeeds([]) })
+    return () => { live = false }
+    // Mount only. The draft does not change while the form is open - picking
+    // another preset unmounts this - and `listLibrary` is rebuilt on every
+    // render of the page above, so depending on it would re-read the whole
+    // library on every keystroke in the name field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }))
+
+  // TWO WAYS THE SAME PACK FILENAME GETS CLAIMED TWICE, and both end the same
+  // way: the second upload answers 409, the slot is wired to the FIRST one's
+  // bytes, and the author ships an effect whose two textures are one texture.
+  // An empty name is the sneakier of the two, because the route slugs it to
+  // "asset" rather than refusing it.
+  const slugs = (needs || []).map((need) => packSlug(names[need.slot]))
+  const unnamed = (needs || []).filter((need, index) => (
+    !slugs[index] || slugs.indexOf(slugs[index]) !== index
+  ))
 
   return (
     <div className="vfx-presets__editor" role="dialog" aria-label="Edit preset">
@@ -609,16 +711,68 @@ function PresetEditor({ draft, busy, onCancel, onSave }) {
         <textarea rows={3} value={form.teachText} onChange={set('teachText')} />
       </label>
 
+      {needs === null && (
+        <p className="vfx-presets__assets-note">Checking what this effect needs…</p>
+      )}
+
+      {needs !== null && needs.length > 0 && (
+        <div className="vfx-presets__assets">
+          <span className="vfx-presets__assets-title">
+            Bundled with the preset
+            <em>{needs.length}</em>
+          </span>
+          <p className="vfx-presets__assets-note">
+            A preset cannot point at your library, so these are copied into the
+            shipped asset pack and named by filename. Anyone opening the preset
+            gets them installed into their own library.
+          </p>
+          {needs.map((need) => (
+            <label className="vfx-presets__asset" key={need.slot}>
+              <span
+                className="material-symbols-outlined"
+                title={need.kind === 'mesh' ? 'Mesh' : 'Image'}
+              >
+                {need.kind === 'mesh' ? 'deployed_code' : 'image'}
+              </span>
+              <input
+                value={names[need.slot] ?? ''}
+                onChange={(event) => setNames((current) => ({
+                  ...current, [need.slot]: event.target.value,
+                }))}
+                spellCheck={false}
+                aria-label={`Pack filename for ${need.name || need.slot}`}
+              />
+              <span
+                className={`vfx-presets__asset-file${unnamed.includes(need) ? ' is-bad' : ''}`}
+              >
+                {packSlug(names[need.slot]) || '(needs a name)'}
+                {packSlug(names[need.slot]) && need.extension ? `.${need.extension}` : ''}
+              </span>
+              {!need.row && (
+                <span className="vfx-presets__asset-gone" title="Not in your library any more">
+                  missing
+                </span>
+              )}
+            </label>
+          ))}
+        </div>
+      )}
+
       <div className="vfx-presets__editor-actions">
         <button type="button" onClick={onCancel}>Cancel</button>
         <button
           type="button"
           className="is-primary"
-          disabled={busy || !form.id || !form.name}
+          // Blocked on an unnamed asset rather than slugging it to "asset":
+          // two of those would collide on one pack filename and the second
+          // would silently reuse the first's bytes.
+          disabled={busy || !form.id || !form.name || unnamed.length > 0}
+          title={unnamed.length ? 'Give every bundled asset its own name first' : ''}
           onClick={() => onSave({
             ...form,
             tags: form.tagText.split(',').map((entry) => entry.trim()).filter(Boolean),
             teaches: form.teachText.split('\n').map((entry) => entry.trim()).filter(Boolean),
+            assetNames: names,
           })}
         >
           {busy ? 'Saving…' : 'Save preset'}

@@ -14,8 +14,11 @@ import {
   PRESET_ID_PATTERN,
   PRESET_TAGS,
   applyPresetAssets,
+  bundlePresetAssets,
+  collectPresetAssetNeeds,
   groupPresets,
   normalizePreset,
+  packAssetDisplayName,
   presetAssetName,
   presetMatches,
   presetSummary,
@@ -300,6 +303,86 @@ console.log('\n--- Rewriting slots to local ids ---');
 
   check('a preset with no declarations passes through untouched',
     applyPresetAssets(doc, [], new Map()).doc === doc);
+}
+
+// ---------------------------------------------------------------------------
+// Saving: the author's library ids become bundled filenames
+// ---------------------------------------------------------------------------
+// The half that was missing. validatePreset has always refused a document
+// holding `asset:41`, and told the author the Save dialog would offer to bundle
+// it - while the dialog offered nothing of the sort, so a custom effect using
+// any sprite simply could not be saved as a preset.
+{
+  const authored = {
+    systems: [{ id: 'sys-1', name: 'Blast' }],
+    references: {
+      tex_a: { kind: 'image', ref: 'asset:41', name: 'Blast Core', colorSpace: 'srgb' },
+      tex_b: { kind: 'image', ref: 'asset:7', name: 'Streak', colorSpace: 'srgb' },
+      mesh_c: { kind: 'mesh', ref: 'asset:99', name: 'Chunk' },
+      // Added and never filled: nothing to bundle, and already legal to save.
+      tex_empty: { kind: 'image', ref: '', name: '' },
+    },
+  };
+
+  const needs = collectPresetAssetNeeds(authored);
+  check('every filled slot is collected', needs.length === 3, needs.map((n) => n.slot).join(' '));
+  check('  and an empty one is not',
+    !needs.some((need) => need.slot === 'tex_empty'));
+  check('  with the kind the slot declares',
+    needs.find((need) => need.slot === 'mesh_c').kind === 'mesh'
+    && needs.find((need) => need.slot === 'tex_a').kind === 'image');
+  check('  and the id parsed off the ref',
+    needs.find((need) => need.slot === 'tex_a').assetId === 41);
+
+  const files = new Map([
+    ['tex_a', 'blast-core.png'],
+    ['tex_b', 'streak.png'],
+    ['mesh_c', 'chunk.glb'],
+  ]);
+  const { doc: saved, assets } = bundlePresetAssets(authored, files);
+
+  // THE POINT OF ALL OF IT: what gets written carries no library ids, so it is
+  // the same preset on every installation.
+  check('the saved document holds no asset ids',
+    Object.values(saved.references).every((entry) => !entry.ref));
+  check('  and validatePreset now accepts it',
+    validatePreset(normalizePreset({ id: 'nuclear-blast', doc: saved, assets })).length === 0,
+    validatePreset(normalizePreset({ id: 'nuclear-blast', doc: saved, assets })).join(' '));
+
+  // Dedup on open is by display name, so the name this derives has to be the
+  // one packAssetDisplayName produces for the same file - see presetAssetName.
+  check('  naming each file the way the install path will',
+    assets.every((need) => need.name === packAssetDisplayName(need.file)),
+    assets.map((need) => `${need.file}->${need.name}`).join(' '));
+  check('  and the slot keeps its entry, emptied rather than deleted',
+    saved.references.tex_a && saved.references.tex_a.kind === 'image');
+
+  // The round trip: bundling and then opening on a machine where those files
+  // installed as different ids must reproduce an ordinary document.
+  const reopened = applyPresetAssets(saved, assets.map((need) => ({ ...need })), {
+    'blast-core.png': 500,
+    'streak.png': 501,
+    'chunk.glb': 502,
+  });
+  check('a bundled preset reopens with local ids',
+    reopened.doc.references.tex_a.ref === 'asset:500'
+    && reopened.doc.references.mesh_c.ref === 'asset:502'
+    && reopened.missing.length === 0,
+    JSON.stringify(reopened.doc.references.tex_a));
+
+  // A slot whose upload failed is left alone rather than emptied: the author
+  // keeps a working document, and validatePreset names the slot still holding
+  // an id instead of the save going through with a hole in it.
+  const partial = bundlePresetAssets(authored, new Map([['tex_a', 'blast-core.png']]));
+  check('an unbundled slot keeps its id so the save is refused',
+    partial.doc.references.tex_b.ref === 'asset:7'
+    && validatePreset(normalizePreset({ id: 'x', doc: partial.doc, assets: partial.assets })).length > 0);
+
+  check('a document with nothing to bundle passes through untouched',
+    bundlePresetAssets({ references: {} }, new Map()).doc.references !== undefined
+    && bundlePresetAssets({ references: {} }, new Map()).assets.length === 0);
+  check('  and a document with no references at all does not throw',
+    collectPresetAssetNeeds({}).length === 0 && collectPresetAssetNeeds(null).length === 0);
 }
 
 console.log(`\n${failures ? `${failures} failure(s)` : 'all checks passed'}`);

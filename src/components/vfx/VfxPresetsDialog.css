@@ -483,6 +483,97 @@
   color: #7b8494;
 }
 
+/* The bundled-asset list. Boxed off from the metadata fields above it because
+ * it is not metadata: saving copies these files into the shipped pack, and the
+ * author should see that as a distinct thing they are agreeing to. */
+.vfx-presets__assets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: #14161b;
+  border: 1px solid #2a2d34;
+  border-radius: 6px;
+}
+
+.vfx-presets__assets-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8a93a4;
+}
+
+.vfx-presets__assets-title em {
+  font-style: normal;
+  background: #22262e;
+  border-radius: 8px;
+  padding: 1px 6px;
+  color: #b8c0ce;
+}
+
+.vfx-presets__assets-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #7b8494;
+}
+
+/* Overrides the editor's column layout for labels: an asset row is a name and
+ * the filename it becomes, side by side. */
+.vfx-presets__editor label.vfx-presets__asset {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+/* text-transform is reset on BOTH of these, and it is not cosmetic. The
+ * editor's `label > span` rule uppercases field captions, and these two spans
+ * are direct children of a label: it would break the icon font's ligature (the
+ * glyph is looked up from the literal text "deployed_code") and shout the
+ * filename back in caps. */
+.vfx-presets__asset > .material-symbols-outlined {
+  flex: none;
+  font-size: 16px;
+  color: #8a93a4;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.vfx-presets__asset input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.vfx-presets__asset-file {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #6f7889;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+/* An empty or duplicated name. The Save button is already disabled; this says
+ * which row is the reason. */
+.vfx-presets__asset-file.is-bad {
+  color: #e8746a;
+}
+
+.vfx-presets__asset-gone {
+  flex: none;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #e8746a;
+}
+
 .vfx-presets__editor-actions {
   display: flex;
   justify-content: flex-end;

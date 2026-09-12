@@ -359,6 +359,93 @@ export function applyPresetAssets(doc, assets, idsByFile) {
 }
 
 /**
+ * Every reference slot in a document that points at a library asset.
+ *
+ * The SAVE side of the same gap applyPresetAssets closes on open. An author's
+ * effect refers to their own library - `asset:41` - and validatePreset refuses
+ * exactly that, because 41 means nothing on anyone else's install. So this is
+ * the list of things that have to be copied into the shipped pack before the
+ * preset can be written, and it is what the Save dialog shows the author.
+ *
+ * SLOTS WITH NO REF ARE NOT LISTED. An effect can carry a reference entry that
+ * was never filled - a texture block added and left empty - and that needs
+ * nothing bundled: it already saves, and it opens drawing with the built-in
+ * blob, which is what an empty slot means everywhere else.
+ *
+ * @param {Object} doc a VFX graph document
+ * @returns {Array<{slot: string, assetId: number, kind: string, name: string}>}
+ */
+export function collectPresetAssetNeeds(doc) {
+  const references = doc?.references;
+  if (!references || typeof references !== 'object') return [];
+  const needs = [];
+  for (const [slot, entry] of Object.entries(references)) {
+    const id = parsePresetAssetRef(entry?.ref);
+    if (id === null) continue;
+    needs.push({
+      slot,
+      assetId: id,
+      kind: entry?.kind === 'mesh' ? 'mesh' : 'image',
+      name: str(entry?.name),
+    });
+  }
+  return needs;
+}
+
+// Local rather than imported from doc.js: this module is the one piece of the
+// VFX code the SERVER loads, and doc.js pulls in the whole document normaliser.
+const PRESET_ASSET_REF = /^asset:(\d+)$/;
+
+function parsePresetAssetRef(ref) {
+  const match = PRESET_ASSET_REF.exec(str(ref));
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Turn a document's library references into bundled-file declarations.
+ *
+ * THE EXACT INVERSE OF applyPresetAssets, and it has to be: that function turns
+ * `slot wants flame-wisp.png` back into `ref: "asset:118"` when the preset is
+ * opened somewhere else. Saving strips the id and records the filename; opening
+ * installs the file and writes whatever id it got there. Neither side ever sees
+ * the other's numbering, which is the whole mechanism.
+ *
+ * The `name` is derived from the FILE, not from the author's library, and that
+ * is load-bearing: dedup on open is by display name, so this has to produce the
+ * same string packAssetDisplayName does for a file installed any other way -
+ * see the note on presetAssetName.
+ *
+ * @param {Object} doc the document being saved
+ * @param {Map<string, string>|Object} filesBySlot slot to bundled filename
+ * @returns {{doc: Object, assets: Object[]}}
+ */
+export function bundlePresetAssets(doc, filesBySlot) {
+  const needs = collectPresetAssetNeeds(doc);
+  if (needs.length === 0) return { doc, assets: [] };
+
+  const lookup = (slot) => (filesBySlot instanceof Map ? filesBySlot.get(slot) : filesBySlot?.[slot]);
+  const references = { ...(doc.references || {}) };
+  const assets = [];
+
+  for (const need of needs) {
+    const file = str(lookup(need.slot));
+    if (!file) continue;
+    assets.push({
+      slot: need.slot,
+      file,
+      kind: need.kind,
+      name: packAssetDisplayName(file),
+    });
+    // The id goes, the slot stays. An entry with an empty ref is what an
+    // unfilled slot looks like everywhere else, so a reader that never installs
+    // the pack file still gets a valid document rather than a dangling id.
+    references[need.slot] = { ...references[need.slot], ref: '' };
+  }
+
+  return { doc: { ...doc, references }, assets };
+}
+
+/**
  * Group summaries for display: category order first, then name within a group.
  *
  * @param {Object[]} summaries

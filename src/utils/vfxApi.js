@@ -324,6 +324,50 @@ export async function deleteVfxPreset(id) {
 }
 
 /**
+ * What is already in the shipped preset asset pack.
+ *
+ * Read before bundling so the Save dialog can say "that filename is taken" in
+ * the form rather than as a 409 after the author has pressed Save.
+ *
+ * @returns {Promise<{assets: Array<Object>, authorMode: boolean}>}
+ */
+export async function listVfxPackAssets() {
+  const response = await fetch(`${API_BASE}/vfx/preset-assets`)
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) throw new Error(payload?.error || 'Could not read the preset asset pack')
+  return { assets: payload.assets || [], authorMode: Boolean(payload.authorMode) }
+}
+
+/**
+ * Copy one file into the preset asset pack.
+ *
+ * This is the step that makes a custom effect shippable: the bytes move OUT of
+ * the author's install-specific library and INTO resources/vfx/assets/, where a
+ * filename is all the reference a preset needs. Author installations only.
+ *
+ * @param {{name: string, dataUrl: string, overwrite?: boolean}} spec
+ * @returns {Promise<{file: string, kind: string, name: string}>}
+ */
+export async function addVfxPackAsset({ name, dataUrl, overwrite = false }) {
+  const response = await fetch(`${API_BASE}/vfx/preset-assets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, dataUrl, overwrite }),
+  })
+  const payload = await response.json().catch(() => ({}))
+  if (!response.ok) {
+    // The 409 carries the filename that clashed, and the caller needs it to
+    // decide between reusing that file and asking for a different name - so it
+    // travels on the error rather than being flattened into the message.
+    const error = new Error(payload?.error || 'Could not add that file to the pack')
+    error.status = response.status
+    error.file = payload?.file || ''
+    throw error
+  }
+  return payload
+}
+
+/**
  * Store a card thumbnail, as a PNG data URL straight off a canvas.
  *
  * @param {string} id
