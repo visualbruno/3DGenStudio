@@ -98,6 +98,96 @@ namespace
 	}
 }
 
+namespace
+{
+	/**
+	 * Run one operator chain at one effect time.
+	 *
+	 * MIRRORS OP_EVALUATORS IN THE APP, including its edge cases, because a
+	 * near-miss here is worse than nothing: remap CLAMPS rather than
+	 * extrapolating, divide by ~zero yields zero rather than infinity, sine is
+	 * sin(x * 2pi) rather than sin(x), and `random` flattens to the middle of
+	 * its range because per-frame noise has no static value at all.
+	 */
+	float EvaluateOps(const TArray<TSharedPtr<FJsonValue>>& Ops, int32 Register, float Time,
+		const TFunctionRef<float(int32)>& Constant)
+	{
+		TMap<int32, float> Registers;
+		for (const TSharedPtr<FJsonValue>& Entry : Ops)
+		{
+			const TSharedPtr<FJsonObject> Op = Entry->AsObject();
+			if (!Op.IsValid()) { continue; }
+
+			TArray<float> In;
+			const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+			if (Op->TryGetArrayField(TEXT("in"), Inputs))
+			{
+				for (const TSharedPtr<FJsonValue>& InputEntry : *Inputs)
+				{
+					const TSharedPtr<FJsonObject> Input = InputEntry->AsObject();
+					if (!Input.IsValid()) { In.Add(0.f); continue; }
+					const int32 Index = Input->GetIntegerField(TEXT("index"));
+					if (Input->GetStringField(TEXT("kind")) == TEXT("register"))
+					{
+						const float* Upstream = Registers.Find(Index);
+						In.Add(Upstream != nullptr ? *Upstream : 0.f);
+					}
+					else
+					{
+						In.Add(Constant(Index));
+					}
+				}
+			}
+			auto At = [&In](int32 i) { return In.IsValidIndex(i) ? In[i] : 0.f; };
+
+			const FString Kind = Op->GetStringField(TEXT("op"));
+			float Value = 0.f;
+			if (Kind == TEXT("time")) { Value = Time; }
+			else if (Kind == TEXT("const")) { Value = At(0); }
+			else if (Kind == TEXT("add")) { Value = At(0) + At(1); }
+			else if (Kind == TEXT("sub")) { Value = At(0) - At(1); }
+			else if (Kind == TEXT("mul")) { Value = At(0) * At(1); }
+			else if (Kind == TEXT("div"))
+			{
+				Value = FMath::Abs(At(1)) < 1e-9f ? 0.f : At(0) / At(1);
+			}
+			else if (Kind == TEXT("lerp")) { Value = At(0) + (At(1) - At(0)) * At(2); }
+			else if (Kind == TEXT("clamp")) { Value = FMath::Clamp(At(0), At(1), At(2)); }
+			else if (Kind == TEXT("sin")) { Value = FMath::Sin(At(0) * 2.f * PI); }
+			else if (Kind == TEXT("random")) { Value = (At(0) + At(1)) * 0.5f; }
+			else if (Kind == TEXT("remap"))
+			{
+				const float Span = At(2) - At(1);
+				if (FMath::Abs(Span) < 1e-9f) { Value = At(3); }
+				else
+				{
+					const float K = FMath::Clamp((At(0) - At(1)) / Span, 0.f, 1.f);
+					Value = At(3) + (At(4) - At(3)) * K;
+				}
+			}
+			Registers.Add(Op->GetIntegerField(TEXT("out")), Value);
+		}
+		const float* Result = Registers.Find(Register);
+		return Result != nullptr ? *Result : 0.f;
+	}
+}
+
+bool FVfxIr::HasOperators(const TSharedPtr<FJsonObject>& Block)
+{
+	if (!Block.IsValid()) { return false; }
+	const TArray<TSharedPtr<FJsonValue>>* Bindings = nullptr;
+	if (!Block->TryGetArrayField(TEXT("bindings"), Bindings)) { return false; }
+	for (const TSharedPtr<FJsonValue>& Entry : *Bindings)
+	{
+		const TSharedPtr<FJsonObject> Binding = Entry->AsObject();
+		if (Binding.IsValid() && Binding->GetStringField(TEXT("src")) == TEXT("register"))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 FVfxBound FVfxIr::Binding(const TSharedPtr<FJsonObject>& Block, const TCHAR* Prop) const
 {
 	FVfxBound Bound;
@@ -133,6 +223,35 @@ FVfxBound FVfxIr::Binding(const TSharedPtr<FJsonObject>& Block, const TCHAR* Pro
 			ReadVector(ConstantPool, Lo, Bound.Width, Bound.LowVector);
 			ReadVector(ConstantPool, Hi, Bound.Width, Bound.HighVector);
 			FMemory::Memcpy(Bound.Vector, Bound.LowVector, sizeof(Bound.Vector));
+			return Bound;
+		}
+		if (Source == TEXT("register"))
+		{
+			// SAMPLED ACROSS THE EFFECT AND AVERAGED. A Niagara module input is
+			// one number; the chain is a function of time. The average is the
+			// one number that is wrong in the same way a constant is always
+			// wrong about an animation, rather than catastrophically wrong
+			// about the magnitude - which is what the zero this used to return
+			// was. The caller reports the flattening; see HasOperators.
+			Bound.bRegister = true;
+			const int32 Register = Binding->GetIntegerField(TEXT("index"));
+			const TArray<TSharedPtr<FJsonValue>>* Ops = nullptr;
+			if (Block->TryGetArrayField(TEXT("pre"), Ops) && Ops->Num() > 0)
+			{
+				const float Span = FMath::Max(0.01f, Duration());
+				constexpr int32 Samples = 17;
+				float Total = 0.f;
+				for (int32 i = 0; i < Samples; ++i)
+				{
+					Total += EvaluateOps(*Ops, Register, Span * i / (Samples - 1),
+						[this](int32 Index) { return Constant(Index); });
+				}
+				Bound.Constant = Total / Samples;
+				for (int32 i = 0; i < Bound.Width && i < 4; ++i)
+				{
+					Bound.Vector[i] = Bound.Constant;
+				}
+			}
 			return Bound;
 		}
 		if (Source == TEXT("curve") || Source == TEXT("gradient"))
@@ -241,4 +360,13 @@ int32 FVfxIr::Seed() const
 		if ((*Effect)->TryGetNumberField(TEXT("seed"), Value)) { return Value; }
 	}
 	return 0;
+}
+
+int32 FVfxIr::AssetSlot(const TSharedPtr<FJsonObject>& Block, const TCHAR* Slot)
+{
+	if (!Block.IsValid()) { return -1; }
+	const TSharedPtr<FJsonObject>* Slots = nullptr;
+	if (!Block->TryGetObjectField(TEXT("assetSlots"), Slots)) { return -1; }
+	int32 Index = -1;
+	return (*Slots)->TryGetNumberField(Slot, Index) ? Index : -1;
 }

@@ -53,7 +53,12 @@ int32 UVfxImportCommandlet::Main(const FString& Params)
 
 	if (Arguments.Contains(TEXT("report")))
 	{
-		FFileHelper::SaveStringToFile(Text, *Arguments[TEXT("report")]);
+		// UTF-8, NOT the default. SaveStringToFile auto-detects and writes
+		// UTF-16 the moment one non-ASCII character appears - a degree sign
+		// in a cone report is enough - so the file a build step diffs changed
+		// encoding depending on which blocks the effect happened to use.
+		FFileHelper::SaveStringToFile(Text, *Arguments[TEXT("report")],
+			FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
 	}
 
 	UE_LOG(LogVfxImportCmd, Display, TEXT("IMPORT RESULT %s | %s"),

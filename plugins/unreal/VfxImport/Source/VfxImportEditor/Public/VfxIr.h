@@ -48,6 +48,18 @@ struct FVfxBound
 	float LowVector[4] = { 0.f, 0.f, 0.f, 0.f };
 	float HighVector[4] = { 0.f, 0.f, 0.f, 0.f };
 
+	/**
+	 * An operator-driven property.
+	 *
+	 * The IR carries per-particle operator chains on the block's `pre` array,
+	 * and a binding whose src is `register` reads one of their outputs. There
+	 * is nothing static to write into a Niagara module input, and the honest
+	 * thing to write is the chain's AVERAGE over the effect rather than the
+	 * zero a missing case hands back: a speed cap of zero with clamping on
+	 * stops every particle dead, and nothing in the report says why.
+	 */
+	bool bRegister = false;
+
 	/** The AUTHORED curve or gradient, not the baked table - see FVfxIr. */
 	TSharedPtr<FJsonObject> Curve;
 	TSharedPtr<FJsonObject> Gradient;
@@ -137,6 +149,18 @@ public:
 	float Constant(int32 Index) const;
 
 	static FString BlockType(const TSharedPtr<FJsonObject>& Block);
+
+	/** True if any of this block's properties is driven by an operator chain. */
+	static bool HasOperators(const TSharedPtr<FJsonObject>& Block);
+
+	/**
+	 * A block's asset index, by slot name, or -1.
+	 *
+	 * A block never carries an asset id: it carries `assetSlots: {mesh: 2}`,
+	 * and 2 is an index into `ir.assets`. That indirection is what lets one
+	 * texture serve six emitters and still be swapped in one place.
+	 */
+	static int32 AssetSlot(const TSharedPtr<FJsonObject>& Block, const TCHAR* Slot);
 	static FString Mode(const TSharedPtr<FJsonObject>& Block, const TCHAR* Name,
 		const TCHAR* Fallback);
 

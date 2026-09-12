@@ -12,6 +12,8 @@
 #include "NiagaraRibbonRendererProperties.h"
 #include "NiagaraDataInterface.h"
 #include "NiagaraDataInterfaceVectorCurve.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogVfxProbe, Log, All);
 
@@ -137,6 +139,113 @@ int32 UVfxProbeCommandlet::Main(const FString& Params)
 	TArray<FString> Switches;
 	TMap<FString, FString> Arguments;
 	ParseCommandLine(*Params, Tokens, Switches, Arguments);
+
+	// DISCOVERY MODE, added when the mapping grew past the modules the original
+	// dump happened to list. The hard-coded array below was fine for writing the
+	// first pass and useless for the second: every module added since - the
+	// collision, the rotation rate, the sub-UV animation, the static mesh
+	// location - had to be found by name first and then read input by input.
+	//
+	//   -find=collision            every Niagara module script whose path
+	//                              contains "collision"
+	//   -modules=a,b,c             those modules added to a real stack, with
+	//                              every input, its type and its visibility
+	//   -script=ParticleSpawnScript  which stage to add them to (default Update)
+	//
+	// Returns immediately, so a targeted question does not cost a 5000-line
+	// dump to answer.
+	if (Arguments.Contains(TEXT("find")))
+	{
+		const FString Needle = Arguments[TEXT("find")];
+		FAssetRegistryModule& Registry =
+			FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		TArray<FString> Roots = { TEXT("/Niagara") };
+		Registry.Get().ScanPathsSynchronous(Roots, /*bForceRescan*/ false);
+		TArray<FAssetData> Found;
+		Registry.Get().GetAssetsByClass(UNiagaraScript::StaticClass()->GetClassPathName(), Found);
+		UE_LOG(LogVfxProbe, Display, TEXT("======== FIND '%s' (%d scripts scanned) ========"),
+			*Needle, Found.Num());
+		for (const FAssetData& Asset : Found)
+		{
+			const FString Path = Asset.GetObjectPathString();
+			if (Path.Contains(Needle)) { UE_LOG(LogVfxProbe, Display, TEXT("  %s"), *Path); }
+		}
+		return 0;
+	}
+
+	if (Arguments.Contains(TEXT("enums")))
+	{
+		TArray<FString> Paths;
+		Arguments[TEXT("enums")].ParseIntoArray(Paths, TEXT(","), true);
+		for (const FString& Path : Paths)
+		{
+			UEnum* Enum = LoadObject<UEnum>(nullptr, *Path);
+			if (Enum == nullptr)
+			{
+				UE_LOG(LogVfxProbe, Warning, TEXT("ENUM %s : NOT FOUND"), *Path);
+				continue;
+			}
+			UE_LOG(LogVfxProbe, Display, TEXT("ENUM %s"), *Path);
+			for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+			{
+				UE_LOG(LogVfxProbe, Display, TEXT("   ENTRY %-20s = %s"),
+					*Enum->GetNameStringByIndex(i),
+					*Enum->GetDisplayNameTextByIndex(i).ToString());
+			}
+		}
+		return 0;
+	}
+
+	if (Arguments.Contains(TEXT("modules")))
+	{
+		TArray<FString> Paths;
+		Arguments[TEXT("modules")].ParseIntoArray(Paths, TEXT(","), true);
+		const FName ScriptName(*Arguments.FindRef(TEXT("script"),
+			TEXT("ParticleUpdateScript")));
+
+		FNiagaraExternalEditContext Fresh;
+		UNiagaraSystem* Probe = UNiagaraExternalEditUtilities::CreateNiagaraSystem(
+			TEXT("ModuleProbe"), TEXT("/Temp"), nullptr, Fresh);
+		if (Probe == nullptr)
+		{
+			UE_LOG(LogVfxProbe, Error, TEXT("could not create the probe system"));
+			return 1;
+		}
+		FNiagaraExternalEditContext Context2(Probe);
+		UNiagaraEmitter* Template = LoadObject<UNiagaraEmitter>(nullptr,
+			TEXT("/Niagara/DefaultAssets/Templates/Emitters/Minimal.Minimal"));
+		FNiagaraExt_EmitterTopology Topology;
+		UNiagaraExternalEditUtilities::AddEmitter(Template, FName(TEXT("Probe")),
+			Topology, Context2);
+
+		for (const FString& Path : Paths)
+		{
+			UNiagaraScript* Script = LoadObject<UNiagaraScript>(nullptr, *Path);
+			if (Script == nullptr)
+			{
+				UE_LOG(LogVfxProbe, Warning, TEXT("MODULE %s : NOT FOUND"), *Path);
+				continue;
+			}
+			FNiagaraExt_StackItemReference Location(Probe, Topology.EmitterName, ScriptName);
+			FNiagaraExt_ModuleTopology Added;
+			Context2.Errors.Reset();
+			UNiagaraExternalEditUtilities::AddModule(Location, Script, Added, Context2);
+			UE_LOG(LogVfxProbe, Display, TEXT("MODULE %s -> %s (errors=%d)"), *Path,
+				*Added.ModuleName.ToString(), Context2.Errors.Num());
+			for (const FText& Error : Context2.Errors)
+			{
+				UE_LOG(LogVfxProbe, Warning, TEXT("   ERR %s"), *Error.ToString());
+			}
+			for (const FNiagaraExt_StackInputTopology& Input : Added.Inputs)
+			{
+				UE_LOG(LogVfxProbe, Display, TEXT("   IN %-36s : %-26s vis=%d edit=%d switch=%d"),
+					*Input.Name.ToString(), *Input.Type.GetName(),
+					Input.bIsVisible ? 1 : 0, Input.bIsEditable ? 1 : 0,
+					Input.bIsStaticSwitch ? 1 : 0);
+			}
+		}
+		return 0;
+	}
 
 	// THE ENUM ENTRY NAMES, which are what a static switch is actually set to.
 	// Every shape, lifetime mode and colour mode in the mapping goes through one

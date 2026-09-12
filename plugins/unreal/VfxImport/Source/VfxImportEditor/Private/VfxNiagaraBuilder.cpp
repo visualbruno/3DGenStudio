@@ -1,6 +1,7 @@
 #include "VfxNiagaraBuilder.h"
 
 #include "VfxImportReport.h"
+#include "VfxAssetImport.h"
 
 #include "NiagaraSystem.h"
 #include "NiagaraEmitter.h"
@@ -9,6 +10,12 @@
 #include "NiagaraExternalSystemEditorUtilities.h"
 #include "NiagaraSpriteRendererProperties.h"
 #include "NiagaraMeshRendererProperties.h"
+#include "NiagaraEmitterHandle.h"
+#include "NiagaraGraph.h"
+#include "NiagaraNodeInput.h"
+#include "NiagaraNodeOutput.h"
+#include "NiagaraScriptSource.h"
+#include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
 
 #include "Engine/Texture2D.h"
 #include "Engine/StaticMesh.h"
@@ -62,6 +69,37 @@ namespace VfxNiagara
 		TEXT("/Niagara/Modules/Update/Lifetime/KillParticlesInVolume.KillParticlesInVolume");
 	static const TCHAR* ModSolve =
 		TEXT("/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity");
+	// Found with the probe's -find mode rather than guessed; every one of these
+	// was then dumped input by input with -modules before a line was written
+	// against it.
+	static const TCHAR* ModAddVelocityInCone =
+		TEXT("/Niagara/Modules/Spawn/Velocity/AddVelocityInCone.AddVelocityInCone");
+	static const TCHAR* ModAddVelocityFromPoint =
+		TEXT("/Niagara/Modules/Spawn/Velocity/AddVelocityFromPoint.AddVelocityFromPoint");
+	static const TCHAR* ModStaticMeshLocation =
+		TEXT("/Niagara/Modules/Spawn/Location/StaticMeshLocation.StaticMeshLocation");
+	static const TCHAR* ModSpriteRotationRate =
+		TEXT("/Niagara/Modules/Update/Orientation/SpriteRotationRate.SpriteRotationRate");
+	static const TCHAR* ModMeshRotationRate =
+		TEXT("/Niagara/Modules/Update/Orientation/MeshRotationRate.MeshRotationRate");
+	static const TCHAR* ModJitterPosition =
+		TEXT("/Niagara/Modules/Update/Position/JitterPosition.JitterPosition");
+	static const TCHAR* ModCollision = TEXT("/Niagara/Modules/Collision/Collision.Collision");
+	static const TCHAR* ModSubUV =
+		TEXT("/Niagara/Modules/Update/SubUV/V2/SubUVAnimation.SubUVAnimation");
+	static const TCHAR* ModInheritVelocity =
+		TEXT("/Niagara/Modules/Update/Velocity/InheritVelocity.InheritVelocity");
+	static const TCHAR* ModGenerateDeathEvent =
+		TEXT("/Niagara/Modules/Events/GenerateDeathEvent.GenerateDeathEvent");
+	static const TCHAR* ModGenerateCollisionEvent =
+		TEXT("/Niagara/Modules/Events/GenerateCollisionEvent.GenerateCollisionEvent");
+	static const TCHAR* ModReceiveDeathEvent =
+		TEXT("/Niagara/Modules/Events/ReceiveDeathEvent.ReceiveDeathEvent");
+	static const TCHAR* ModReceiveCollisionEvent =
+		TEXT("/Niagara/Modules/Events/ReceiveCollisionEvent.ReceiveCollisionEvent");
+
+	static const TCHAR* DynUniformRangedVector =
+		TEXT("/Niagara/DynamicInputs/UniformRange/UniformRangedVector.UniformRangedVector");
 
 	static const TCHAR* DynVectorFromCurve =
 		TEXT("/Niagara/DynamicInputs/ValueFromCurve/VectorFromCurve.VectorFromCurve");
@@ -89,6 +127,18 @@ namespace VfxNiagara
 		TEXT("/Niagara/Enums/ENiagaraEmitterLifeCycleMode.ENiagaraEmitterLifeCycleMode");
 	static const TCHAR* EnumLoopBehavior =
 		TEXT("/Niagara/Enums/ENiagara_EmitterStateOptions.ENiagara_EmitterStateOptions");
+	static const TCHAR* EnumRotationMode =
+		TEXT("/Niagara/Enums/Transforms/ENiagara_RotationMode.ENiagara_RotationMode");
+	static const TCHAR* EnumCpuCollision =
+		TEXT("/Niagara/Enums/ENiagara_CPUCollisionType.ENiagara_CPUCollisionType");
+	static const TCHAR* EnumCoordinateSpace =
+		TEXT("/Niagara/Enums/ENiagaraCoordinateSpace.ENiagaraCoordinateSpace");
+	static const TCHAR* EnumSubUvMode =
+		TEXT("/Niagara/Enums/ENiagara_SubUVLookupModeV2.ENiagara_SubUVLookupModeV2");
+	static const TCHAR* EnumKillShape =
+		TEXT("/Niagara/Enums/ENiagaraKillVolumeOptions.ENiagaraKillVolumeOptions");
+	static const TCHAR* EnumMeshOrSprite =
+		TEXT("/Niagara/Enums/ENiagaraMeshOrSprite.ENiagaraMeshOrSprite");
 
 	/**
 	 * An enum entry, BY DISPLAY NAME.
@@ -190,6 +240,7 @@ UNiagaraSystem* FVfxNiagaraBuilder::Build(const FString& AssetName, const FStrin
 	// but not in memory: the save asserts with "cannot be saved as it has only
 	// been partially loaded" and takes the editor down with it. Loading it fully
 	// first turns that crash into an ordinary overwrite.
+	PackageFolder = PackagePath;
 	const FString LongPackageName = PackagePath / AssetName;
 	if (FPackageName::DoesPackageExist(LongPackageName))
 	{
@@ -225,6 +276,8 @@ UNiagaraSystem* FVfxNiagaraBuilder::Build(const FString& AssetName, const FStrin
 		++Index;
 	}
 
+	BuildEvents();
+
 	GContextHolder.Reset();
 	GContext = nullptr;
 	return System;
@@ -234,6 +287,25 @@ void FVfxNiagaraBuilder::BuildEmitter(const TSharedPtr<FJsonObject>& SystemObjec
 {
 	CurrentLabel = EmitterName.ToString();
 	bNeedsSolver = false;
+	AfterSolve.Reset();
+	SolverSpeedLimit = -1.f;
+	PendingMeshScale = -1.f;
+	bUsesParticleId = false;
+
+	// THE RENDERER IS READ BEFORE THE STACK IS BUILT, because the Update stage
+	// needs it: a spin is Sprite Rotation Rate on a sprite and Mesh Rotation
+	// Rate on a mesh, and the two write different attributes. Reading it here
+	// costs one field lookup; discovering it in BuildOutput, which runs last,
+	// would mean either building the stack twice or getting it wrong.
+	OutputMode.Reset();
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Outputs = nullptr;
+		if (SystemObject->TryGetArrayField(TEXT("outputs"), Outputs) && Outputs->Num() > 0)
+		{
+			const TSharedPtr<FJsonObject> First = (*Outputs)[0]->AsObject();
+			if (First.IsValid()) { OutputMode = First->GetStringField(TEXT("mode")); }
+		}
+	}
 
 	UNiagaraEmitter* Template = LoadObject<UNiagaraEmitter>(nullptr, VfxNiagara::TemplateEmitter);
 	if (Template == nullptr)
@@ -259,6 +331,8 @@ void FVfxNiagaraBuilder::BuildEmitter(const TSharedPtr<FJsonObject>& SystemObjec
 	// to use the name it actually got.
 	EmitterName = Topology.EmitterName;
 	CurrentLabel = EmitterName.ToString();
+	EmitterBySystemId.Add(SystemObject->GetStringField(TEXT("id")), EmitterName);
+	bIsSubEmitter = SystemObject->HasField(TEXT("listen"));
 
 	BuildEmitterState(SystemObject, EmitterName);
 	BuildSpawn(SystemObject, EmitterName);
@@ -270,15 +344,416 @@ void FVfxNiagaraBuilder::BuildEmitter(const TSharedPtr<FJsonObject>& SystemObjec
 	// module accumulated, so a solver placed before them integrates last frame's
 	// forces - which looks like a one-frame lag at 60fps and like broken physics
 	// at 10. Niagara does not enforce the order; the author would have to know.
-	if (bNeedsSolver)
+	if (bNeedsSolver || SolverSpeedLimit >= 0.f || AfterSolve.Num() > 0)
 	{
 		const FName Solver = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
 			VfxNiagara::ModSolve, TEXT("solver"));
 		if (!Solver.IsNone())
 		{
+			if (SolverSpeedLimit >= 0.f)
+			{
+				// THE SPEED CAP LIVES HERE, and it is native rather than a note
+				// telling the author to go and tick it themselves. Clamp
+				// Velocity reveals Speed Limit, so the switch goes first.
+				SetBool(EmitterName, VfxNiagara::ParticleUpdate, Solver,
+					{ TEXT("Clamp Velocity") }, true, TEXT("update.speedLimit"));
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Solver,
+					{ TEXT("Speed Limit") }, SolverSpeedLimit, TEXT("update.speedLimit"));
+				Report.Native(CurrentLabel, TEXT("update.speedLimit"),
+					FString::Printf(TEXT("Solve Forces and Velocity clamps at %.0f cm/s"),
+						SolverSpeedLimit));
+			}
 			Report.Native(CurrentLabel, TEXT("Solve Forces and Velocity"),
 				TEXT("added last, so it integrates the forces above it"));
 		}
+	}
+
+	BuildAfterSolve(EmitterName);
+
+	if (bUsesParticleId)
+	{
+		// PERSISTENT IDS, or the script that reads Particles.ID does not run.
+		// Niagara reports this as an asset compile warning - "Before the
+		// Particles.ID parameter can be used, the 'Requires persistent IDs'
+		// option has to be activated" - which never reaches the import report,
+		// so the effect saves clean and the curve emitter silently piles every
+		// particle onto the same point.
+		for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+		{
+			if (Handle.GetName() != EmitterName) { continue; }
+			if (FVersionedNiagaraEmitterData* Data = Handle.GetEmitterData())
+			{
+				Data->bRequiresPersistentIDs = true;
+				Report.Native(CurrentLabel, TEXT("persistent ids"),
+					TEXT("enabled, because this emitter reads Particles.ID"));
+			}
+		}
+	}
+}
+
+namespace
+{
+	/**
+	 * An empty script stack for one usage: an input node feeding an output node.
+	 *
+	 * NOT FNiagaraStackGraphUtilities::ResetGraphForOutput, which is exactly
+	 * this function and is declared in a public header WITHOUT an export macro
+	 * - so it compiles against and links against nothing. (RelayoutGraph is in
+	 * the same position, and is only cosmetic, so it is simply not called.)
+	 *
+	 * The shape is the one every Niagara script stack has: a Parameter Map in,
+	 * a Parameter Map out, and modules inserted between them. AddScriptModuleToStack
+	 * - which IS exported - does the inserting from there.
+	 */
+	UNiagaraNodeOutput* MakeEventScriptStack(UNiagaraGraph& Graph, const FGuid& UsageId)
+	{
+		if (UNiagaraNodeOutput* Existing = Graph.FindEquivalentOutputNode(
+			ENiagaraScriptUsage::ParticleEventScript, UsageId))
+		{
+			return Existing;
+		}
+
+		FGraphNodeCreator<UNiagaraNodeInput> InputCreator(Graph);
+		UNiagaraNodeInput* InputNode = InputCreator.CreateNode();
+		InputNode->Input = FNiagaraVariable(FNiagaraTypeDefinition::GetParameterMapDef(),
+			TEXT("InputMap"));
+		InputNode->Usage = ENiagaraInputNodeUsage::Parameter;
+		InputNode->NodePosX = -100;
+		InputNode->NodePosY = 0;
+		InputCreator.Finalize();
+
+		FGraphNodeCreator<UNiagaraNodeOutput> OutputCreator(Graph);
+		UNiagaraNodeOutput* OutputNode = OutputCreator.CreateNode();
+		OutputNode->SetUsage(ENiagaraScriptUsage::ParticleEventScript);
+		OutputNode->SetUsageId(UsageId);
+		OutputNode->Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetParameterMapDef(),
+			TEXT("OutputMap")));
+		OutputNode->NodePosX = 300;
+		OutputNode->NodePosY = 0;
+		OutputCreator.Finalize();
+
+		UEdGraphPin* From = InputNode->GetOutputPin(0);
+		UEdGraphPin* To = OutputNode->GetInputPin(0);
+		if (From == nullptr || To == nullptr) { return nullptr; }
+		From->MakeLinkTo(To);
+		return OutputNode;
+	}
+}
+
+void FVfxNiagaraBuilder::BuildEvents()
+{
+	const TArray<TSharedPtr<FJsonValue>>* Channels = nullptr;
+	if (!Ir.Ir()->TryGetArrayField(TEXT("eventChannels"), Channels)) { return; }
+
+	// The generator is added once per (source emitter, trigger) even when three
+	// systems listen to the same one - a second Generate Death Event on the
+	// same stack sends every death twice.
+	TSet<FString> Generated;
+
+	for (const TSharedPtr<FJsonValue>& Entry : Ir.Systems())
+	{
+		const TSharedPtr<FJsonObject> SystemObject = Entry->AsObject();
+		if (!SystemObject.IsValid() || !SystemObject->HasField(TEXT("listen"))) { continue; }
+		const TSharedPtr<FJsonObject>* Listen = nullptr;
+		if (!SystemObject->TryGetObjectField(TEXT("listen"), Listen)) { continue; }
+
+		const FString ChildId = SystemObject->GetStringField(TEXT("id"));
+		const FName* ChildName = EmitterBySystemId.Find(ChildId);
+		if (ChildName == nullptr) { continue; }
+		CurrentLabel = ChildName->ToString();
+
+		int32 ChannelIndex = -1;
+		(*Listen)->TryGetNumberField(TEXT("channel"), ChannelIndex);
+		if (!Channels->IsValidIndex(ChannelIndex)) { continue; }
+		const TSharedPtr<FJsonObject> Channel = (*Channels)[ChannelIndex]->AsObject();
+		if (!Channel.IsValid()) { continue; }
+
+		const FString SourceId = Channel->GetStringField(TEXT("sourceSystemId"));
+		const FName* SourceName = EmitterBySystemId.Find(SourceId);
+		if (SourceName == nullptr)
+		{
+			Report.Dropped(CurrentLabel, TEXT("sub-emitter"),
+				FString::Printf(TEXT("it listens to '%s', which is not in this effect"),
+					*SourceId));
+			continue;
+		}
+
+		FString Trigger = Channel->GetStringField(TEXT("trigger"));
+		FString ListenTrigger;
+		if ((*Listen)->TryGetStringField(TEXT("trigger"), ListenTrigger) && !ListenTrigger.IsEmpty())
+		{
+			Trigger = ListenTrigger;
+		}
+		const bool bCollision = Trigger == TEXT("onCollide");
+		double Probability = 1.0;
+		(*Listen)->TryGetNumberField(TEXT("probability"), Probability);
+
+		// ---- the generator, on the source ------------------------------
+		const FString GeneratorKey = SourceId + TEXT("/") + Trigger;
+		if (!Generated.Contains(GeneratorKey))
+		{
+			Generated.Add(GeneratorKey);
+			const FString SourceLabel = SourceName->ToString();
+			const FString Saved = CurrentLabel;
+			CurrentLabel = SourceLabel;
+			const FName Generator = AddModule(*SourceName, VfxNiagara::ParticleUpdate,
+				bCollision ? VfxNiagara::ModGenerateCollisionEvent
+					: VfxNiagara::ModGenerateDeathEvent, TEXT("sub-emitter"));
+			if (!Generator.IsNone())
+			{
+				// PROBABILITY IS NATIVE HERE, which it is not in Unity: the
+				// generator rolls per event, exactly like the preview's
+				// per-event roll, so "a quarter of the sparks make a puff"
+				// survives as the same sentence rather than as a note.
+				if (Probability < 1.0 && !bCollision)
+				{
+					SetBool(*SourceName, VfxNiagara::ParticleUpdate, Generator,
+						{ TEXT("Use Event Probability") }, true, TEXT("sub-emitter"));
+					SetFloat(*SourceName, VfxNiagara::ParticleUpdate, Generator,
+						{ TEXT("Event Probability") }, static_cast<float>(Probability),
+						TEXT("sub-emitter"));
+				}
+				Report.Native(SourceLabel, TEXT("sub-emitter"),
+					FString::Printf(TEXT("generates %s events"),
+						bCollision ? TEXT("collision") : TEXT("death")));
+			}
+			CurrentLabel = Saved;
+		}
+
+		// ---- the handler, on the listener ------------------------------
+		FVersionedNiagaraEmitter Versioned;
+		FGuid SourceHandleId;
+		for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+		{
+			if (Handle.GetName() == *ChildName) { Versioned = Handle.GetInstance(); }
+			if (Handle.GetName() == *SourceName) { SourceHandleId = Handle.GetId(); }
+		}
+		FVersionedNiagaraEmitterData* Data = Versioned.GetEmitterData();
+		if (Versioned.Emitter == nullptr || Data == nullptr) { continue; }
+
+		// BOTH SIDES NEED PERSISTENT IDS. The generator sends the dying
+		// particle's id in the payload and the receiver reads it, so both
+		// scripts touch Particles.ID - and Niagara refuses to run a script that
+		// reads it without this, as an asset WARNING that never reaches the
+		// import report. The effect then saves clean and does nothing.
+		Data->bRequiresPersistentIDs = true;
+		for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+		{
+			if (Handle.GetName() != *SourceName) { continue; }
+			if (FVersionedNiagaraEmitterData* SourceData = Handle.GetEmitterData())
+			{
+				SourceData->bRequiresPersistentIDs = true;
+			}
+		}
+
+		UNiagaraScriptSource* Source = Cast<UNiagaraScriptSource>(Data->GraphSource);
+		if (Source == nullptr || Source->NodeGraph == nullptr)
+		{
+			Report.Dropped(CurrentLabel, TEXT("sub-emitter"),
+				TEXT("this emitter has no editable graph to hang an event handler on"));
+			continue;
+		}
+
+		// THE EXTERNAL EDIT API CANNOT REACH AN EVENT HANDLER: its stack
+		// references name one of six scripts and an event handler is a seventh.
+		// So this is the one place the importer talks to the graph directly -
+		// the same four calls the editor's own "Add Event Handler" button makes.
+		FNiagaraEventScriptProperties EventProperties;
+		EventProperties.Script = NewObject<UNiagaraScript>(Versioned.Emitter,
+			MakeUniqueObjectName(Versioned.Emitter, UNiagaraScript::StaticClass(),
+				TEXT("EventScript")), RF_Transactional);
+		EventProperties.Script->SetUsage(ENiagaraScriptUsage::ParticleEventScript);
+		EventProperties.Script->SetUsageId(FGuid::NewGuid());
+		EventProperties.Script->SetLatestSource(Source);
+		EventProperties.SourceEmitterID = SourceHandleId;
+		// THE EVENT'S NAME, WITHOUT WHICH NOTHING FIRES. A handler with no
+		// SourceEventName matches no generator, so the emitter sits there
+		// spawning nothing and the import report happily says the sub-emitter
+		// was wired. Fire Storm imported with no impacts at all and the Ice
+		// Wall with only its slabs, both from this one empty FName.
+		//
+		// These two names are what the stock modules actually declare, read
+		// back off a compiled asset (`-run=VfxVerify` prints EVENT GENERATOR
+		// lines) rather than guessed.
+		EventProperties.SourceEventName = bCollision ? TEXT("CollisionEvent") : TEXT("DeathEvent");
+		EventProperties.ExecutionMode = EScriptExecutionMode::SpawnedParticles;
+		const int32* Burst = SubEmitterBurst.Find(ChildId);
+		EventProperties.SpawnNumber = Burst != nullptr ? *Burst : 1;
+		EventProperties.MaxEventsPerFrame = 1024;
+		EventProperties.UpdateAttributeInitialValues = true;
+		Versioned.Emitter->AddEventHandler(EventProperties, Versioned.Version);
+
+		UNiagaraNodeOutput* Output = MakeEventScriptStack(*Source->NodeGraph,
+			EventProperties.Script->GetUsageId());
+		if (Output != nullptr)
+		{
+			// WITHOUT THIS THE CHILDREN ALL APPEAR AT THE ORIGIN. The handler
+			// spawns them; only the Receive module copies the event's position
+			// and velocity onto them, and an impact effect whose impacts are
+			// all in the middle of the level is the classic symptom.
+			UNiagaraScript* Receive = LoadObject<UNiagaraScript>(nullptr,
+				bCollision ? VfxNiagara::ModReceiveCollisionEvent
+					: VfxNiagara::ModReceiveDeathEvent);
+			if (Receive != nullptr)
+			{
+				FNiagaraStackGraphUtilities::AddScriptModuleToStack(Receive, *Output);
+			}
+		}
+		Source->NodeGraph->NotifyGraphChanged();
+
+		// The stack was reshaped behind the context's back.
+		RefreshContext(System);
+
+		Report.Native(CurrentLabel, TEXT("sub-emitter"),
+			FString::Printf(TEXT("%d particle(s) per %s event from %s%s"),
+				EventProperties.SpawnNumber, bCollision ? TEXT("collision") : TEXT("death"),
+				*SourceName->ToString(),
+				Probability < 1.0
+					? *FString::Printf(TEXT(", at %.0f%% of events"), Probability * 100.0)
+					: TEXT("")));
+		if (Probability < 1.0 && bCollision)
+		{
+			Report.Approximated(CurrentLabel, TEXT("sub-emitter"),
+				TEXT("Generate Collision Event has no probability input, so every collision ")
+				TEXT("spawns - the authored fraction was not carried"));
+		}
+	}
+}
+
+void FVfxNiagaraBuilder::BuildAfterSolve(FName EmitterName)
+{
+	for (const TSharedPtr<FJsonObject>& Block : AfterSolve)
+	{
+		const FString Type = FVfxIr::BlockType(Block);
+
+		if (Type == TEXT("update.collidePlane"))
+		{
+			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
+				VfxNiagara::ModCollision, Type);
+			if (Module.IsNone()) { continue; }
+
+			// NOT Constrain Position To Plane, which is what this used to be.
+			// That module stops a particle at the floor and holds it there: no
+			// bounce, no friction, no sliding - so a spark shower arrived as a
+			// carpet of stationary dots. The Collision module has an ANALYTICAL
+			// PLANES mode that needs no scene geometry, and it carries
+			// restitution and friction, which is the rest of the block.
+			SetEnum(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("CPU Collision Type") }, VfxNiagara::EnumCpuCollision,
+				TEXT("Analytical Planes"), Type);
+
+			const FVfxBound Height = Ir.Binding(Block, TEXT("height"));
+			const FVfxBound Bounce = Ir.Binding(Block, TEXT("bounce"));
+			const FVfxBound Friction = Ir.Binding(Block, TEXT("friction"));
+
+			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Analytical Collision Normal 1") }, FVector3f(0.f, 0.f, 1.f), Type);
+			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Analytical Collision Plane Position 1") },
+				FVector3f(0.f, 0.f, FVfxConvert::Length(Height.Constant)), Type);
+			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Restitution") }, Bounce.bFound ? Bounce.Constant : 0.f, Type);
+			SetBool(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Simple Friction") }, true, Type);
+			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Friction") }, Friction.bFound ? Friction.Constant : 0.f, Type);
+			// The particle's own radius would make a sprite collide at its
+			// visible edge, which is right for a rock and wrong for a spark;
+			// the preview collides the point, so the scale is zero.
+			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Particle Radius Scale") }, 0.f, Type);
+			Report.Native(CurrentLabel, Type,
+				FString::Printf(TEXT("analytical plane at z=%.0f, bounce %.2f, friction %.2f"),
+					FVfxConvert::Length(Height.Constant),
+					Bounce.bFound ? Bounce.Constant : 0.f,
+					Friction.bFound ? Friction.Constant : 0.f));
+		}
+		else if (Type == TEXT("update.killOnBounds"))
+		{
+			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
+				VfxNiagara::ModKillInVolume, Type);
+			if (Module.IsNone()) { continue; }
+			// THE SHAPE SWITCH FIRST, or Box Size is hidden and the write is
+			// refused - the module defaults to a sphere, so a box authored here
+			// arrived as a 100cm sphere and killed everything immediately.
+			SetEnum(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Kill Shape") },
+				VfxNiagara::EnumKillShape, TEXT("Box"), Type);
+			const FVfxBound Size = Ir.Binding(Block, TEXT("size"));
+			FVector3f Extent = FVfxConvert::Vector(Size.Vector);
+			Extent = FVector3f(FMath::Abs(Extent.X), FMath::Abs(Extent.Y), FMath::Abs(Extent.Z));
+			SetBool(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Invert Volume") },
+				true, Type);
+			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Box Size") },
+				Extent, Type);
+			Report.Native(CurrentLabel, Type, TEXT("kill outside the box"));
+		}
+	}
+}
+
+void FVfxNiagaraBuilder::ApplyShapeTransform(FName EmitterName, FName Shape,
+	const TSharedPtr<FJsonObject>& Block, const FString& Type)
+{
+	// THE OFFSET, WHICH NOTHING USED TO CARRY. Every shape emitter in the IR
+	// has one and Shape Location calls it Shape Origin, so an effect whose
+	// systems are laid out in a row - which is every effect with more than one
+	// thing happening in it - imported with all of them stacked on the origin.
+	const FVfxBound Offset = Ir.Binding(Block, TEXT("offset"));
+	if (Offset.bFound)
+	{
+		SetPosition(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Shape Origin") },
+			FVfxConvert::Vector(Offset.Vector), Type);
+	}
+
+	const FVfxBound Rotation = Ir.Binding(Block, TEXT("rotation"));
+	if (!Rotation.bFound) { return; }
+	const FVector3f Euler = FVfxConvert::Euler(Rotation.Vector);
+	if (Euler.IsNearlyZero()) { return; }
+
+	SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Rotation Mode") },
+		VfxNiagara::EnumRotationMode, TEXT("Yaw / Pitch / Roll"), Type);
+	// Unreal orders this input Yaw, Pitch, Roll - rotation about Z, Y and X -
+	// while FVfxConvert::Euler hands the angles back in X, Y, Z order like
+	// every other vector. Reversed here rather than inside the converter,
+	// which every other caller wants in axis order.
+	SetVector(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Yaw / Pitch / Roll") },
+		FVector3f(Euler.Z, Euler.Y, Euler.X), Type);
+}
+
+void FVfxNiagaraBuilder::AddConeVelocity(FName EmitterName, const FVector3f& Axis,
+	float HalfAngleDegrees, const FVfxBound& Speed, const FString& Type)
+{
+	const FName Module = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
+		VfxNiagara::ModAddVelocityInCone, Type);
+	if (Module.IsNone()) { return; }
+	bNeedsSolver = true;
+
+	SetVector(EmitterName, VfxNiagara::ParticleSpawn, Module, { TEXT("Cone Axis") }, Axis, Type);
+	// NIAGARA'S CONE ANGLE IS THE FULL OPENING, the app's is the half-angle
+	// from the axis - the same convention difference the cone SHAPE has. A 30
+	// degree jet authored here and imported literally is a 15 degree one.
+	SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Module, { TEXT("Cone Angle") },
+		FMath::Clamp(HalfAngleDegrees * 2.f, 0.f, 360.f), Type);
+	SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Module,
+		{ TEXT("Cone Axis Coordinate Space") }, VfxNiagara::EnumCoordinateSpace,
+		TEXT("Local"), Type);
+
+	if (Speed.bRandom)
+	{
+		if (SetDynamicInput(EmitterName, VfxNiagara::ParticleSpawn, Module,
+			{ TEXT("Velocity Strength") }, VfxNiagara::DynUniformRangedFloat, Type))
+		{
+			SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Module,
+				{ TEXT("Velocity Strength"), TEXT("Minimum") },
+				FVfxConvert::Length(Speed.Low), Type);
+			SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Module,
+				{ TEXT("Velocity Strength"), TEXT("Maximum") },
+				FVfxConvert::Length(Speed.High), Type);
+		}
+	}
+	else
+	{
+		SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Module, { TEXT("Velocity Strength") },
+			FVfxConvert::Length(Speed.Constant), Type);
 	}
 }
 
@@ -352,6 +827,13 @@ void FVfxNiagaraBuilder::BuildSpawn(const TSharedPtr<FJsonObject>& SystemObject,
 				{ TEXT("SpawnRate") }, Rate.Constant, Type);
 			Report.Native(CurrentLabel, Type, FString::Printf(TEXT("%.0f/s"), Rate.Constant));
 		}
+		else if (Type == TEXT("spawn.burst") && bIsSubEmitter)
+		{
+			// Held for the event handler - see SubEmitterBurst.
+			const FVfxBound Count = Ir.Binding(Block, TEXT("count"));
+			SubEmitterBurst.Add(SystemObject->GetStringField(TEXT("id")),
+				FMath::Max(1, FMath::RoundToInt(Count.Constant)));
+		}
 		else if (Type == TEXT("spawn.burst") || Type == TEXT("spawn.periodicBurst"))
 		{
 			const FName Module = AddModule(EmitterName, VfxNiagara::EmitterUpdate,
@@ -397,6 +879,12 @@ void FVfxNiagaraBuilder::BuildInitialize(const TSharedPtr<FJsonObject>& SystemOb
 		const TSharedPtr<FJsonObject> Block = Entry->AsObject();
 		const FString Type = FVfxIr::BlockType(Block);
 		if (Type.IsEmpty()) { continue; }
+		if (FVfxIr::HasOperators(Block))
+		{
+			Report.Approximated(CurrentLabel, Type,
+				TEXT("a property here is driven by operators, which Niagara has no equivalent ")
+				TEXT("for on a module input - flattened to the chain's average over the effect"));
+		}
 
 		if (Type == TEXT("initialize.setLifetime"))
 		{
@@ -424,6 +912,27 @@ void FVfxNiagaraBuilder::BuildInitialize(const TSharedPtr<FJsonObject>& SystemOb
 		else if (Type == TEXT("initialize.setSize"))
 		{
 			const FVfxBound Size = Ir.Binding(Block, TEXT("size"));
+
+			// A MESH IS NOT A SPRITE, and Sprite Size does nothing to one. The
+			// mesh renderer reads Particles.Scale, so an emitter that draws a
+			// mesh needs the size written there instead - otherwise every
+			// instance draws at the mesh's own size, which for a rune authored
+			// at 0.28 was a rune several metres tall.
+			//
+			// NO UNIT CONVERSION HERE, deliberately. Sprite size is a LENGTH and
+			// goes metres -> centimetres; this is a MULTIPLIER on a mesh that
+			// arrived in centimetres already, so scaling it by 100 would be the
+			// same mistake in the other direction.
+			if (OutputMode == TEXT("mesh"))
+			{
+				// HELD FOR THE OUTPUT STAGE. Mesh Scale is gated on the emitter
+				// having a mesh renderer, and at this point it still has the
+				// template's sprite one - so writing it here is refused as
+				// "not part of the executing graph". See PendingMeshScale.
+				PendingMeshScale = Size.bRandom ? (Size.Low + Size.High) * 0.5f : Size.Constant;
+				continue;
+			}
+
 			if (Size.bRandom)
 			{
 				SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Init, { TEXT("Sprite Size Mode") },
@@ -519,6 +1028,7 @@ void FVfxNiagaraBuilder::BuildInitialize(const TSharedPtr<FJsonObject>& SystemOb
 				const FString Fill = FVfxIr::Mode(Block, TEXT("fill"), TEXT("volume"));
 				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape,
 					{ TEXT("Sphere Surface Distribution") }, Fill == TEXT("surface") ? 1.f : 0.f, Type);
+				ApplyShapeTransform(EmitterName, Shape, Block, Type);
 				Report.Native(CurrentLabel, Type, Fill == TEXT("surface")
 					? TEXT("surface only") : TEXT("filled volume"));
 			}
@@ -534,6 +1044,7 @@ void FVfxNiagaraBuilder::BuildInitialize(const TSharedPtr<FJsonObject>& SystemOb
 				Extent = FVector3f(FMath::Abs(Extent.X), FMath::Abs(Extent.Y), FMath::Abs(Extent.Z));
 				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Box Size") },
 					Extent, Type);
+				ApplyShapeTransform(EmitterName, Shape, Block, Type);
 				Report.Native(CurrentLabel, Type);
 			}
 			else if (Type == TEXT("initialize.positionCircle"))
@@ -543,86 +1054,238 @@ void FVfxNiagaraBuilder::BuildInitialize(const TSharedPtr<FJsonObject>& SystemOb
 				const FVfxBound Radius = Ir.Binding(Block, TEXT("radius"));
 				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Ring Radius") },
 					FVfxConvert::Length(Radius.Constant), Type);
+				// THICKNESS IS A BAND WIDTH IN METRES, not a fraction. The
+				// kernel reads `inner = max(0, radius - thickness)`, and Disc
+				// Coverage is the fraction of the radius the band covers - so
+				// the conversion is a DIVISION that was missing. A ring 0.3m
+				// wide on a 1m radius arrived claiming to cover 30% of the
+				// radius by luck, and the same ring on a 3m radius arrived
+				// covering 30% instead of 10%; anything thicker than a metre
+				// was clamped to a filled disc.
 				const FVfxBound Thickness = Ir.Binding(Block, TEXT("thickness"));
 				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Disc Coverage") },
-					FMath::Clamp(Thickness.Constant, 0.f, 1.f), Type);
-				Report.Native(CurrentLabel, Type);
+					FMath::Clamp(Thickness.Constant / FMath::Max(0.0001f, Radius.Constant),
+						0.f, 1.f), Type);
+				ApplyShapeTransform(EmitterName, Shape, Block, Type);
+				Report.Native(CurrentLabel, Type,
+					FString::Printf(TEXT("ring %.2f-%.2fm"),
+						FMath::Max(0.f, Radius.Constant - Thickness.Constant), Radius.Constant));
 			}
 			else if (Type == TEXT("initialize.positionCone"))
 			{
+				// A DISC PLUS A CONE OF VELOCITY, not a cone-shaped volume.
+				// The kernel (shape.cone in kernels.js) puts the particle on
+				// the cone's MOUTH - a disc of `radius` at the shape's origin -
+				// and spends the angle on the VELOCITY. Niagara's Cone
+				// primitive scatters the position through the cone's body over
+				// Cone Length, which is a different emitter: it starts wide and
+				// has no mouth. Splitting it into Ring / Disc + Add Velocity In
+				// Cone reproduces the kernel exactly, and it is also what the
+				// author sees in the preview.
 				SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Shape Primitive") },
-					VfxNiagara::EnumShapes, TEXT("Cone"), Type);
+					VfxNiagara::EnumShapes, TEXT("Ring / Disc"), Type);
 				const FVfxBound Angle = Ir.Binding(Block, TEXT("angle"));
 				const FVfxBound Radius = Ir.Binding(Block, TEXT("radius"));
-				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Cone Angle") },
-					Angle.Constant, Type);
-				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Cone Length") },
-					FVfxConvert::Length(FMath::Max(0.01f, Radius.Constant)), Type);
-				// The cone block is a shape AND a velocity in one, which Niagara
-				// splits into two modules.
+				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Ring Radius") },
+					FVfxConvert::Length(FMath::Max(0.0001f, Radius.Constant)), Type);
+				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Disc Coverage") },
+					1.f, Type);
+				ApplyShapeTransform(EmitterName, Shape, Block, Type);
+
 				const FVfxBound Speed = Ir.Binding(Block, TEXT("speed"));
-				if (Speed.bFound && Speed.Constant != 0.f)
+				if (Speed.bFound && (Speed.Constant != 0.f || Speed.bRandom))
 				{
-					const FName Velocity = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
-						VfxNiagara::ModAddVelocity, Type);
-					if (!Velocity.IsNone())
-					{
-						SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
-							{ TEXT("Velocity") },
-							FVector3f(0.f, 0.f, FVfxConvert::Length(Speed.Constant)), Type);
-						bNeedsSolver = true;
-					}
+					AddConeVelocity(EmitterName, FVector3f(0.f, 0.f, 1.f), Angle.Constant,
+						Speed, Type);
 				}
-				Report.Native(CurrentLabel, Type, TEXT("cone shape plus its speed"));
+				Report.Native(CurrentLabel, Type,
+					FString::Printf(TEXT("mouth disc of %.2fm, velocity in a %.0f degree cone"),
+						Radius.Constant, Angle.Constant));
 			}
 			else if (Type == TEXT("initialize.positionMesh"))
 			{
-				Report.Dropped(CurrentLabel, Type,
-					TEXT("mesh emission needs a Static Mesh data interface pointed at an ")
-					TEXT("imported mesh, and this importer does not bring meshes in yet; ")
-					TEXT("import the bundle's mesh yourself and add a Static Mesh Location ")
-					TEXT("module pointed at it"));
+				// The ShapeLocation module already added above is the wrong one
+				// for this: sampling a mesh is its own module with its own data
+				// interface. Disabling is not possible through this API, so the
+				// shape is left on its default sphere of radius 0 - harmless,
+				// because Static Mesh Location writes the position after it.
+				const int32 Index = FVfxIr::AssetSlot(Block, TEXT("mesh"));
+				UStaticMesh* const* Found = Assets.Meshes.Find(Index);
+				if (Found == nullptr || *Found == nullptr)
+				{
+					Report.Dropped(CurrentLabel, Type,
+						TEXT("this emitter spawns over a mesh and the bundle carried none"));
+					continue;
+				}
+
+				const FName Sampler = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
+					VfxNiagara::ModStaticMeshLocation, Type);
+				if (Sampler.IsNone()) { continue; }
+
+				// A data interface is set from a property BLOB, not from a
+				// pointer: the only way through SetStackInputData is the JSON
+				// the provider serialises, and the mesh is a soft path inside it.
+				const FString MeshJson = FString::Printf(
+					TEXT("{\"defaultMesh\":\"%s\",\"sourceMode\":\"DefaultMeshOnly\"}"),
+					*(*Found)->GetPathName());
+				SetDataInterface(EmitterName, VfxNiagara::ParticleSpawn, Sampler,
+					{ TEXT("Static Mesh") }, MeshJson, Type);
+
+				const FString Sampling = FVfxIr::Mode(Block, TEXT("sampling"), TEXT("surface"));
+				SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Sampler,
+					{ TEXT("Mesh Sampling Type") },
+					TEXT("/Niagara/Enums/StaticMesh/ENiagara_StaticSamplingMode.")
+					TEXT("ENiagara_StaticSamplingMode"),
+					Sampling == TEXT("vertex") ? TEXT("Vertices") : TEXT("Triangles"), Type);
+
+				// NORMAL SPEED IS WHAT MAKES IT READ AS A SURFACE rather than
+				// as a cloud in the shape of one, so it is carried rather than
+				// dropped: the module can push the spawn point out along the
+				// sampled normal, which is the same thing at birth.
+				const FVfxBound NormalSpeed = Ir.Binding(Block, TEXT("normalSpeed"));
+				if (NormalSpeed.bFound && NormalSpeed.Constant != 0.f)
+				{
+					// The module samples a normal but cannot turn it into a
+					// velocity; what it can do is push the spawn point off the
+					// surface along it, which reads the same at birth.
+					SetBool(EmitterName, VfxNiagara::ParticleSpawn, Sampler,
+						{ TEXT("OffsetAlongNormal") }, true, Type);
+					SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Sampler,
+						{ TEXT("Offset Position Along Sampled Normal") },
+						FVfxConvert::Length(NormalSpeed.Constant * 0.05f), Type);
+					Report.Approximated(CurrentLabel, Type,
+						FString::Printf(TEXT("normal speed %.2f m/s became a %.1fcm offset along ")
+							TEXT("the sampled normal: the module can push the spawn point off ")
+							TEXT("the surface but cannot give it a velocity there"),
+							NormalSpeed.Constant,
+							FVfxConvert::Length(NormalSpeed.Constant * 0.05f)));
+				}
+				Report.Native(CurrentLabel, Type,
+					FString::Printf(TEXT("%s of %s"),
+						Sampling == TEXT("vertex") ? TEXT("vertices") : TEXT("surface"),
+						*(*Found)->GetName()));
+			}
+			else if (Type == TEXT("initialize.positionPoint"))
+			{
+				// A POINT IS A SPHERE OF RADIUS `jitter`, which is exactly what
+				// the kernel does, and it is the most common shape in any
+				// effect - every sub-emitter and every "it happens here" system
+				// uses it. Dropping it meant those emitters had no position
+				// module at all and spawned wherever the template's default put
+				// them.
+				SetEnum(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Shape Primitive") },
+					VfxNiagara::EnumShapes, TEXT("Sphere"), Type);
+				const FVfxBound Jitter = Ir.Binding(Block, TEXT("jitter"));
+				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape, { TEXT("Sphere Radius") },
+					FVfxConvert::Length(FMath::Max(0.f, Jitter.Constant)), Type);
+				SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Shape,
+					{ TEXT("Sphere Surface Distribution") }, 0.f, Type);
+				ApplyShapeTransform(EmitterName, Shape, Block, Type);
+				Report.Native(CurrentLabel, Type, Jitter.Constant > 0.f
+					? *FString::Printf(TEXT("point, scattered by %.2fm"), Jitter.Constant)
+					: TEXT("point"));
 			}
 			else
 			{
 				Report.Dropped(CurrentLabel, Type, TEXT("no Niagara shape matches this"));
 			}
 		}
-		else if (Type == TEXT("initialize.velocityDirection")
-			|| Type == TEXT("initialize.velocityRandom")
-			|| Type == TEXT("initialize.velocityOutward"))
+		else if (Type == TEXT("initialize.velocityDirection"))
 		{
+			// PROPERTIES ARE direction, speed AND spread - not one "velocity"
+			// vector, which is a property this block has never had. Binding()
+			// returns bFound=false for a name that is not there and a caller
+			// that ignores it gets a zero: every directional jet in every
+			// imported effect launched at 0 cm/s, and the report called it
+			// native.
+			const FVfxBound Direction = Ir.Binding(Block, TEXT("direction"));
+			const FVfxBound Speed = Ir.Binding(Block, TEXT("speed"));
+			const FVfxBound Spread = Ir.Binding(Block, TEXT("spread"));
+			FVector3f Axis = FVfxConvert::Direction(Direction.Vector);
+			if (Axis.IsNearlyZero()) { Axis = FVector3f(0.f, 0.f, -1.f); }
+			Axis.Normalize();
+
+			// A cone of zero degrees IS a direction, so one module covers both
+			// and the spread survives instead of being apologised for.
+			AddConeVelocity(EmitterName, Axis, Spread.bFound ? Spread.Constant : 0.f,
+				Speed, Type);
+			Report.Native(CurrentLabel, Type,
+				FString::Printf(TEXT("%.1f m/s in a %.0f degree cone"),
+					Speed.bRandom ? Speed.High : Speed.Constant,
+					Spread.bFound ? Spread.Constant : 0.f));
+		}
+		else if (Type == TEXT("initialize.velocityRandom"))
+		{
+			// PROPERTIES ARE min AND max, two vectors - again not "velocity".
+			// Read under the wrong name this imported as zero; read under the
+			// right one it is a uniform ranged vector, which Niagara has as a
+			// dynamic input, so the per-axis spread survives rather than
+			// collapsing to the top of the range.
 			const FName Velocity = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
 				VfxNiagara::ModAddVelocity, Type);
 			if (Velocity.IsNone()) { continue; }
 			bNeedsSolver = true;
 
-			if (Type == TEXT("initialize.velocityDirection"))
+			const FVfxBound Min = Ir.Binding(Block, TEXT("min"));
+			const FVfxBound Max = Ir.Binding(Block, TEXT("max"));
+			if (SetDynamicInput(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
+				{ TEXT("Velocity") }, VfxNiagara::DynUniformRangedVector, Type))
 			{
-				const FVfxBound Direction = Ir.Binding(Block, TEXT("velocity"));
-				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity, { TEXT("Velocity") },
-					FVfxConvert::Vector(Direction.Vector), Type);
-				Report.Native(CurrentLabel, Type);
-			}
-			else if (Type == TEXT("initialize.velocityRandom"))
-			{
-				const FVfxBound Velocity3 = Ir.Binding(Block, TEXT("velocity"));
-				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity, { TEXT("Velocity") },
-					FVfxConvert::Vector(Velocity3.bRandom ? Velocity3.HighVector : Velocity3.Vector),
-					Type);
-				Report.Approximated(CurrentLabel, Type,
-					TEXT("became a constant velocity at the top of the authored range; the ")
-					TEXT("per-axis random spread was not carried"));
+				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
+					{ TEXT("Velocity"), TEXT("Minimum") }, FVfxConvert::Vector(Min.Vector), Type);
+				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
+					{ TEXT("Velocity"), TEXT("Maximum") }, FVfxConvert::Vector(Max.Vector), Type);
+				Report.Native(CurrentLabel, Type, TEXT("uniform ranged vector, per axis"));
 			}
 			else
 			{
-				const FVfxBound Speed = Ir.Binding(Block, TEXT("speed"));
 				SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity, { TEXT("Velocity") },
-					FVector3f(0.f, 0.f, FVfxConvert::Length(Speed.Constant)), Type);
+					FVfxConvert::Vector(Max.Vector), Type);
 				Report.Approximated(CurrentLabel, Type,
-					TEXT("outward-from-centre became a constant upward velocity; wire Add ")
-					TEXT("Velocity from Point to the emitter origin to restore it"));
+					TEXT("became a constant velocity at the top of the authored range; this ")
+					TEXT("engine has no Uniform Ranged Vector dynamic input"));
 			}
+		}
+		else if (Type == TEXT("initialize.velocityRadial"))
+		{
+			// THE BLOCK IS CALLED velocityRadial. The handler here was written
+			// for "initialize.velocityOutward", a name the catalog has never
+			// used, so it never ran once - the block fell through to the
+			// bottom and was reported as having no Niagara module, while the
+			// module it wanted has shipped with Niagara all along.
+			const FName Velocity = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
+				VfxNiagara::ModAddVelocityFromPoint, Type);
+			if (Velocity.IsNone()) { continue; }
+			bNeedsSolver = true;
+			const FVfxBound Speed = Ir.Binding(Block, TEXT("speed"));
+			SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
+				{ TEXT("Velocity Strength") }, FVfxConvert::Length(Speed.Constant), Type);
+			SetVector(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
+				{ TEXT("Velocity Origin") }, FVector3f::ZeroVector, Type);
+			Report.Native(CurrentLabel, Type,
+				FString::Printf(TEXT("%.1f m/s away from the emitter origin"), Speed.Constant));
+		}
+		else if (Type == TEXT("initialize.inheritVelocity"))
+		{
+			// Only meaningful on a system that is NOT a sub-emitter; on one
+			// that is, the velocity comes from the event payload and is handled
+			// where the event handler is built.
+			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
+				VfxNiagara::ModInheritVelocity, Type);
+			if (Module.IsNone()) { continue; }
+			const FVfxBound Scale = Ir.Binding(Block, TEXT("scale"));
+			SetVector(EmitterName, VfxNiagara::ParticleSpawn, Module,
+				{ TEXT("Inherited Velocity Amount Scale") },
+				FVector3f(Scale.Constant, Scale.Constant, Scale.Constant), Type);
+			Report.Native(CurrentLabel, Type,
+				FString::Printf(TEXT("%.0f%% of the emitter's velocity"), Scale.Constant * 100.f));
+		}
+		else if (Type == TEXT("initialize.setFlipbookFrame"))
+		{
+			// Applied with the renderer - see BuildFlipbook. Skipped rather
+			// than dropped, or the report claims a start frame was lost that
+			// is in fact carried two stages later.
+			continue;
 		}
 		else
 		{
@@ -658,8 +1321,18 @@ void FVfxNiagaraBuilder::BuildPathLocation(FName EmitterName, const FString& Lab
 		return;
 	}
 
+	// A MARCHING CHAIN IS INDEXED BY TIME, NOT BY SPAWN INDEX. In `spacing`
+	// mode the preview advances the emission point along the path by a fixed
+	// distance per particle, so the point WALKS; the normalized execution index
+	// only spreads the particles spawned in one frame, and at one particle per
+	// frame that index is 0 every time - which is why the Ice Wall's slabs all
+	// appeared at the start of the line, on top of each other. Keying the curve
+	// in SECONDS and linking the index to Emitter.Age reproduces the walk.
+	const bool bWalk = FString(PlacementMode) == TEXT("spacing");
+	const float KeyScale = bWalk ? FMath::Max(0.01f, Ir.Duration()) : 1.f;
+
 	SetDataInterface(EmitterName, VfxNiagara::ParticleSpawn, Init,
-		{ TEXT("Position"), TEXT("VectorCurve") }, PathCurveJson(Path), Label);
+		{ TEXT("Position"), TEXT("VectorCurve") }, PathCurveJson(Path, KeyScale), Label);
 
 	// WHERE ALONG THE PATH each particle lands. The curve is keyed by cumulative
 	// chord length rather than by point index, so a uniform sweep of the curve's
@@ -673,10 +1346,10 @@ void FVfxNiagaraBuilder::BuildPathLocation(FName EmitterName, const FString& Lab
 	if (Placement == TEXT("spacing"))
 	{
 		Report.Approximated(CurrentLabel, Label,
-			FString::Printf(TEXT("the path survived as a %d-key vector curve, but fixed ")
-				TEXT("spacing became even spread: Niagara has no walk-along-at-a-distance ")
-				TEXT("mode, so the gap now depends on how many particles are alive"),
-				Path.Num()));
+			FString::Printf(TEXT("the path survived as a %d-key vector curve and the emission ")
+				TEXT("point walks it once per loop, driven by Emitter.Age - the preview ")
+				TEXT("instead advances a fixed distance per particle, so the spacing follows ")
+				TEXT("the spawn rate there and the clock here"), Path.Num()));
 	}
 	else
 	{
@@ -688,9 +1361,21 @@ void FVfxNiagaraBuilder::BuildPathLocation(FName EmitterName, const FString& Lab
 	const FVfxBound Thickness = Ir.Binding(Block, TEXT("thickness"));
 	if (Thickness.bFound && Thickness.Constant > 0.f)
 	{
-		Report.Approximated(CurrentLabel, Label,
-			TEXT("the path's thickness was not carried; particles sit exactly on the curve. ")
-			TEXT("Add a Jitter Position module to scatter them around it"));
+		// A JITTER MODULE, rather than a note telling the author to add one.
+		// The kernel scatters the spawn point inside a ball of this radius
+		// around the path, and Jitter Position with a delay of zero does
+		// exactly that once, at birth - the two are the same thing.
+		const FName Jitter = AddModule(EmitterName, VfxNiagara::ParticleSpawn,
+			VfxNiagara::ModJitterPosition, Label);
+		if (!Jitter.IsNone())
+		{
+			SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Jitter, { TEXT("Jitter Amount") },
+				FVfxConvert::Length(Thickness.Constant), Label);
+			SetFloat(EmitterName, VfxNiagara::ParticleSpawn, Jitter, { TEXT("Jitter Delay") },
+				0.f, Label);
+			Report.Native(CurrentLabel, Label,
+				FString::Printf(TEXT("scattered %.2fm around the path"), Thickness.Constant));
+		}
 	}
 
 	// TANGENT SPEED: particles leave ALONG the path, which is what makes it read
@@ -712,7 +1397,7 @@ void FVfxNiagaraBuilder::BuildPathLocation(FName EmitterName, const FString& Lab
 			{
 				SetDataInterface(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
 					{ TEXT("Velocity"), TEXT("VectorCurve") },
-					PathTangentCurveJson(Path), Label);
+					PathTangentCurveJson(Path, KeyScale), Label);
 				SetPathIndexChain(EmitterName, VfxNiagara::ParticleSpawn, Velocity,
 					{ TEXT("Velocity"), TEXT("CurveIndex") }, PlacementMode, Label);
 				// The tangent curve is normalised, so the speed is the scale.
@@ -732,7 +1417,18 @@ void FVfxNiagaraBuilder::SetPathIndexChain(FName EmitterName, FName ScriptName, 
 	const TArray<FName>& InputStack, const TCHAR* PlacementMode, const FString& Label)
 {
 	const FString Placement(PlacementMode);
-	if (Placement == TEXT("even") || Placement == TEXT("spacing"))
+	if (Placement == TEXT("spacing"))
+	{
+		// Emitter.Age, in seconds, against a curve keyed in seconds. Niagara
+		// ships no "normalized loop age" dynamic input and the arithmetic to
+		// build one out of Multiply and Modulo nodes would be three more
+		// dynamic inputs deep; keying the curve to match the parameter is the
+		// same answer with none of that.
+		SetLinked(EmitterName, ScriptName, ModuleName, InputStack, TEXT("Emitter.Age"),
+			FNiagaraTypeDefinition::GetFloatDef(), Label);
+		return;
+	}
+	if (Placement == TEXT("even"))
 	{
 		SetDynamicInput(EmitterName, ScriptName, ModuleName, InputStack,
 			VfxNiagara::DynNormalizedExecIndex, Label);
@@ -748,6 +1444,9 @@ void FVfxNiagaraBuilder::SetPathIndexChain(FName EmitterName, FName ScriptName, 
 	{
 		return;
 	}
+	// Reading Particles.ID needs the emitter to carry persistent ids, which
+	// is off by default - see BuildEmitter.
+	bUsesParticleId = true;
 	TArray<FName> SeedStack = InputStack;
 	SeedStack.Add(TEXT("Seed"));
 	SetDynamicInput(EmitterName, ScriptName, ModuleName, SeedStack,
@@ -764,6 +1463,12 @@ void FVfxNiagaraBuilder::BuildUpdate(const TSharedPtr<FJsonObject>& SystemObject
 		const TSharedPtr<FJsonObject> Block = Entry->AsObject();
 		const FString Type = FVfxIr::BlockType(Block);
 		if (Type.IsEmpty()) { continue; }
+		if (FVfxIr::HasOperators(Block))
+		{
+			Report.Approximated(CurrentLabel, Type,
+				TEXT("a property here is driven by operators, which Niagara has no equivalent ")
+				TEXT("for on a module input - flattened to the chain's average over the effect"));
+		}
 
 		if (Type == TEXT("update.gravity"))
 		{
@@ -798,15 +1503,27 @@ void FVfxNiagaraBuilder::BuildUpdate(const TSharedPtr<FJsonObject>& SystemObject
 			const FVfxBound Frequency = Ir.Binding(Block, TEXT("frequency"));
 			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Noise Strength") },
 				FVfxConvert::Length(Strength.Constant), Type);
+			// FREQUENCY IS A RECIPROCAL LENGTH, so it converts the OTHER WAY.
+			// The block's frequency is cycles per METRE; Niagara samples the
+			// noise field at the particle's position, which is in CENTIMETRES.
+			// Passing the number through unchanged made every metre of the
+			// effect span a hundred cycles of noise - neighbouring particles
+			// sampled uncorrelated directions, so a turbulence authored as
+			// broad swirls arrived as static.
 			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Noise Frequency") },
-				Frequency.Constant, Type);
+				Frequency.Constant * 0.01f, Type);
 			bNeedsSolver = true;
 			// BOTH ARE CURL NOISE, which is the rare case where the preview and
 			// the engine agree on the character of the motion rather than only
 			// its strength - unlike Unity, whose noise module is value noise.
 			Report.Native(CurrentLabel, Type, TEXT("curl noise, same divergence-free field"));
 		}
-		else if (Type == TEXT("update.pointAttractor"))
+		// NAMED update.attractor IN THE CATALOG. This was written against
+		// "update.pointAttractor", which nothing has ever emitted, so the
+		// handler below had never run once and every attractor in every effect
+		// was reported as having no Niagara equivalent - next to the module
+		// that is its exact equivalent.
+		else if (Type == TEXT("update.attractor"))
 		{
 			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
 				VfxNiagara::ModPointAttraction, Type);
@@ -830,12 +1547,38 @@ void FVfxNiagaraBuilder::BuildUpdate(const TSharedPtr<FJsonObject>& SystemObject
 			if (Module.IsNone()) { continue; }
 			const FVfxBound Axis = Ir.Binding(Block, TEXT("axis"));
 			const FVfxBound Strength = Ir.Binding(Block, TEXT("strength"));
+			const FVfxBound Position = Ir.Binding(Block, TEXT("position"));
+			const FVfxBound Inward = Ir.Binding(Block, TEXT("inward"));
+
 			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Vortex Axis") },
 				FVfxConvert::Direction(Axis.Vector), Type);
+			SetEnum(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ TEXT("Vortex Axis Coordinate Space") }, VfxNiagara::EnumCoordinateSpace,
+				TEXT("Local"), Type);
 			SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Vortex Force Amount") },
 				FVfxConvert::Length(Strength.Constant), Type);
+
+			// THE AXIS IS NOT THE WHOLE VORTEX. Two inputs were missing and
+			// both of them matter:
+			//
+			//   Vortex Origin - the line the particles turn around. Left at its
+			//     default the column orbits a point that is not where the block
+			//     put it, and a funnel emitted from a ring at the base LEANS as
+			//     it rises, which is exactly what the Sand Tornado did.
+			//   Origin Pull Amount - the block's `inward`. Without it nothing
+			//     pulls the particles in, so the funnel never necks: it is a
+			//     cylinder of rotation rather than a tornado.
+			SetPosition(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Vortex Origin") },
+				FVfxConvert::Vector(Position.Vector), Type);
+			if (Inward.bFound && Inward.Constant != 0.f)
+			{
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+					{ TEXT("Origin Pull Amount") }, FVfxConvert::Length(Inward.Constant), Type);
+			}
 			bNeedsSolver = true;
-			Report.Native(CurrentLabel, Type);
+			Report.Native(CurrentLabel, Type,
+				FString::Printf(TEXT("%.1f m/s2 around the axis, %.1f m/s2 inward"),
+					Strength.Constant, Inward.bFound ? Inward.Constant : 0.f));
 		}
 		else if (Type == TEXT("update.wind"))
 		{
@@ -893,45 +1636,128 @@ void FVfxNiagaraBuilder::BuildUpdate(const TSharedPtr<FJsonObject>& SystemObject
 				Report.Native(CurrentLabel, Type);
 			}
 		}
-		else if (Type == TEXT("update.collidePlane"))
+		// SAME STORY AS THE ATTRACTOR: the block is update.killOnBounds and
+		// this read update.killBox. Held back rather than added here - it tests
+		// the position the solver is about to write.
+		else if (Type == TEXT("update.killOnBounds") || Type == TEXT("update.collidePlane"))
 		{
-			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
-				VfxNiagara::ModConstrainToPlane, Type);
-			if (Module.IsNone()) { continue; }
-			const FVfxBound Height = Ir.Binding(Block, TEXT("height"));
-			SetPosition(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Plane Position") },
-				FVector3f(0.f, 0.f, FVfxConvert::Length(Height.Constant)), Type);
-			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Plane Normal") },
-				FVector3f(0.f, 0.f, 1.f), Type);
-			Report.Approximated(CurrentLabel, Type,
-				TEXT("became Constrain Position To Plane, which stops particles at the floor ")
-				TEXT("but does not bounce them; the authored bounce and friction were not carried"));
+			AfterSolve.Add(Block);
 		}
-		else if (Type == TEXT("update.killBox"))
+		else if (Type == TEXT("update.collideSphere") || Type == TEXT("update.collideBox"))
 		{
-			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
-				VfxNiagara::ModKillInVolume, Type);
-			if (Module.IsNone()) { continue; }
-			const FVfxBound Size = Ir.Binding(Block, TEXT("size"));
-			FVector3f Extent = FVfxConvert::Vector(Size.Vector);
-			Extent = FVector3f(FMath::Abs(Extent.X), FMath::Abs(Extent.Y), FMath::Abs(Extent.Z));
-			SetBool(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Invert Volume") },
-				true, Type);
-			SetVector(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Box Size") },
-				Extent, Type);
-			Report.Native(CurrentLabel, Type, TEXT("kill outside the box"));
+			// Niagara's analytical collision does planes and nothing else; the
+			// ray-traced mode needs real scene geometry. An implicit sphere or
+			// box has no equivalent either way.
+			const FVfxBound Radius = Ir.Binding(Block, TEXT("radius"));
+			Report.Dropped(CurrentLabel, Type,
+				FString::Printf(TEXT("Niagara collides against analytical PLANES or against ")
+					TEXT("real scene geometry, never against an implicit shape. Put a %s ")
+					TEXT("collider in the level and switch this emitter's Collision module to ")
+					TEXT("Ray Traced, or keep the shape as a kill volume"),
+					Type == TEXT("update.collideSphere")
+						? *FString::Printf(TEXT("%.1fm sphere"), Radius.Constant)
+						: TEXT("box")));
 		}
 		else if (Type == TEXT("update.speedLimit"))
 		{
-			// Not a module: the solver owns the clamp, and clamping anywhere
-			// else means clamping last frame's velocity while this frame's
-			// acceleration immediately exceeds it again.
+			// Recorded, and applied to the solver once it exists - see
+			// BuildEmitter. It used to be a note asking the author to go and
+			// tick two boxes by hand.
 			const FVfxBound Limit = Ir.Binding(Block, TEXT("speed"));
+			const float Cap = FVfxConvert::Length(Limit.Constant);
+			if (Cap <= 0.f)
+			{
+				// CLAMPING AT ZERO FREEZES THE EMITTER. A cap of 0 is never an
+				// authored intent - it is what a property the importer could
+				// not resolve looks like - so it is refused and reported rather
+				// than written.
+				Report.Dropped(CurrentLabel, Type,
+					TEXT("the speed cap resolved to 0, which would stop every particle dead, ")
+					TEXT("so no clamp was applied"));
+			}
+			else
+			{
+				SolverSpeedLimit = Cap;
+			}
 			bNeedsSolver = true;
-			Report.Approximated(CurrentLabel, Type,
-				FString::Printf(TEXT("Niagara clamps speed inside Solve Forces and Velocity ")
-					TEXT("rather than as its own module; set its Speed Limit to %.0f and ")
-					TEXT("tick Clamp Velocity"), FVfxConvert::Length(Limit.Constant)));
+		}
+		else if (Type == TEXT("update.spin"))
+		{
+			// Sprites spin in their billboard plane and meshes spin in three
+			// axes, and Niagara splits that into two modules writing two
+			// different attributes. Picking the wrong one is silent: the
+			// attribute is written and the renderer never reads it.
+			const bool bMesh = OutputMode == TEXT("mesh");
+			const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
+				bMesh ? VfxNiagara::ModMeshRotationRate : VfxNiagara::ModSpriteRotationRate, Type);
+			if (Module.IsNone()) { continue; }
+			const FVfxBound Speed = Ir.Binding(Block, TEXT("speed"));
+			const float Degrees = Speed.bRandom
+				? (FMath::Abs(Speed.Low) > FMath::Abs(Speed.High) ? Speed.Low : Speed.High)
+				: Speed.Constant;
+
+			// A SYMMETRIC RANGE IS THE WHOLE POINT OF A SPIN. Debris authored at
+			// -320..320 deg/s and imported as a flat 320 has every fragment
+			// turning the same way at the same rate, which reads as a conveyor
+			// belt rather than as tumbling. The range survives as a Uniform
+			// Ranged Float wired into the rate.
+			const TCHAR* RateInput = bMesh ? TEXT("Roll") : TEXT("Rotation Rate");
+			bool bRangeCarried = false;
+			if (Speed.bRandom && SetDynamicInput(EmitterName, VfxNiagara::ParticleUpdate, Module,
+				{ RateInput }, VfxNiagara::DynUniformRangedFloat, Type))
+			{
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+					{ RateInput, TEXT("Minimum") }, FMath::Min(Speed.Low, Speed.High), Type);
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+					{ RateInput, TEXT("Maximum") }, FMath::Max(Speed.Low, Speed.High), Type);
+				if (bMesh)
+				{
+					SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+						{ TEXT("Rotation Rate") }, 1.f, Type);
+				}
+				bRangeCarried = true;
+				Report.Native(CurrentLabel, Type,
+					FString::Printf(TEXT("%.0f..%.0f deg/s per particle, %s"),
+						Speed.Low, Speed.High, bMesh ? TEXT("mesh") : TEXT("sprite")));
+			}
+			if (bRangeCarried) { continue; }
+
+			if (bMesh)
+			{
+				// Roll is the spin about the sprite's own facing axis, which is
+				// what the block means on a mesh too.
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Roll") },
+					Degrees, Type);
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+					{ TEXT("Rotation Rate") }, 1.f, Type);
+			}
+			else
+			{
+				SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module,
+					{ TEXT("Rotation Rate") }, Degrees, Type);
+			}
+			if (Speed.bRandom)
+			{
+				Report.Approximated(CurrentLabel, Type,
+					FString::Printf(TEXT("the authored %.0f..%.0f deg/s became a single %.0f: ")
+						TEXT("the rate module takes one number, and a per-particle range needs ")
+						TEXT("a Uniform Ranged Float wired into it by hand"),
+						Speed.Low, Speed.High, Degrees));
+			}
+			else
+			{
+				Report.Native(CurrentLabel, Type,
+					FString::Printf(TEXT("%.0f deg/s, %s"), Degrees,
+						bMesh ? TEXT("mesh") : TEXT("sprite")));
+			}
+		}
+		else if (Type == TEXT("update.flipbook") || Type == TEXT("initialize.setFlipbookFrame"))
+		{
+			// Handled with the renderer, where the sheet layout lives: the
+			// frame count and the play rate are here, the columns and rows are
+			// on the Output, and Niagara wants all of it in one module that
+			// also needs a reference to the renderer itself.
+			continue;
 		}
 		else
 		{
@@ -940,7 +1766,8 @@ void FVfxNiagaraBuilder::BuildUpdate(const TSharedPtr<FJsonObject>& SystemObject
 	}
 }
 
-void FVfxNiagaraBuilder::BuildOutput(const TSharedPtr<FJsonObject>& SystemObject, FName EmitterName)
+void FVfxNiagaraBuilder::BuildOutput(const TSharedPtr<FJsonObject>& SystemObject,
+	FName EmitterName)
 {
 	const TArray<TSharedPtr<FJsonValue>>* Outputs = nullptr;
 	if (!SystemObject->TryGetArrayField(TEXT("outputs"), Outputs) || Outputs->Num() == 0)
@@ -952,38 +1779,292 @@ void FVfxNiagaraBuilder::BuildOutput(const TSharedPtr<FJsonObject>& SystemObject
 
 	const FString Mode = Output->GetStringField(TEXT("mode"));
 	const FString Blend = Output->GetStringField(TEXT("blend"));
+	const FString Sort = Output->GetStringField(TEXT("sort"));
 
-	// The Minimal template already carries a sprite renderer, which is what the
-	// billboard and stretched modes want. A mesh effect needs a different
-	// renderer class, and that is a bigger change than this pass makes.
-	if (Mode == TEXT("mesh"))
+	// The sheet layout lives on the OUTPUT, not on the flipbook block: the
+	// block says how many frames to play and how fast, the output says how the
+	// sheet is cut up. Both halves are needed before either can be applied.
+	int32 Columns = 1;
+	int32 Rows = 1;
+	const TArray<TSharedPtr<FJsonValue>>* Tiles = nullptr;
+	if (Output->TryGetArrayField(TEXT("tiles"), Tiles) && Tiles->Num() >= 2)
 	{
-		Report.Dropped(CurrentLabel, TEXT("output.mode"),
-			TEXT("mesh rendering needs a Mesh Renderer pointed at the imported mesh; the ")
-			TEXT("emitter kept its sprite renderer"));
+		Columns = FMath::Max(1, static_cast<int32>((*Tiles)[0]->AsNumber()));
+		Rows = FMath::Max(1, static_cast<int32>((*Tiles)[1]->AsNumber()));
 	}
-	else if (Mode == TEXT("stretched"))
+
+	UTexture2D* Texture = nullptr;
+	UStaticMesh* Mesh = nullptr;
+	const TArray<TSharedPtr<FJsonValue>>* OutputBlocks = nullptr;
+	if (Output->TryGetArrayField(TEXT("blocks"), OutputBlocks))
 	{
+		for (const TSharedPtr<FJsonValue>& Entry : *OutputBlocks)
+		{
+			const TSharedPtr<FJsonObject> Block = Entry->AsObject();
+			if (!Block.IsValid()) { continue; }
+			const TSharedPtr<FJsonObject>* Slots = nullptr;
+			if (!Block->TryGetObjectField(TEXT("assetSlots"), Slots)) { continue; }
+			int32 Index = -1;
+			if ((*Slots)->TryGetNumberField(TEXT("texture"), Index))
+			{
+				if (UTexture2D* const* Found = Assets.Textures.Find(Index)) { Texture = *Found; }
+			}
+			if ((*Slots)->TryGetNumberField(TEXT("mesh"), Index))
+			{
+				if (UStaticMesh* const* Found = Assets.Meshes.Find(Index)) { Mesh = *Found; }
+			}
+		}
+	}
+
+	const bool bMesh = Mode == TEXT("mesh");
+	const bool bRibbon = Mode == TEXT("trail") || Mode == TEXT("ribbon");
+	UMaterialInterface* Material = FVfxAssetImport::MaterialFor(Texture, Blend, bMesh,
+		PackageFolder, Report);
+
+	// THE RENDERER THE TEMPLATE CAME WITH is a sprite renderer, which is right
+	// for three of the four modes and useless for the fourth. Swapping it is
+	// the only way to get a mesh onto the screen, and it has to happen through
+	// the emitter rather than the stack API - renderers are not modules.
+	FVersionedNiagaraEmitter Versioned;
+	for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		if (Handle.GetName() == EmitterName) { Versioned = Handle.GetInstance(); break; }
+	}
+	FVersionedNiagaraEmitterData* EmitterData = Versioned.GetEmitterData();
+	if (Versioned.Emitter == nullptr || EmitterData == nullptr)
+	{
+		Report.Dropped(CurrentLabel, TEXT("output"), TEXT("the emitter could not be found again"));
+		return;
+	}
+
+	UNiagaraSpriteRendererProperties* Sprite = nullptr;
+	TArray<UNiagaraRendererProperties*> Existing(EmitterData->GetRenderers());
+	for (UNiagaraRendererProperties* Renderer : Existing)
+	{
+		if (UNiagaraSpriteRendererProperties* AsSprite =
+			Cast<UNiagaraSpriteRendererProperties>(Renderer))
+		{
+			Sprite = AsSprite;
+		}
+	}
+
+	const ENiagaraSortMode SortMode =
+		Sort == TEXT("depth") ? ENiagaraSortMode::ViewDepth
+		: Sort == TEXT("age") ? ENiagaraSortMode::CustomAscending
+		: ENiagaraSortMode::None;
+
+	if (bMesh)
+	{
+		if (Mesh == nullptr)
+		{
+			Report.Dropped(CurrentLabel, TEXT("output.mode"),
+				TEXT("this emitter draws a mesh and the bundle carried none, so it kept its ")
+				TEXT("sprite renderer"));
+		}
+		else
+		{
+			UNiagaraMeshRendererProperties* MeshRenderer =
+				NewObject<UNiagaraMeshRendererProperties>(Versioned.Emitter);
+			// The GLB arrives with its own material, which was never compiled
+			// with the Niagara mesh-particle usage flag - so without the
+			// override every mesh particle draws as the grey checkerboard.
+			MeshRenderer->bOverrideMaterials = true;
+			FNiagaraMeshMaterialOverride Override;
+			Override.ExplicitMat = Material;
+			MeshRenderer->OverrideMaterials.Add(Override);
+			MeshRenderer->SortMode = SortMode;
+			if (Sprite != nullptr)
+			{
+				Versioned.Emitter->RemoveRenderer(Sprite, Versioned.Version);
+				Sprite = nullptr;
+			}
+			Versioned.Emitter->AddRenderer(MeshRenderer, Versioned.Version);
+
+			// THE MESH IS ASSIGNED AFTER AddRenderer, NOT BEFORE. Adding the
+			// renderer to the emitter re-caches it from its compiled data,
+			// which rebuilds the Meshes array - so a mesh set beforehand is
+			// dropped on the way in, and the renderer arrives pointing at
+			// nothing while the import report cheerfully names the mesh.
+			FNiagaraMeshRendererMeshProperties MeshProperties;
+			MeshProperties.Mesh = Mesh;
+			// THE SCALE GOES ON THE RENDERER, not on Initialize Particle. That
+			// module's Mesh Scale input reports itself visible and NOT EDITABLE
+			// whatever Write Scale is set to and however often the context is
+			// rebuilt, so every write is refused - while the renderer's own
+			// per-mesh scale takes it without argument. The difference is that
+			// this one value covers the whole emitter rather than varying per
+			// particle, which for a size authored as a narrow random range is
+			// the mean either way.
+			if (PendingMeshScale >= 0.f)
+			{
+				// NO UNIT CONVERSION: sprite size is a length and goes metres ->
+				// centimetres, but this is a MULTIPLIER on a mesh that arrived
+				// in centimetres already. Scaling it by 100 would be the same
+				// mistake in the other direction - and a rune several metres
+				// tall is what the un-scaled version looked like.
+				MeshProperties.Scale = FVector(PendingMeshScale);
+			}
+			MeshRenderer->Meshes.Reset();
+			MeshRenderer->Meshes.Add(MeshProperties);
+			MeshRenderer->PostEditChange();
+
+			Report.Native(CurrentLabel, TEXT("output.mode"),
+				MeshRenderer->Meshes.Num() > 0 && MeshRenderer->Meshes[0].Mesh != nullptr
+					? *FString::Printf(TEXT("Mesh renderer, %s"), *Mesh->GetName())
+					: TEXT("a Mesh renderer that would not hold the mesh"));
+
+			if (PendingMeshScale >= 0.f)
+			{
+				Report.Native(CurrentLabel, TEXT("initialize.setSize"),
+					FString::Printf(TEXT("mesh scale %.2f on the renderer"), PendingMeshScale));
+			}
+		}
+	}
+	else if (bRibbon)
+	{
+		// A ribbon needs one id per strand and an ordering within it, and the
+		// IR has neither - its trail is a per-particle stretch, not a strand.
+		// A ribbon renderer here would draw one tangle joining every particle.
 		Report.Approximated(CurrentLabel, TEXT("output.mode"),
-			TEXT("kept the sprite renderer; set its Alignment to Velocity Aligned and ")
-			TEXT("Facing Mode to Custom Facing Vector to stretch along motion"));
+			TEXT("became a velocity-aligned sprite, not a Ribbon renderer: a ribbon needs a ")
+			TEXT("ribbon id per strand and the effect has no strands, only particles"));
 	}
-	else if (Mode == TEXT("trail") || Mode == TEXT("ribbon"))
+
+	if (Sprite != nullptr)
 	{
-		Report.Dropped(CurrentLabel, TEXT("output.mode"),
-			TEXT("a ribbon needs a Ribbon Renderer and ribbon ids on the particles"));
+		Sprite->Material = Material;
+		Sprite->SortMode = SortMode;
+
+		if (Mode == TEXT("stretched") || bRibbon)
+		{
+			// Set here rather than described in a note. The two properties go
+			// together: aligning to velocity without changing the facing mode
+			// rotates the sprite and then lets the camera flatten it again.
+			Sprite->Alignment = ENiagaraSpriteAlignment::VelocityAligned;
+			Sprite->FacingMode = ENiagaraSpriteFacingMode::FaceCameraPlane;
+			Report.Native(CurrentLabel, TEXT("output.mode"),
+				TEXT("Sprite, velocity aligned"));
+		}
+		else if (!bMesh)
+		{
+			Report.Native(CurrentLabel, TEXT("output.mode"), TEXT("Sprite"));
+		}
+
+		if (Columns > 1 || Rows > 1)
+		{
+			Sprite->SubImageSize = FVector2D(Columns, Rows);
+			Sprite->bSubImageBlend = false;
+			BuildFlipbook(SystemObject, EmitterName, Sprite, Columns * Rows);
+		}
+		Sprite->PostEditChange();
+	}
+
+	// BLEND IS A MATERIAL DECISION IN UNREAL, and now it is one this importer
+	// actually makes. It used to be a note asking the author to go and build
+	// the material themselves, which is the single most common reason an
+	// imported effect looked wrong: no texture, no blend, white squares.
+	Report.Native(CurrentLabel, TEXT("output.blend"),
+		FString::Printf(TEXT("'%s' as a generated unlit material%s"), *Blend,
+			Texture != nullptr ? TEXT(" with the bundle's texture") : TEXT("")));
+}
+
+void FVfxNiagaraBuilder::BuildFlipbook(const TSharedPtr<FJsonObject>& SystemObject,
+	FName EmitterName, UNiagaraSpriteRendererProperties* Sprite, int32 Cells)
+{
+	// THE FLIPBOOK IS SPREAD OVER THREE BLOCKS - the frame count and rate on
+	// update.flipbook, the start frame on initialize.setFlipbookFrame, the
+	// sheet layout on the output - and Niagara wants all of it in one module
+	// that also needs a pointer back to the renderer it is animating. So it is
+	// assembled here, after the renderer exists, rather than where the blocks
+	// are walked.
+	int32 Frames = Cells;
+	float Rate = 0.f;
+	FString Timing = TEXT("life");
+	FVfxBound StartFrame;
+	bool bFound = false;
+
+	const TArray<TSharedPtr<FJsonValue>>* Blocks = nullptr;
+	if (SystemObject->TryGetArrayField(TEXT("update"), Blocks))
+	{
+		for (const TSharedPtr<FJsonValue>& Entry : *Blocks)
+		{
+			const TSharedPtr<FJsonObject> Block = Entry->AsObject();
+			if (FVfxIr::BlockType(Block) != TEXT("update.flipbook")) { continue; }
+			bFound = true;
+			const FVfxBound FrameCount = Ir.Binding(Block, TEXT("frames"));
+			if (FrameCount.bFound) { Frames = FMath::Max(1, FMath::RoundToInt(FrameCount.Constant)); }
+			Rate = Ir.Binding(Block, TEXT("rate")).Constant;
+			Timing = FVfxIr::Mode(Block, TEXT("timing"), TEXT("life"));
+		}
+	}
+	if (SystemObject->TryGetArrayField(TEXT("init"), Blocks))
+	{
+		for (const TSharedPtr<FJsonValue>& Entry : *Blocks)
+		{
+			const TSharedPtr<FJsonObject> Block = Entry->AsObject();
+			if (FVfxIr::BlockType(Block) != TEXT("initialize.setFlipbookFrame")) { continue; }
+			StartFrame = Ir.Binding(Block, TEXT("flipbookFrame"));
+		}
+	}
+	if (!bFound)
+	{
+		Report.Native(CurrentLabel, TEXT("output.setFlipbook"),
+			FString::Printf(TEXT("%dx%d sheet on the renderer, no animation block"),
+				static_cast<int32>(Sprite->SubImageSize.X),
+				static_cast<int32>(Sprite->SubImageSize.Y)));
+		return;
+	}
+
+	const FName Module = AddModule(EmitterName, VfxNiagara::ParticleUpdate,
+		VfxNiagara::ModSubUV, TEXT("update.flipbook"));
+	if (Module.IsNone()) { return; }
+
+	// "Infinite Loop" plays at a rate and wraps; "Linear" spreads the sheet
+	// across the particle's life exactly once. That is precisely the two
+	// timings the block offers, which is a rarer alignment than it sounds.
+	SetEnum(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("SubUV Animation Mode") },
+		VfxNiagara::EnumSubUvMode, Timing == TEXT("rate") ? TEXT("Infinite Loop") : TEXT("Linear"),
+		TEXT("update.flipbook"));
+	SetEnum(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Renderer Type") },
+		VfxNiagara::EnumMeshOrSprite, TEXT("Sprite"), TEXT("update.flipbook"));
+
+	if (Timing == TEXT("rate"))
+	{
+		// The loop length in seconds is what Infinite Loop takes, and the block
+		// gives frames per second: a 36 frame sheet at 24fps loops every 1.5s.
+		const float LoopSeconds = Rate > 0.f ? Frames / Rate : 1.f;
+		SetFloat(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Play Rate") },
+			LoopSeconds, TEXT("update.flipbook"));
+	}
+
+	if (StartFrame.bFound)
+	{
+		SetBool(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Random Start Frame") },
+			StartFrame.bRandom, TEXT("initialize.setFlipbookFrame"));
+		if (!StartFrame.bRandom)
+		{
+			SetInt(EmitterName, VfxNiagara::ParticleUpdate, Module, { TEXT("Start Frame Offset") },
+				FMath::RoundToInt(StartFrame.Constant), TEXT("initialize.setFlipbookFrame"));
+		}
+		Report.Native(CurrentLabel, TEXT("initialize.setFlipbookFrame"),
+			StartFrame.bRandom ? TEXT("random start frame")
+				: *FString::Printf(TEXT("starts at frame %.0f"), StartFrame.Constant));
+	}
+
+	if (Frames < Cells)
+	{
+		Report.Approximated(CurrentLabel, TEXT("update.flipbook"),
+			FString::Printf(TEXT("the block plays %d of the sheet's %d frames; Niagara's SubUV ")
+				TEXT("module always walks the whole sheet, so the extra frames play too"),
+				Frames, Cells));
 	}
 	else
 	{
-		Report.Native(CurrentLabel, TEXT("output.mode"), TEXT("Sprite"));
+		Report.Native(CurrentLabel, TEXT("update.flipbook"),
+			Timing == TEXT("rate")
+				? *FString::Printf(TEXT("%d frames at %.0f fps, looping"), Frames, Rate)
+				: *FString::Printf(TEXT("%d frames spread over the particle's life"), Frames));
 	}
-
-	// BLEND IS A MATERIAL DECISION IN UNREAL, not a renderer flag. Saying so
-	// matters: an author who does not know that will look for an additive
-	// checkbox on the renderer and conclude the import lost it.
-	Report.Approximated(CurrentLabel, TEXT("output.blend"),
-		FString::Printf(TEXT("'%s' is a material property in Unreal, not a renderer setting; ")
-			TEXT("assign a material with that blend mode to the Sprite Renderer"), *Blend));
 }
 
 // ---------------------------------------------------------------------------
@@ -1145,6 +2226,17 @@ bool FVfxNiagaraBuilder::SetDynamicInput(FName EmitterName, FName ScriptName, FN
 	return bSet;
 }
 
+bool FVfxNiagaraBuilder::SetLinked(FName EmitterName, FName ScriptName, FName ModuleName,
+	const TArray<FName>& InputStack, const TCHAR* ParameterName,
+	const FNiagaraTypeDefinition& ParameterType, const FString& Label)
+{
+	FNiagaraExt_StackInputData_Linked Payload;
+	Payload.LinkedVariable.Name = ParameterName;
+	Payload.LinkedVariable.Type = ParameterType;
+	return SetInput(EmitterName, ScriptName, ModuleName, InputStack,
+		FInstancedStruct::Make(Payload), Label);
+}
+
 bool FVfxNiagaraBuilder::SetDataInterface(FName EmitterName, FName ScriptName, FName ModuleName,
 	const TArray<FName>& InputStack, const FString& PropertyValues, const FString& Label)
 {
@@ -1215,7 +2307,7 @@ namespace
 	}
 }
 
-FString FVfxNiagaraBuilder::PathCurveJson(const TArray<FVector3f>& Path)
+FString FVfxNiagaraBuilder::PathCurveJson(const TArray<FVector3f>& Path, float KeyScale)
 {
 	// KEYED BY CUMULATIVE CHORD LENGTH, not by point index. The preview walks
 	// the path by arc length so that "spacing" means metres and "even" means
@@ -1229,8 +2321,8 @@ FString FVfxNiagaraBuilder::PathCurveJson(const TArray<FVector3f>& Path)
 	for (int32 i = 0; i < Path.Num(); ++i)
 	{
 		if (i > 0) { Walked += (Path[i] - Path[i - 1]).Size(); }
-		const float T = Total > KINDA_SMALL_NUMBER ? Walked / Total
-			: static_cast<float>(i) / FMath::Max(1, Path.Num() - 1);
+		const float T = (Total > KINDA_SMALL_NUMBER ? Walked / Total
+			: static_cast<float>(i) / FMath::Max(1, Path.Num() - 1)) * KeyScale;
 		X.Add({ T, Path[i].X });
 		Y.Add({ T, Path[i].Y });
 		Z.Add({ T, Path[i].Z });
@@ -1247,7 +2339,7 @@ FString FVfxNiagaraBuilder::PathCurveJson(const TArray<FVector3f>& Path)
 	return Out;
 }
 
-FString FVfxNiagaraBuilder::PathTangentCurveJson(const TArray<FVector3f>& Path)
+FString FVfxNiagaraBuilder::PathTangentCurveJson(const TArray<FVector3f>& Path, float KeyScale)
 {
 	// UNIT TANGENTS at the same key times as the path itself, by central
 	// difference - which is the Catmull-Rom tangent, so the direction a particle
@@ -1259,8 +2351,8 @@ FString FVfxNiagaraBuilder::PathTangentCurveJson(const TArray<FVector3f>& Path)
 	for (int32 i = 0; i < Path.Num(); ++i)
 	{
 		if (i > 0) { Walked += (Path[i] - Path[i - 1]).Size(); }
-		const float T = Total > KINDA_SMALL_NUMBER ? Walked / Total
-			: static_cast<float>(i) / FMath::Max(1, Path.Num() - 1);
+		const float T = (Total > KINDA_SMALL_NUMBER ? Walked / Total
+			: static_cast<float>(i) / FMath::Max(1, Path.Num() - 1)) * KeyScale;
 
 		const FVector3f& Before = Path[FMath::Max(0, i - 1)];
 		const FVector3f& After = Path[FMath::Min(Path.Num() - 1, i + 1)];

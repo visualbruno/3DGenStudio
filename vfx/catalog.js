@@ -1316,7 +1316,9 @@ const BLOCK_LIST = [
     kernel: 'force.attract',
     engines: {
       unity: ENGINE_SUPPORT.NATIVE,
-      unreal: ENGINE_SUPPORT.APPROX,
+      // Niagara clamps inside Solve Forces and Velocity rather than as a module
+      // of its own, and the importer now sets that pair itself.
+      unreal: ENGINE_SUPPORT.NATIVE,
       note: 'Niagara has Point Attraction Force, but its falloff curve differs - the shape is the same, the exact strength at a given distance is not.',
     },
     attributes: ['position', 'velocity'],
@@ -1538,9 +1540,16 @@ const BLOCK_LIST = [
     kernel: 'collide.sphere',
     stage: BLOCK_STAGE.AFTER,
     engines: {
-      unity: ENGINE_SUPPORT.NATIVE,
-      unreal: ENGINE_SUPPORT.NATIVE,
-      note: 'Unity: Collide with Sphere. Niagara: Collision (Analytical, sphere).',
+      // NEITHER ENGINE COLLIDES WITH AN IMPLICIT SHAPE, which both importers
+      // confirmed by dropping this block: Shuriken's collision module takes
+      // planes or scene colliders, and Niagara's analytical mode is PLANES
+      // ONLY - its enum has exactly two entries, Ray Traced and Analytical
+      // Planes. Claiming native here told the author at authoring time that
+      // the block would survive, which is the one thing these flags exist to
+      // prevent.
+      unity: ENGINE_SUPPORT.NONE,
+      unreal: ENGINE_SUPPORT.NONE,
+      note: 'Neither engine has an implicit sphere collider: put a real one in the level, or use it as a kill volume.',
     },
     attributes: ['position', 'velocity'],
   },
@@ -1610,9 +1619,11 @@ const BLOCK_LIST = [
     kernel: 'collide.box',
     stage: BLOCK_STAGE.AFTER,
     engines: {
-      unity: ENGINE_SUPPORT.NATIVE,
-      unreal: ENGINE_SUPPORT.NATIVE,
-      note: 'Unity: Collide with AABox. Niagara: Collision (Analytical, box).',
+      // See update.collideSphere: an implicit box is not a collider in either
+      // engine, and both importers drop it.
+      unity: ENGINE_SUPPORT.NONE,
+      unreal: ENGINE_SUPPORT.NONE,
+      note: 'Neither engine has an implicit box collider: put a real one in the level, or use it as a kill volume.',
     },
     attributes: ['position', 'velocity'],
   },

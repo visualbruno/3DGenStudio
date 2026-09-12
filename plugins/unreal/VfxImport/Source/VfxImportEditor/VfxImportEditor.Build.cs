@@ -21,6 +21,14 @@ public class VfxImportEditor : ModuleRules
 			"Json",
 			"JsonUtilities",
 			"UnrealEd",
+			// Importing the bundle's PNGs and GLBs the way a drag-and-drop
+			// does, rather than re-implementing two importers here.
+			"AssetTools",
+			// A GLB import runs through Interchange, and Interchange runs
+			// ASYNCHRONOUSLY - the importer has to wait for it before it can
+			// point a renderer at the mesh.
+			"InterchangeCore",
+			"InterchangeEngine",
 			"AssetRegistry",
 			"Projects",
 			"Niagara",

@@ -17,8 +17,8 @@ real diagnostic - so nothing here should be a surprise at import time.
 
 | Engine | Native | Approximate | Unsupported |
 |---|---|---|---|
-| Unity VFX Graph | 45 | 3 | 0 |
-| Unreal Niagara | 45 | 3 | 0 |
+| Unity VFX Graph | 43 | 3 | 2 |
+| Unreal Niagara | 44 | 2 | 2 |
 
 ## What survives, and what does not
 
@@ -83,12 +83,12 @@ Not surviving:
 | Size Over Life | `update.sizeOverLife` | yes | yes | Unity: Set Size over Life. Niagara: Scale Sprite Size with a float curve. |
 | Colour Over Life | `update.colorOverLife` | yes | yes | Unity: Set Color over Life. Niagara: Color module with a colour curve. |
 | Spin | `update.spin` | yes | yes |  |
-| Attract to Point | `update.attractor` | yes | approx | Niagara has Point Attraction Force, but its falloff curve differs - the shape is the same, the exact strength at a given distance is not. |
+| Attract to Point | `update.attractor` | yes | yes | Niagara has Point Attraction Force, but its falloff curve differs - the shape is the same, the exact strength at a given distance is not. |
 | Vortex | `update.vortex` | yes | yes | Unity: Vortex Force. Niagara: Vortex Force. |
 | Speed Limit | `update.speedLimit` | yes | approx | Niagara clamps speed INSIDE Solve Forces and Velocity rather than as its own module, so the importer reports the value to set on that module's Speed Limit instead of adding anything. Clamping anywhere else would clamp last frame's velocity while this frame's acceleration immediately exceeds it again. |
 | Collide with Floor | `update.collidePlane` | yes | yes | Unity: Collide with Plane. Niagara: Collision (Plane). |
-| Collide with Sphere | `update.collideSphere` | yes | yes | Unity: Collide with Sphere. Niagara: Collision (Analytical, sphere). |
-| Collide with Box | `update.collideBox` | yes | yes | Unity: Collide with AABox. Niagara: Collision (Analytical, box). |
+| Collide with Sphere | `update.collideSphere` | NO | NO | Neither engine has an implicit sphere collider: put a real one in the level, or use it as a kill volume. |
+| Collide with Box | `update.collideBox` | NO | NO | Neither engine has an implicit box collider: put a real one in the level, or use it as a kill volume. |
 | Kill Outside Box | `update.killOnBounds` | yes | yes | Unity: Kill (AABox). Niagara: Kill Particles In Volume. |
 | Play Sprite Sheet | `update.flipbook` | yes | yes | Unity: Flipbook Player / Set Tex Index. Niagara: SubUV Animation. |
 

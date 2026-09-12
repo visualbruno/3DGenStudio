@@ -5,13 +5,22 @@ from it — real emitters and module stacks, not parameters bound onto a templat
 
 Editor-only. Nothing ships in a packaged game.
 
-> **Status: working, with gaps.** The IR → Niagara mapping is written and
-> verified against a real exported bundle: emitter state, spawn rate and bursts,
-> lifetime, size, colour, mass, rotation, the shape emitters, velocity, the
-> forces, colour-over-life, size-over-life, the floor plane, kill volumes — and
-> the **curve/spline emitter**, which Unreal carries better than Unity does.
-> **Textures and meshes are not imported yet**, so an imported effect has the
-> right motion and a default material; the report says so every time.
+> **Status: complete for the block catalog, bar two engine limits.** A 22-system
+> test bench and four real effects import with nothing dropped except the two
+> things Niagara genuinely cannot do (see *What survives* below).
+>
+> Carried across: emitter state, spawn rate and bursts, lifetime, size, colour,
+> mass, rotation, every shape emitter *with its offset and rotation*, the three
+> velocity blocks including their cones and ranges, the forces, colour- and
+> size-over-life, spin, the flipbook, collision against the floor **with bounce
+> and friction**, kill volumes, the speed cap, mesh emission, **sub-emitters on
+> death and on collision with their per-event probability**, and the
+> **curve/spline emitter**, which Unreal carries better than Unity does.
+>
+> **Textures and meshes are imported too**, and a material is generated per
+> (texture, blend mode, renderer) with the right blend and the Niagara usage
+> flags set — so an imported effect opens looking like the preview rather than
+> as white squares.
 
 ## Requirements
 
@@ -208,3 +217,39 @@ So every position, velocity, direction and offset needs an **axis swap and a
 ×100 scale**: `(x, y, z)` becomes `(x, z, y) × 100`. Swapping two axes is what
 flips the handedness, and it puts our up-axis onto Unreal's. This is a bigger
 conversion than the Unity importer's, which only had to negate Z.
+
+## Verifying an import
+
+```bat
+UnrealEditor-Cmd.exe "C:\path	o\YourProject.uproject" ^
+  -run=VfxVerify -system=/Game/ImportedVfx/BenchA -out=verify.txt ^
+  -unattended -nosplash -nopause -stdout
+```
+
+Reads the SAVED asset back and prints every emitter's module stack with the
+value of every input, plus its renderers, its event handlers and whether it
+carries persistent ids. That is not the same as watching it run, and it is not
+meant to be: what it catches is the failure this plugin is most prone to - a
+write that was silently REFUSED. An input hidden behind an unset static switch,
+an enum entry name that does not exist in this engine, a renderer that kept its
+default material: each leaves the module at its default and reports nothing, and
+each shows up in this file as a default sitting where a number should be.
+
+There is deliberately no "simulate it and compare" mode. Both routes to one are
+closed: `UNiagaraComponent` refuses to activate in a commandlet world (it
+reaches its "asset is not ready, retry on tick" path and the retry never comes),
+and `FNiagaraSystemInstanceController::Initialize`, which would drive an
+instance without a component, is declared in a public header with no export
+macro and links against nothing. Both were tried.
+
+## Discovering what Niagara calls things
+
+```bat
+UnrealEditor-Cmd.exe <project> -run=VfxProbe -find=collision       ^ every module whose path contains it
+UnrealEditor-Cmd.exe <project> -run=VfxProbe -modules=<a>,<b>      ^ their inputs, types and visibility
+UnrealEditor-Cmd.exe <project> -run=VfxProbe -enums=<a>,<b>        ^ an enum's entries BY DISPLAY NAME
+```
+
+Every module path, input name and enum entry in the mapping came from these
+three, and none of them was guessed. A wrong input name does not fail loudly -
+SetStackInputData reports one error among many and the module keeps its default.

@@ -3,6 +3,7 @@
 #include "VfxIr.h"
 #include "VfxImportReport.h"
 #include "VfxNiagaraBuilder.h"
+#include "VfxAssetImport.h"
 
 #include "NiagaraSystem.h"
 #include "Misc/Paths.h"
@@ -47,19 +48,12 @@ bool FVfxBundleImporter::Import(const FString& BundleDir, const FString& Destina
 	// package rather than an error at the point of naming.
 	AssetName = AssetName.Replace(TEXT(" "), TEXT("_")).Replace(TEXT("-"), TEXT("_"));
 
-	// TEXTURES AND MESHES ARE NOT IMPORTED YET, and saying so is the point: the
-	// bundle carries them, the effect references them, and an emitter with the
-	// right motion and the wrong material looks like a broken import rather
-	// than an unfinished one.
+	// THE ART, FIRST. The builder needs the objects, not the file paths: a
+	// sprite renderer takes a material and a material takes a texture, so
+	// nothing about the renderer can be decided until these exist.
 	FVfxImportedAssets Assets;
-	const TArray<TSharedPtr<FJsonValue>>* References = nullptr;
-	if (Ir.Manifest()->TryGetArrayField(TEXT("references"), References) && References->Num() > 0)
-	{
-		Report.Dropped(TEXT("effect"), TEXT("referenced assets"),
-			FString::Printf(TEXT("%d texture(s)/mesh(es) in the bundle were not imported; ")
-				TEXT("import them into the project and assign them to the emitter's material ")
-				TEXT("and renderer"), References->Num()));
-	}
+	FVfxAssetImport::ImportReferences(Ir, FPaths::GetPath(ManifestPath), DestinationPath,
+		Report, Assets);
 
 	FVfxNiagaraBuilder Builder(Ir, Report, Assets);
 	UNiagaraSystem* System = Builder.Build(AssetName, DestinationPath);
