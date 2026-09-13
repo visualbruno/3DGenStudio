@@ -5,6 +5,7 @@ import path from 'path';
 // vfx/index.js for the three build registrations that keep this resolvable
 // in a packaged app and in Docker.
 import { normalizeVfxDoc } from './vfx/doc.js';
+import { VFX_BUNDLE_FORMAT } from './vfx/bundle.js';
 import { compileVfxGraph } from './vfx/compile.js';
 import {
   buildEngineMapping,
@@ -69,7 +70,11 @@ export const VFX_ASSETS_DIR = path.join(ASSETS_DIR, 'vfx');
 // bundle. A plugin declares the range it supports and must refuse anything
 // outside it rather than half-importing - the same contract VFX_IR_FORMAT
 // states for the IR inside.
-export const VFX_BUNDLE_FORMAT = 1;
+//
+// DEFINED IN vfx/bundle.js, re-exported here. The writer of a bundle is this
+// file and the reader is that one, and a number stated twice is a number that
+// eventually disagrees with itself.
+export { VFX_BUNDLE_FORMAT };
 
 const DATA_ASSETS_PREFIX = 'data/assets/';
 const KANBAN_COLUMNS = [

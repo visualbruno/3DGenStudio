@@ -1,0 +1,137 @@
+/* The VFX bundle importer.
+ *
+ * Rides on ProjectIODialog.css - it is the same dialog as project and effect
+ * EXPORT, and an importer that looked different would read as a different kind
+ * of operation. What is here is only what that stylesheet has no reason to
+ * carry: the bundle preview, the warning list and the checkbox row.
+ *
+ * WIDER THAN THE EXPORT DIALOG, because this one shows content rather than
+ * collecting four fields - a warning naming a slot and a file wraps to three
+ * lines at 480px. */
+
+.vfx-import {
+  max-width: 560px;
+}
+
+/* The directory input itself is never seen: the visible control is the Browse
+   button, so that the read-only path field and the button match Export's row
+   exactly. */
+.vfx-import__file-input {
+  display: none;
+}
+
+.vfx-import__summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(143, 245, 255, 0.14);
+  border-radius: var(--radius-md);
+  background: rgba(143, 245, 255, 0.04);
+}
+
+.vfx-import__summary-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.86rem;
+  color: var(--on-surface);
+}
+
+.vfx-import__summary-head .material-symbols-outlined {
+  font-size: 1.1rem;
+  color: var(--primary);
+}
+
+.vfx-import__meta {
+  font-size: 0.72rem;
+  color: var(--on-surface-variant);
+}
+
+.vfx-import__counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  color: var(--on-surface-variant);
+}
+
+.vfx-import__counts li + li::before {
+  content: '·';
+  margin-right: 0.75rem;
+  opacity: 0.5;
+}
+
+/* The row the export dialog's own `project-io__field--check` never got a rule
+   for, so its checkbox stacks above its label. Kept local rather than added to
+   the shared sheet, which would change that dialog's layout as a side effect of
+   this feature. */
+.vfx-import__check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0.55rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--on-surface);
+}
+
+.vfx-import__check input {
+  margin-top: 0.15rem;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.vfx-import__check em {
+  font-style: normal;
+  color: var(--on-surface-variant);
+  font-size: 0.74rem;
+}
+
+.vfx-import__warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--on-surface-variant);
+}
+
+.vfx-import__warnings li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.vfx-import__warnings .material-symbols-outlined {
+  font-size: 1rem;
+  flex: none;
+  color: #ffc46b;
+}
+
+.vfx-import__warnings code {
+  font-family: var(--font-mono, monospace);
+  color: var(--primary);
+}
+
+/* An inline verb in a sentence, so it is styled as the link it reads as rather
+   than as a third button competing with Import and Cancel. */
+.vfx-import__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--primary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.vfx-import__link:hover {
+  color: var(--on-surface);
+}

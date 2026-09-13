@@ -5,6 +5,7 @@ import Footer from '../components/Footer'
 import MeshPreviewDialog from '../components/MeshPreviewDialog'
 import SettingsModal from '../components/SettingsModal'
 import TagFilter from '../components/TagFilter'
+import VfxImportDialog from '../components/vfx/VfxImportDialog'
 import { useProjects } from '../context/ProjectContext'
 import { createMeshThumbnailFile, isMeshFile } from '../utils/meshThumbnail'
 import { parseAbrFile } from '../utils/brushAbr'
@@ -362,6 +363,8 @@ export default function AssetsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const [importing, setImporting] = useState(false)
   const [importFeedback, setImportFeedback] = useState(null)
+  // The VFX section imports a FOLDER, not a file - see VfxImportDialog.
+  const [vfxImportOpen, setVfxImportOpen] = useState(false)
   const [workflowLoading, setWorkflowLoading] = useState(true)
   const [workflowSaving, setWorkflowSaving] = useState(false)
   const [workflows, setWorkflows] = useState([])
@@ -707,6 +710,17 @@ export default function AssetsPage() {
   const handleImportClick = () => {
     if (isWorkflowSection) {
       workflowFileInputRef.current?.click()
+      return
+    }
+
+    // An EXPORTED EFFECT IS A FOLDER, so the VFX section cannot use the file
+    // picker the other sections share: the graph is only half of it, and
+    // importing that half alone lands an effect whose every texture slot points
+    // at an asset id from somebody else's database. The dialog reads the
+    // manifest, installs the textures and meshes here, and re-points the slots.
+    // It still offers the bare-.vfx.json route, which is what this input is.
+    if (activeSection === 'vfx') {
+      setVfxImportOpen(true)
       return
     }
 
@@ -1399,7 +1413,7 @@ export default function AssetsPage() {
 
   const importButtonLabel = isWorkflowSection
     ? (workflowSaving ? 'Importing...' : 'Import JSON')
-    : (importing ? 'Importing...' : 'Import')
+    : (importing ? 'Importing...' : activeSection === 'vfx' ? 'Import Bundle' : 'Import')
 
   const importButtonDisabled = isWorkflowSection ? workflowSaving : importing
 
@@ -1906,6 +1920,25 @@ export default function AssetsPage() {
       )}
 
       {meshPreviewAsset && <MeshPreviewDialog asset={meshPreviewAsset} onClose={() => setMeshPreviewAsset(null)} />}
+
+      {vfxImportOpen && (
+        <VfxImportDialog
+          onClose={() => setVfxImportOpen(false)}
+          // The grid has to redraw: the import adds the effect AND, usually,
+          // several textures to sections the user is not looking at.
+          onImported={asset => {
+            loadLibrary()
+            setImportFeedback({
+              type: 'success',
+              message: `Imported "${asset?.name || 'effect'}" into the VFX library.`
+            })
+          }}
+          // The bare-file route the section's Import button used to be. Kept
+          // reachable rather than removed: a .vfx.json with no textures of its
+          // own is a perfectly ordinary thing to be handed.
+          onImportSingleFile={() => assetFileInputRef.current?.click()}
+        />
+      )}
 
       {workflowEditorOpen && inspectedWorkflow && (
         <div className="assets-dialog-overlay" role="presentation" onClick={closeWorkflowEditor}>

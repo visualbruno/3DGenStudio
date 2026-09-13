@@ -135,11 +135,62 @@ guesses will be wrong for one of the two.
 | 404 | No asset with that id. |
 | 500 | The graph file could not be read or parsed. |
 
-## Cross-installation imports
+## Reading a bundle back
 
-A bundle is for engines. Moving an effect between two installations of this app
-goes through `.3dgp` project export instead, which carries the effect *and*
-renumbers its `asset:<id>` references on import — see the Phase B remap in
-`storage.js`. That remap is verified by `tools/vfx-export-e2e.mjs`, which runs
-two servers with separate data directories, because with one installation the
-imported ids coincide with the exported ones and the check proves nothing.
+The Assets page's **VFX → Import Bundle** button reads a folder written by
+`POST /api/assets/:id/vfx-export` and installs it here: its textures and meshes
+become library assets, and the effect is saved pointing at *their* ids.
+
+**The browser does this, not the server, and there is no import route.** Export
+has to be server-side because a browser cannot write a folder of files; reading
+one is the opposite problem — a directory input hands the page every byte
+already. A server route would have to read the *user's* disk while writing the
+*shared* database, which is the split `serverMode.js` special-cases for project
+import (a staging upload, a second route, two classifier entries). Doing it in
+the page costs none of that and works unchanged in local, Electron and
+Docker-server installs.
+
+| Piece | Where |
+|---|---|
+| The format: manifest gate, needs list, reference remap | `vfx/bundle.js` (pure) |
+| The install: locate the folder, upload, save | `src/utils/vfx/bundleImport.js` |
+| The dialog | `src/components/vfx/VfxImportDialog.jsx` |
+
+### A slot the bundle could not supply is emptied
+
+This is the whole reason the remap is a tested function rather than a loop in a
+component. `asset:412` is a row in the **exporting** machine's database. On the
+importing machine 412 is either nothing or, far worse, an unrelated image — and
+whoever imported it can never see the breakage, because their library really
+does contain a 412.
+
+So every slot is rewritten. One whose file was installed points at the new local
+id; one whose file did not ship (`file: null`, the `MISSING_ASSET` case above),
+failed to upload, or is not in the manifest at all is set to `ref: ""`. An empty
+ref is what an unfilled slot looks like everywhere else: the effect opens, draws
+with the built-in stand-in, and the diagnostics say a sprite is missing. The
+import reports each one rather than leaving it to be discovered.
+
+### Reuse is by kind and name stem
+
+A re-import adopts what is already here instead of adding a second copy. The
+match drops the extension — the exporting library's display name is whatever the
+author typed (`Spark`), while the name it lands under here is the file it
+arrived as (`Spark.png`), because `/api/assets/library/import` names an asset
+after its file. It is scoped by kind, so a `flame.png` cannot be adopted as the
+mesh a `flame.glb` slot wants. The dialog's **Reuse library assets with the same
+name** checkbox turns it off.
+
+### Verified across two installations
+
+`tools/vfx-bundle-import-e2e.mjs` exports from one server and imports into
+another with a separate data directory, then reads the saved graph file back and
+checks it names the *importing* install's id. One installation cannot prove
+this: the imported ids coincide with the exported ones and the check passes
+either way. It is the sibling of `tools/vfx-export-e2e.mjs`, which asks the same
+question of a `.3dgp` project bundle — where the remap happens on the server
+instead (the Phase B remap in `storage.js`).
+
+Both routes still exist and are for different jobs: a `.3dgp` carries a whole
+project, a VFX bundle carries one effect and is also what an engine plugin
+reads.
