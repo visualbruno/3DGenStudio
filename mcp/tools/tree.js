@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { Buffer } from 'node:buffer';
 import { toolHandler, createProgressReporter, withAssetUrls } from '../client.js';
+import { applyAssetTags, tagsInput } from '../assetTags.js';
 
 // Procedural tree generation, served by the Python mesh-tools service (:8200).
 //
@@ -152,12 +153,13 @@ export function registerTreeTools(server, { api, notifyMutation }) {
       branchTextureAssetId: z.number().int().optional().describe('Separate image asset for the thin wood. Supplying it splits the bark into two materials (one extra draw call); omit it and the branches wear the trunk texture.'),
       leafImageAssetIds: z.array(z.number().int()).max(64).optional().describe('Image assets for the leaves, WITH ALPHA. Pass several: they are composed into an atlas and every card picks one at random, so a few variants read as far more. This is the field to use — an atlas is what the renderer wants, not what anyone has.'),
       leafAtlasAssetId: z.number().int().optional().describe('A ready-made leaf atlas, if you already have one laid out on a grid. Ignored when leafImageAssetIds is given.'),
-      save: z.boolean().default(true).describe('Set false to generate and report stats without saving an asset.')
+      save: z.boolean().default(true).describe('Set false to generate and report stats without saving an asset.'),
+      tags: tagsInput
     }
   }, toolHandler(async (args, extra) => {
     const {
       projectId, name, trunkTextureAssetId, branchTextureAssetId,
-      leafImageAssetIds, leafAtlasAssetId, save = true, ...source
+      leafImageAssetIds, leafAtlasAssetId, save = true, tags, ...source
     } = args;
     const reportProgress = createProgressReporter(extra);
 
@@ -193,7 +195,12 @@ export function registerTreeTools(server, { api, notifyMutation }) {
 
     if (!save) {
       await reportProgress(100, 100, 'Done');
-      return { spec, stats, savedAsset: null, note: 'save was false, so no asset was written.' };
+      return {
+        spec,
+        stats,
+        savedAsset: null,
+        note: `save was false, so no asset was written${tags?.length ? ' — and nothing was tagged, because tags belong to a saved asset' : ''}.`
+      };
     }
 
     await reportProgress(92, 100, 'Saving tree');
@@ -203,6 +210,11 @@ export function registerTreeTools(server, { api, notifyMutation }) {
 
     if (projectId) notifyMutation(projectId);
     await reportProgress(100, 100, 'Done');
-    return { spec, stats, savedAsset: withAssetUrls(api, savedAsset) };
+    return {
+      spec,
+      stats,
+      savedAsset: withAssetUrls(api, savedAsset),
+      ...(await applyAssetTags(api, tags, [savedAsset]))
+    };
   }));
 }

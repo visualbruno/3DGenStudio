@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { toolHandler, createProgressReporter } from '../client.js';
 import { attachResultsToNode, resolveNodeTarget } from '../nodeResults.js';
+import { applyAssetTags, tagsInput } from '../assetTags.js';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -77,7 +78,7 @@ const HITEM_MESH_OPTIONS = {
 // complete, so this loop IS what finishes an async job. Returns the completed
 // result, throws on provider error, or returns {status:'running'} on timeout.
 async function pollMeshResult(api, notifyMutation, {
-  pollRequest, providerLabel, projectId, nodeId, selectedApi, timeoutSeconds, pollIntervalSeconds, pollFirst = false
+  pollRequest, providerLabel, projectId, nodeId, selectedApi, tags, timeoutSeconds, pollIntervalSeconds, pollFirst = false
 }, reportProgress) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   let lastStatus = null;
@@ -99,7 +100,12 @@ async function pollMeshResult(api, notifyMutation, {
         });
       }
       notifyMutation(projectId);
-      return nodeAttachment ? { ...lastStatus, nodeAttachment } : lastStatus;
+      // Tagged here rather than at the call site because THIS is the only place
+      // a provider mesh is known to be saved: the poll that sees "completed" is
+      // what persists it, and generate_mesh may already have timed out and
+      // handed the job over to get_mesh_result.
+      const tagging = await applyAssetTags(api, tags, lastStatus.assets || []);
+      return { ...lastStatus, ...(nodeAttachment ? { nodeAttachment } : {}), ...tagging };
     }
     if (lastStatus?.status === 'error') {
       throw new Error(lastStatus.error || 'Mesh generation failed');
@@ -121,7 +127,7 @@ async function pollMeshResult(api, notifyMutation, {
 async function runMeshGeneration(api, notifyMutation, args, extra) {
   const {
     projectId, selectedApi, name, prompt, imageSource, nodeId, cardId, parentAssetId,
-    options = {}, timeoutSeconds = 1200, pollIntervalSeconds = 10
+    options = {}, tags, timeoutSeconds = 1200, pollIntervalSeconds = 10
   } = args;
   const reportProgress = createProgressReporter(extra);
 
@@ -150,8 +156,8 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
     parentAssetId: parentAssetId ?? null
   });
 
-  // Custom APIs respond synchronously — nothing to poll.
-  if (!pollRequest) return submit;
+  // Custom APIs respond synchronously — the submit response IS the saved mesh.
+  if (!pollRequest) return { ...submit, ...(await applyAssetTags(api, tags, [submit])) };
 
   await reportProgress(0, 100, `${submit.provider} job submitted (${submit.jobId || submit.taskId})`);
 
@@ -161,6 +167,7 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
     projectId,
     nodeId: targetNodeId,
     selectedApi,
+    tags,
     timeoutSeconds,
     pollIntervalSeconds
   }, reportProgress);
@@ -172,12 +179,13 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
     // nodeId and still land the mesh on the intended node.
     return {
       status: 'running',
-      note: `Still processing after ${timeoutSeconds}s. The provider keeps working, but the mesh is only saved once a result poll sees it finish — call get_mesh_result with the ids below to retrieve it when ready${targetNodeId ? ' (pass nodeId to attach it to the graph node)' : ''}. Do NOT re-run generation (that starts a new job).`,
+      note: `Still processing after ${timeoutSeconds}s. The provider keeps working, but the mesh is only saved once a result poll sees it finish — call get_mesh_result with the ids below to retrieve it when ready${targetNodeId ? ' (pass nodeId to attach it to the graph node)' : ''}${tags?.length ? ' (pass tags too — nothing is saved yet, so nothing has been tagged yet)' : ''}. Do NOT re-run generation (that starts a new job).`,
       provider: submit.provider,
       selectedApi,
       projectId,
       name,
       ...(targetNodeId ? { nodeId: targetNodeId } : {}),
+      ...(tags?.length ? { tags } : {}),
       ...(submit.jobId ? { jobId: submit.jobId } : {}),
       ...(submit.taskId ? { taskId: submit.taskId } : {}),
       ...(submit.region ? { region: submit.region } : {}),
@@ -198,9 +206,10 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().min(1),
       name: z.string().min(1).describe('Name for the generated asset/card'),
       nodeId: z.number().int().optional().describe('Graph node to attach the result to'),
-      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing kanban card to attach the result to')
+      cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing kanban card to attach the result to'),
+      tags: tagsInput
     }
-  }, toolHandler(async ({ projectId, nodeId, ...body }) => {
+  }, toolHandler(async ({ projectId, nodeId, tags, ...body }) => {
     // A graph node id may arrive as nodeId or (mistakenly) as cardId — route it
     // to the node and keep only a real kanban cardId in the request body.
     const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId: body.cardId });
@@ -215,7 +224,8 @@ export function registerActionTools(server, { api, notifyMutation }) {
       });
     }
     notifyMutation(projectId);
-    return nodeAttachment ? { ...result, nodeAttachment } : result;
+    const tagging = await applyAssetTags(api, tags, [result]);
+    return { ...result, ...(nodeAttachment ? { nodeAttachment } : {}), ...tagging };
   }));
 
   server.registerTool('edit_image', {
@@ -228,9 +238,10 @@ export function registerActionTools(server, { api, notifyMutation }) {
       name: z.string().min(1),
       imageSource: z.union([z.number().int(), z.string()]).describe('Source image: asset id or stored filePath'),
       nodeId: z.number().int().optional().describe('Graph node to attach the result to'),
-      cardId: z.union([z.number().int(), z.string()]).optional()
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      tags: tagsInput
     }
-  }, toolHandler(async ({ projectId, nodeId, ...body }) => {
+  }, toolHandler(async ({ projectId, nodeId, tags, ...body }) => {
     const { nodeId: targetNodeId, cardId: kanbanCardId } = await resolveNodeTarget(api, projectId, { nodeId, cardId: body.cardId });
     const result = await api.apiJson('POST', '/image-edits/api', { body: { projectId, ...body, cardId: kanbanCardId } });
     let nodeAttachment = null;
@@ -244,7 +255,10 @@ export function registerActionTools(server, { api, notifyMutation }) {
       });
     }
     notifyMutation(projectId);
-    return nodeAttachment ? { ...result, nodeAttachment } : result;
+    // The edits, never result.assetId — that is the SOURCE image this edit was
+    // made from, and tagging it would label the input.
+    const tagging = await applyAssetTags(api, tags, savedEdits);
+    return { ...result, ...(nodeAttachment ? { nodeAttachment } : {}), ...tagging };
   }));
 
   server.registerTool('generate_mesh', {
@@ -260,6 +274,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
       options: z.record(z.string(), z.any()).default({}).describe('Provider options, e.g. Tencent: region, modelVersion, enablePBR, faceCount, generationType, polygonType; Tripo: modelVersion, texture, pbr, quad, faceLimit, …. Prefer the dedicated generate_mesh_tencent / generate_mesh_tripo / generate_mesh_hitem tools, which document and validate every option.'),
+      tags: tagsInput,
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
@@ -277,6 +292,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
+      tags: tagsInput,
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
@@ -294,6 +310,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
+      tags: tagsInput,
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
@@ -310,6 +327,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
       cardId: z.union([z.number().int(), z.string()]).optional(),
       parentAssetId: z.number().int().optional(),
+      tags: tagsInput,
       timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
@@ -330,13 +348,14 @@ export function registerActionTools(server, { api, notifyMutation }) {
       cardId: z.union([z.number().int(), z.string()]).optional().describe('Kanban card the job is attached to (from the timeout payload)'),
       parentAssetId: z.number().int().optional().describe('Save the result as a version of this asset'),
       nodeId: z.number().int().optional().describe('Graph node to attach the result to (graph projects)'),
+      tags: tagsInput,
       timeoutSeconds: z.number().int().min(5).max(3600).default(600),
       pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
     }
   }, toolHandler(async (args, extra) => {
     const {
       projectId, name, provider, taskId, jobId, region, selectedApi, prompt,
-      cardId, parentAssetId, nodeId, timeoutSeconds = 600, pollIntervalSeconds = 10
+      cardId, parentAssetId, nodeId, tags, timeoutSeconds = 600, pollIntervalSeconds = 10
     } = args;
     const reportProgress = createProgressReporter(extra);
 
@@ -365,6 +384,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
       projectId,
       nodeId,
       selectedApi: effectiveSelectedApi,
+      tags,
       timeoutSeconds,
       pollIntervalSeconds,
       pollFirst: true
@@ -395,12 +415,13 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().min(1),
       name: z.string().min(1),
       meshSource: z.union([z.number().int(), z.string()]).describe('Source mesh: asset id or stored filePath'),
-      cardId: z.union([z.number().int(), z.string()]).optional()
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      tags: tagsInput
     }
-  }, toolHandler(async ({ projectId, ...body }) => {
+  }, toolHandler(async ({ projectId, tags, ...body }) => {
     const result = await api.apiJson('POST', '/meshes/edit', { body: { projectId, ...body } });
     notifyMutation(projectId);
-    return result;
+    return { ...result, ...(await applyAssetTags(api, tags, [result])) };
   }));
 
   server.registerTool('texture_mesh', {
@@ -412,12 +433,13 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().min(1),
       name: z.string().min(1),
       meshSource: z.union([z.number().int(), z.string()]),
-      cardId: z.union([z.number().int(), z.string()]).optional()
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      tags: tagsInput
     }
-  }, toolHandler(async ({ projectId, ...body }) => {
+  }, toolHandler(async ({ projectId, tags, ...body }) => {
     const result = await api.apiJson('POST', '/meshes/texture', { body: { projectId, ...body } });
     notifyMutation(projectId);
-    return result;
+    return { ...result, ...(await applyAssetTags(api, tags, [result])) };
   }));
 
   server.registerTool('rig_mesh_api', {
@@ -429,11 +451,12 @@ export function registerActionTools(server, { api, notifyMutation }) {
       prompt: z.string().min(1),
       name: z.string().min(1),
       meshSource: z.union([z.number().int(), z.string()]),
-      cardId: z.union([z.number().int(), z.string()]).optional()
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      tags: tagsInput
     }
-  }, toolHandler(async ({ projectId, ...body }) => {
+  }, toolHandler(async ({ projectId, tags, ...body }) => {
     const result = await api.apiJson('POST', '/meshes/rigging', { body: { projectId, ...body } });
     notifyMutation(projectId);
-    return result;
+    return { ...result, ...(await applyAssetTags(api, tags, [result])) };
   }));
 }

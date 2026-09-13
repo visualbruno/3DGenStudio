@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { toolHandler, createProgressReporter } from '../client.js';
 import { attachResultsToNode, resolveNodeTarget, resolveNodeInputAssets } from '../nodeResults.js';
+import { applyAssetTags, tagsInput } from '../assetTags.js';
 
 const FILE_PARAM_TYPES = ['image', 'mesh', 'video'];
 const SCALAR_EXAMPLES = { string: '"a red robot"', number: '42', boolean: 'true' };
@@ -438,6 +439,7 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
       cardId: z.union([z.number().int(), z.string()]).optional().describe('Existing KANBAN card to attach the run to (kanban projects). For graph nodes use nodeId — a graph node id passed here is auto-routed to that node'),
       name: z.string().optional().describe('Name for the generated asset(s)'),
       parentAssetId: z.number().int().optional().describe('Save results under this asset: a mesh output becomes a version of it, an image output an edit of it (the parent must match the output type, else a new root asset is created). USUALLY LEAVE UNSET — it is inferred automatically from the source the output was derived from: the workflow file (image/mesh) input matching the output type, whether that input came from the target node\'s wiring or was passed in `inputs`. Set this only to override that inference (e.g. attach to a different asset).'),
+      tags: tagsInput,
       persistProcessingCard: z.boolean().optional(),
       persistGeneratedAssets: z.boolean().optional(),
       timeoutSeconds: z.number().int().min(5).max(3600).default(600)
@@ -445,7 +447,7 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
   }, toolHandler(async (args, extra) => {
     const {
       workflowId, projectId, inputs = {}, fileInputs, nodeId, cardId, name,
-      parentAssetId, persistProcessingCard, persistGeneratedAssets, timeoutSeconds = 600
+      parentAssetId, tags, persistProcessingCard, persistGeneratedAssets, timeoutSeconds = 600
     } = args;
     const reportProgress = createProgressReporter(extra);
     const promptId = randomUUID();
@@ -564,7 +566,8 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
           status: 'running',
           promptId,
           ...(inputWarnings.length > 0 ? { warnings: inputWarnings } : {}),
-          note: `Still running after ${timeoutSeconds}s. The workflow continues in the background — call get_run_status with this promptId to check on it; results are attached to the project when it finishes.`
+          ...(tags?.length ? { tags } : {}),
+          note: `Still running after ${timeoutSeconds}s. The workflow continues in the background — call get_run_status with this promptId to check on it${tags?.length ? ' (pass tags too — the results are not saved yet, so nothing has been tagged yet)' : ''}; results are attached to the project when it finishes.`
         };
       }
       if (outcome.status === 'error') {
@@ -593,7 +596,8 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
         promptId,
         assets,
         ...(inputWarnings.length > 0 ? { warnings: inputWarnings } : {}),
-        ...(nodeAttachment ? { nodeAttachment } : {})
+        ...(nodeAttachment ? { nodeAttachment } : {}),
+        ...(await applyAssetTags(api, tags, assets))
       };
     } finally {
       if (timer) clearTimeout(timer);
@@ -603,12 +607,12 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
 
   server.registerTool('get_run_status', {
     title: 'Get workflow run status',
-    description: 'Check on a ComfyUI workflow run by promptId (returned by run_workflow). Returns the latest progress snapshot: status (processing/completed/error), progressPercent, detail, and the generated assets once done.',
+    description: 'Check on a ComfyUI workflow run by promptId (returned by run_workflow). Returns the latest progress snapshot: status (processing/completed/error), progressPercent, detail, and the generated assets once done. Pass tags to label those assets when the run has finished — use it to apply the tags a run_workflow call could not, because it timed out before anything was saved.',
     inputSchema: {
-      promptId: z.string().min(1)
-    },
-    annotations: { readOnlyHint: true }
-  }, toolHandler(async ({ promptId }) => {
+      promptId: z.string().min(1),
+      tags: tagsInput
+    }
+  }, toolHandler(async ({ promptId, tags }) => {
     // The single-job stream replays the latest snapshot immediately on
     // connect; grab it and close. No snapshot within 3s means the server no
     // longer tracks this prompt (finished >60s ago, or never existed).
@@ -628,6 +632,10 @@ export function registerWorkflowTools(server, { api, notifyMutation }) {
         note: 'No progress snapshot for this promptId. The run either finished more than a minute ago (check the project\'s assets with list_assets) or was never started.'
       };
     }
-    return snapshot;
+    // Only a finished run has assets to tag. Tagging is additive, so polling
+    // this repeatedly with the same tags is harmless.
+    if (!snapshot.done && snapshot.status !== 'completed') return snapshot;
+    const assets = Array.isArray(snapshot.result) ? snapshot.result : (snapshot.result ? [snapshot.result] : []);
+    return { ...snapshot, ...(await applyAssetTags(api, tags, assets)) };
   }));
 }

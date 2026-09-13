@@ -268,6 +268,19 @@ Tags are the free-form labels the Assets page filters by, and they work the same
 
 Tags are normalized server-side — trimmed, whitespace-collapsed, lower-cased, 48 chars max, 50 per asset — so `"Sci-Fi"`, `"sci-fi "` and `"SCI-FI"` are one tag. Punctuation is left alone, though: `sci-fi` and `sci fi` remain two different tags. A tag always comes back in its canonical form, which is what a later search has to match.
 
+#### Tagging at generation time
+
+Every tool that **saves** a generated asset takes the same optional `tags` list, applied the moment the result is saved: `generate_image`, `edit_image`, `generate_mesh` (and `generate_mesh_tencent` / `_tripo` / `_hitem`), `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api`, `run_workflow`, `get_run_status`, and `generate_tree`. This is what keeps a generated asset findable without a second round trip, which an automated caller routinely forgets to make — a mesh generated and never tagged is a mesh nobody finds again.
+
+The result then carries `taggedAssets: [{ assetId, tags }]` — the resulting tag list per saved asset, read back from the server, so the canonical form is visible immediately. `tags` is additive (the same rule as `tag_asset`'s `add`), so it never clears a tag an earlier step set; use `tag_asset` to remove or replace.
+
+Two behaviours worth knowing:
+
+- **Tagging cannot fail a generation.** Tags are applied by a separate request after the save, so it can fail on its own — but throwing then would report a successful, minutes-long generation as a failed tool call, and the caller would retry the *generation*. Instead the result comes back intact with a `tagWarnings` entry naming the asset id and the error; `tag_asset` fixes it up.
+- **A timed-out job has not been tagged**, because nothing has been saved yet. `generate_mesh*` and `run_workflow` echo the `tags` back in their `{status: "running"}` payload — pass them to the `get_mesh_result` / `get_run_status` call that finishes the job. (This is why `get_run_status` is no longer marked read-only.)
+
+`edit_image` tags its `savedEdits`, never the source image it was derived from — its response also carries the source's `assetId`, and tagging that would label the input.
+
 ## Requirements per capability
 
 | Capability | Needs |

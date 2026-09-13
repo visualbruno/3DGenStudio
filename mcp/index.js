@@ -6,8 +6,8 @@
 // app. Tools call the running backend over loopback HTTP (see client.js).
 //
 // Context cost: a client injects the WHOLE tool catalog into the model's system
-// prompt on every request, before it reads the user's message. The full 67-tool
-// catalog is ~91 KB of JSON (~25k tokens) plus ~5 KB of instructions. Clients
+// prompt on every request, before it reads the user's message. The full 81-tool
+// catalog is ~123 KB of JSON (~35k tokens) plus ~5 KB of instructions. Clients
 // that load tool schemas lazily pay almost nothing; the rest pay it per session.
 // For those, TOOL_GROUPS below lets a client load only the groups it needs —
 // see resolveGroups(). Instructions are assembled to match (buildInstructions),
@@ -47,10 +47,10 @@ const TOOL_GROUPS = {
   projects: { register: registerProjectTools, cost: 4035 },
   cards: { register: registerCardTools, cost: 4437 },
   graph: { register: registerGraphTools, cost: 5266 },
-  workflows: { register: registerWorkflowTools, cost: 8957 },
-  actions: { register: registerActionTools, cost: 19385 },
+  workflows: { register: registerWorkflowTools, cost: 10183 },
+  actions: { register: registerActionTools, cost: 23338 },
   mesh: { register: registerMeshToolTools, cost: 31972 },
-  tree: { register: registerTreeTools, cost: 6200 },
+  tree: { register: registerTreeTools, cost: 12368 },
   vfx: { register: registerVfxTools, cost: 5400 },
   assets: { register: registerAssetTools, cost: 12542 },
   settings: { register: registerSettingsTools, cost: 1684 }
@@ -165,7 +165,7 @@ const INSTRUCTION_BLOCKS = [
   },
   {
     groups: ['assets'],
-    text: '- Asset tags: free-form labels for finding assets later. list_asset_tags (no assetId) shows the vocabulary in use with counts — read it before inventing a tag; tag_asset adds/removes/replaces the tags of one asset (root asset, image edit or mesh version); find_assets_by_tags searches the whole library across projects (every tag must match unless matchAll=false). Tags are normalized server-side (trimmed, whitespace-collapsed, lower-cased), so "Sci-Fi" and "sci-fi " are the same tag — but "sci-fi" and "sci fi" are not.'
+    text: '- Asset tags: free-form labels for finding assets later. list_asset_tags (no assetId) shows the vocabulary in use with counts — read it before inventing a tag; tag_asset adds/removes/replaces the tags of one asset (root asset, image edit or mesh version); find_assets_by_tags searches the whole library across projects (every tag must match unless matchAll=false). Tags are normalized server-side (trimmed, whitespace-collapsed, lower-cased), so "Sci-Fi" and "sci-fi " are the same tag — but "sci-fi" and "sci fi" are not. TAG AT GENERATION TIME: every tool that saves a generated asset takes the same optional `tags` list (generate_image, edit_image, generate_mesh + the typed tencent/tripo/hitem variants, get_mesh_result, edit_mesh, texture_mesh, rig_mesh_api, run_workflow, get_run_status, generate_tree), which applies them the moment the result is saved — a separate tag_asset call is then only needed to change them later. Tagging never fails a generation: if it fails, the result still comes back with a tagWarnings entry. When a long run returns {status:"running"}, NOTHING is saved and nothing is tagged yet — pass the same tags to the get_mesh_result / get_run_status call that finishes it.'
   },
   {
     groups: ['assets'],
