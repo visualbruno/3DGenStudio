@@ -772,14 +772,35 @@ void FVfxNiagaraBuilder::BuildEmitterState(const TSharedPtr<FJsonObject>& System
 		{ TEXT("Loop Behavior") }, VfxNiagara::EnumLoopBehavior,
 		bLoops ? TEXT("Infinite") : TEXT("Once"), TEXT("loop behavior"));
 
+	// THE CLIP'S DURATION IS THE EMITTER'S, NOT THE EFFECT'S. This used to set
+	// every emitter's Loop Duration to the whole effect length and carry only
+	// the clip's start, which silently threw away the window: a channel meant
+	// to emit for 0.3s emitted for the full 3.8s instead. On a spawn RATE that
+	// is twelve times as many particles, and on a `spacing` path emitter - whose
+	// walk is driven by Emitter.Age - it is a bolt that takes four seconds to
+	// crawl to the ground instead of a third of one.
+	const TSharedPtr<FJsonObject>* Schedule = nullptr;
+	double ClipDuration = 0;
+	if (SystemObject->TryGetObjectField(TEXT("schedule"), Schedule))
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Clips = nullptr;
+		if ((*Schedule)->TryGetArrayField(TEXT("clips"), Clips) && Clips->Num() > 0)
+		{
+			const TSharedPtr<FJsonObject> First = (*Clips)[0]->AsObject();
+			if (First.IsValid()) { First->TryGetNumberField(TEXT("duration"), ClipDuration); }
+		}
+	}
+	// A duration of zero means "opens here and never closes", which is the
+	// effect's own length.
+	EmitterLoopDuration = ClipDuration > 0.0
+		? static_cast<float>(ClipDuration) : FMath::Max(0.01f, Ir.Duration());
 	SetFloat(EmitterName, VfxNiagara::EmitterUpdate, VfxNiagara::EmitterStateModule,
-		{ TEXT("Loop Duration") }, Ir.Duration(), TEXT("loop duration"));
+		{ TEXT("Loop Duration") }, EmitterLoopDuration, TEXT("loop duration"));
 
 	// A clip that starts later than zero becomes the emitter's loop delay. One
 	// clip maps exactly; more than one does not, and the author is told so
 	// rather than finding out when only the first burst appears.
-	const TSharedPtr<FJsonObject>* Schedule = nullptr;
-	if (SystemObject->TryGetObjectField(TEXT("schedule"), Schedule))
+	if (Schedule != nullptr)
 	{
 		const TArray<TSharedPtr<FJsonValue>>* Clips = nullptr;
 		if ((*Schedule)->TryGetArrayField(TEXT("clips"), Clips) && Clips->Num() > 0)
@@ -804,7 +825,9 @@ void FVfxNiagaraBuilder::BuildEmitterState(const TSharedPtr<FJsonObject>& System
 		}
 	}
 	Report.Native(CurrentLabel, TEXT("emitter state"),
-		FString::Printf(TEXT("%s, %.2fs"), bLoops ? TEXT("looping") : TEXT("once"), Ir.Duration()));
+		FString::Printf(TEXT("%s, %.2fs%s"), bLoops ? TEXT("looping") : TEXT("once"),
+			EmitterLoopDuration,
+			ClipDuration > 0.0 ? TEXT(" (the clip's window)") : TEXT("")));
 }
 
 void FVfxNiagaraBuilder::BuildSpawn(const TSharedPtr<FJsonObject>& SystemObject, FName EmitterName)
@@ -1329,7 +1352,7 @@ void FVfxNiagaraBuilder::BuildPathLocation(FName EmitterName, const FString& Lab
 	// appeared at the start of the line, on top of each other. Keying the curve
 	// in SECONDS and linking the index to Emitter.Age reproduces the walk.
 	const bool bWalk = FString(PlacementMode) == TEXT("spacing");
-	const float KeyScale = bWalk ? FMath::Max(0.01f, Ir.Duration()) : 1.f;
+	const float KeyScale = bWalk ? FMath::Max(0.01f, EmitterLoopDuration) : 1.f;
 
 	SetDataInterface(EmitterName, VfxNiagara::ParticleSpawn, Init,
 		{ TEXT("Position"), TEXT("VectorCurve") }, PathCurveJson(Path, KeyScale), Label);

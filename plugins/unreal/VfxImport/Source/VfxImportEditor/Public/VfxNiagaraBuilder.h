@@ -213,6 +213,16 @@ private:
 	 */
 	float PendingMeshScale = -1.f;
 
+	/**
+	 * How long THIS emitter runs for, which is not how long the effect runs for.
+	 *
+	 * A clip with a duration closes its emission window; one with a duration of
+	 * zero opens at `at` and never closes. Niagara has no window, so the window
+	 * becomes the emitter's own Loop Duration - and anything keyed to
+	 * Emitter.Age has to be keyed against THIS, not against the effect.
+	 */
+	float EmitterLoopDuration = 1.f;
+
 	/** Where the system is being written; generated materials go beside it. */
 	FString PackageFolder;
 
