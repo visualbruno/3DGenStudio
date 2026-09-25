@@ -31,6 +31,8 @@ import {
   validateStylePack,
 } from './building/stylepack.js';
 import { mountMcp } from './mcp/http.js';
+import { createApiClient } from './mcp/client.js';
+import { createBatchRunner, mountBatchRuns } from './batch/runner.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
 import { previewResponseBody, renderVfxFrames } from './vfxPreview.js';
@@ -359,6 +361,10 @@ const comfyProgressSnapshots = new Map();
 // receives progress for every promptId. This keeps a handful of concurrent
 // workflows from exhausting the browser's ~6 connection-per-origin cap.
 const comfyProgressGlobalSubscribers = new Set();
+// In-process listeners, keyed by promptId: the backend's own batch runner waits
+// on these instead of on a loopback SSE socket, so a cell that runs for hours
+// never depends on a connection staying up.
+const comfyProgressInProcessListeners = new Map();
 // In-flight ComfyUI runs, keyed by promptId, so a cancel request can reach the
 // execution monitor that is waiting on them. A run stays registered from the
 // moment its monitor is created until it settles (success, failure or cancel).
@@ -2079,6 +2085,14 @@ function publishComfyProgress(promptId, payload) {
     response.write(serialized);
   }
 
+  for (const listener of [...(comfyProgressInProcessListeners.get(key) || [])]) {
+    try {
+      listener(message);
+    } catch (err) {
+      console.warn(`A ComfyUI progress listener for ${key} failed:`, err?.message || err);
+    }
+  }
+
   if (message.status === 'completed' || message.status === 'error' || message.status === 'cancelled') {
     setTimeout(() => {
       if ((comfyProgressSubscribers.get(key)?.size || 0) === 0) {
@@ -2235,6 +2249,40 @@ async function cancelComfyRun(promptId) {
   return { ...outcome, tracked: true, settledByMonitor };
 }
 
+// Same frames as the SSE routes, delivered to a function in this process.
+// Replays the latest snapshot so a subscriber that is late still sees the end.
+function subscribeToComfyProgressInProcess(promptId, onData) {
+  const key = String(promptId || '');
+  if (!comfyProgressInProcessListeners.has(key)) {
+    comfyProgressInProcessListeners.set(key, new Set());
+  }
+  comfyProgressInProcessListeners.get(key).add(onData);
+
+  const snapshot = comfyProgressSnapshots.get(key);
+  if (snapshot) {
+    queueMicrotask(() => onData(snapshot));
+  }
+
+  return {
+    close: () => {
+      const listeners = comfyProgressInProcessListeners.get(key);
+      if (!listeners) return;
+      listeners.delete(onData);
+      if (listeners.size === 0) comfyProgressInProcessListeners.delete(key);
+    }
+  };
+}
+
+// Batch runs ride the multiplexed progress stream rather than /api/events:
+// that bus is forwarded to the shared server in gateway mode, while a batch run
+// - like ComfyUI itself - only ever exists on this computer.
+function publishBatchRun(run) {
+  const serialized = `data: ${JSON.stringify({ type: 'batchRun', timestamp: Date.now(), run })}\n\n`;
+  for (const response of comfyProgressGlobalSubscribers) {
+    response.write(serialized);
+  }
+}
+
 function subscribeToAllComfyProgress(req, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -2250,6 +2298,10 @@ function subscribeToAllComfyProgress(req, res) {
   for (const snapshot of comfyProgressSnapshots.values()) {
     res.write(`data: ${JSON.stringify(snapshot)}\n\n`);
   }
+  // Every batch run, as the authoritative state: a page that was asleep,
+  // reloaded, or reconnected after a backend restart replaces whatever it
+  // remembered with this.
+  res.write(`data: ${JSON.stringify({ type: 'batchRuns', timestamp: Date.now(), runs: batchRunner.list() })}\n\n`);
 
   const heartbeat = setInterval(() => {
     res.write(': keep-alive\n\n');
@@ -4799,6 +4851,15 @@ app.get('/api/comfyui/workflows/progress/:promptId', (req, res) => {
 app.get('/api/comfyui/workflows/events', (req, res) => {
   subscribeToAllComfyProgress(req, res);
 });
+
+// Batch runs (batch/runner.js): the loop runs here, not in the browser tab, so a
+// days-long batch keeps going while the tab is asleep, reloaded or closed.
+const batchRunner = createBatchRunner({
+  api: createApiClient(`http://127.0.0.1:${PORT}`),
+  subscribeProgress: subscribeToComfyProgressInProcess,
+  publish: publishBatchRun
+});
+mountBatchRuns(app, batchRunner);
 
 // Cancel a running (or still queued) ComfyUI workflow. The stop takes effect at
 // the next node/step boundary on the ComfyUI side; the run is settled here right

@@ -197,3 +197,15 @@ export async function createMeshThumbnailFile(file) {
   const baseName = file.name.replace(/\.[^.]+$/, '') || 'mesh'
   return new File([blob], `${baseName}-thumbnail.png`, { type: 'image/png' })
 }
+
+// The same, for a mesh that is already stored: download it, then render. For
+// results the backend saved without a thumbnail — it renders them through the
+// mesh-tools service, and saves the mesh without one when that is not running.
+export async function createMeshThumbnailFileFromUrl(url, fileName = 'mesh.glb') {
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new Error(`Failed to download ${fileName} (HTTP ${response.status})`)
+  }
+  const blob = await response.blob()
+  return createMeshThumbnailFile(new File([blob], fileName, { type: blob.type || 'application/octet-stream' }))
+}

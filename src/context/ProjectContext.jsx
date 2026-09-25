@@ -35,9 +35,49 @@ export function ProjectProvider({ children }) {
 
     const listeners = new Map() // promptId -> Set<handler>
     const lastTerminal = new Map() // promptId -> terminal payload (for late subscribers)
-    const stream = { listeners, lastTerminal, eventSource: null }
+    // Batch runs live in the backend (batch/runner.js) and ride this same
+    // stream. `batchRunsSynced` stays false until the backend has sent its full
+    // list, so a page cannot mistake "not heard yet" for "not running".
+    const batchRuns = new Map() // projectId -> latest run snapshot
+    const batchListeners = new Set()
+    const stream = { listeners, lastTerminal, eventSource: null, batchRuns, batchListeners, batchRunsSynced: false }
+
+    const notifyBatchRuns = () => {
+      const state = { runs: Object.fromEntries(batchRuns), synced: stream.batchRunsSynced }
+      for (const listener of [...batchListeners]) {
+        listener(state)
+      }
+    }
+
+    // Every snapshot carries the backend's global revision, so whichever of a
+    // request's response and the matching stream frame lands second is ignored.
+    stream.applyBatchRun = (run) => {
+      if (!run || run.projectId === null || run.projectId === undefined) return
+      const key = String(run.projectId)
+      const current = batchRuns.get(key)
+      if (current && (Number(run.revision) || 0) < (Number(current.revision) || 0)) return
+      batchRuns.set(key, run)
+      notifyBatchRuns()
+    }
 
     const dispatch = (payload) => {
+      // The full list arrives on every (re)connect and replaces what was
+      // remembered: that is what makes a woken or reloaded tab, or one that
+      // outlived a backend restart, show the truth instead of a stale run.
+      if (payload?.type === 'batchRuns') {
+        batchRuns.clear()
+        for (const run of Array.isArray(payload.runs) ? payload.runs : []) {
+          if (run?.projectId !== null && run?.projectId !== undefined) batchRuns.set(String(run.projectId), run)
+        }
+        stream.batchRunsSynced = true
+        notifyBatchRuns()
+        return
+      }
+      if (payload?.type === 'batchRun') {
+        stream.applyBatchRun(payload.run)
+        return
+      }
+
       const promptId = String(payload?.promptId || '')
       if (!promptId) return
       if (payload?.done || payload?.status === 'error' || payload?.status === 'cancelled') {
@@ -594,6 +634,51 @@ export function ProjectProvider({ children }) {
     if (!res.ok) throw new Error(data?.error || 'Failed to link the batch result to its card')
     return data
   }
+
+  // --- Batch runs (owned by the backend) -----------------------------------
+
+  const postBatchRun = async (path, body = {}) => {
+    const res = await fetch(`${API_BASE}/comfyui/batch-runs/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      const error = new Error(data?.error || 'The batch request failed')
+      error.problems = Array.isArray(data?.problems) ? data.problems : []
+      throw error
+    }
+    // Applied straight away rather than waiting for the stream's copy, so the
+    // page flips to "running" the moment the backend has accepted the run.
+    if (data?.run) getComfyStream().applyBatchRun(data.run)
+    return data?.run || null
+  }
+
+  // mode: "continue" keeps every cell that already has a result; "restart"
+  // starts a fresh run.
+  const startBatchRun = (projectId, { config, mode = 'continue' } = {}) => (
+    postBatchRun(`${projectId}`, { config, mode })
+  )
+
+  const cancelBatchRun = (projectId) => postBatchRun(`${projectId}/cancel`)
+
+  const clearBatchRunCells = (projectId, cellKeys) => postBatchRun(`${projectId}/clear-cells`, { cellKeys })
+
+  // handler({ runs: { [projectId]: run }, synced }) — called on every change,
+  // and once right away with what is already known.
+  const subscribeToBatchRuns = useCallback((handler) => {
+    const stream = getComfyStream()
+    stream.batchListeners.add(handler)
+    Promise.resolve().then(() => {
+      if (stream.batchListeners.has(handler)) {
+        handler({ runs: Object.fromEntries(stream.batchRuns), synced: stream.batchRunsSynced })
+      }
+    })
+    return () => {
+      stream.batchListeners.delete(handler)
+    }
+  }, [getComfyStream])
 
   const getBoard = async (boardId) => {
     const res = await fetch(`${API_BASE}/boards/${boardId}`)
@@ -1561,6 +1646,10 @@ export function ProjectProvider({ children }) {
       runComfyWorkflow,
       cancelComfyWorkflow,
       subscribeToComfyWorkflowProgress,
+      startBatchRun,
+      cancelBatchRun,
+      clearBatchRunCells,
+      subscribeToBatchRuns,
       getWikiConfig,
       getWikiPages,
       getWikiPage,

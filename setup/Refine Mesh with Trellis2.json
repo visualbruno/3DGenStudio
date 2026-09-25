@@ -174,7 +174,7 @@
       ],
       "method": "Cumesh",
       "mesh": [
-        "33",
+        "35",
         0
       ]
     },
@@ -202,6 +202,35 @@
     "class_type": "Trellis2FillHolesWithMeshlib",
     "_meta": {
       "title": "Trellis2 - Fill Holes with Meshlib"
+    }
+  },
+  "34": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Fill Holes"
+    }
+  },
+  "35": {
+    "inputs": {
+      "switch": [
+        "34",
+        0
+      ],
+      "on_false": [
+        "10",
+        0
+      ],
+      "on_true": [
+        "33",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
     }
   }
 }

@@ -929,7 +929,8 @@
 				{ "Node": "2", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 				{ "Node": "28",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "4",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
-				{ "Node": "4",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[1024,1536] }
+				{ "Node": "4",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "34",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "6", "Name": "Save Mesh", "Type": "Mesh" }

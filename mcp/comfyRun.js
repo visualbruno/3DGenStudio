@@ -21,9 +21,17 @@ import path from 'node:path';
 // onQueued(): the prompt reached ComfyUI's queue.
 // onProgress(payload): every non-terminal progress frame, verbatim.
 //
+// subscribe(promptId, onData, { onEnd }) -> { close }: where the progress
+//   frames come from. Defaults to the loopback SSE route; the backend's own
+//   batch runner passes its in-process progress bus instead, because a run that
+//   lasts hours should not hang on a socket that can drop.
+//
 // Resolves { status: 'completed', promptId, assets } or, when timeoutSeconds
 // elapses first, { status: 'running', promptId } — the run itself continues in
-// the background either way. Throws when the run reports an error.
+// the background either way. A timeoutSeconds of null (or 0) waits for as long
+// as the run takes. Throws when the run reports an error, and throws an error
+// carrying `cancelled: true` when it was cancelled — a cancel publishes
+// `done: true` with no result, which would otherwise read as "no output".
 export async function executeComfyRun(api, {
   projectId,
   workflowId,
@@ -37,21 +45,24 @@ export async function executeComfyRun(api, {
   persistProcessingCard,
   persistGeneratedAssets,
   timeoutSeconds = 600,
+  subscribe,
   onQueued,
   onProgress
 } = {}) {
   let resolveTerminal;
   const terminalPromise = new Promise(resolve => { resolveTerminal = resolve; });
-  const subscription = api.subscribeSse(`/comfyui/workflows/progress/${promptId}`, payload => {
+  const onData = payload => {
     if (String(payload?.promptId || '') !== promptId) return;
-    if (payload?.status === 'error' || payload?.done) {
+    if (payload?.status === 'error' || payload?.status === 'cancelled' || payload?.cancelled || payload?.done) {
       resolveTerminal(payload);
       return;
     }
     onProgress?.(payload);
-  }, {
-    onEnd: err => resolveTerminal({ status: 'error', detail: `Progress stream ended unexpectedly: ${err?.message || err}` })
-  });
+  };
+  const onEnd = err => resolveTerminal({ status: 'error', detail: `Progress stream ended unexpectedly: ${err?.message || err}` });
+  const subscription = subscribe
+    ? subscribe(promptId, onData, { onEnd })
+    : api.subscribeSse(`/comfyui/workflows/progress/${promptId}`, onData, { onEnd });
 
   let timer = null;
   try {
@@ -87,12 +98,20 @@ export async function executeComfyRun(api, {
     await api.apiForm('POST', '/comfyui/workflows/run', form);
     await onQueued?.();
 
-    const outcome = await Promise.race([
-      terminalPromise,
-      new Promise(resolve => { timer = setTimeout(() => resolve({ __timeout: true }), timeoutSeconds * 1000); })
-    ]);
+    const hasTimeout = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0;
+    const outcome = hasTimeout
+      ? await Promise.race([
+        terminalPromise,
+        new Promise(resolve => { timer = setTimeout(() => resolve({ __timeout: true }), timeoutSeconds * 1000); })
+      ])
+      : await terminalPromise;
 
     if (outcome.__timeout) return { status: 'running', promptId };
+    if (outcome.status === 'cancelled' || outcome.cancelled) {
+      const cancelled = new Error(outcome.detail || 'Workflow cancelled');
+      cancelled.cancelled = true;
+      throw cancelled;
+    }
     if (outcome.status === 'error') {
       throw new Error(outcome.detail || outcome.error || 'ComfyUI workflow failed');
     }

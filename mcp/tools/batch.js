@@ -586,6 +586,13 @@ export function registerBatchTools(server, { api, notifyMutation }) {
     } = args;
     const reportProgress = createProgressReporter(extra);
 
+    // The Batch page runs its batches in the backend (batch/runner.js). Two
+    // loops on one grid would queue every outstanding cell twice.
+    const backendRun = await api.apiJson('GET', `/comfyui/batch-runs/${projectId}`).catch(() => null);
+    if (['running', 'cancelling'].includes(backendRun?.run?.status)) {
+      throw new Error(`This batch is already running (started from the Batch page). Wait for it to finish, or stop it there, before calling run_batch.`);
+    }
+
     const [{ project, config: stored }, workflowsById] = await Promise.all([
       loadBatch(api, projectId),
       loadStageWorkflows(api)

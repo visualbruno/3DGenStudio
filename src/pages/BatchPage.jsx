@@ -9,10 +9,11 @@ import BatchStageColumn from '../components/batch/BatchStageColumn'
 import BatchResultsGrid from '../components/batch/BatchResultsGrid'
 import { useProjects } from '../context/ProjectContext'
 import { useBatchRun } from '../context/BatchRunContext'
-import { createMeshThumbnailFile } from '../utils/meshThumbnail'
+import { createMeshThumbnailFile, createMeshThumbnailFileFromUrl } from '../utils/meshThumbnail'
 import {
   buildImageEditorPath,
   buildMeshEditorPath,
+  getAssetPreviewUrl,
   getWorkflowFileInputAccept
 } from '../utils/graphHelpers'
 import {
@@ -82,12 +83,15 @@ export default function BatchPage({ project }) {
   const [deleteTarget, setDeleteTarget] = useState(null) // null = dialog closed
   const [deletingResult, setDeletingResult] = useState(false)
   const [deleteError, setDeleteError] = useState('')
+  const [runError, setRunError] = useState('')
+  const [startingRun, setStartingRun] = useState(false)
 
   const saveTimerRef = useRef(null)
   const lastSavedRef = useRef('')
   const hydratedRef = useRef(false)
   const fileInputRef = useRef(null)
   const uploadTargetRef = useRef(null)
+  const thumbnailAttemptsRef = useRef(new Set())
 
   // Any workflow can be a stage: the chain mixes image generation, image edit
   // and mesh generation, so everything that produces an image or a mesh is
@@ -119,9 +123,18 @@ export default function BatchPage({ project }) {
     }
   }, [getProjectAssets, project.id])
 
-  // The run lives above the router, so opening a result in an editor and coming
-  // back finds the batch still going with its grid intact.
-  const { runState, resultsVersion, startBatch, cancelBatch, clearCells } = useBatchRun(project.id)
+  // The run lives in the backend, so it keeps going while this tab is asleep,
+  // reloaded or closed; the page only draws it. `runStateSynced` is false until
+  // the backend has said which runs exist — until then an idle-looking grid
+  // might be a batch that is running, so Run and Continue stay disabled.
+  const {
+    runState,
+    synced: runStateSynced,
+    resultsVersion,
+    startBatch,
+    cancelBatch,
+    clearCells
+  } = useBatchRun(project.id)
   const isRunning = runState.status === 'running' || runState.status === 'cancelling'
 
   // Re-fetch as each cell settles so thumbnails appear while the batch runs, and
@@ -131,6 +144,42 @@ export default function BatchPage({ project }) {
       refreshAssets()
     }
   }, [resultsVersion, loading, refreshAssets])
+
+  // The backend renders a result mesh's thumbnail through the mesh-tools
+  // service, and saves the mesh without one when that service is not running.
+  // Such results get their thumbnail rendered here instead — one at a time, and
+  // once per asset per visit, so a mesh that cannot be rendered is not retried
+  // on every refresh.
+  useEffect(() => {
+    const missing = assets.filter(asset => asset?.type === 'mesh'
+      && !asset.thumbnail
+      && asset.filename
+      && String(asset.cardKey || '').startsWith('batch:')
+      && !thumbnailAttemptsRef.current.has(asset.id))
+    if (missing.length === 0) {
+      return
+    }
+    missing.forEach(asset => thumbnailAttemptsRef.current.add(asset.id))
+
+    ;(async () => {
+      let rendered = 0
+      for (const asset of missing) {
+        try {
+          const fileName = String(asset.filename).split('/').pop() || `${asset.name || 'mesh'}.glb`
+          const thumbnailFile = await createMeshThumbnailFileFromUrl(getAssetPreviewUrl(asset.filename), fileName)
+          if (thumbnailFile) {
+            await uploadAssetThumbnail(asset.id, thumbnailFile)
+            rendered += 1
+          }
+        } catch (err) {
+          console.warn(`Failed to render a thumbnail for ${asset.name || asset.id}:`, err)
+        }
+      }
+      if (rendered > 0) {
+        refreshAssets()
+      }
+    })()
+  }, [assets, refreshAssets, uploadAssetThumbnail])
 
   useEffect(() => {
     let cancelled = false
@@ -580,7 +629,7 @@ export default function BatchPage({ project }) {
         })
       }
 
-      clearCells(cellKeys)
+      await clearCells(cellKeys)
       setDeleteTarget(null)
     } catch (err) {
       console.error('Failed to delete the batch result:', err)
@@ -668,6 +717,33 @@ export default function BatchPage({ project }) {
     && Boolean(resumeRunId)
     && progress.done > 0
     && progress.outstanding > 0
+  const runBlocked = loading || !runStateSynced || startingRun || problems.length > 0
+
+  // "continue" keeps every cell that already has a result; "restart" runs the
+  // whole grid again. The backend decides what is done from the result cards.
+  const handleStartBatch = async (mode) => {
+    setRunError('')
+    setStartingRun(true)
+    try {
+      await startBatch({ config, mode })
+    } catch (err) {
+      console.error('Failed to start the batch:', err)
+      setRunError(err?.message || 'Failed to start the batch')
+    } finally {
+      setStartingRun(false)
+    }
+  }
+
+  const handleCancelBatch = async () => {
+    try {
+      await cancelBatch()
+    } catch (err) {
+      console.error('Failed to stop the batch:', err)
+      setRunError(err?.message || 'Failed to stop the batch')
+    }
+  }
+
+  const runProblem = runError || (runState.status === 'error' ? `The batch stopped: ${runState.error || 'unknown error'}` : '')
 
   return (
     <div className="batch-page">
@@ -869,7 +945,13 @@ export default function BatchPage({ project }) {
           </button>
 
           {isRunning ? (
-            <button type="button" className="batch-btn batch-btn--danger" onClick={cancelBatch}>
+            <button
+              type="button"
+              className="batch-btn batch-btn--danger"
+              onClick={handleCancelBatch}
+              disabled={runState.status === 'cancelling'}
+              title="The batch runs in the backend on this computer: closing or reloading this tab does not stop it. Stop lets the generation in progress finish."
+            >
               <span className="material-symbols-outlined">stop</span>
               {runState.status === 'cancelling' ? 'Stopping after this run…' : 'Stop'}
             </button>
@@ -879,13 +961,8 @@ export default function BatchPage({ project }) {
                 <button
                   type="button"
                   className="batch-btn batch-btn--primary"
-                  onClick={() => startBatch({
-                    project,
-                    workflowsById,
-                    config,
-                    resumeFrom: { runId: resumeRunId, cells: displayCells }
-                  })}
-                  disabled={loading || problems.length > 0}
+                  onClick={() => handleStartBatch('continue')}
+                  disabled={runBlocked}
                   title={problems.length > 0
                     ? 'Resolve the problems listed below first'
                     : `Pick up where the run stopped — ${progress.done} done, ${progress.outstanding} to go`}
@@ -897,8 +974,8 @@ export default function BatchPage({ project }) {
               <button
                 type="button"
                 className={`batch-btn ${canContinue ? '' : 'batch-btn--primary'}`}
-                onClick={() => startBatch({ project, workflowsById, config })}
-                disabled={loading || problems.length > 0 || plannedRuns === 0}
+                onClick={() => handleStartBatch('restart')}
+                disabled={runBlocked || plannedRuns === 0}
                 title={problems.length > 0
                   ? 'Resolve the problems listed below first'
                   : `${canContinue ? 'Start over: run' : 'Run'} every group through every stage, ${orderDescription}`}
@@ -921,6 +998,20 @@ export default function BatchPage({ project }) {
           >
             <span className="material-symbols-outlined">error</span>
             <span className="batch-page__problems-title font-label">{assetError}</span>
+          </button>
+        </div>
+      )}
+
+      {runProblem && (
+        <div className="batch-page__problems batch-page__problems--error">
+          <button
+            type="button"
+            className="batch-page__problems-toggle"
+            onClick={() => setRunError('')}
+            title="Dismiss"
+          >
+            <span className="material-symbols-outlined">error</span>
+            <span className="batch-page__problems-title font-label">{runProblem}</span>
           </button>
         </div>
       )}

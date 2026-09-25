@@ -48,7 +48,11 @@ export default function BatchResultsGrid({
                 {stages.map((stage, stageIndex) => {
                   const cell = cells?.[`${group.id}:${stage.id}`] || null
                   const asset = cell?.cardKey ? assetsByCardKey?.[cell.cardKey] || null : null
-                  const previewUrl = getAssetPreviewUrl(asset?.thumbnail || asset?.filename || null)
+                  // A mesh without a thumbnail draws the status icon: pointing an
+                  // <img> at the .glb itself would just be a broken image.
+                  const previewUrl = getAssetPreviewUrl(asset?.thumbnail
+                    || (asset?.type === 'mesh' ? null : asset?.filename)
+                    || null)
                   const status = cell?.status || 'idle'
                   // Anything the run has already settled can be thrown away and
                   // regenerated; a cell still in flight owns its card.
