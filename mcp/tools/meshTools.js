@@ -115,7 +115,8 @@ const AUTO_RIG_OPTIONS = {
 // allow_seam_breaking reaches the target by welding attribute seams, which
 // reassigns normals and UVs and needs a re-bake or re-unwrap afterwards.
 const OPTIMIZE_OPTIONS = {
-  simplify_ratio: z.number().min(0.01).max(1).default(0.5).describe('Target fraction of the original triangle count (0.5 = half). 1 leaves the mesh untouched.'),
+  simplify_ratio: z.number().min(0.01).max(1).default(0.5).describe('Target fraction of the original triangle count (0.5 = half). 1 leaves the mesh untouched. Ignored when target_faces is set.'),
+  target_faces: z.number().int().min(1).optional().describe('Target triangle COUNT instead of a ratio — turned into a ratio against the input mesh, so one value means the same thing on every mesh. A mesh already at or below it is not reduced. Wins over simplify_ratio; stats.target_faces echoes it.'),
   simplify_error: z.number().min(0.001).max(1).default(0.05).describe("How far the simplifier may move the surface, as a fraction of the mesh size (gltfpack's -se). This is normally what caps a reduction, NOT the UV seams: raising it reaches the target while leaving normals and UVs untouched, so try it before allow_seam_breaking. gltfpack's own default is 0.01; this defaults to 0.05. Values near 1 can collapse the mesh entirely, which is refused rather than saved."),
   allow_seam_breaking: z.boolean().default(false).describe('Let the simplifier weld vertices sitting on an attribute (UV or normal) seam. Off (default) preserves the mapping and the hard edges but caps how far a seam-heavy mesh can reduce — check stats.seam_limited. On reaches the target but reassigns UVs and normals, so re-unwrap or re-bake afterwards.'),
   permissive: z.boolean().default(false).describe("gltfpack's -sp: collapse across attribute discontinuities while still choosing by quality. Measured as a no-op on every mesh tested, so it is offered but not relied on. Only applies when allow_seam_breaking is on."),

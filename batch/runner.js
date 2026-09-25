@@ -20,6 +20,7 @@
 // is a result card, so Continue picks up from what the cards show.
 import { randomUUID } from 'node:crypto';
 import { executeComfyRun } from '../mcp/comfyRun.js';
+import { executeBatchAction } from './actionRunner.js';
 import {
   buildBatchCardKey,
   buildResultName,
@@ -27,7 +28,10 @@ import {
   deriveCellsFromAssets,
   findParentAssetForStage,
   getRunIdFromCells,
+  getStageAction,
+  getStageWorkflow,
   isBatchStageWorkflow,
+  isBuiltInBatchAction,
   normalizeBatchConfig,
   resolveStageInputs,
   validateBatch
@@ -122,7 +126,8 @@ export function createBatchRunner({ api, subscribeProgress, publish = () => {}, 
         continue;
       }
 
-      const workflow = workflowsById[String(stage.workflowId)] || null;
+      const workflow = getStageWorkflow(stage, workflowsById);
+      const action = getStageAction(stage);
       if (!workflow) {
         patchCell(run, cellKey, { status: 'error', error: 'No workflow selected' });
         emit(run);
@@ -159,32 +164,50 @@ export function createBatchRunner({ api, subscribeProgress, publish = () => {}, 
       run.currentCellKey = cellKey;
       emit(run);
 
-      try {
-        const outcome = await executeComfyRun(api, {
-          projectId: run.projectId,
-          workflowId: Number(stage.workflowId),
-          promptId,
-          // The server owns the result card: it creates it under this
-          // deterministic clientKey and streams progress into it.
-          cardId: cardKey,
-          name: resultName,
-          parentAssetId: parentAsset?.id,
-          // The batch picks its own parent (the input matching the OUTPUT
-          // type); the server's inference would take the first file input.
-          autoParentFromInputs: false,
-          inputs,
-          // A cell takes as long as it takes — a 40-minute mesh refine is normal.
-          timeoutSeconds: null,
-          subscribe: subscribeProgress,
-          onProgress: payload => {
-            const percent = Math.round(Number(payload?.progressPercent));
-            if (!Number.isFinite(percent) || percent === run.cells[cellKey]?.progressPercent) return;
-            patchCell(run, cellKey, { progressPercent: percent });
-            emit(run);
-          }
-        });
+      const onPercent = percent => {
+        if (!Number.isFinite(percent) || percent === run.cells[cellKey]?.progressPercent) return;
+        patchCell(run, cellKey, { progressPercent: percent });
+        emit(run);
+      };
 
-        const produced = (outcome.assets || []).filter(Boolean);
+      try {
+        let produced;
+        let warnings = [];
+        if (isBuiltInBatchAction(action)) {
+          // Optimize / Auto Rig / Bake run on the backend's own mesh routes, not
+          // in ComfyUI. They save a version of their input and make the card.
+          const outcome = await executeBatchAction(api, {
+            action,
+            projectId: run.projectId,
+            inputs,
+            name: resultName,
+            cardKey,
+            onProgress: percent => onPercent(Math.round(Number(percent)))
+          });
+          produced = [outcome.asset];
+          warnings = outcome.warnings || [];
+        } else {
+          const outcome = await executeComfyRun(api, {
+            projectId: run.projectId,
+            workflowId: Number(stage.workflowId),
+            promptId,
+            // The server owns the result card: it creates it under this
+            // deterministic clientKey and streams progress into it.
+            cardId: cardKey,
+            name: resultName,
+            parentAssetId: parentAsset?.id,
+            // The batch picks its own parent (the input matching the OUTPUT
+            // type); the server's inference would take the first file input.
+            autoParentFromInputs: false,
+            inputs,
+            // A cell takes as long as it takes — a 40-minute mesh refine is normal.
+            timeoutSeconds: null,
+            subscribe: subscribeProgress,
+            onProgress: payload => onPercent(Math.round(Number(payload?.progressPercent)))
+          });
+          produced = (outcome.assets || []).filter(Boolean);
+        }
+
         if (produced.length === 0) {
           throw new Error('The workflow returned no output');
         }
@@ -212,12 +235,15 @@ export function createBatchRunner({ api, subscribeProgress, publish = () => {}, 
           assetType: primary.type || null,
           parentAssetId: parentAsset?.id ?? null,
           extraOutputs: produced.length - 1,
+          // A result that landed but is worth a second look — a bake that
+          // reached little of the UVs, an optimize stopped short of its target.
+          warning: warnings.length > 0 ? warnings.join(' · ') : null,
           finishedAt: Date.now()
         });
       } catch (err) {
         patchCell(run, cellKey, err?.cancelled
           ? { status: 'cancelled', error: null, finishedAt: Date.now() }
-          : { status: 'error', error: err?.message || 'Workflow failed', finishedAt: Date.now() });
+          : { status: 'error', error: err?.message || (isBuiltInBatchAction(action) ? 'The action failed' : 'Workflow failed'), finishedAt: Date.now() });
       }
 
       run.currentCellKey = null;

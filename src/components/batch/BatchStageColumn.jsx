@@ -1,4 +1,6 @@
 import {
+  BATCH_ACTIONS,
+  BATCH_ACTION_LABELS,
   BINDING_MANUAL,
   BINDING_STAGE,
   BINDING_VARIABLE,
@@ -6,7 +8,9 @@ import {
   bindingToSelectValue,
   getBinding,
   getBindingOptionsForParameter,
+  getStageAction,
   getStageLabel,
+  isBuiltInBatchAction,
   getVariableLabel,
   isVariableCompatibleWithValueType,
   resolveStageName,
@@ -20,8 +24,10 @@ import {
 } from '../../utils/graphHelpers'
 import { getWorkflowEnumOptions, resolveWorkflowEnumValue } from '../../utils/workflowEnums'
 
-// One workflow stage. Every stage runs once per group, in column order, and can
-// consume the output of any earlier stage.
+// One stage. Every stage runs once per group, in column order, and can consume
+// the output of any earlier stage. What it runs is its ACTION: a ComfyUI
+// workflow, or one of the Mesh Editor's tools — which describe themselves as a
+// workflow (see batch/actions.js), so the parameter list below serves both.
 export default function BatchStageColumn({
   stage,
   stageIndex,
@@ -38,6 +44,8 @@ export default function BatchStageColumn({
   onMoveStage
 }) {
   const parameters = workflow?.parameters || []
+  const action = getStageAction(stage)
+  const isBuiltIn = isBuiltInBatchAction(action)
 
   // Show what the name template resolves to for the first group, so the effect
   // of a {{token}} is visible without running the batch.
@@ -58,12 +66,18 @@ export default function BatchStageColumn({
             onChange={event => onSetManualInput(stage.id, parameter.id, event.target.checked)}
             disabled={locked}
           />
-          <span>{parameter.label || 'Enabled'}</span>
+          {/* A built-in action's label is a sentence of help, shown below. */}
+          <span>{isBuiltIn ? 'Enabled' : (parameter.label || 'Enabled')}</span>
         </label>
       )
     }
 
-    const enumOptions = getWorkflowEnumOptions(parameter, currentValue)
+    // A built-in action's choice carries a label per value (bone naming reads
+    // "Unreal Engine 5", not "ue5"); a workflow enum's label is its value.
+    const enumOptions = getWorkflowEnumOptions(parameter, currentValue)?.map(option => ({
+      ...option,
+      label: parameter.options?.find(item => String(item.value) === option.value)?.label || option.label
+    }))
     if (enumOptions) {
       return (
         <select
@@ -84,6 +98,9 @@ export default function BatchStageColumn({
         <input
           type="number"
           className="batch-input"
+          min={parameter.min}
+          max={parameter.max}
+          step={parameter.step ?? 'any'}
           value={currentValue ?? ''}
           onChange={event => onSetManualInput(stage.id, parameter.id, event.target.value)}
           disabled={locked}
@@ -174,19 +191,38 @@ export default function BatchStageColumn({
         </div>
 
         <label className="batch-field">
-          <span className="batch-field__label font-label">COMFYUI WORKFLOW</span>
+          <span className="batch-field__label font-label">ACTION</span>
           <select
             className="batch-select"
-            value={stage.workflowId || ''}
-            onChange={event => onUpdateStage(stage.id, { workflowId: event.target.value })}
+            value={action}
+            onChange={event => onUpdateStage(stage.id, { action: event.target.value })}
             disabled={locked}
           >
-            <option value="">Select a workflow…</option>
-            {[...workflows].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(item => (
-              <option key={item.id} value={item.id}>{item.name}</option>
+            {BATCH_ACTIONS.map(item => (
+              <option key={item} value={item}>{BATCH_ACTION_LABELS[item]}</option>
             ))}
           </select>
+          {isBuiltIn && workflow?.description && (
+            <span className="batch-param__hint">{workflow.description}</span>
+          )}
         </label>
+
+        {!isBuiltIn && (
+          <label className="batch-field">
+            <span className="batch-field__label font-label">COMFYUI WORKFLOW</span>
+            <select
+              className="batch-select"
+              value={stage.workflowId || ''}
+              onChange={event => onUpdateStage(stage.id, { workflowId: event.target.value })}
+              disabled={locked}
+            >
+              <option value="">Select a workflow…</option>
+              {[...workflows].sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(item => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         {!workflow ? (
           <p className="batch-empty">Pick a workflow to configure its parameters.</p>
@@ -227,6 +263,10 @@ export default function BatchStageColumn({
                       <option key={option.value} value={option.value}>{option.label}</option>
                     ))}
                   </select>
+
+                  {isBuiltIn && isFileWorkflowValueType(valueType) && parameter.label && (
+                    <span className="batch-param__hint">{parameter.label}.</span>
+                  )}
 
                   {isDanglingBinding && (
                     <span className="batch-param__warning">

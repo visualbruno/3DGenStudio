@@ -1,0 +1,53 @@
+{
+  "6": {
+    "inputs": {
+      "filename_prefix": "3dGenStudio",
+      "image": "",
+      "mesh": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  },
+  "9": {
+    "inputs": {
+      "segmenter": "pec",
+      "resolution": 1024,
+      "padding": 1,
+      "weld_distance": 0.001,
+      "mesh": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "UnwrapMesh",
+    "_meta": {
+      "title": "Unwrap Mesh UVs"
+    }
+  },
+  "11": {
+    "inputs": {
+      "model_3d": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "Get3DComponents",
+    "_meta": {
+      "title": "Get 3D Components"
+    }
+  },
+  "12": {
+    "inputs": {
+      "glb_path": ""
+    },
+    "class_type": "Trellis2StringToFile3D",
+    "_meta": {
+      "title": "Trellis2 - String To File3D"
+    }
+  }
+}

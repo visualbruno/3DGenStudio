@@ -88,7 +88,8 @@ export default function BatchResultsGrid({
                           className="batch-results__cell-btn"
                           onClick={() => asset && onOpenAsset?.(asset)}
                           disabled={!asset}
-                          title={cell?.error || (asset ? asset.name : describeCell(cell))}
+                          title={cell?.error
+                            || (asset ? [asset.name, cell?.warning].filter(Boolean).join('\n') : describeCell(cell))}
                         >
                           {previewUrl ? (
                             <img className="batch-results__thumb" src={previewUrl} alt={asset?.name || ''} />
@@ -105,6 +106,14 @@ export default function BatchResultsGrid({
                           {cell?.extraOutputs > 0 && (
                             <span className="batch-results__extra font-label">
                               +{cell.extraOutputs} more output{cell.extraOutputs === 1 ? '' : 's'}
+                            </span>
+                          )}
+                          {/* Landed, but worth a look — a bake that reached little of
+                              the UVs, an optimize that stopped short of its target.
+                              Only the live run knows; a reload shows the result alone. */}
+                          {status === 'completed' && cell?.warning && (
+                            <span className="batch-results__extra font-label" style={{ color: '#e0a030' }}>
+                              Check result — hover for why
                             </span>
                           )}
                         </button>

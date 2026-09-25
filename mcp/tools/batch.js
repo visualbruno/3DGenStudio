@@ -2,7 +2,8 @@
 //
 // A Batch project is a GRID, not a graph: `variables` are declared once,
 // each `group` is one ROW of values for them, and `stages` are a linear chain
-// of ComfyUI workflows run once per row. N groups x M stages = N*M generations,
+// of actions (a ComfyUI workflow, or the Mesh Editor's Optimize / Auto Rig /
+// Bake) run once per row. N groups x M stages = N*M generations,
 // and each executed cell becomes an ordinary project Card carrying its asset.
 //
 // THE DOCUMENT MODEL IS SHARED WITH THE BATCH PAGE (batch/document.js at the
@@ -24,7 +25,10 @@ import { toolHandler, createProgressReporter, withAssetUrls } from '../client.js
 import { executeComfyRun } from '../comfyRun.js';
 import { applyAssetTags, tagsInput } from '../assetTags.js';
 import { createParameterResolver } from './workflows.js';
+import { executeBatchAction } from '../../batch/actionRunner.js';
 import {
+  BATCH_ACTION_COMFYUI,
+  BATCH_ACTIONS,
   BATCH_EXECUTION_ORDERS,
   BATCH_VARIABLE_TYPES,
   BINDING_MANUAL,
@@ -44,12 +48,16 @@ import {
   getBinding,
   getGroupLabel,
   getRunIdFromCells,
+  getStageAction,
   getStageLabel,
+  getStageWorkflow,
   getVariableLabel,
   getWorkflowParameterValueType,
   isBatchAssetValue,
   isBatchStageWorkflow,
+  isBuiltInBatchAction,
   isFileWorkflowValueType,
+  normalizeBatchAction,
   isVariableCompatibleWithValueType,
   normalizeBatchConfig,
   normalizeExecutionOrder,
@@ -126,17 +134,23 @@ function bindingView(binding, { variables, stages }) {
 }
 
 function stageView(stage, index, { config, workflowsById }) {
-  const workflow = workflowsById[String(stage?.workflowId)] || null;
+  const workflow = getStageWorkflow(stage, workflowsById);
+  const action = getStageAction(stage);
   const { variables, stages } = config;
 
   return {
     position: index + 1,
     name: stage?.name || '',
-    workflowId: Number(stage?.workflowId) || null,
-    workflowName: workflow?.name || null,
-    ...(workflow ? {} : {
-      problem: 'No usable workflow: the id is not in the library, or the workflow produces neither an image nor a mesh (only those can be a batch stage).'
-    }),
+    action,
+    ...(isBuiltInBatchAction(action)
+      ? {}
+      : {
+        workflowId: Number(stage?.workflowId) || null,
+        workflowName: workflow?.name || null,
+        ...(workflow ? {} : {
+          problem: 'No usable workflow: the id is not in the library, or the workflow produces neither an image nor a mesh (only those can be a batch stage).'
+        })
+      }),
     parameters: (workflow?.parameters || []).map(parameter => {
       const valueType = getWorkflowParameterValueType(parameter);
       const source = bindingView(getBinding(stage, parameter.id), { variables, stages });
@@ -305,27 +319,36 @@ function parseBinding(text, { parameter, valueType, variables, stageCount, stage
 }
 
 // Replace the stage chain. A stage keeps its id (and therefore its results)
-// while it stays at the same position running the same workflow; changing its
-// workflow re-seeds its values from that workflow's defaults, because the old
-// ones were keyed to parameter ids that no longer exist.
+// while it stays at the same position running the same action and workflow;
+// changing either re-seeds its values from the new one's defaults, because the
+// old ones were keyed to parameter ids that no longer exist.
 function applyStages(config, incoming, workflowsById) {
   const previous = config.stages;
   const draft = incoming.map((entry, index) => {
-    const workflowId = Number(entry?.workflowId);
-    const workflow = workflowsById[String(workflowId)] || null;
+    // A stage given a workflowId and no action is a ComfyUI stage, which is
+    // what every caller written before actions existed sends.
+    const action = normalizeBatchAction(entry?.action || BATCH_ACTION_COMFYUI);
+    const isBuiltIn = isBuiltInBatchAction(action);
+    const workflowId = isBuiltIn ? '' : Number(entry?.workflowId);
+    const workflow = getStageWorkflow({ action, workflowId }, workflowsById);
     if (!workflow) {
-      throw new Error(`Stage ${index + 1}: workflow ${entry?.workflowId} is not available as a batch stage. A stage workflow must be in the library AND produce an image or a mesh — call list_workflows to find one.`);
+      throw new Error(entry?.workflowId === undefined
+        ? `Stage ${index + 1}: a "comfyui" stage needs a workflowId (call list_workflows), or set action to one of ${BATCH_ACTIONS.filter(item => item !== BATCH_ACTION_COMFYUI).join(', ')}.`
+        : `Stage ${index + 1}: workflow ${entry?.workflowId} is not available as a batch stage. A stage workflow must be in the library AND produce an image or a mesh — call list_workflows to find one.`);
     }
 
     const existing = previous[index] || null;
-    const keepsId = Boolean(existing) && String(existing.workflowId) === String(workflowId);
+    const keepsId = Boolean(existing)
+      && getStageAction(existing) === action
+      && String(existing.workflowId ?? '') === String(workflowId);
     const base = keepsId
       ? existing
-      : { ...createStage(), workflowId, inputs: createStageDefaultInputs(workflow), bindings: {} };
+      : { ...createStage('', action), workflowId, inputs: createStageDefaultInputs(workflow), bindings: {} };
 
     return {
       stage: {
         ...base,
+        action,
         workflowId,
         name: entry?.name !== undefined ? String(entry.name) : (base.name || ''),
         inputs: { ...(base.inputs || {}) },
@@ -501,7 +524,7 @@ function buildSelector(items, requested, labelFor, what) {
 export function registerBatchTools(server, { api, notifyMutation }) {
   server.registerTool('get_batch', {
     title: 'Get batch project',
-    description: 'Read a Batch project: its variables (declared once), its groups (one ROW of values per variable — each group is one iteration), its stage chain (the ComfyUI workflows run per group, with every parameter\'s source and manual value), the problems that would block a run, and the results already produced. Sources read as "manual", "variable:<name>" or "stage:<n>" (1-based). Call this before update_batch — it is where the parameter ids and the variable names come from.',
+    description: 'Read a Batch project: its variables (declared once), its groups (one ROW of values per variable — each group is one iteration), its stage chain (the action each stage runs per group — a ComfyUI workflow, or the built-in optimize / autorig / bake mesh tools — with every parameter\'s source and manual value), the problems that would block a run, and the results already produced. Sources read as "manual", "variable:<name>" or "stage:<n>" (1-based). Call this before update_batch — it is where the parameter ids and the variable names come from.',
     inputSchema: {
       projectId: z.number().int().describe('Batch project id (from list_projects)'),
       includeResults: z.boolean().default(true).describe('Include the last run\'s grid (one row per produced cell, with its asset). Set false for the recipe alone.')
@@ -522,7 +545,7 @@ export function registerBatchTools(server, { api, notifyMutation }) {
 
   server.registerTool('update_batch', {
     title: 'Update batch project',
-    description: 'Write a Batch project\'s recipe. Each section you pass REPLACES that whole section (a section you omit is untouched), so read it with get_batch first and send the full list back with your changes. `variables` declares what varies, by name and type (string/number/boolean/image/mesh). `groups` are the rows: values is a map of variable NAME -> value, and an image/mesh variable takes an asset id (the asset is linked to the project for you); a variable a group leaves out falls back to the stage\'s own manual value. `stages` is the chain, in order: each takes a workflowId (it must produce an image or a mesh), an optional name — a template, where "{{variable name}}" is replaced per group and becomes the result\'s name — plus `inputs` (parameter id -> manual value) and `bindings` (parameter id -> "manual" | "variable:<name>" | "stage:<n>", 1-based and strictly EARLIER). inputs/bindings are merged into the stage, so pass only what changes. Image/mesh parameters cannot take a manual value: bind them. Positions carry identity — a group or stage kept at the same position keeps the results already in its cells, and a stage keeps its values while its workflow is unchanged.',
+    description: 'Write a Batch project\'s recipe. Each section you pass REPLACES that whole section (a section you omit is untouched), so read it with get_batch first and send the full list back with your changes. `variables` declares what varies, by name and type (string/number/boolean/image/mesh). `groups` are the rows: values is a map of variable NAME -> value, and an image/mesh variable takes an asset id (the asset is linked to the project for you); a variable a group leaves out falls back to the stage\'s own manual value. `stages` is the chain, in order: each takes an action (default "comfyui", which takes a workflowId that must produce an image or a mesh; or "optimize" / "autorig" / "bake", the Mesh Editor tools), an optional name — a template, where "{{variable name}}" is replaced per group and becomes the result\'s name — plus `inputs` (parameter id -> manual value) and `bindings` (parameter id -> "manual" | "variable:<name>" | "stage:<n>", 1-based and strictly EARLIER). inputs/bindings are merged into the stage, so pass only what changes. Image/mesh parameters cannot take a manual value: bind them. Positions carry identity — a group or stage kept at the same position keeps the results already in its cells, and a stage keeps its values while its workflow is unchanged.',
     inputSchema: {
       projectId: z.number().int(),
       variables: z.array(z.object({
@@ -536,7 +559,8 @@ export function registerBatchTools(server, { api, notifyMutation }) {
       })).optional().describe('Replaces the group rows — one run of the whole chain each'),
       stages: z.array(z.object({
         name: z.string().optional().describe('Result name template, e.g. "{{character}} - {{resolution}}px"'),
-        workflowId: z.number().int().describe('Saved ComfyUI workflow id (from list_workflows) — must produce an image or a mesh'),
+        action: z.enum(BATCH_ACTIONS).default(BATCH_ACTION_COMFYUI).describe('What the stage runs. "comfyui" runs workflowId. The Mesh Editor tools run in the app backend without ComfyUI, each taking its input mesh(es) as bindings and saving a new VERSION of it: "optimize" (param "mesh", simplified to "target_faces" triangles), "autorig" (param "mesh", skeleton + skin weights; needs the rigging service), "bake" (params "low_poly" + "high_poly", bakes the high poly onto the low poly\'s UVs and applies the maps to its material — the low poly must have UVs; needs the mesh-tools service). get_batch lists every parameter of a stage after it is written.'),
+        workflowId: z.number().int().optional().describe('comfyui stages only: saved ComfyUI workflow id (from list_workflows) — must produce an image or a mesh'),
         inputs: z.record(z.string(), z.any()).optional().describe('Parameter id -> manual value, for parameters left on "manual"'),
         bindings: z.record(z.string(), z.string()).optional().describe('Parameter id -> "manual" | "variable:<name>" | "stage:<n>"')
       })).optional().describe('Replaces the stage chain, in execution order'),
@@ -568,7 +592,7 @@ export function registerBatchTools(server, { api, notifyMutation }) {
 
   server.registerTool('run_batch', {
     title: 'Run batch project',
-    description: 'Run the batch: every group through every stage, one ComfyUI generation per cell, each saved as a result card in the project (streams MCP progress). CONTINUES by default — cells that already produced an asset are kept and reused as inputs for the stages after them, so a stopped or partial run picks up where it left off; mode "restart" regenerates everything instead. `groups` / `stages` limit the walk to some rows or some steps (by name or 1-based position), which combined with mode "restart" is how you regenerate a single cell. A stage bound to an earlier stage receives that stage\'s output for the SAME group, which is what makes a chain (image -> mesh -> texture) work. Refuses to start while get_batch reports problems. Requires ComfyUI to be running. Long batches are budgeted: when maxSeconds runs out the tool returns what finished and you call it again to carry on.',
+    description: 'Run the batch: every group through every stage, one generation (a ComfyUI workflow or a built-in mesh tool) per cell, each saved as a result card in the project (streams MCP progress). CONTINUES by default — cells that already produced an asset are kept and reused as inputs for the stages after them, so a stopped or partial run picks up where it left off; mode "restart" regenerates everything instead. `groups` / `stages` limit the walk to some rows or some steps (by name or 1-based position), which combined with mode "restart" is how you regenerate a single cell. A stage bound to an earlier stage receives that stage\'s output for the SAME group, which is what makes a chain (image -> mesh -> texture) work. Refuses to start while get_batch reports problems. Requires ComfyUI to be running for comfyui stages, the rigging service for autorig stages and the mesh-tools service for bake stages (optimize needs nothing). A built-in stage returns when its tool does, so timeoutSeconds only bounds comfyui cells. Long batches are budgeted: when maxSeconds runs out the tool returns what finished and you call it again to carry on.',
     inputSchema: {
       projectId: z.number().int(),
       mode: z.enum(['continue', 'restart']).default('continue').describe('"continue" skips cells that already have a result; "restart" regenerates the selected cells'),
@@ -667,7 +691,8 @@ export function registerBatchTools(server, { api, notifyMutation }) {
         continue;
       }
 
-      const workflow = workflowsById[String(stage.workflowId)];
+      const workflow = getStageWorkflow(stage, workflowsById);
+      const action = getStageAction(stage);
       const { inputs, missing } = resolveStageInputs({ stage, workflow, group, variables, stageOutputs, stages });
       if (missing.length > 0) {
         cells.push({
@@ -689,38 +714,54 @@ export function registerBatchTools(server, { api, notifyMutation }) {
 
       await reportProgress(stepIndex, steps.length, `${label.group} · ${label.stage}`);
 
-      try {
-        const outcome = await executeComfyRun(api, {
-          projectId,
-          workflowId: Number(stage.workflowId),
-          promptId,
-          cardId: cardKey,
-          name: resultName,
-          parentAssetId: parentAsset?.id,
-          // The batch decides its own parent (the input whose type matches the
-          // OUTPUT), exactly as the page does — the server's own inference would
-          // pick the first file input instead, which files a re-texture under
-          // its reference image rather than under the mesh.
-          autoParentFromInputs: false,
-          inputs,
-          timeoutSeconds,
-          onProgress: payload => {
-            const percent = Number(payload?.progressPercent);
-            reportProgress(
-              stepIndex + (Number.isFinite(percent) ? percent / 100 : 0),
-              steps.length,
-              `${label.group} · ${label.stage} — ${payload?.detail || 'running'}`
-            );
-          }
-        });
+      const reportCellProgress = (percent, detail) => reportProgress(
+        stepIndex + (Number.isFinite(percent) ? percent / 100 : 0),
+        steps.length,
+        `${label.group} · ${label.stage} — ${detail || 'running'}`
+      );
 
-        if (outcome.status === 'running') {
-          stopped = 'timeout';
-          cells.push({ ...label, status: 'running', promptId, error: `Still running after ${timeoutSeconds}s` });
-          continue;
+      try {
+        let produced;
+        let warnings = [];
+        if (isBuiltInBatchAction(action)) {
+          // A Mesh Editor tool, run in the backend: no ComfyUI prompt, so no
+          // timeout to hand back — the call returns when the tool does.
+          const outcome = await executeBatchAction(api, {
+            action,
+            projectId,
+            inputs,
+            name: resultName,
+            cardKey,
+            onProgress: (percent, detail) => reportCellProgress(Number(percent), detail)
+          });
+          produced = [outcome.asset];
+          warnings = outcome.warnings || [];
+        } else {
+          const outcome = await executeComfyRun(api, {
+            projectId,
+            workflowId: Number(stage.workflowId),
+            promptId,
+            cardId: cardKey,
+            name: resultName,
+            parentAssetId: parentAsset?.id,
+            // The batch decides its own parent (the input whose type matches the
+            // OUTPUT), exactly as the page does — the server's own inference would
+            // pick the first file input instead, which files a re-texture under
+            // its reference image rather than under the mesh.
+            autoParentFromInputs: false,
+            inputs,
+            timeoutSeconds,
+            onProgress: payload => reportCellProgress(Number(payload?.progressPercent), payload?.detail)
+          });
+
+          if (outcome.status === 'running') {
+            stopped = 'timeout';
+            cells.push({ ...label, status: 'running', promptId, error: `Still running after ${timeoutSeconds}s` });
+            continue;
+          }
+          produced = outcome.assets.filter(Boolean);
         }
 
-        const produced = outcome.assets.filter(Boolean);
         if (produced.length === 0) throw new Error('The workflow returned no output');
 
         // Only the first output feeds the next stage: a row has one cell per
@@ -753,10 +794,12 @@ export function registerBatchTools(server, { api, notifyMutation }) {
           assetType: primary?.type || null,
           name: resultName,
           ...(produced.length > 1 ? { extraOutputs: produced.length - 1 } : {}),
-          ...(linkWarning ? { warning: linkWarning } : {})
+          ...(linkWarning || warnings.length > 0
+            ? { warning: [...warnings, ...(linkWarning ? [linkWarning] : [])].join(' · ') }
+            : {})
         });
       } catch (err) {
-        cells.push({ ...label, status: 'error', error: err?.message || 'Workflow failed' });
+        cells.push({ ...label, status: 'error', error: err?.message || (isBuiltInBatchAction(action) ? 'The action failed' : 'Workflow failed') });
       }
     }
 

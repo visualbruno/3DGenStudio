@@ -10,6 +10,7 @@ import BatchResultsGrid from '../components/batch/BatchResultsGrid'
 import { useProjects } from '../context/ProjectContext'
 import { useBatchRun } from '../context/BatchRunContext'
 import { createMeshThumbnailFile, createMeshThumbnailFileFromUrl } from '../utils/meshThumbnail'
+import { ensureDesktopService } from '../utils/meshTools'
 import {
   buildImageEditorPath,
   buildMeshEditorPath,
@@ -29,9 +30,13 @@ import {
   deriveCellsFromAssets,
   getBatchAssetIds,
   getGroupLabel,
+  getBatchActionDescriptor,
   getRunIdFromCells,
+  getStageAction,
   getStageLabel,
+  getStageWorkflow,
   isBatchStageWorkflow,
+  normalizeBatchAction,
   variableValueKind,
   summarizeRunProgress,
   normalizeBatchConfig,
@@ -41,7 +46,8 @@ import './BatchPage.css'
 
 const AUTOSAVE_DELAY = 700
 
-// A "Batch" preset project: run one linear chain of ComfyUI workflows once per
+// A "Batch" preset project: run one linear chain of stages — ComfyUI workflows
+// or the Mesh Editor's Optimize / Auto Rig / Bake — once per
 // group of parameter values. Each executed cell becomes a normal project Card
 // carrying its asset, so results behave like any other generation.
 export default function BatchPage({ project }) {
@@ -338,23 +344,30 @@ export default function BatchPage({ project }) {
     patchConfig(current => ({ ...current, stages: [...current.stages, createStage()] }))
   }, [patchConfig])
 
-  // Changing the workflow invalidates every binding and manual value, since they
-  // were keyed to the previous workflow's parameter ids. The replacement is
-  // seeded from the new workflow's own defaults so the stage starts valid
-  // instead of reporting one problem per parameter per group.
+  // Changing the action or the workflow invalidates every binding and manual
+  // value, since they were keyed to the previous one's parameter ids. The
+  // replacement is seeded from the new one's own defaults so the stage starts
+  // valid instead of reporting one problem per parameter per group. Switching
+  // away from ComfyUI drops the workflow id, so it cannot resurface later.
   const handleUpdateStage = useCallback((stageId, patch) => {
     patchConfig(current => ({
       ...current,
       stages: current.stages.map((stage, stageIndex) => {
         if (stage.id !== stageId) return stage
+        const isActionChange = patch.action !== undefined
+          && normalizeBatchAction(patch.action) !== getStageAction(stage)
         const isWorkflowChange = patch.workflowId !== undefined && String(patch.workflowId) !== String(stage.workflowId)
-        if (!isWorkflowChange) {
+        if (!isActionChange && !isWorkflowChange) {
           return { ...stage, ...patch }
         }
-        const nextWorkflow = workflowsById[String(patch.workflowId)] || null
-        return {
+        const next = {
           ...stage,
           ...patch,
+          ...(isActionChange ? { action: normalizeBatchAction(patch.action), workflowId: '' } : {})
+        }
+        const nextWorkflow = getStageWorkflow(next, workflowsById)
+        return {
+          ...next,
           inputs: createStageDefaultInputs(nextWorkflow),
           bindings: createStageDefaultBindings(nextWorkflow, current.stages, stageIndex, current.variables)
         }
@@ -725,6 +738,16 @@ export default function BatchPage({ project }) {
     setRunError('')
     setStartingRun(true)
     try {
+      // The desktop app starts its Python services on demand, and only the page
+      // can ask it to — the backend running the batch cannot. So every service a
+      // built-in stage needs is brought up before the run is handed over, rather
+      // than letting each of those cells fail on a connection refused.
+      const services = new Set(normalized.stages
+        .map(stage => getBatchActionDescriptor(getStageAction(stage))?.desktopService)
+        .filter(Boolean))
+      for (const service of services) {
+        await ensureDesktopService(service)
+      }
       await startBatch({ config, mode })
     } catch (err) {
       console.error('Failed to start the batch:', err)
@@ -1071,7 +1094,7 @@ export default function BatchPage({ project }) {
                 variables={normalized.variables}
                 groups={normalized.groups}
                 workflows={stageWorkflows}
-                workflow={workflowsById[String(stage.workflowId)] || null}
+                workflow={getStageWorkflow(stage, workflowsById)}
                 locked={isRunning}
                 onUpdateStage={handleUpdateStage}
                 onSetBinding={handleSetBinding}

@@ -12,14 +12,17 @@
 // Dependency-free on purpose (see electron-builder.yml on src/utils/vfx): a file
 // added here that imports a browser API breaks the packaged backend at startup.
 //
-// A batch runs one linear chain of ComfyUI workflows ("stages") once per
-// "group". A group is ONE ITERATION: a row of values for the batch's declared
+// A batch runs one linear chain of "stages" once per "group". A stage runs an
+// ACTION: a ComfyUI workflow, or one of the Mesh Editor's tools (Optimize, Auto
+// Rig, Bake) — see actions.js, which describes each tool in a workflow's shape
+// so everything below applies to both. A group is ONE ITERATION: a row of values for the batch's declared
 // variables. Groups are sparse — a variable a group leaves blank falls back to
 // whatever the stage has set manually.
 //
 //   variables: [{ id, name, type }]                  declared once for the batch
 //   groups:    [{ id, name, values: { [variableId]: value } }]   one per iteration
-//   stages:    [{ id, name, workflowId, bindings: { [parameterId]: binding } }]
+//   stages:    [{ id, name, action, workflowId, bindings: { [parameterId]: binding } }]
+//              (workflowId only for action "comfyui")
 //
 // A binding is one of:
 //   { source: 'manual' }                      use the stage's own value
@@ -32,6 +35,19 @@
 // Results are NOT stored in this document. Each executed cell becomes a normal
 // Card carrying its asset, addressed by a deterministic clientKey — see
 // buildBatchCardKey below.
+
+import {
+  BATCH_ACTION_BAKE,
+  BATCH_ACTION_COMFYUI,
+  BATCH_ACTION_LABELS,
+  describeBakeMapProblem,
+  getBakeActionMaps,
+  getBatchActionDescriptor,
+  isBuiltInBatchAction,
+  normalizeBatchAction
+} from './actions.js'
+
+export * from './actions.js'
 
 
 // Mirrors src/utils/graphHelpers.js — kept local so this module stays
@@ -249,8 +265,35 @@ export function isVariableCompatibleWithValueType(variable, valueType) {
   return true
 }
 
-export function createStage(name = '') {
-  return { id: createLocalId('stg'), name, workflowId: '', inputs: {}, bindings: {} }
+export function createStage(name = '', action = BATCH_ACTION_COMFYUI) {
+  return { id: createLocalId('stg'), name, action: normalizeBatchAction(action), workflowId: '', inputs: {}, bindings: {} }
+}
+
+export function getStageAction(stage) {
+  return normalizeBatchAction(stage?.action)
+}
+
+// What a stage runs, in the workflow shape every rule below reads: a built-in
+// action's descriptor, or the stage's ComfyUI workflow from the library map.
+// Null when a ComfyUI stage has no (usable) workflow picked.
+export function getStageWorkflow(stage, workflowsById) {
+  const action = getStageAction(stage)
+  if (isBuiltInBatchAction(action)) {
+    return getBatchActionDescriptor(action)
+  }
+  const workflowId = String(stage?.workflowId ?? '')
+  return workflowId ? (workflowsById?.[workflowId] || null) : null
+}
+
+// "Optimize", or "ComfyUI · Text to Image" — how a stage's action reads in a
+// problem list or a tool response.
+export function describeStageAction(stage, workflowsById) {
+  const action = getStageAction(stage)
+  if (isBuiltInBatchAction(action)) {
+    return BATCH_ACTION_LABELS[action]
+  }
+  const workflow = getStageWorkflow(stage, workflowsById)
+  return workflow ? `ComfyUI · ${workflow.name || workflow.id}` : BATCH_ACTION_LABELS[BATCH_ACTION_COMFYUI]
 }
 
 // Seed a stage's manual values from the workflow's own defaults. Without this
@@ -278,21 +321,32 @@ export function createStageDefaultInputs(workflow) {
 // A file parameter cannot hold a typed-in value, so seed it with a source rather
 // than leaving it invalid: the immediately preceding stage, or — for a first
 // stage, which has nothing upstream — a declared variable of the same type.
+//
+// A parameter can ask to reach further back (`defaultUpstreamOffset`): a Bake
+// takes its low poly from the stage right before it and its high poly from the
+// one before that, which is what a generate -> optimize -> bake chain wants.
+// With nothing that far back it settles for the earliest stage there is, and a
+// first stage never hands two file inputs the same variable while another of
+// that type is declared — baking a mesh onto itself is never the intent.
 export function createStageDefaultBindings(workflow, stages, stageIndex, variables = []) {
-  const previousStage = stageIndex > 0 ? stages[stageIndex - 1] : null
-
   const bindings = {}
+  const usedVariables = new Set()
+
   for (const parameter of workflow?.parameters || []) {
     const valueType = getWorkflowParameterValueType(parameter)
     if (!isFileWorkflowValueType(valueType)) {
       continue
     }
-    if (previousStage) {
-      bindings[parameter.id] = { source: BINDING_STAGE, stageId: previousStage.id }
+    const offset = Math.max(1, Number(parameter.defaultUpstreamOffset) || 1)
+    const upstream = stageIndex > 0 ? stages[Math.max(0, stageIndex - offset)] : null
+    if (upstream) {
+      bindings[parameter.id] = { source: BINDING_STAGE, stageId: upstream.id }
       continue
     }
-    const variable = (variables || []).find(item => item.type === valueType)
+    const candidates = (variables || []).filter(item => item.type === valueType)
+    const variable = candidates.find(item => !usedVariables.has(item.id)) || candidates[0]
     if (variable) {
+      usedVariables.add(variable.id)
       bindings[parameter.id] = { source: BINDING_VARIABLE, variableId: variable.id }
     }
   }
@@ -571,26 +625,49 @@ export function validateBatch({ config, workflowsById }) {
   const { variables, groups, stages } = normalizeBatchConfig(config)
 
   if (stages.length === 0) {
-    problems.push({ scope: 'batch', message: 'Add at least one workflow stage' })
+    problems.push({ scope: 'batch', message: 'Add at least one stage' })
   }
   if (groups.length === 0) {
     problems.push({ scope: 'batch', message: 'Add at least one group — each group is one run' })
   }
 
   stages.forEach((stage, stageIndex) => {
-    const workflow = workflowsById?.[String(stage.workflowId)] || null
+    const workflow = getStageWorkflow(stage, workflowsById)
     if (!workflow) {
       problems.push({ scope: 'stage', stageId: stage.id, message: `${getStageLabel(stage, stageIndex)}: no workflow selected` })
       return
     }
 
+    // A stage binding can point at an earlier stage that produces the wrong
+    // KIND of file — an Optimize fed by an image generation. That is known at
+    // plan time from what the upstream stage declares it outputs, and would
+    // otherwise surface only as a failed cell hours into the run. An upstream
+    // stage that declares no output type is given the benefit of the doubt.
+    for (const parameter of workflow.parameters || []) {
+      const valueType = getWorkflowParameterValueType(parameter)
+      const binding = getBinding(stage, parameter.id)
+      if (!isFileWorkflowValueType(valueType) || binding.source !== BINDING_STAGE) continue
+      const upstreamIndex = stages.findIndex(item => item.id === binding.stageId)
+      if (upstreamIndex === -1) continue
+      const upstreamOutputs = getWorkflowOutputTypes(getStageWorkflow(stages[upstreamIndex], workflowsById))
+      if (upstreamOutputs.length > 0 && !upstreamOutputs.includes(valueType)) {
+        problems.push({
+          scope: 'stage',
+          stageId: stage.id,
+          message: `${getStageLabel(stage, stageIndex)} · ${parameter.name || parameter.id}: ${getStageLabel(stages[upstreamIndex], upstreamIndex)} produces ${articleFor(upstreamOutputs[0])} ${upstreamOutputs.join('/')}, not ${articleFor(valueType)} ${valueType}`
+        })
+      }
+    }
+
     // Pretend every upstream stage produced something, so only genuinely
     // unset values surface here rather than ordering artefacts.
     const pretendOutputs = {}
-    stages.slice(0, stageIndex).forEach(upstream => { pretendOutputs[upstream.id] = { id: -1 } })
+    // One pretend id per stage, so two inputs bound to the same stage still read
+    // as the same asset (which is what the bake's "same mesh" check looks for).
+    stages.slice(0, stageIndex).forEach((upstream, upstreamIndex) => { pretendOutputs[upstream.id] = { id: -(upstreamIndex + 1) } })
 
     groups.forEach((group, groupIndex) => {
-      const { missing } = resolveStageInputs({ stage, workflow, group, variables, stageOutputs: pretendOutputs, stages })
+      const { inputs, missing } = resolveStageInputs({ stage, workflow, group, variables, stageOutputs: pretendOutputs, stages })
       missing.forEach(item => {
         problems.push({
           scope: 'cell',
@@ -599,10 +676,32 @@ export function validateBatch({ config, workflowsById }) {
           message: `${getGroupLabel(group, groupIndex)} · ${getStageLabel(stage, stageIndex)} · ${item.label}: ${item.reason}`
         })
       })
+      const actionProblem = describeActionInputProblem(stage, inputs)
+      if (actionProblem) {
+        problems.push({
+          scope: 'cell',
+          stageId: stage.id,
+          groupId: group.id,
+          message: `${getGroupLabel(group, groupIndex)} · ${getStageLabel(stage, stageIndex)}: ${actionProblem}`
+        })
+      }
     })
   })
 
   return problems
+}
+
+// Resolved inputs a built-in action cannot run with, beyond a missing value.
+// Checked per group, because a bake's map switches can come from a variable.
+// Null when there is nothing to say.
+export function describeActionInputProblem(stage, inputs) {
+  if (getStageAction(stage) === BATCH_ACTION_BAKE) {
+    if (inputs?.low_poly && inputs.low_poly === inputs.high_poly) {
+      return 'the low poly and the high poly are the same mesh'
+    }
+    return describeBakeMapProblem(getBakeActionMaps(inputs))
+  }
+  return null
 }
 
 // The types a workflow declares it will produce, e.g. ['mesh'].
@@ -627,11 +726,17 @@ export function getWorkflowOutputTypes(workflow) {
 // over a list of picked meshes files its results under them exactly as a
 // mid-chain stage does. Only `asset:<id>` references can be a parent — an
 // `edit:` reference names a file, not an asset id, so those results stay roots.
+//
+// A built-in action names its parent input outright (`parentParameterId`): a
+// Bake takes two meshes and returns one, so matching on type alone could file
+// the textured low poly under the high poly it was baked from.
 export function findParentAssetForStage({ stage, workflow, stageOutputs, group }) {
   const outputTypes = getWorkflowOutputTypes(workflow)
   const candidates = []
+  const parameters = (workflow?.parameters || [])
+    .filter(parameter => !workflow?.parentParameterId || parameter.id === workflow.parentParameterId)
 
-  for (const parameter of workflow?.parameters || []) {
+  for (const parameter of parameters) {
     const valueType = getWorkflowParameterValueType(parameter)
     if (!isFileWorkflowValueType(valueType)) {
       continue

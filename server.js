@@ -9807,6 +9807,37 @@ function glbHasUvs(buffer) {
   }
 }
 
+// Triangles in a GLB, read from the JSON chunk alone (accessor counts, so no
+// buffer decoding and no dependency on how the geometry is compressed). Counts
+// each mesh once per node that instances it, which is also what gltfpack
+// reports as its input. Null when the file cannot be read or holds no
+// triangles, so a caller falls back to a plain ratio.
+function countGlbTriangles(buffer) {
+  try {
+    if (buffer.length < 20 || buffer.readUInt32LE(0) !== 0x46546c67) return null; // 'glTF'
+    const jsonLength = buffer.readUInt32LE(12);
+    const json = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString('utf8'));
+    const accessors = json.accessors || [];
+    const trianglesInMesh = mesh => (mesh?.primitives || []).reduce((sum, primitive) => {
+      const mode = primitive.mode ?? 4;
+      const count = primitive.indices !== undefined
+        ? accessors[primitive.indices]?.count
+        : accessors[primitive.attributes?.POSITION]?.count;
+      if (!count) return sum;
+      if (mode === 4) return sum + Math.floor(count / 3);        // TRIANGLES
+      if (mode === 5 || mode === 6) return sum + Math.max(0, count - 2); // STRIP / FAN
+      return sum;
+    }, 0);
+    const instanced = (json.nodes || []).filter(node => node.mesh !== undefined);
+    const total = instanced.length
+      ? instanced.reduce((sum, node) => sum + trianglesInMesh(json.meshes?.[node.mesh]), 0)
+      : (json.meshes || []).reduce((sum, mesh) => sum + trianglesInMesh(mesh), 0);
+    return total > 0 ? total : null;
+  } catch {
+    return null;
+  }
+}
+
 // Simplify a GLB to `ratio` of its triangle count.
 //
 // Two different things stop a mesh short of its target, and they were previously
@@ -9929,7 +9960,16 @@ app.post('/api/meshes/optimize', meshToolsUpload.single('meshFile'), async (req,
     if (typeof req.body?.options === 'string' && req.body.options.length) {
       try { options = JSON.parse(req.body.options); } catch { options = {}; }
     }
-    const ratio = clampSimplifyRatio(options.simplify_ratio);
+    // A face budget instead of a ratio — what a Batch stage (and an MCP caller)
+    // asks for, because a ratio means something different on every mesh in the
+    // batch. gltfpack only takes a ratio, so the budget is turned into one
+    // against the input's own count. A mesh already inside the budget gets
+    // ratio 1, which simplifies nothing.
+    const targetFaces = Math.round(Number(options.target_faces));
+    const inputFaces = Number.isFinite(targetFaces) && targetFaces > 0 ? countGlbTriangles(meshFile.buffer) : null;
+    const ratio = inputFaces
+      ? clampSimplifyRatio(targetFaces / inputFaces)
+      : clampSimplifyRatio(options.simplify_ratio);
     const simplify = readSimplifyOptions(options);
 
     const result = await runGltfpack(meshFile.buffer, ratio, simplify);
@@ -9937,6 +9977,7 @@ app.post('/api/meshes/optimize', meshToolsUpload.single('meshFile'), async (req,
     res.json({
       mesh_b64: result.buffer.toString('base64'),
       stats: {
+        ...(inputFaces ? { target_faces: targetFaces } : {}),
         simplify_ratio: ratio,
         simplify_error: simplify.simplifyError,
         triangles: result.triangles,

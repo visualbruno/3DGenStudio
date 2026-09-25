@@ -92,9 +92,18 @@ function createBackend({ preset = 'Batch' } = {}) {
         return { projectId: 7, state: body.state };
       }
       if (method === 'GET' && path === '/library/comfy-workflows') return WORKFLOWS;
+      // A built-in action looks its input mesh up by id (findProjectAsset),
+      // which lists the project without asking for children.
+      if (method === 'GET' && path === '/assets' && query?.includeChildren === undefined && state.meshLookup) {
+        return state.meshLookup();
+      }
       if (method === 'GET' && path === '/assets') {
         assert.equal(String(query?.includeChildren), 'true', 'results are cards on edits/versions too');
         return state.assets;
+      }
+      if (method === 'POST' && path === '/cards') {
+        state.cards.push(body);
+        return { id: state.cards.length };
       }
       if (method === 'POST' && /^\/projects\/\d+\/assets$/.test(path)) {
         const record = state.library.get(Number(body.assetId));
@@ -111,6 +120,16 @@ function createBackend({ preset = 'Batch' } = {}) {
     // an SSE subscription. Both are faked: the subscription hands back the
     // terminal event for the prompt the form carried.
     async apiForm(method, path, form) {
+      // The built-in Optimize action: simplify, then save a version.
+      if (path === '/meshes/optimize') {
+        state.toolCalls.push({ path, options: JSON.parse(form.get('options')) });
+        return { mesh_b64: Buffer.from('glb').toString('base64'), stats: { triangles: 800, input_triangles: 9000 } };
+      }
+      if (path === '/meshes/editor/save') {
+        const saved = { id: state.nextAssetId++, type: 'mesh', name: form.get('name'), parentAssetId: Number(form.get('assetId')) };
+        state.toolCalls.push({ path, saved });
+        return saved;
+      }
       assert.equal(path, '/comfyui/workflows/run');
       const run = {
         projectId: Number(form.get('projectId')),
@@ -138,10 +157,13 @@ function createBackend({ preset = 'Batch' } = {}) {
       });
       return { close: () => state.pending.delete(promptId) };
     },
-    assetUrl: file => `http://127.0.0.1:3001/assets/${file}`
+    assetUrl: file => `http://127.0.0.1:3001/assets/${file}`,
+    fetchAssetBuffer: async () => Buffer.from('glb')
   };
 
   state.pending = new Map();
+  state.cards = [];
+  state.toolCalls = [];
   return { state, api };
 }
 
@@ -568,6 +590,77 @@ test('a cell that never answers stops the run instead of hanging the whole grid'
   assert.equal(run.cells[0].status, 'running');
   assert.ok(run.cells.slice(1).every(cell => cell.status === 'not-run'));
   assert.ok(run.notes.some(note => /continues in ComfyUI/.test(note)));
+});
+
+// --- built-in actions ------------------------------------------------------------
+
+test('a stage can run a built-in action, bound and read back like a workflow', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await call('update_batch', {
+    projectId: 7,
+    variables: [{ name: 'Faces', type: 'number' }],
+    groups: [{ name: 'Knight', values: { Faces: 1500 } }],
+    stages: [
+      { workflowId: 1, inputs: { '6.text': 'a knight' } },
+      { workflowId: 2 },
+      { name: 'Knight low', action: 'optimize', bindings: { target_faces: 'variable:Faces' } }
+    ]
+  });
+
+  const batch = await call('get_batch', { projectId: 7, includeResults: false });
+  assert.deepEqual(batch.problems, [], JSON.stringify(batch.problems));
+  const optimize = batch.stages[2];
+  assert.equal(optimize.action, 'optimize');
+  assert.equal(optimize.workflowId, undefined, 'a built-in stage has no workflow to name');
+  assert.equal(optimize.parameters.find(p => p.id === 'mesh').source, 'stage:2', 'seeded from the stage before');
+  assert.equal(optimize.parameters.find(p => p.id === 'target_faces').source, 'variable:Faces');
+
+  // Wiring it to the image stage is refused before anything runs.
+  await call('update_batch', {
+    projectId: 7,
+    stages: [
+      { workflowId: 1, inputs: { '6.text': 'a knight' } },
+      { workflowId: 2 },
+      { action: 'optimize', bindings: { mesh: 'stage:1' } }
+    ]
+  });
+  const broken = await call('get_batch', { projectId: 7, includeResults: false });
+  assert.ok(broken.problems.some(problem => /produces an image, not a mesh/.test(problem)), broken.problems.join('\n'));
+});
+
+test('run_batch runs a built-in action without ComfyUI and files a version under its input', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await call('update_batch', {
+    projectId: 7,
+    variables: [{ name: 'Faces', type: 'number' }],
+    groups: [{ name: 'Knight', values: { Faces: 1500 } }],
+    stages: [
+      { workflowId: 1, inputs: { '6.text': 'a knight' } },
+      { workflowId: 2 },
+      { name: 'Knight low', action: 'optimize', bindings: { target_faces: 'variable:Faces' } }
+    ]
+  });
+  const produced = [];
+  const produce = backend.state.produce;
+  backend.state.produce = run => { const out = produce(run); produced.push(...out); return out; };
+  backend.state.meshLookup = () => produced.map(asset => ({ ...asset, filename: `meshes/${asset.id}.glb` }));
+
+  const run = await call('run_batch', { projectId: 7, mode: 'restart' });
+
+  assert.equal(run.status, 'completed');
+  assert.equal(backend.state.runs.length, 2, 'only the two ComfyUI stages were queued');
+  const optimizeCall = backend.state.toolCalls.find(item => item.path === '/meshes/optimize');
+  assert.equal(optimizeCall.options.target_faces, 1500, 'the group\'s value drove the face budget');
+  const saved = backend.state.toolCalls.find(item => item.path === '/meshes/editor/save').saved;
+  assert.equal(saved.parentAssetId, produced[1].id, 'a version of the generated mesh');
+  assert.equal(saved.name, 'Knight low');
+  assert.equal(backend.state.cards.length, 1);
+  assert.equal(backend.state.cards[0].column, 'Mesh Edit');
+  assert.equal(run.cells[2].status, 'completed');
+  assert.equal(run.cells[2].assetId, saved.id);
+  assert.equal(backend.state.linkedCards.at(-1).assetId, saved.id);
 });
 
 // --- run ----------------------------------------------------------------------
