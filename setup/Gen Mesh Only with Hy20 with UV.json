@@ -1,0 +1,160 @@
+{
+  "1": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "guidance_scale": 7.5,
+      "steps": 30,
+      "seed": 12345,
+      "scheduler": "ConsistencyFlowMatchEulerDiscreteScheduler",
+      "force_offload": false,
+      "pipeline": [
+        "86",
+        0
+      ],
+      "image": [
+        "75",
+        0
+      ],
+      "mask": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "Hy3DGenerateMesh",
+    "_meta": {
+      "title": "Hy3DGenerateMesh"
+    }
+  },
+  "6": {
+    "inputs": {
+      "box_v": 1.01,
+      "octree_resolution": 384,
+      "num_chunks": 128000,
+      "mc_level": 0,
+      "mc_algo": "mc",
+      "enable_flash_vdm": true,
+      "force_offload": false,
+      "vae": [
+        "86",
+        1
+      ],
+      "latents": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "Hy3DVAEDecode",
+    "_meta": {
+      "title": "Hy3D VAE Decode"
+    }
+  },
+  "27": {
+    "inputs": {
+      "remove_floaters": true,
+      "remove_degenerate_faces": true,
+      "reduce_faces": true,
+      "max_facenum": 500000,
+      "smooth_normals": false,
+      "trimesh": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "Hy3DPostprocessMesh",
+    "_meta": {
+      "title": "Hy3D Postprocess Mesh"
+    }
+  },
+  "75": {
+    "inputs": {
+      "left": 80,
+      "right": 80,
+      "top": 0,
+      "bottom": 0,
+      "extra_padding": 0,
+      "pad_mode": "edge",
+      "color": "0, 0, 0",
+      "image": [
+        "1",
+        0
+      ],
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "ImagePadKJ",
+    "_meta": {
+      "title": "ImagePad KJ"
+    }
+  },
+  "76": {
+    "inputs": {
+      "mask": [
+        "75",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "86": {
+    "inputs": {},
+    "class_type": "Hy3DMiniTurboModelLoader",
+    "_meta": {
+      "title": "Hy3D - Mini Turbo Model Loader"
+    }
+  },
+  "88": {
+    "inputs": {
+      "segmenter": "pec",
+      "resolution": 1024,
+      "padding": 1,
+      "weld_distance": 0,
+      "mesh": [
+        "89",
+        0
+      ]
+    },
+    "class_type": "UnwrapMesh",
+    "_meta": {
+      "title": "Unwrap Mesh UVs"
+    }
+  },
+  "89": {
+    "inputs": {
+      "trimesh": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "VisualBrunoToolsTrimeshToMesh",
+    "_meta": {
+      "title": "3d - Trimesh to Mesh"
+    }
+  },
+  "90": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioHy20",
+      "image": "",
+      "mesh": [
+        "88",
+        0
+      ]
+    },
+    "class_type": "SaveGLB",
+    "_meta": {
+      "title": "Save 3D Model"
+    }
+  }
+}

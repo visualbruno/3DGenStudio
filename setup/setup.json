@@ -867,6 +867,21 @@
 			]
 		},
 		{
+			"Name": "Gen MeshOnly with Trellis2 with UV",
+			"File": "setup/Gen Mesh Only with Trellis2 with UV.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "258",  "Input": "to_resolution",  "Name": "Cascade Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "260",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
+			],
+			"Outputs": [
+				{ "Node": "266", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},		
+		{
 			"Name": "Gen TexturedMesh with Trellis2",
 			"File": "setup/Gen TexturedMesh with Trellis2.json",
 			"Inputs": [
@@ -901,7 +916,8 @@
 				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 				{ "Node": "8", "Input": "glb_path",  "Name": "Source Mesh", "Type": "Mesh" },
 				{ "Node": "3",  "Input": "texture_size",  "Name": "Texture Size",   "Type": "Number" },
-				{ "Node": "3",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[1024,1536] }
+				{ "Node": "3",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[1024,1536] },
+				{ "Node": "2",  "Input": "keep_models_loaded",  "Name": "Keep Model Loaded",   "Type": "Boolean" }
 			],
 			"Outputs": [
 				{ "Node": "11", "Name": "Output Mesh", "Type": "Mesh" }
@@ -985,6 +1001,18 @@
 				{ "Node": "87", "Name": "Save Mesh", "Type": "Mesh" }
 			]
 		},
+		{
+			"Name": "Gen Mesh Only with Hy20 with UV",
+			"File": "setup/Gen Mesh Only with Hy20 with UV.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "27",  "Input": "max_facenum",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "5",  "Input": "seed",  "Name": "Seed",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "90", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},		
 		{
 			"Name": "Prompt Enhancer",
 			"File": "setup/Prompt Enhancer.json",
