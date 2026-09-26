@@ -99,7 +99,8 @@ export default function ExportProjectDialog({ project, onClose }) {
 
           <p className="project-io__hint">
             Creates <code>{folderBase}/</code> containing <code>{folderBase}.3dgp</code> and an
-            <code> assets/</code> folder with every linked asset, sub-asset and thumbnail.
+            <code> assets/</code> folder with every linked asset, sub-asset and thumbnail. Files are
+            named after their asset, with edits and versions in a folder beside the asset they came from.
           </p>
 
           {error && <div className="project-io__message project-io__message--error">{error}</div>}

@@ -5776,6 +5776,93 @@ function assetSubdirForTypeName(typeName) {
   return getAssetSubdirectory(String(typeName || 'image').toLowerCase());
 }
 
+// An asset's display name as a file/folder stem that is legal on Windows, macOS
+// and Linux. The stored extension is dropped from the name when it repeats it,
+// so an upload named "hero.png" exports as "hero.png" and not "hero.png.png".
+// Capped so a nested edit still fits comfortably inside Windows' MAX_PATH.
+const EXPORT_NAME_MAX_LENGTH = 80;
+function exportNameStem(name, extension, fallback) {
+  let stem = String(name || '').trim();
+  if (extension && stem.toLowerCase().endsWith(extension.toLowerCase())) {
+    stem = stem.slice(0, -extension.length);
+  }
+  const clean = value => value
+    // eslint-disable-next-line no-control-regex -- control chars are illegal in filenames
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '');
+  stem = clean(stem).slice(0, EXPORT_NAME_MAX_LENGTH);
+  stem = clean(stem) || fallback;
+  // Reserved device names cannot be used as a file OR folder on Windows.
+  return /^(con|prn|aux|nul|com\d|lpt\d)$/i.test(stem) ? `_${stem}` : stem;
+}
+
+// Reserve `stem` in one folder's namespace, suffixing _1, _2, … on a clash.
+// Case-insensitive, because Windows and macOS file systems are.
+function claimExportName(used, stem) {
+  let candidate = stem;
+  for (let index = 1; used.has(candidate.toLowerCase()); index += 1) {
+    candidate = `${stem}_${index}`;
+  }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+// Bundle path of every exported asset FILE, named after the asset rather than
+// its storage filename so a person can find one by browsing the folder:
+//
+//   assets/images/Hero.png              <- no edits: just the file
+//   assets/images/Knight/Knight.png     <- has edits: a folder of its own, the
+//   assets/images/Knight/Knight_1.png      asset first, its edits beside it
+//   assets/images/Knight/Red cape.png
+//
+// Roots are grouped by type as before; a child always sits under its parent,
+// whatever its own type. Siblings are named oldest first, so re-exporting an
+// unchanged project gives the same paths. Import reads these paths from the
+// manifest, so the layout is free to change without a schema bump.
+function planProjectExportPaths(rows) {
+  const byId = new Map(rows.map(row => [row.id, row]));
+  const childrenById = new Map();
+  const roots = [];
+  for (const row of [...rows].sort((a, b) => a.id - b.id)) {
+    const parentId = row.parentId != null ? Number(row.parentId) : null;
+    if (parentId != null && parentId !== row.id && byId.has(parentId)) {
+      if (!childrenById.has(parentId)) childrenById.set(parentId, []);
+      childrenById.get(parentId).push(row);
+    } else {
+      roots.push(row);
+    }
+  }
+
+  const paths = new Map();
+  const place = (row, dir, used) => {
+    if (paths.has(row.id)) return;
+    const extension = path.extname(row.filePath || '');
+    const stem = claimExportName(used, exportNameStem(row.name, extension, row.typeName || 'Asset'));
+    const children = (childrenById.get(row.id) || []).filter(child => !paths.has(child.id));
+    if (!children.length) {
+      paths.set(row.id, `${dir}/${stem}${extension}`);
+      return;
+    }
+    const folder = `${dir}/${stem}`;
+    paths.set(row.id, `${folder}/${stem}${extension}`);
+    const inner = new Set([stem.toLowerCase()]);
+    children.forEach(child => place(child, folder, inner));
+  };
+
+  const usedByDir = new Map();
+  const placeRoot = (row) => {
+    const dir = `assets/${assetSubdirForTypeName(row.typeName)}`;
+    if (!usedByDir.has(dir)) usedByDir.set(dir, new Set());
+    place(row, dir, usedByDir.get(dir));
+  };
+  roots.forEach(placeRoot);
+  // Only a parentId cycle leaves anything unplaced; export those as roots.
+  rows.filter(row => !paths.has(row.id)).forEach(placeRoot);
+  return paths;
+}
+
 // Deep-walk parsed metadata collecting every `asset:<id>` reference so exports
 // pull in assets that are only referenced from a card/node's metadata (e.g. the
 // "last action" params or a Tripo input source), not just its primary link.
@@ -6309,25 +6396,38 @@ export async function buildProjectExport(projectId, { appVersion = '' } = {}) {
     files.push({ source: toAbsoluteStoragePath(storagePath), storagePath, dest });
   };
 
-  const assets = [];
+  const assetRows = [];
   for (const assetId of collectedIds) {
     const row = await get(
       db,
       `SELECT a.*, at.name AS typeName FROM Assets a JOIN AssetTypes at ON at.id = a.assetTypeId WHERE a.id = ?`,
       [assetId]
     );
-    if (!row || !row.filePath) continue;
+    if (row && row.filePath) assetRows.push(row);
+  }
+  const exportPaths = planProjectExportPaths(assetRows);
+  // A version inherits its parent's thumbnail FILE, so one stored thumbnail can
+  // back several assets; it is copied once, under the first asset's name.
+  const thumbnailPaths = new Map();
 
+  const assets = [];
+  for (const row of assetRows) {
+    const assetId = row.id;
     const subdir = assetSubdirForTypeName(row.typeName);
-    const fileBase = path.basename(row.filePath);
-    const relPath = `assets/${subdir}/${fileBase}`;
+    const relPath = exportPaths.get(assetId);
     addFile(row.filePath, relPath);
 
     let thumbnailRelPath = null;
     if (row.thumbnail) {
-      const thumbBase = path.basename(row.thumbnail);
-      thumbnailRelPath = `assets/thumbnails/${thumbBase}`;
-      addFile(row.thumbnail, thumbnailRelPath);
+      thumbnailRelPath = thumbnailPaths.get(row.thumbnail) || null;
+      if (!thumbnailRelPath) {
+        // Mirrors the asset's own path under thumbnails/, so it stays out of the
+        // folders a person browses but is still findable by the same name.
+        const stem = relPath.slice('assets/'.length, relPath.length - path.extname(row.filePath).length);
+        thumbnailRelPath = `assets/thumbnails/${stem}${path.extname(row.thumbnail)}`;
+        thumbnailPaths.set(row.thumbnail, thumbnailRelPath);
+        addFile(row.thumbnail, thumbnailRelPath);
+      }
     }
 
     // Paint document (base + layer textures live under paintdocs/<assetId>/).
