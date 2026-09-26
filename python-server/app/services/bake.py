@@ -21,11 +21,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import BAKE_TIMEOUT_S, WORK_DIR
-from ..schemas import BakeOptions
+from ..schemas import BakeOptions, FlattenOptions
 
 SENTINEL = "GENSTUDIO_EVT "  # keep in sync with app/tools/bake_worker.py
 
 _WORKER = Path(__file__).resolve().parents[1] / "tools" / "bake_worker.py"
+_FLATTEN_WORKER = Path(__file__).resolve().parents[1] / "tools" / "flatten_worker.py"
 
 _bake_lock = threading.Semaphore(1)
 
@@ -49,7 +50,12 @@ def run_bake(low_glb: bytes, high_glb: bytes, opts: BakeOptions,
         opt_path.write_text(opts.model_dump_json(), encoding="utf-8")
 
         with _bake_lock:
-            result = _run_worker(low_path, high_path, out_dir, opt_path, progress)
+            result = _run_worker(_WORKER, [
+                "--low", str(low_path),
+                "--high", str(high_path),
+                "--outdir", str(out_dir),
+                "--options", str(opt_path),
+            ], progress)
 
         if not result.get("ok"):
             raise RuntimeError(result.get("error") or "Bake failed.")
@@ -67,16 +73,50 @@ def run_bake(low_glb: bytes, high_glb: bytes, opts: BakeOptions,
         shutil.rmtree(job_dir, ignore_errors=True)
 
 
-def _run_worker(low_path: Path, high_path: Path, out_dir: Path, opt_path: Path, progress) -> dict:
+def run_flatten(mesh_glb: bytes, opts: FlattenOptions,
+                progress) -> tuple[dict[str, bytes], dict]:
+    """Bake `mesh_glb`'s full PBR look, under studio light, into one albedo.
+
+    The mesh must carry the packed atlas as a second UV set (see
+    tools/flatten_worker.py). Returns ({"albedo": png_bytes}, worker_stats).
+    Shares the bake semaphore: it is the same Cycles workload, and two of them at
+    once would only make both slower.
+    """
+    job_dir = WORK_DIR / f"flatten-{uuid4().hex}"
+    job_dir.mkdir(parents=True)
+    try:
+        mesh_path = job_dir / "mesh.glb"
+        mesh_path.write_bytes(mesh_glb)
+        out_dir = job_dir / "maps"
+        opt_path = job_dir / "options.json"
+        opt_path.write_text(opts.model_dump_json(), encoding="utf-8")
+
+        with _bake_lock:
+            result = _run_worker(_FLATTEN_WORKER, [
+                "--mesh", str(mesh_path),
+                "--outdir", str(out_dir),
+                "--options", str(opt_path),
+            ], progress)
+
+        if not result.get("ok"):
+            raise RuntimeError(result.get("error") or "Flatten failed.")
+
+        stats = result.get("stats") or {}
+        images: dict[str, bytes] = {}
+        for name, filename in (stats.get("maps") or {}).items():
+            path = out_dir / filename
+            if path.exists():
+                images[name] = path.read_bytes()
+        if "albedo" not in images:
+            raise RuntimeError("The flatten worker reported success but produced no albedo.")
+        return images, stats
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
+
+
+def _run_worker(worker: Path, worker_args: list[str], progress) -> dict:
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            str(_WORKER),
-            "--low", str(low_path),
-            "--high", str(high_path),
-            "--outdir", str(out_dir),
-            "--options", str(opt_path),
-        ],
+        [sys.executable, str(worker), *worker_args],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

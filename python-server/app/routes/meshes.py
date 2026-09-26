@@ -31,13 +31,13 @@ from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_sce
                       mesh_stats, scene_to_mesh)
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
                        ImpostorOptions,
-                       ConvertOptions, FitOptions, HiddenFaceOptions, InspectOptions,
+                       ConvertOptions, FitOptions, FlattenOptions, HiddenFaceOptions, InspectOptions,
                        RepairOptions, SegmentOptions)
 from ..services.assembly_fit import run_fit
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
 from ..services.hidden_faces import run_hidden_faces
-from ..services.bake import run_bake
+from ..services.bake import run_bake, run_flatten
 from ..services.collision import run_collision
 # The impostor baker lives under treegen only because that is where it was
 # first needed; it takes a plain Scene and knows nothing about trees.
@@ -245,6 +245,32 @@ async def bake(
         }
 
     return stream_payload(run, "Bake")
+
+
+@router.post("/flatten")
+async def flatten(
+    meshFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> StreamingResponse:
+    """Bake a PBR mesh's lit look into one albedo texture (mobile export).
+
+    One upload: the mesh itself, carrying its packed atlas as an extra UV set.
+    Returns images, like /bake — the terminal `done` event carries `maps`
+    ({"albedo": base64 PNG}) and the client applies it to its own geometry,
+    which is how rigs, clips and morphs survive untouched.
+    """
+    opts = _parse_options(options, FlattenOptions)
+    mesh_bytes = await _read_upload(meshFile)
+
+    def run(emit):
+        images, tool_stats = run_flatten(mesh_bytes, opts, progress=emit)
+        return {
+            "format": "png",
+            "maps": {name: base64.b64encode(data).decode("ascii") for name, data in images.items()},
+            "stats": {"tool": tool_stats},
+        }
+
+    return stream_payload(run, "Flatten")
 
 
 @router.post("/fit")

@@ -221,6 +221,35 @@ class BakeOptions(BaseModel):
                                                "blank maps. 0 disables the check.")
 
 
+class FlattenOptions(BaseModel):
+    """Options for the lit-albedo flatten (`/meshes/flatten`).
+
+    Bakes a PBR mesh's whole look — normal detail, occlusion, roughness, metal —
+    under a neutral studio light into ONE colour texture, for shaders that cannot
+    afford PBR (mobile unlit / Lambert). The mesh must carry a packed,
+    non-overlapping atlas as an extra UV set; the client builds it.
+    """
+
+    resolution: int = Field(default=2048, ge=64, le=8192,
+                            description="Albedo resolution (px). Cost scales with the square of this.")
+    samples: int = Field(default=64, ge=1, le=1024,
+                         description="Cycles samples per texel. Unlike a data bake this one is lit, so "
+                                     "it needs real sampling: 64 is clean on open surfaces, cavities "
+                                     "want 128+.")
+    lighting: Literal["studio", "soft"] = Field(
+        default="studio",
+        description="'studio' bakes a soft dome plus a gentle top key light — for UNLIT shaders, where "
+                    "the bake is the only light the mesh will ever get. 'soft' bakes occlusion and a "
+                    "mild top-down fill only — for SIMPLE LIT shaders, whose own light supplies the "
+                    "direction a baked key would double.")
+    exposure: float = Field(default=0.0, ge=-3.0, le=3.0,
+                            description="Exposure in stops, applied before the highlight roll-off.")
+    atlas_uv: int = Field(default=1, ge=1, le=7,
+                          description="Which glTF UV set (TEXCOORD_n) holds the packed atlas.")
+    margin: int = Field(default=8, ge=0, le=64,
+                        description="Texels of island dilation before the gutter fill.")
+
+
 class InspectOptions(BaseModel):
     """Options for the Game-Ready check (`/meshes/inspect`).
 

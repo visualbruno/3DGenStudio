@@ -8961,6 +8961,17 @@ app.post('/api/meshes/bake',
     }
   });
 
+// Lit-albedo flatten for mobile export: one mesh (carrying its packed atlas as a
+// second UV set) in, one baked albedo PNG out — same SSE contract as /bake.
+app.post('/api/meshes/flatten', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshTool('/meshes/flatten', req, res, { failureLabel: 'Flatten' });
+  } catch (err) {
+    console.error('Flatten proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Flatten failed' });
+  }
+});
+
 // Assembly fit: adapt a garment/armour piece so it follows a base body's
 // silhouette. Two meshes, like /bake — `meshFile` is the PIECE being modified
 // and `sourceFile` is the base body.

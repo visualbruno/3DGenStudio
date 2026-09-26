@@ -729,7 +729,7 @@ export function bakeSourceIsMisaligned(fit) {
 // values, not colour) and only base colour is sRGB; flipY is false throughout to
 // match the glTF convention the loader's own textures already use, and channel 0
 // stops aoMap being read from the uv1 three.js otherwise defaults it to.
-function textureFromBlob(blob, srgb) {
+export function textureFromBlob(blob, srgb) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(blob)
     new THREE.TextureLoader().load(

@@ -233,6 +233,34 @@ export async function bakeMaps(lowBlob, highBlob, { options = {}, fileName = 'lo
   return { maps, stats: data.stats?.tool || null }
 }
 
+// Lit-albedo flatten (headless Blender). ONE mesh in — carrying its packed atlas
+// as an extra UV set, see meshFlatten.js — and images out, like bakeMaps.
+// Resolves to { maps: { albedo: Blob }, stats }.
+export async function flattenBake(meshBlob, { options = {}, fileName = 'mesh.glb', onProgress = null } = {}) {
+  const form = new FormData()
+  form.append('meshFile', meshBlob, fileName)
+  form.append('options', JSON.stringify(options))
+
+  const response = await fetch(`${API_BASE}/meshes/flatten`, { method: 'POST', body: form })
+  if (!response.ok) {
+    let message = `Request failed (${response.status})`
+    try {
+      const payload = await response.json()
+      message = payload.detail ? `${payload.error}: ${payload.detail}` : (payload.error || message)
+    } catch {
+      // non-JSON error body — keep the status message
+    }
+    throw new Error(message)
+  }
+
+  const data = await readSseStream(response, onProgress)
+  const maps = {}
+  for (const [name, base64] of Object.entries(data.maps || {})) {
+    maps[name] = base64ToBlob(base64, 'image/png')
+  }
+  return { maps, stats: data.stats?.tool || null }
+}
+
 export const DEFAULT_BAKE_OPTIONS = {
   maps: ['normal', 'ao'],
   resolution: 2048,

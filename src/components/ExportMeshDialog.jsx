@@ -33,6 +33,12 @@ import {
   generateLods,
   inspectMesh
 } from '../utils/meshTools'
+import {
+  DEFAULT_FLATTEN_OPTIONS,
+  FLATTEN_SHADERS,
+  flattenMeshMaterials,
+  toUnlitGlb
+} from '../utils/meshFlatten'
 import './ExportMeshDialog.css'
 
 const LAST_OUTPUT_FOLDER_KEY = 'exportMeshDialog:lastOutputFolder'
@@ -89,6 +95,14 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
     allow_seam_breaking: false,
     ...DEFAULT_SIMPLIFY_OPTIONS,
   })
+  // Mobile: bake every material's full PBR look into ONE lit albedo. Opt-in and
+  // expensive (a lit Cycles bake), and it replaces the materials, so it must
+  // never be something an export does by default.
+  const [flattenEnabled, setFlattenEnabled] = useState(false)
+  const [flattenShader, setFlattenShader] = useState(DEFAULT_FLATTEN_OPTIONS.shader)
+  const [flattenResolution, setFlattenResolution] = useState(DEFAULT_FLATTEN_OPTIONS.resolution)
+  const [flattenSamples, setFlattenSamples] = useState(DEFAULT_FLATTEN_OPTIONS.samples)
+  const [flattenExposure, setFlattenExposure] = useState(DEFAULT_FLATTEN_OPTIONS.exposure)
   const [collisionEnabled, setCollisionEnabled] = useState(false)
   const [collisionMethod, setCollisionMethod] = useState(DEFAULT_COLLISION_OPTIONS.method)
   const [checking, setChecking] = useState(false)
@@ -101,9 +115,19 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
   // under its UCX naming convention. Everywhere else it ships as its own file.
   const embedsCollision = collisionEnabled && selectedFormat.preset === 'unreal'
   const setSimplifyOption = (key, value) => setSimplifyOptions(prev => ({ ...prev, [key]: value }))
+  const selectedFlattenShader = FLATTEN_SHADERS.find(entry => entry.value === flattenShader) || FLATTEN_SHADERS[0]
+  // Only GLB can say "unlit"; every other format gets the rough non-metal
+  // material the flatten produces, which imports as a plain textured diffuse.
+  const writesUnlit = flattenEnabled && flattenShader === 'unlit'
+  // A flattened source has one channel left worth transferring, so a level
+  // re-bake carries just that one: a normal or ORM map would feed a PBR shader
+  // the flatten exists to avoid.
+  const effectiveBakeMaps = flattenEnabled
+    ? (bakeMapNames.length ? ['base_color'] : [])
+    : bakeMapNames
   // The extras only outgrow a single column once one of them is expanded (or a
   // check report is on screen); until then the dialog stays a narrow form.
-  const wideLayout = lodEnabled || collisionEnabled || !!report
+  const wideLayout = lodEnabled || collisionEnabled || flattenEnabled || !!report
   // The simplifier column exists only while there are levels to simplify.
   const showSimplifyColumn = lodEnabled
 
@@ -163,7 +187,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
   // the collision hulls — so they all land in the same format as the main export.
   const filesFromGlb = async (glbBlob, base, onProgress) => {
     if (selectedFormat.value === 'glb') {
-      return [{ filename: `${base}.glb`, blob: glbBlob }]
+      return [{ filename: `${base}.glb`, blob: writesUnlit ? await toUnlitGlb(glbBlob, base) : glbBlob }]
     }
     if (selectedFormat.kind === 'preset') {
       const { blob } = await convertMesh(glbBlob, {
@@ -194,7 +218,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
     try {
       const files = []
       const notes = []
-      const needsService = selectedFormat.kind === 'preset' || lodEnabled || collisionEnabled
+      const needsService = selectedFormat.kind === 'preset' || lodEnabled || collisionEnabled || flattenEnabled
       // LOD0 keeps the primary file's name unless a chain was requested.
       const primaryBase = lodEnabled ? lodFileName(base, 0) : base
 
@@ -205,9 +229,45 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
 
       // The extras all derive from one source GLB, generated once.
       let sourceGlb = null
-      if (lodEnabled || collisionEnabled || selectedFormat.value === 'glb' || selectedFormat.kind === 'preset') {
+      if (lodEnabled || collisionEnabled || flattenEnabled || selectedFormat.value === 'glb' || selectedFormat.kind === 'preset') {
         setProgress({ frac: 0.06, message: 'Preparing source GLB…' })
         sourceGlb = await getSourceGlbBlob(base)
+      }
+
+      // ── Flatten to one lit albedo ──────────────────────────────────────────
+      // First, because everything after it — LODs, collision, the format
+      // conversion — should work from the mesh that actually ships. The result
+      // replaces the source GLB outright: same geometry, same rig and clips, one
+      // material with one texture.
+      if (flattenEnabled) {
+        const flat = await flattenMeshMaterials(sourceGlb, {
+          shader: flattenShader,
+          resolution: flattenResolution,
+          samples: flattenSamples,
+          exposure: flattenExposure,
+          baseName: base,
+          onProgress: evt => setProgress({
+            frac: 0.07 + 0.05 * (evt.frac ?? 0),
+            message: evt.message || 'Flattening materials…',
+          }),
+        })
+        sourceGlb = flat.blob
+        notes.push(`flattened to one ${flattenResolution}px lit albedo`
+          + (flat.atlas.repacked ? ` (${flat.atlas.islands.toLocaleString()} UV islands repacked)` : ' (original UV layout kept)'))
+        // More than one only when parts differ in culling or transparency; they
+        // all share the texture.
+        if (flat.materialCount > 1) {
+          notes.push(`${flat.materialCount} materials sharing it (parts differ in sidedness or transparency)`)
+        }
+        if (flat.atlas.unmapped) {
+          notes.push(`${flat.atlas.unmapped.toLocaleString()} triangle${flat.atlas.unmapped === 1 ? '' : 's'} without usable UVs mapped one by one`)
+        }
+        if (flat.stats?.has_alpha) notes.push('alpha kept')
+        // Worth saying: a tenth of the texels flattened at the shoulder of the
+        // tone curve means the exposure is washing the brightest parts out.
+        if ((flat.stats?.clipped_frac || 0) > 0.1) {
+          notes.push(`${Math.round(flat.stats.clipped_frac * 100)}% of the albedo hit the highlight roll-off — lower the exposure if it looks washed out`)
+        }
       }
 
       // Simplify from the ORIGINAL source, before any collision merge — hulls
@@ -234,7 +294,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
       // Simplification moves vertices and can weld UV seams, so the source
       // texture stops landing where it did and the level looks smeared. Baking
       // from the original mesh onto the simplified UVs is the fix.
-      if (bakeEnabled && reduced.length && bakeMapNames.length) {
+      if (bakeEnabled && reduced.length && effectiveBakeMaps.length) {
         const span = 0.28 / reduced.length
         for (let index = 0; index < reduced.length; index += 1) {
           const lod = reduced[index]
@@ -291,7 +351,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
             const { maps, stats } = await bakeMaps(lod.blob, sourceGlb, {
               options: {
                 ...DEFAULT_BAKE_OPTIONS,
-                maps: bakeMapNames,
+                maps: effectiveBakeMaps,
                 resolution,
                 samples: bakeSamples,
               },
@@ -358,7 +418,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
       // whole job here: LOD0's UVs are the source's, so the image only has to
       // get smaller — no rays, no Blender, no round trip through the service.
       let primaryGlb = sourceGlb
-      const primaryResolution = bakeEnabled && bakeMapNames.length
+      const primaryResolution = bakeEnabled && effectiveBakeMaps.length
         ? lodBakeResolution(bakeResolution, 0, bakeFalloff)
         : 0
       if (lodEnabled && primaryResolution) {
@@ -393,9 +453,13 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
         // Byte-passthrough when the source is a .glb (rig/animations/textures
         // untouched); three.js re-export otherwise — or the resampled copy above,
         // when a bake resolution was asked for.
-        files.push({ filename: `${primaryBase}.glb`, blob: primaryGlb })
+        files.push(...await filesFromGlb(primaryGlb, primaryBase))
       } else if (selectedFormat.kind !== 'preset') {
-        const object = getObject3D ? await getObject3D() : await loadObject3DFromUrl(meshUrl)
+        // A flattened export has to write the flattened mesh, not re-read the
+        // original with its PBR materials.
+        const object = flattenEnabled
+          ? await loadGlbBlob(sourceGlb)
+          : (getObject3D ? await getObject3D() : await loadObject3DFromUrl(meshUrl))
         if (!object) {
           throw new Error('No mesh is available to export.')
         }
@@ -543,6 +607,83 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
                 <label className="export-mesh__check">
                   <input
                     type="checkbox"
+                    checked={flattenEnabled}
+                    onChange={event => { setFlattenEnabled(event.target.checked); setSuccess('') }}
+                  />
+                  <span>Flatten to one lit albedo (mobile)</span>
+                </label>
+                {flattenEnabled && (
+                  <div className="export-mesh__extra-body">
+                    <label className="export-mesh__inline-field">
+                      <span>Target shader</span>
+                      <select
+                        className="export-mesh__select export-mesh__select--inline"
+                        value={flattenShader}
+                        onChange={event => setFlattenShader(event.target.value)}
+                      >
+                        {FLATTEN_SHADERS.map(entry => (
+                          <option key={entry.value} value={entry.value}>{entry.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <p className="export-mesh__hint">{selectedFlattenShader.hint}</p>
+                    <label className="export-mesh__inline-field">
+                      <span>Resolution</span>
+                      <select
+                        className="export-mesh__select export-mesh__select--inline"
+                        value={String(flattenResolution)}
+                        onChange={event => setFlattenResolution(Number(event.target.value))}
+                      >
+                        {[512, 1024, 2048, 4096].map(n => (
+                          <option key={n} value={String(n)}>{n} × {n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="export-mesh__inline-field">
+                      <span>Samples</span>
+                      <select
+                        className="export-mesh__select export-mesh__select--inline"
+                        value={String(flattenSamples)}
+                        onChange={event => setFlattenSamples(Number(event.target.value))}
+                      >
+                        {[16, 32, 64, 128, 256].map(n => (
+                          <option key={n} value={String(n)}>{n}{n === 16 ? ' (preview)' : ''}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="export-mesh__inline-field">
+                      <span>Exposure</span>
+                      <input
+                        className="export-mesh__input export-mesh__input--inline"
+                        type="number"
+                        min={-3}
+                        max={3}
+                        step={0.25}
+                        value={flattenExposure}
+                        onChange={event => setFlattenExposure(Math.min(3, Math.max(-3, Number(event.target.value) || 0)))}
+                      />
+                      <span className="export-mesh__hint">stops</span>
+                    </label>
+                    <p className="export-mesh__hint">
+                      Bakes the normal detail, occlusion, roughness and metal of every material into a
+                      single colour texture under a neutral studio light, then gives every mesh a
+                      material that uses it. Specular highlights and cast shadows are left out on
+                      purpose: they belong to one camera and one light, and baked in they would stay
+                      stuck on the surface. Metals keep their colour. The existing UV islands are
+                      repacked into one atlas rather than re-unwrapped, so a rig, its skin weights and
+                      its animation clips come through unchanged.
+                    </p>
+                    <p className="export-mesh__hint">
+                      Runs a lit Cycles bake on the Mesh Tools service: seconds for a prop at 64
+                      samples, a few minutes for a dense character at 4096px. Raise the samples if
+                      cavities look grainy.
+                    </p>
+                  </div>
+                )}
+
+                <label className="export-mesh__check">
+                  <input
+                    type="checkbox"
                     checked={lodEnabled}
                     onChange={event => { setLodEnabled(event.target.checked); setSuccess('') }}
                   />
@@ -576,7 +717,13 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
                     </label>
                     {bakeEnabled && (
                       <div className="export-mesh__extra-body">
-                        <div className="export-mesh__map-row">
+                        {flattenEnabled && (
+                          <p className="export-mesh__hint">
+                            With the flatten on, each level re-bakes the flattened albedo only — it
+                            is the one channel the shipped material has.
+                          </p>
+                        )}
+                        <div className="export-mesh__map-row" style={flattenEnabled ? { display: 'none' } : undefined}>
                           {LOD_BAKE_MAPS.map(name => (
                             <label className="export-mesh__check" key={name}>
                               <input
@@ -641,7 +788,7 @@ export default function ExportMeshDialog({ getObject3D, meshUrl, defaultName = '
                           level&apos;s UVs in the exported file.
                         </p>
                         <p className="export-mesh__hint">
-                          Bakes {bakeMapNames.length ? bakeMapNames.map(name => BAKE_MAP_LABELS[name] || name).join(', ') : 'nothing'}
+                          Bakes {effectiveBakeMaps.length ? effectiveBakeMaps.map(name => BAKE_MAP_LABELS[name] || name).join(', ') : 'nothing'}
                           {' '}from the unsimplified mesh onto each level&apos;s own UVs, at{' '}
                           {lodRatios.slice(1).map((_, index) => `${lodBakeResolution(bakeResolution, index + 1, bakeFalloff)}px`).join(' / ')}.
                           LOD0 is the source, so it is never baked — its geometry and UVs are

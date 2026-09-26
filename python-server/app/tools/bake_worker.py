@@ -458,12 +458,17 @@ def measure_coverage(low, outdir, written: dict, resolution: int) -> dict | None
         return None
 
 
-def rasterize_uv_layout(low, width: int, height: int):
+def rasterize_uv_layout(low, width: int, height: int, layer_name: str | None = None):
     """Boolean (height, width) mask of the texels the low-poly's UVs cover.
 
     None when it cannot be built. This is the authoritative "inside the layout"
     test — the texels the shader can actually sample — used both to score bake
     coverage and to decide which texels the gutter fill may overwrite.
+
+    `low` may also be a LIST of objects, rasterised into one mask, and
+    `layer_name` picks a UV set other than the active-render one — both for the
+    flatten worker, which bakes every object of a scene into one shared atlas
+    held in a second UV set.
     """
     try:
         import numpy as np
@@ -471,29 +476,35 @@ def rasterize_uv_layout(low, width: int, height: int):
     except Exception:  # noqa: BLE001
         return None
 
-    mesh = low.data
-    # Blender bakes into the ACTIVE RENDER uv set, which is not necessarily the
-    # one selected in the UI — rasterising the other one would describe a layout
-    # the bake never wrote to.
-    uv_layer = next((layer for layer in mesh.uv_layers if layer.active_render), mesh.uv_layers.active)
-    if uv_layer is None:
-        return None
-    # Removed in newer Blender, where the cache is maintained automatically.
-    if hasattr(mesh, "calc_loop_triangles"):
-        mesh.calc_loop_triangles()
-
     layout = Image.new("1", (width, height), 0)
     draw = ImageDraw.Draw(layout)
-    data = uv_layer.data
-    # Blender's V runs bottom-up and its PNG writer flips on save, so the saved
-    # image's top row is V=1 — hence (1 - v) here. Getting this backwards would
-    # compare the layout against a mirror image of itself and report nonsense.
-    for triangle in mesh.loop_triangles:
-        draw.polygon([
-            (data[loop].uv[0] * width, (1.0 - data[loop].uv[1]) * height)
-            for loop in triangle.loops
-        ], fill=1)
-    return np.asarray(layout, dtype=bool)
+    drawn = False
+    for obj in (low if isinstance(low, (list, tuple)) else [low]):
+        mesh = obj.data
+        if layer_name is not None:
+            uv_layer = mesh.uv_layers.get(layer_name)
+        else:
+            # Blender bakes into the ACTIVE RENDER uv set, which is not
+            # necessarily the one selected in the UI — rasterising the other one
+            # would describe a layout the bake never wrote to.
+            uv_layer = next((layer for layer in mesh.uv_layers if layer.active_render), mesh.uv_layers.active)
+        if uv_layer is None:
+            continue
+        # Removed in newer Blender, where the cache is maintained automatically.
+        if hasattr(mesh, "calc_loop_triangles"):
+            mesh.calc_loop_triangles()
+
+        data = uv_layer.data
+        # Blender's V runs bottom-up and its PNG writer flips on save, so the saved
+        # image's top row is V=1 — hence (1 - v) here. Getting this backwards would
+        # compare the layout against a mirror image of itself and report nonsense.
+        for triangle in mesh.loop_triangles:
+            draw.polygon([
+                (data[loop].uv[0] * width, (1.0 - data[loop].uv[1]) * height)
+                for loop in triangle.loops
+            ], fill=1)
+            drawn = True
+    return np.asarray(layout, dtype=bool) if drawn else None
 
 
 def _erode(mask, iterations: int = 1):
@@ -516,7 +527,7 @@ def _erode(mask, iterations: int = 1):
     return out
 
 
-def fill_gutters(low, outdir, written: dict):
+def fill_gutters(low, outdir, written: dict, layout=None):
     """Flood every baked map's empty gutter with the nearest in-layout colour.
 
     Returns {map_name: fraction_of_image_filled}, or None when it could not run
@@ -539,6 +550,9 @@ def fill_gutters(low, outdir, written: dict):
     Must run AFTER pack_orm: that reads the bake's alpha and tests colour for
     exactly zero to decide a channel is empty, and both of those stop meaning
     what they mean once the gutter carries colour.
+
+    `layout` is a precomputed rasterize_uv_layout mask, for callers whose layout
+    is not the low-poly's active-render UV set (the flatten worker's atlas).
     """
     try:
         import numpy as np
@@ -548,13 +562,14 @@ def fill_gutters(low, outdir, written: dict):
         print(f"Gutter fill unavailable ({exc}); UV seams may darken at distance.", flush=True)
         return None
 
-    first = next((written[name] for name in BAKE_ORDER if name in written), None)
+    first = next((written[name] for name in BAKE_ORDER if name in written), None)         or next(iter(written.values()), None)
     if not first:
         return None
     try:
         with Image.open(outdir / first) as probe:
             width, height = probe.size
-        layout = rasterize_uv_layout(low, width, height)
+        if layout is None:
+            layout = rasterize_uv_layout(low, width, height)
         if layout is None or not layout.any():
             return None
 
