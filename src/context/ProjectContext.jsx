@@ -333,8 +333,11 @@ export function ProjectProvider({ children }) {
     return data
   }
 
-  const deleteAssetEdit = async ({ filePath }) => {
+  const deleteAssetEdit = async ({ filePath, force = false }) => {
     const params = new URLSearchParams({ filePath })
+    if (force) {
+      params.set('force', 'true')
+    }
     const res = await fetch(`${API_BASE}/assets/library/edits?${params.toString()}`, {
       method: 'DELETE'
     })
@@ -346,7 +349,10 @@ export function ProjectProvider({ children }) {
     const data = await res.json().catch(() => ({}))
 
     if (!res.ok) {
-      throw new Error(data?.error || 'Failed to delete asset edit')
+      const error = new Error(data?.error || 'Failed to delete asset edit')
+      error.status = res.status
+      error.details = data
+      throw error
     }
 
     return data
@@ -590,8 +596,12 @@ export function ProjectProvider({ children }) {
 
   const deleteProject = async (id, { deleteAssets = false } = {}) => {
     const query = deleteAssets ? '?deleteAssets=true' : ''
-    await fetch(`${API_BASE}/projects/${id}${query}`, { method: 'DELETE' })
+    const res = await fetch(`${API_BASE}/projects/${id}${query}`, { method: 'DELETE' })
     await fetchProjects()
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data?.error || 'Failed to delete project')
+    }
   }
 
   // ---- Brainstorming Boards ------------------------------------------------

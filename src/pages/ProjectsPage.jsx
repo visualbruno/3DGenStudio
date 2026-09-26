@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjects } from '../context/ProjectContext'
 import { useSettings } from '../context/SettingsContext.shared'
+import { useNotifications } from '../context/NotificationContext'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
@@ -628,6 +629,7 @@ const CHANGE_LOG_ENTRIES = [
 export default function ProjectsPage() {
   const { projects, createProject, updateProject, deleteProject } = useProjects()
   const { settings, loading: settingsLoading } = useSettings()
+  const { addNotification } = useNotifications()
   const navigate = useNavigate()
   const [showCreate, setShowCreate] = useState(false)
   const [showChangeLog, setShowChangeLog] = useState(false)
@@ -661,7 +663,16 @@ export default function ProjectsPage() {
     if (!projectToDelete) return
     const id = projectToDelete.id
     setProjectToDelete(null)
-    await deleteProject(id, { deleteAssets })
+    try {
+      await deleteProject(id, { deleteAssets })
+    } catch (err) {
+      addNotification({
+        title: 'Project not deleted',
+        message: err.message || 'Failed to delete project',
+        source: 'Projects',
+        tone: 'error'
+      })
+    }
   }
 
   const openEdit = (project) => {

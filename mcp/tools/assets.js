@@ -511,7 +511,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
       type: z.enum(['image', 'mesh', 'brush', 'tree', 'vfx', 'building']).optional().describe('kind "asset" only: the asset type'),
       filename: z.string().min(1).optional().describe('kind "asset" only: the stored filename from list_library_assets'),
       filePath: z.string().min(1).optional().describe('kind "edit"/"version" only: the stored filePath'),
-      force: z.boolean().default(false).describe('Delete even when the entry is linked to a project (kind "asset" and "version").')
+      force: z.boolean().default(false).describe('Delete even when the entry is linked to a project (any kind).')
     },
     annotations: { destructiveHint: true }
   }, toolHandler(async ({ kind, confirm, type, filename, filePath, force = false }) => {
@@ -522,7 +522,7 @@ export function registerAssetTools(server, { api, notifyMutation }) {
       await api.apiJson('DELETE', '/assets/library', { query: { type, filename, force: String(force) } });
     } else if (kind === 'edit') {
       if (!filePath) throw new Error('kind "edit" requires filePath.');
-      await api.apiJson('DELETE', '/assets/library/edits', { query: { filePath } });
+      await api.apiJson('DELETE', '/assets/library/edits', { query: { filePath, force: String(force) } });
     } else {
       if (!filePath) throw new Error('kind "version" requires filePath.');
       await api.apiJson('DELETE', '/assets/library/versions', { query: { filePath, force: String(force) } });

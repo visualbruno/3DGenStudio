@@ -653,13 +653,23 @@ async function commitStagedUpload(file, assetType) {
 
 app.delete('/api/assets/library/edits', async (req, res) => {
   try {
-    const { filePath } = req.query;
+    const { filePath, force } = req.query;
 
     if (!filePath) {
       return res.status(400).json({ error: 'filePath is required' });
     }
 
-    const result = await deleteAssetEditByFilePath(String(filePath));
+    const result = await deleteAssetEditByFilePath(String(filePath), {
+      force: String(force || '').toLowerCase() === 'true'
+    });
+
+    if (result.status === 'linked') {
+      return res.status(409).json({
+        error: 'Edit is linked to a project',
+        projectId: result.projectId,
+        projectName: result.projectName || null
+      });
+    }
 
     if (result.status === 'not-found') {
       return res.status(404).json({ error: 'Edit not found' });
@@ -6654,7 +6664,8 @@ app.delete('/api/projects/:id', async (req, res) => {
     const deleteAssets = req.query.deleteAssets === 'true';
     await deleteProjectById(Number(req.params.id), { deleteAssets });
     res.status(204).end();
-  } catch {
+  } catch (err) {
+    console.error('Failed to delete project:', err);
     res.status(500).json({ error: 'Deletion failed' });
   }
 });
@@ -10346,7 +10357,7 @@ app.delete('/api/assets/:id', async (req, res) => {
     }
 
     if (result.status === 'linked') {
-      return res.status(409).json({ error: 'Cannot delete an asset while it is linked to a card' });
+      return res.status(409).json({ error: 'Cannot delete an asset while it, or one of its edits/versions, is linked to a project or card' });
     }
 
     res.status(204).end();

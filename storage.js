@@ -2976,71 +2976,95 @@ export async function getProjectById(projectId) {
   return row ? mapProjectRow(row) : null;
 }
 
+// SQL condition: the asset aliased `alias` is still used — it belongs to a
+// project or sits on a card. Cards_Assets.assetId is ON DELETE RESTRICT, so an
+// asset on a card cannot be deleted, directly or through a parentId cascade.
+const assetInUseSql = alias => `(
+  EXISTS (SELECT 1 FROM Assets_Projects WHERE Assets_Projects.assetId = ${alias}.id)
+  OR EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = ${alias}.id)
+)`;
+
 export async function deleteProjectById(projectId, { deleteAssets = false } = {}) {
   const db = await getDb();
 
-  let candidateAssetIds = [];
-  if (deleteAssets) {
-    const projectAssetRows = await all(
-      db,
-      'SELECT DISTINCT assetId FROM Assets_Projects WHERE projectId = ?',
-      [projectId]
-    );
-    const directIds = projectAssetRows.map(row => row.assetId);
-
-    if (directIds.length > 0) {
-      const directPlaceholders = directIds.map(() => '?').join(',');
-      const siblingRows = await all(
-        db,
-        `SELECT id FROM Assets
-         WHERE filePath IN (SELECT filePath FROM Assets WHERE id IN (${directPlaceholders}))`,
-        directIds
+  // One transaction: a failing asset sweep must not leave the project deleted
+  // and its assets behind with nothing left to find them by. That is exactly
+  // what happened when the Projects row went first and the sweep then hit a
+  // RESTRICT.
+  const allDeletedRows = await withTransaction(db, async tx => {
+    let candidateAssetIds = [];
+    if (deleteAssets) {
+      const projectAssetRows = await all(
+        tx,
+        'SELECT DISTINCT assetId FROM Assets_Projects WHERE projectId = ?',
+        [projectId]
       );
-      candidateAssetIds = siblingRows.map(row => row.id);
+      const directIds = projectAssetRows.map(row => row.assetId);
+
+      if (directIds.length > 0) {
+        const directPlaceholders = directIds.map(() => '?').join(',');
+        const siblingRows = await all(
+          tx,
+          `SELECT id FROM Assets
+           WHERE filePath IN (SELECT filePath FROM Assets WHERE id IN (${directPlaceholders}))`,
+          directIds
+        );
+        candidateAssetIds = siblingRows.map(row => row.id);
+      }
     }
-  }
 
-  await run(db, 'DELETE FROM Projects WHERE id = ?', [projectId]);
+    await run(tx, 'DELETE FROM Projects WHERE id = ?', [projectId]);
 
-  if (!deleteAssets || candidateAssetIds.length === 0) return;
+    if (!deleteAssets || candidateAssetIds.length === 0) return [];
 
-  const placeholders = candidateAssetIds.map(() => '?').join(',');
+    const placeholders = candidateAssetIds.map(() => '?').join(',');
 
-  // The Projects row is gone, so its Assets_Projects rows cascaded with it: an
-  // asset with no membership left belonged to this project only and can go.
-  const eligibleRows = await all(
-    db,
-    `SELECT a.id, a.filePath, a.thumbnail
-     FROM Assets a
-     WHERE a.id IN (${placeholders})
-       AND a.assetTypeId NOT IN (
-             SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree', 'Vfx', 'Building')
-           )
-       AND NOT EXISTS (SELECT 1 FROM Assets_Projects WHERE Assets_Projects.assetId = a.id)
-       AND NOT EXISTS (SELECT 1 FROM Cards_Assets WHERE Cards_Assets.assetId = a.id)`,
-    candidateAssetIds
-  );
+    // The Projects row is gone, so its Assets_Projects rows and cards cascaded
+    // with it: an asset nothing uses any more belonged to this project only and
+    // can go. Deleting it cascades to its edits/versions, so it stays while any
+    // of those is still used elsewhere (an edit placed on another project's
+    // card) — the cascade would take that edit from the other project, or fail
+    // on the card's RESTRICT.
+    const eligibleRows = await all(
+      tx,
+      `SELECT a.id, a.filePath, a.thumbnail
+       FROM Assets a
+       WHERE a.id IN (${placeholders})
+         AND a.assetTypeId NOT IN (
+               SELECT id FROM AssetTypes WHERE name IN ('Workflow', 'Brush', 'Tree', 'Vfx', 'Building')
+             )
+         AND NOT ${assetInUseSql('a')}
+         AND NOT EXISTS (
+               SELECT 1 FROM Assets child
+               WHERE child.parentId = a.id AND ${assetInUseSql('child')}
+             )`,
+      candidateAssetIds
+    );
 
-  if (eligibleRows.length === 0) return;
+    if (eligibleRows.length === 0) return [];
 
-  const eligibleIds = eligibleRows.map(row => row.id);
-  const eligiblePlaceholders = eligibleIds.map(() => '?').join(',');
-  const childRows = await all(
-    db,
-    `SELECT id, filePath, thumbnail FROM Assets WHERE parentId IN (${eligiblePlaceholders})`,
-    eligibleIds
-  );
+    const eligibleIds = eligibleRows.map(row => row.id);
+    const eligiblePlaceholders = eligibleIds.map(() => '?').join(',');
+    const childRows = await all(
+      tx,
+      `SELECT id, filePath, thumbnail FROM Assets WHERE parentId IN (${eligiblePlaceholders})`,
+      eligibleIds
+    );
 
-  const allDeletedRows = [...eligibleRows, ...childRows];
+    await run(
+      tx,
+      `DELETE FROM Assets WHERE id IN (${eligiblePlaceholders})`,
+      eligibleIds
+    );
+
+    return [...eligibleRows, ...childRows];
+  });
+
+  if (allDeletedRows.length === 0) return;
+
   const allDeletedIds = allDeletedRows.map(row => row.id);
   const filePathsToCheck = new Set(allDeletedRows.map(row => row.filePath).filter(Boolean));
   const thumbnailsToCheck = new Set(allDeletedRows.map(row => row.thumbnail).filter(Boolean));
-
-  await run(
-    db,
-    `DELETE FROM Assets WHERE id IN (${eligiblePlaceholders})`,
-    eligibleIds
-  );
 
   for (const filePath of filePathsToCheck) {
     const stillReferenced = await get(
@@ -4870,7 +4894,7 @@ export async function renameAssetEditByFilePath(filePath, name) {
   };
 }
 
-export async function deleteAssetEditByFilePath(filePath) {
+export async function deleteAssetEditByFilePath(filePath, { force = false } = {}) {
   const db = await getDb();
   const storedFilePath = toStoredAssetPath('image', filePath);
   const existingEdit = await get(
@@ -4887,7 +4911,35 @@ export async function deleteAssetEditByFilePath(filePath) {
     return { status: 'not-found' };
   }
 
-  await run(db, 'DELETE FROM Assets WHERE filePath = ? AND parentId IS NOT NULL', [storedFilePath]);
+  // Same contract as a mesh version: an edit a project still uses is refused
+  // unless forced, and a forced delete detaches it first. Cards_Assets is ON
+  // DELETE RESTRICT, so deleting an edit that sits on a card would just fail.
+  const editRows = await all(
+    db,
+    'SELECT id FROM Assets WHERE filePath = ? AND parentId IS NOT NULL',
+    [storedFilePath]
+  );
+  const editIds = editRows.map(row => row.id);
+  const editReference = `edit:${existingEdit.filePath}`;
+
+  if (!force) {
+    for (const editId of editIds) {
+      const linkedProject = await findProjectLinkedToVersion(db, editId, editReference);
+      if (linkedProject) {
+        return {
+          status: 'linked',
+          projectId: linkedProject.projectId,
+          projectName: linkedProject.projectName || null
+        };
+      }
+    }
+  }
+
+  await withTransaction(db, async tx => {
+    await run(tx, 'DELETE FROM Cards_Attributes WHERE attributeValue = ?', [editReference]);
+    await detachAssetsFromCards(tx, editIds);
+    await run(tx, 'DELETE FROM Assets WHERE filePath = ? AND parentId IS NOT NULL', [storedFilePath]);
+  });
 
   const absoluteEditFilePath = toAbsoluteStoragePath(existingEdit.filePath);
   await fs.rm(absoluteEditFilePath, { force: true }).catch(() => null);
@@ -5007,11 +5059,11 @@ export async function deleteAssetVersionByFilePath(filePath, { force = false } =
   // Force delete (or unlinked): detach any project references so cards/nodes
   // don't keep pointing at a file that no longer exists. Node.assetId is
   // ON DELETE SET NULL, so direct graph-node attachments clear when the row goes.
-  await run(db, 'DELETE FROM Cards_Attributes WHERE attributeValue = ?', [editReference]);
-  await run(db, 'DELETE FROM Cards_Assets WHERE assetId = ?', [version.id]);
-  await run(db, 'DELETE FROM Assets_Projects WHERE assetId = ?', [version.id]);
-
-  await run(db, 'DELETE FROM Assets WHERE id = ? AND parentId IS NOT NULL', [version.id]);
+  await withTransaction(db, async tx => {
+    await run(tx, 'DELETE FROM Cards_Attributes WHERE attributeValue = ?', [editReference]);
+    await detachAssetsFromCards(tx, [version.id]);
+    await run(tx, 'DELETE FROM Assets WHERE id = ? AND parentId IS NOT NULL', [version.id]);
+  });
 
   // Only the mesh file itself is removed — the thumbnail is typically inherited
   // from (shared with) the parent asset, so deleting it would break the parent.
@@ -5069,62 +5121,38 @@ export async function deleteLibraryAssetByFilePath(type, filePath, { force = fal
     return { status: 'deleted' };
   }
 
-  const childAssetRows = normalizedType === 'Image' && assets.length > 0
-    ? await all(
-      db,
-      `SELECT id, filePath
-       FROM Assets
-       WHERE parentId IN (${assets.map(() => '?').join(', ')})`,
-      assets.map(asset => asset.id)
-    )
-    : [];
-
-  if (childAssetRows.length > 0) {
-    await run(
-      db,
-      `DELETE FROM Cards_Assets
-       WHERE assetId IN (${childAssetRows.map(() => '?').join(', ')})`,
-      childAssetRows.map(childAsset => childAsset.id)
-    );
-
-    await run(
-      db,
-      `DELETE FROM Assets
-       WHERE id IN (${childAssetRows.map(() => '?').join(', ')})`,
-      childAssetRows.map(childAsset => childAsset.id)
-    );
-  }
-
   const assetIds = assets.map(asset => asset.id);
-  const linkedCardRows = assetIds.length > 0
-    ? await all(
-      db,
-      `SELECT cardId, assetId
-       FROM Cards_Assets
-       WHERE assetId IN (${assetIds.map(() => '?').join(', ')})`,
-      assetIds
-    )
-    : [];
+  // Every type's children, not just an image's edits: a mesh's versions go with
+  // it through the parentId cascade, and a version on a card would make that
+  // cascade fail on Cards_Assets' RESTRICT.
+  const childAssetRows = await all(
+    db,
+    `SELECT id, filePath, thumbnail
+     FROM Assets
+     WHERE parentId IN (${assetIds.map(() => '?').join(', ')})`,
+    assetIds
+  );
+  const childAssetIds = childAssetRows.map(childAsset => childAsset.id);
 
-  if (linkedCardRows.length > 0) {
-    await run(
-      db,
-      `DELETE FROM Cards_Assets
-       WHERE assetId IN (${assetIds.map(() => '?').join(', ')})`,
-      assetIds
-    );
-  }
+  await withTransaction(db, async tx => {
+    for (const childAssetRow of childAssetRows) {
+      await run(tx, 'DELETE FROM Cards_Attributes WHERE attributeValue = ?', [`edit:${childAssetRow.filePath}`]);
+    }
+    await detachAssetsFromCards(tx, [...childAssetIds, ...assetIds]);
 
-  for (const asset of assets) {
-    await run(db, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
-  }
+    if (childAssetIds.length > 0) {
+      await run(
+        tx,
+        `DELETE FROM Assets
+         WHERE id IN (${childAssetIds.map(() => '?').join(', ')})`,
+        childAssetIds
+      );
+    }
 
-  const affectedCardIds = [...new Set(linkedCardRows.map(row => row.cardId).filter(cardId => Number.isInteger(cardId)))];
-  for (const cardId of affectedCardIds) {
-    await normalizeCardAssetPositions(db, cardId);
-  }
-
-  await deleteCardsIfEmpty(db, affectedCardIds);
+    for (const asset of assets) {
+      await run(tx, 'DELETE FROM Assets WHERE id = ?', [asset.id]);
+    }
+  });
 
   await fs.rm(toAbsoluteStoragePath(storedFilePath), { force: true }).catch(() => null);
 
@@ -5138,15 +5166,53 @@ export async function deleteLibraryAssetByFilePath(type, filePath, { force = fal
   // the shared data/assets/images folder, so deleting path.dirname() here would
   // recursively wipe every image. Guard on filePath still being referenced by
   // another asset row (edits and sources can share files after attach/link).
+  // Mesh versions can have their own thumbnail, or share the parent's, so the
+  // same guard applies to those.
   for (const childAssetRow of childAssetRows) {
-    if (!childAssetRow.filePath) continue;
-    const stillReferenced = await get(db, 'SELECT 1 FROM Assets WHERE filePath = ? LIMIT 1', [childAssetRow.filePath]);
-    if (!stillReferenced) {
-      await fs.rm(toAbsoluteStoragePath(childAssetRow.filePath), { force: true }).catch(() => null);
+    if (childAssetRow.filePath) {
+      const stillReferenced = await get(db, 'SELECT 1 FROM Assets WHERE filePath = ? LIMIT 1', [childAssetRow.filePath]);
+      if (!stillReferenced) {
+        await fs.rm(toAbsoluteStoragePath(childAssetRow.filePath), { force: true }).catch(() => null);
+      }
+    }
+    if (childAssetRow.thumbnail) {
+      const stillReferenced = await get(db, 'SELECT 1 FROM Assets WHERE thumbnail = ? LIMIT 1', [childAssetRow.thumbnail]);
+      if (!stillReferenced) {
+        await fs.rm(toAbsoluteStoragePath(childAssetRow.thumbnail), { force: true }).catch(() => null);
+      }
     }
   }
 
+  for (const id of [...assetIds, ...childAssetIds]) {
+    await fs.rm(paintDocSubdirForAsset(id), { recursive: true, force: true }).catch(() => null);
+  }
+
   return { status: 'deleted' };
+}
+
+// Take assets off every card that shows them: the link rows go, the assets
+// left on each card close ranks, and a Kanban card left empty is pruned.
+// Cards_Assets.assetId is ON DELETE RESTRICT, so this has to happen before an
+// asset (or the root its parentId cascades from) can be deleted.
+async function detachAssetsFromCards(db, assetIds = []) {
+  const ids = [...new Set(assetIds.filter(id => Number.isInteger(id)))];
+  if (ids.length === 0) return;
+
+  const placeholders = ids.map(() => '?').join(', ');
+  const linkRows = await all(
+    db,
+    `SELECT DISTINCT cardId FROM Cards_Assets WHERE assetId IN (${placeholders})`,
+    ids
+  );
+  if (linkRows.length === 0) return;
+
+  await run(db, `DELETE FROM Cards_Assets WHERE assetId IN (${placeholders})`, ids);
+
+  const cardIds = linkRows.map(row => row.cardId);
+  for (const cardId of cardIds) {
+    await normalizeCardAssetPositions(db, cardId);
+  }
+  await deleteCardsIfEmpty(db, cardIds);
 }
 
 async function deleteCardsIfEmpty(db, cardIds = []) {
@@ -5221,6 +5287,17 @@ export async function deleteAssetById(assetId, { projectId = null } = {}) {
     }
 
     return { status: 'unlinked' };
+  }
+
+  // Deleting the root cascades to its edits/versions; one still used by a
+  // project or a card would be taken from it (or trip the card's RESTRICT).
+  const childInUse = await get(
+    db,
+    `SELECT 1 FROM Assets child WHERE child.parentId = ? AND ${assetInUseSql('child')} LIMIT 1`,
+    [assetId]
+  );
+  if (childInUse) {
+    return { status: 'linked' };
   }
 
   const deletedRows = await all(

@@ -935,36 +935,50 @@ export default function AssetsPage() {
     }
   }
 
-  const handleDeleteEdit = async (asset, edit) => {
+  const handleDeleteEdit = async (asset, edit, { force = false } = {}) => {
     if (!edit?.filePath) {
       return
     }
 
-    const confirmed = window.confirm(`Delete edit "${edit.name?.trim() || 'Unnamed edit'}"?`)
-    if (!confirmed) {
-      return
+    if (!force) {
+      const confirmed = window.confirm(`Delete edit "${edit.name?.trim() || 'Unnamed edit'}"?`)
+      if (!confirmed) {
+        return
+      }
     }
 
     setDeletingEditKey(edit.filePath)
     setImportFeedback(null)
 
     try {
-      await deleteAssetEdit({ filePath: edit.filePath })
+      await deleteAssetEdit({ filePath: edit.filePath, force })
 
       const data = await getLibraryAssets()
       setLibraryAssets(data)
 
       const refreshedAsset = (data.images || []).find(item => item.filename === asset.filename)
       setEditPreviewAsset(refreshedAsset || { ...asset, children: [], edits: [], childCount: 0, editCount: 0 })
+      setLinkedAssetDialog(null)
       setImportFeedback({
         type: 'success',
         message: 'Edit deleted.'
       })
     } catch (err) {
-      setImportFeedback({
-        type: 'error',
-        message: err.message || 'Failed to delete edit.'
-      })
+      if (err.status === 409) {
+        setLinkedAssetDialog({
+          kind: 'edit',
+          parentAsset: asset,
+          edit,
+          assetName: edit.name?.trim() || 'Edit',
+          projectId: err.details?.projectId,
+          projectName: err.details?.projectName || null
+        })
+      } else {
+        setImportFeedback({
+          type: 'error',
+          message: err.message || 'Failed to delete edit.'
+        })
+      }
     } finally {
       setDeletingEditKey(null)
     }
@@ -1214,6 +1228,11 @@ export default function AssetsPage() {
   const handleForceDeleteLinkedAsset = async () => {
     if (linkedAssetDialog?.kind === 'version') {
       await handleDeleteMeshVersion(linkedAssetDialog.parentAsset, linkedAssetDialog.version, { force: true })
+      return
+    }
+
+    if (linkedAssetDialog?.kind === 'edit') {
+      await handleDeleteEdit(linkedAssetDialog.parentAsset, linkedAssetDialog.edit, { force: true })
       return
     }
 
@@ -1694,7 +1713,9 @@ export default function AssetsPage() {
                 onClick={handleForceDeleteLinkedAsset}
                 disabled={linkedAssetDialog.kind === 'version'
                   ? deletingVersionKey === linkedAssetDialog.version?.filePath
-                  : deletingAssetKey === `${linkedAssetDialog.asset?.type}:${linkedAssetDialog.asset?.filename}`}
+                  : linkedAssetDialog.kind === 'edit'
+                    ? deletingEditKey === linkedAssetDialog.edit?.filePath
+                    : deletingAssetKey === `${linkedAssetDialog.asset?.type}:${linkedAssetDialog.asset?.filename}`}
               >
                 Delete Anyway
               </button>
