@@ -666,11 +666,18 @@ function serviceRegistry() {
       isInstalled: () => comfyReady(),
       // The port is chosen at install time (to dodge a user's own ComfyUI) and
       // stored in settings, so it must be read at start time, not at boot.
-      resolveLaunch: (svc) => resolveConfiguredPort(svc, COMFY_PORT_DEFAULT),
-      start: (port) => startComfyUI({
-        appRoot: APP_ROOT, installDir: COMFY_DIR, dataDir: COMFY_DATA, venvDir: COMFY_VENV,
-        port, logStream: openLogStream('comfyui.log'), log,
-      }),
+      // The models folder lives in settings too (apis.comfyui.modelsPath), same as
+      // motion and mocap, so it is read at start time as well.
+      resolveLaunch: async (svc) => {
+        const api = await resolveConfiguredPort(svc, COMFY_PORT_DEFAULT);
+        svc.modelsDir = String(api.modelsPath || '').trim() || null;
+      },
+      start(port) {
+        return startComfyUI({
+          appRoot: APP_ROOT, installDir: COMFY_DIR, dataDir: COMFY_DATA, venvDir: COMFY_VENV,
+          modelsDir: this.modelsDir, port, logStream: openLogStream('comfyui.log'), log,
+        });
+      },
     },
   };
 }
@@ -873,7 +880,7 @@ function registerServicesIpc() {
     const applied = await applyManagedComfySettings();
     if (!applied) return { ok: false, error: 'Could not save the settings.' };
     log(`Re-pointed settings at the managed ComfyUI on port ${applied.port}.`);
-    return { ok: true, port: applied.port, path: COMFY_DIR, modelsPath: path.join(COMFY_DATA, 'models') };
+    return { ok: true, port: applied.port, path: COMFY_DIR, modelsPath: applied.modelsPath };
   });
 
   // --- Managed ComfyUI upgrades ---------------------------------------------
@@ -1085,12 +1092,18 @@ async function applyManagedComfySettings() {
   // Nothing free nearby is not fatal here: the install still records the default,
   // and the conflict is resolved again (with the user in the loop) at start time.
   const port = (await pickFreePort(COMFY_PORT_DEFAULT)) || COMFY_PORT_DEFAULT;
+  // Keep a custom models folder the user already set on the managed install;
+  // only fall back to the default when there is none (or the settings drifted to
+  // an external instance, whose models folder is not ours to reuse).
+  const current = (await fetchSettings())?.apis?.comfyui;
+  const keepModelsPath = current?.managed === true && String(current?.modelsPath || '').trim();
+  const modelsPath = keepModelsPath ? String(current.modelsPath).trim() : path.join(COMFY_DATA, 'models');
   const ok = await patchSettings({
     apis: {
       comfyui: {
         managed: true,
         path: COMFY_DIR,
-        modelsPath: path.join(COMFY_DATA, 'models'),
+        modelsPath,
         url: 'http://127.0.0.1',
         port: String(port),
       },
@@ -1098,7 +1111,7 @@ async function applyManagedComfySettings() {
   });
   if (!ok) return null;
   if (SERVICES?.comfyui) SERVICES.comfyui.port = port;
-  return { port };
+  return { port, modelsPath };
 }
 
 // Global setup IPC — used by BOTH the first-run window and the running app
