@@ -108,6 +108,17 @@ if (!TABLE_ORDER.length) {
   process.exit(1);
 }
 
+// Table names are interpolated straight into SQL below (Postgres has no way to
+// bind an identifier as a parameter), so every one is checked against a strict
+// allow-list pattern here, once, before any query can use it.
+const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
+for (const table of TABLE_ORDER) {
+  if (!SAFE_IDENTIFIER.test(table)) {
+    console.error(`Refusing to use unsafe table name from schema.pg.sql: ${table}`);
+    process.exit(1);
+  }
+}
+
 // PostgreSQL caps a statement at 65535 bound parameters. Staying well under it
 // keeps the batch size honest for a wide table like Assets.
 const MAX_PARAMS_PER_STATEMENT = 20000;
