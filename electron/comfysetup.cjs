@@ -1373,7 +1373,7 @@ async function updateComfyUI({ uv, appRoot, installDir, dataDir, venvDir, appVer
 }
 
 // ---- launcher ---------------------------------------------------------------
-function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, logStream, log }) {
+function startComfyUI({ appRoot, installDir, dataDir, venvDir, modelsDir, port, logStream, log }) {
   const write = (s) => { try { logStream && logStream.write(s); } catch { /* ignore */ } };
   const vp = venvPython(venvDir);
   if (!fs.existsSync(vp) || !fs.existsSync(path.join(installDir, 'main.py'))) {
@@ -1395,8 +1395,18 @@ function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, logStream, 
   // live next to the code, in <installDir>/custom_nodes. These per-directory flags
   // each document "Overrides --base-directory", so they move exactly what we want
   // and leave custom_nodes resolving to the install dir.
+  //
+  // Models are the exception: apis.comfyui.modelsPath (Settings) may point at a
+  // folder elsewhere (e.g. another drive). Honour it when it exists; otherwise
+  // warn and fall back to <dataDir>/models rather than silently creating a folder
+  // on a disconnected drive.
+  let modelsRoot = path.join(dataDir, 'models');
+  if (modelsDir) {
+    if (fs.existsSync(modelsDir)) modelsRoot = modelsDir;
+    else log && log(`ComfyUI: configured models folder "${modelsDir}" not found — using ${modelsRoot}.`);
+  }
   const dirs = {
-    models: path.join(dataDir, 'models'),
+    models: modelsRoot,
     input: path.join(dataDir, 'input'),
     output: path.join(dataDir, 'output'),
     user: path.join(dataDir, 'user'),
