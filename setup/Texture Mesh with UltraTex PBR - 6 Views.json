@@ -1,0 +1,290 @@
+{
+  "2": {
+    "inputs": {
+      "mesh_path": "",
+      "render_size": 4096,
+      "atlas_size": 4096,
+      "uv_mode": "comfy_gpu",
+      "reference_alignment": "fit_front_silhouette",
+      "mask_meaning": "background (LoadImage)",
+      "reference_image": [
+        "19",
+        0
+      ],
+      "reference_mask": [
+        "19",
+        1
+      ],
+      "trimesh": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "UltraTexPrep",
+    "_meta": {
+      "title": "UltraTex Prep (mesh + reference)"
+    }
+  },
+  "4": {
+    "inputs": {
+      "resolution": [
+        "31",
+        0
+      ],
+      "steps": [
+        "32",
+        0
+      ],
+      "seed": [
+        "29",
+        0
+      ],
+      "guidance": 4,
+      "drop_background_tokens": true,
+      "memory_factor": 0,
+      "attention": "ultratex_sparse",
+      "sparse_topk": 0.2,
+      "token_chunk": 8192,
+      "denoise": 1,
+      "model": [
+        "7",
+        0
+      ],
+      "vae": [
+        "8",
+        0
+      ],
+      "positive": [
+        "28",
+        0
+      ],
+      "prep": [
+        "2",
+        0
+      ],
+      "negative": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "UltraTexSampler",
+    "_meta": {
+      "title": "UltraTex Sampler (Albedo)"
+    }
+  },
+  "5": {
+    "inputs": {
+      "unet_name": "flux-2-klein-base-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "6": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "7": {
+    "inputs": {
+      "lora_name": "ultratex_flux2.safetensors",
+      "strength": 1,
+      "model": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "UltraTexLoraLoader",
+    "_meta": {
+      "title": "UltraTex Load LoRA"
+    }
+  },
+  "8": {
+    "inputs": {
+      "decoder_name": "ultratex_flux2_decoder.pt",
+      "vae": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "UltraTexForegroundDecoder",
+    "_meta": {
+      "title": "UltraTex Foreground VAE Decoder"
+    }
+  },
+  "9": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "12": {
+    "inputs": {
+      "texture_size": [
+        "30",
+        0
+      ],
+      "filename_prefix": "3DGenStudioUltraTexPBR",
+      "view_weight_power": 4,
+      "best_view_mix": 0.5,
+      "edge_feather_px": 6,
+      "views_2_use": "all",
+      "prep": [
+        "2",
+        0
+      ],
+      "albedo_views": [
+        "4",
+        0
+      ],
+      "metallic_roughness_views": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "UltraTexBake",
+    "_meta": {
+      "title": "UltraTex Bake Texture"
+    }
+  },
+  "19": {
+    "inputs": {
+      "image": "DwarfWarrior_1024_00001_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "22": {
+    "inputs": {
+      "glb_path": "C:\\Git\\ComfyUI\\output\\3D\\DwarfWarrior_MV_Qwen\\DwarfWarrior_MV_Qwen_WhiteMesh_00001_.glb",
+      "only_vertices_and_faces": false
+    },
+    "class_type": "UltraTexLoadMesh",
+    "_meta": {
+      "title": "UltraText Load Mesh"
+    }
+  },
+  "24": {
+    "inputs": {
+      "resolution": [
+        "31",
+        0
+      ],
+      "steps": [
+        "32",
+        0
+      ],
+      "seed": [
+        "29",
+        0
+      ],
+      "guidance": 4,
+      "drop_background_tokens": true,
+      "memory_factor": 0,
+      "attention": "ultratex_sparse",
+      "sparse_topk": 0.2,
+      "token_chunk": 8192,
+      "denoise": 1,
+      "model": [
+        "33",
+        0
+      ],
+      "vae": [
+        "8",
+        0
+      ],
+      "positive": [
+        "28",
+        0
+      ],
+      "prep": [
+        "2",
+        0
+      ],
+      "negative": [
+        "28",
+        0
+      ]
+    },
+    "class_type": "UltraTexSampler",
+    "_meta": {
+      "title": "UltraTex Sampler (Metallic Roughness)"
+    }
+  },
+  "28": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "9",
+        0
+      ]
+    },
+    "class_type": "UltraTexTextEncode",
+    "_meta": {
+      "title": "UltraTex Text Encode"
+    }
+  },
+  "29": {
+    "inputs": {
+      "value": 12345
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "30": {
+    "inputs": {
+      "value": 2048
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Texture Size"
+    }
+  },
+  "31": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Resolution"
+    }
+  },
+  "32": {
+    "inputs": {
+      "value": 25
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "33": {
+    "inputs": {
+      "lora_name": "ultratex_flux2_mr.safetensors",
+      "strength": 1,
+      "model": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "UltraTexLoraLoader",
+    "_meta": {
+      "title": "UltraTex Load LoRA"
+    }
+  }
+}

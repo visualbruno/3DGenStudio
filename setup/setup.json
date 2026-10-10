@@ -36,6 +36,7 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -53,6 +54,7 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -91,7 +93,87 @@
 					]
 				}				
 			]
-		},	
+		},
+		{
+			"Name": "Qwen Image 2.1 Turbo",
+			"DiffusionModels": {
+				"Q8 TURBO": { "FileName": "qwen_image_2.1_turbo_Q8_0.gguf",   "Url": "https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen_image_2.1_turbo_Q8_0.gguf?download=true",   "Size": 7.6 },
+				"Q6 TURBO": { "FileName": "qwen_image_2.1_turbo_Q6_K.gguf",   "Url": "https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen_image_2.1_turbo_Q6_K.gguf?download=true",   "Size": 5.9 },
+				"Q5 TURBO": { "FileName": "qwen_image_2.1_turbo_Q5_K_M.gguf",   "Url": "https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen_image_2.1_turbo_Q5_K_M.gguf?download=true",   "Size": 5.0 },
+				"Q4 TURBO": { "FileName": "qwen_image_2.1_turbo_Q4_K_M.gguf",   "Url": "https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen_image_2.1_turbo_Q4_K_M.gguf?download=true",   "Size": 4.2 },
+				"Q3 TURBO": { "FileName": "qwen_image_2.1_turbo_Q3_K_M.gguf",   "Url": "https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF/resolve/main/qwen_image_2.1_turbo_Q3_K_M.gguf?download=true",   "Size": 3.2 }				
+			},
+			"VAE":         [{ "FileName": "qwen_image_2.1_vae_bf16.safetensors",                              "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/vae/qwen_image_2.1_vae_bf16.safetensors?download=true",                                "Size": 0.7 }],
+			"TextEncoder": { "FileName": "qwen3vl_8b_int8_convrot.safetensors",                   "Url": "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/main/text_encoders/qwen3vl_8b_int8_convrot.safetensors?download=true",       "Size": 9.4 },		
+			"Workflows": [
+				{
+					"Name": "Gen Image with QwenImage21 Turbo",
+					"File": "setup/Gen Image with QwenImage21 Turbo.json",
+					"Inputs": [
+						{ "Node": "482", "Input": "value",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Edit Image with QwenImage21 Turbo",
+					"File": "setup/Edit Image with QwenImage21 Turbo.json",
+					"Inputs": [
+						{ "Node": "478", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "480", "Input": "value",  "Name": "Prompt", "Type": "String" },
+						{ "Node": "477", "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+						{ "Node": "477", "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
+						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
+						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
+						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
+					],
+					"Outputs": [
+						{ "Node": "470", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection with QwenImage21 Turbo",
+					"File": "setup/Mesh Projection with QwenImage21 Turbo.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "22", "Input": "image",  "Name": "Reference Image",   "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "20", "Input": "steps",   "Name": "Number of Steps",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "42", "Name": "Save Image", "Type": "Image" }
+					]
+				},
+				{
+					"Name": "Mesh Projection TexturedView with QwenImage21 Turbo",
+					"File": "setup/Mesh Projection TexturedView with QwenImage21 Turbo.json",
+					"Inputs": [
+						{ "Node": "21", "Input": "image",  "Name": "Position Image",    "Type": "Image"  },
+						{ "Node": "37", "Input": "image",  "Name": "Textured View",     "Type": "Image"  },
+						{ "Node": "50", "Input": "image",  "Name": "Reference Image",     "Type": "Image"  },
+						{ "Node": "43",  "Input": "value", "Name": "Prompt",            "Type": "String" },
+						{ "Node": "20", "Input": "seed",   "Name": "Seed",              "Type": "Number" },
+						{ "Node": "34", "Input": "value",  "Name": "Image Resolution",  "Type": "Number" },
+						{ "Node": "20", "Input": "steps",  "Name": "Number of Steps",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "48", "Name": "Save Image", "Type": "Image" }
+					]
+				}				
+			]
+		},		
 		{
 			"Name": "Qwen Image Edit 2511",
 			"DiffusionModels": {
@@ -919,6 +1001,22 @@
 					"Outputs": [
 						{ "Node": "56", "Name": "Save Images", "Type": "Image" }
 					]
+				},
+				{
+					"Name": "Texture Mesh with UltraTex PBR - 6 Views",
+					"File": "setup/Texture Mesh with UltraTex PBR - 6 Views.json",
+					"Inputs": [
+						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
+						{ "Node": "31",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "30",  "Input": "value", "Name": "Texture Size",  "Type": "Number", "Enums":[512,1024,2048,4096,8192] },
+						{ "Node": "29",  "Input": "value", "Name": "Seed",  "Type": "Number" },
+						{ "Node": "32",  "Input": "value", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "24",  "Input": "guidance", "Name": "Guidance",  "Type": "Number" }
+					],
+					"Outputs": [
+						{ "Node": "12", "Name": "Save Mesh", "Type": "Mesh" }
+					]
 				}				
 			]
 		}			
@@ -1251,6 +1349,20 @@
 			"Outputs": [
 				{ "Node": "7", "Name": "Save Mesh", "Type": "Mesh" }
 			]
-		}		
+		},
+		{
+			"Name": "Resize Image",
+			"File": "setup/Resize Image.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "2",  "Input": "resize_type.width",  "Name": "Width",   "Type": "Number" },
+				{ "Node": "2",  "Input": "resize_type.height",  "Name": "Height",   "Type": "Number" },
+				{ "Node": "2", "Input": "resize_type.crop",  "Name": "Crop", "Type": "String", "Enums":["center","disabled"] },
+				{ "Node": "2", "Input": "scale_method",  "Name": "Scale Method", "Type": "String", "Enums":["area","lanczos","nearest-exact"] }
+			],
+			"Outputs": [
+				{ "Node": "3", "Name": "Save Image", "Type": "Image" }
+			]
+		}			
 	]
 }
