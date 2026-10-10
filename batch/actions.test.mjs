@@ -430,6 +430,13 @@ function createBackend(stages) {
     // Extra stats the fake gltfpack reports (seams_broken, seam_limited).
     optimizeStats: {},
     autoUvTool: { n_charts: 12, fill_ratio: 0.71, overlap_share: 0, flipped_triangles: 0 },
+    retopoTool: {
+      metrics: {
+        topology: { faces: 6000, vertices: 3002, watertight: true, components: 1 },
+        triangle_quality: { pct_well_shaped: 92.2 }
+      },
+      quad_face_count: null
+    },
     inputMesh: null,
     flattenTargets: [],
     flattenClipped: 0
@@ -486,6 +493,18 @@ function createBackend(stages) {
         // Marked by its material so a test can tell the unwrapped mesh was saved.
         const unwrapped = tinyGlb({ materials: [{ name: 'autouv', pbrMetallicRoughness: {} }] });
         return { type: 'done', mesh_b64: unwrapped.toString('base64'), stats: { tool: state.autoUvTool } };
+      }
+      if (path === '/meshes/auto-retopo') {
+        const retopo = tinyGlb({ materials: [{ name: 'autoretopo', pbrMetallicRoughness: {} }] });
+        // Shaped like the live route: the service's stats sit under `tool`, and
+        // the triangle metrics are `triangle_quality`. Verified against a real
+        // POST to /api/meshes/auto-retopo — a mock that nested them one level
+        // higher passed happily over a runner that read nothing.
+        return {
+          type: 'done',
+          mesh_b64: retopo.toString('base64'),
+          stats: { vertex_count: 3002, face_count: 6000, has_uv: false, tool: state.retopoTool }
+        };
       }
       if (path === '/meshes/flatten') {
         const meshFile = Buffer.from(await form.get('meshFile').arrayBuffer());
@@ -648,6 +667,75 @@ test('an Auto UV stage sends its own settings and flags an overlapping layout an
   assert.ok(outcome.warnings.some(warning => /rig was dropped/.test(warning)));
   assert.equal(state.saves[0].assetId, 5, 'saved as a version of its input');
   assert.equal(state.cards[0].column, 'Mesh Edit');
+});
+
+test('Auto Retopo seeds the Mesh Editor defaults and needs the Mesh Tools service', () => {
+  const stage = seededStage('autoretopo', chain());
+  assert.equal(stage.inputs.target_faces, 6000);
+  assert.equal(stage.inputs.shell_resolution, 256);
+  assert.equal(stage.inputs.shell_smooth, 0.4, 'the measured default, not the old 1.4');
+  assert.equal(stage.inputs.device, 'auto');
+  assert.deepEqual(stage.bindings.mesh, { source: 'stage', stageId: 'stg-mesh' });
+  assert.deepEqual(getStageDesktopServices(stage), ['meshtools']);
+});
+
+test('a bake after Auto Retopo bakes FROM the original, because retopo moves every vertex', () => {
+  // The opposite of the Auto UV case above: retopo rebuilds the surface, so its
+  // result is the low poly and the high poly must come from before it.
+  const stages = chain('autoretopo', 'bake');
+  const bake = stages[3];
+  assert.deepEqual(bake.bindings.low_poly, { source: 'stage', stageId: stages[2].id });
+  assert.deepEqual(bake.bindings.high_poly, { source: 'stage', stageId: 'stg-mesh' });
+});
+
+test('an Auto Retopo stage sends its own settings and flags what the rebuild drops', async () => {
+  const { state, api } = createBackend([]);
+  state.assets.set(5, { id: 5, type: 'mesh', name: 'knight', filename: 'meshes/5.glb' });
+
+  const outcome = await executeBatchAction(api, {
+    action: 'autoretopo',
+    projectId: 7,
+    inputs: { mesh: 'asset:5', target_faces: 12000, shell_smooth: 1.4, preserve_features: true },
+    name: 'Knight retopo',
+    cardKey: 'batch:r:g:s'
+  });
+
+  const options = state.toolCalls[0].options;
+  assert.equal(state.toolCalls[0].path, '/meshes/auto-retopo');
+  assert.equal(options.target_faces, 12000);
+  assert.equal(options.shell_smooth, 1.4, 'a hard-surface stage may raise it back');
+  assert.equal(options.preserve_features, true);
+  assert.equal(options.shell_resolution, 256, 'unset inputs fall back to the defaults');
+  assert.equal(options.device, 'auto');
+  assert.equal('mesh' in options, false, 'the mesh goes as the file, not as an option');
+  assert.equal(outcome.stats.faces, 6000);
+  assert.equal(outcome.stats.components, 1);
+  assert.ok(outcome.warnings.some(warning => /UVs, the texture and any rig are gone/.test(warning)), outcome.warnings.join('\n'));
+  assert.equal(state.saves[0].assetId, 5, 'saved as a version of its input');
+  assert.equal(state.cards[0].column, 'Mesh Edit');
+});
+
+test('Auto Retopo warns when the shell could not close or unify the mesh', async () => {
+  const { state, api } = createBackend([]);
+  state.assets.set(5, { id: 5, type: 'mesh', name: 'broken', filename: 'meshes/5.glb' });
+  state.retopoTool = {
+    metrics: {
+      topology: { faces: 5900, vertices: 2950, watertight: false, components: 4 },
+      triangle_quality: { pct_well_shaped: 88 }
+    },
+    quad_face_count: null
+  };
+
+  const outcome = await executeBatchAction(api, {
+    action: 'autoretopo',
+    projectId: 7,
+    inputs: { mesh: 'asset:5' },
+    name: 'Broken retopo',
+    cardKey: 'batch:r:g:s'
+  });
+
+  assert.ok(outcome.warnings.some(warning => /not watertight/.test(warning)), outcome.warnings.join('\n'));
+  assert.ok(outcome.warnings.some(warning => /in 4 pieces/.test(warning)));
 });
 
 test('an action refuses an input that is not a mesh', async () => {

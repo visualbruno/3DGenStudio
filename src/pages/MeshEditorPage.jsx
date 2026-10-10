@@ -263,7 +263,9 @@ const DEFAULT_AUTO_RETOPO_OPTIONS = {
   watertight: true,
   shell_resolution: 256,
   shell_close_iter: 1,
-  shell_smooth: 1.4,
+  // 1.4 until 2026-10-09; measured as over-smoothing on everything except
+  // hard-surface architecture — see RetopoConfig.shell_smooth for the numbers.
+  shell_smooth: 0.4,
   shell_taubin: 10,
   shell_samples_per_pitch: 2,
   max_memory_gb: 4,

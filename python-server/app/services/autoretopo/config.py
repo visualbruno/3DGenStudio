@@ -14,7 +14,17 @@ class RetopoConfig:
                                       # False: remesh the original surface directly (keeps open boundaries)
     shell_resolution: int = 256       # voxel grid cells along the longest bbox axis (silhouette fidelity)
     shell_close_iter: int = 1         # morphological closing to bridge cracks in non-watertight input
-    shell_smooth: float = 1.4         # gaussian sigma (voxels) on the signed-distance field; kills voxel ripple
+    shell_smooth: float = 0.4         # gaussian sigma (voxels) on the signed-distance field; kills voxel ripple
+                                      # 1.4 until 2026-10-09. Measured at 15k faces over 6 meshes (two-way
+                                      # Hausdorff vs the source): the blur costs detail and buys almost
+                                      # nothing, because the isotropic remesh + projection stages already
+                                      # remove voxel ripple. Lowering 1.4 -> 0.4 cut lost detail by 13-33%
+                                      # on 5 of 6 (knight -33%, sorcerer -18%, camp -16%, tree -15%,
+                                      # warrior -13%) while the "ripple" direction stayed flat (+-0.005).
+                                      # The exception is hard-surface architecture: a building got 27%
+                                      # WORSE, because flat walls are where voxel staircase actually shows
+                                      # and the blur is what removes it. Raise this back toward 1.4 for
+                                      # buildings / architecture - it is a slider in the Auto Retopo panel.
     shell_taubin: int = 10            # Taubin polish steps on the dense shell (0 disables)
     shell_samples_per_pitch: float = 2.0  # surface sampling density (>=2 guarantees gap-free voxel coverage)
     max_memory_gb: float = 4.0        # auto-lower shell_resolution so the voxel grid fits this budget

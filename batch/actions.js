@@ -25,6 +25,7 @@
 
 export const BATCH_ACTION_COMFYUI = 'comfyui'
 export const BATCH_ACTION_OPTIMIZE = 'optimize'
+export const BATCH_ACTION_AUTORETOPO = 'autoretopo'
 export const BATCH_ACTION_AUTOUV = 'autouv'
 export const BATCH_ACTION_AUTORIG = 'autorig'
 export const BATCH_ACTION_TRANSFER_RIG = 'transferrig'
@@ -32,11 +33,12 @@ export const BATCH_ACTION_BAKE = 'bake'
 export const BATCH_ACTION_FLATTEN = 'flatten'
 
 // Picker order.
-export const BATCH_ACTIONS = [BATCH_ACTION_COMFYUI, BATCH_ACTION_OPTIMIZE, BATCH_ACTION_AUTOUV, BATCH_ACTION_AUTORIG, BATCH_ACTION_TRANSFER_RIG, BATCH_ACTION_BAKE, BATCH_ACTION_FLATTEN]
+export const BATCH_ACTIONS = [BATCH_ACTION_COMFYUI, BATCH_ACTION_OPTIMIZE, BATCH_ACTION_AUTORETOPO, BATCH_ACTION_AUTOUV, BATCH_ACTION_AUTORIG, BATCH_ACTION_TRANSFER_RIG, BATCH_ACTION_BAKE, BATCH_ACTION_FLATTEN]
 
 export const BATCH_ACTION_LABELS = {
   [BATCH_ACTION_COMFYUI]: 'ComfyUI Workflow',
   [BATCH_ACTION_OPTIMIZE]: 'Optimize',
+  [BATCH_ACTION_AUTORETOPO]: 'Auto Retopo',
   [BATCH_ACTION_AUTOUV]: 'Auto UV',
   [BATCH_ACTION_AUTORIG]: 'Auto Rig',
   [BATCH_ACTION_TRANSFER_RIG]: 'Transfer Rig',
@@ -142,6 +144,70 @@ const ACTION_DESCRIPTORS = {
         'gltfpack -sa. Only applies when seams may break: reaches the target by rebuilding the vertex set, so hard edges smooth over and the texture scrambles.'),
       toggle(OPTIMIZE_REUNWRAP_PARAMETER, 'Re-unwrap UVs if seams break', true,
         'When the aggressive pass actually ran, give the result fresh UVs with Auto UV (default settings) so a later Bake has a clean layout to bake onto. The old texture no longer applies either way — bake the base colour from the source to bring it back. Needs the Mesh Tools service, and drops a rig: rig after this stage, not before.')
+    ]
+  },
+
+  [BATCH_ACTION_AUTORETOPO]: {
+    id: `action:${BATCH_ACTION_AUTORETOPO}`,
+    action: BATCH_ACTION_AUTORETOPO,
+    name: 'Auto Retopo',
+    description: 'Rebuilds clean, evenly-spaced topology with the Mesh Tools service, exactly as the Mesh Editor’s Auto Retopo does: a watertight voxel shell, then curvature-adaptive isotropic remeshing down to a face budget, then projection back onto the original surface. Unlike Optimize (which decimates the mesh you give it) this throws the old topology away, so it fixes non-manifold and multi-component ComfyUI output that Optimize can only work around. The result is geometry only — no UVs, no texture, no rig — so put Auto UV, then Bake, then a rig after it. Saved as a new version of the input mesh.',
+    kanbanColumn: 'Mesh Edit',
+    desktopService: 'meshtools',
+    parentParameterId: 'mesh',
+    // No keepsSurface: every vertex moves. A later Bake treating this result as
+    // its low poly is exactly right, so it must not look past it for a high poly.
+    outputs: [{ name: 'Mesh', valueType: 'mesh' }],
+    parameters: [
+      mesh('mesh', 'Mesh', 'The mesh to retopologize'),
+      // Target
+      number('target_faces', 'Target face count', 6000,
+        'Approximate triangle budget of the result. Unlike Optimize this is a rebuild, so it is hit closely rather than being capped by seams.',
+        { min: 50, max: 5000000, step: 1 }),
+      toggle('quads', 'Quad-dominant', false,
+        'Convert to quad-dominant. Reported in the stats only — the saved GLB is triangles either way, because glTF has no quads.'),
+      // Watertight shell
+      toggle('watertight', 'Watertight shell', true,
+        'Build a unified voxel shell first (robust: closes holes and merges disconnected parts). Turn off to remesh the surface directly and stay closer to the original, which needs input that is already clean.'),
+      number('shell_resolution', 'Shell resolution', 256,
+        'Voxel grid cells along the longest axis. Raise it for small detail, at the cost of memory and time.',
+        { min: 16, max: 1024, step: 8 }),
+      number('shell_close_iter', 'Close iterations', 1,
+        'Morphological closing passes that bridge cracks in non-watertight input.', { min: 0, max: 20, step: 1 }),
+      number('shell_smooth', 'Smooth (sigma)', 0.4,
+        'SDF blur in voxels. The default suits characters, creatures and vegetation, where the blur mostly costs small detail (pointed hats, fingers, thin branches) because the remesh and projection stages already remove most ripple. Raise it toward 1.4 for buildings and hard-surface models, where flat walls are what voxel staircase shows on.',
+        { min: 0, max: 5, step: 0.05 }),
+      number('shell_taubin', 'Taubin polish', 10,
+        'Taubin smoothing steps on the dense shell (0 disables).', { min: 0, max: 100, step: 1 }),
+      number('shell_samples_per_pitch', 'Samples / pitch', 2,
+        'Surface sampling density; 2 or more guarantees gap-free voxel coverage.', { min: 1, max: 8, step: 0.5 }),
+      number('max_memory_gb', 'Max memory (GB)', 4,
+        'Auto-lower the shell resolution to fit this budget (0 disables). Worth keeping on in a batch, where one oversized mesh would otherwise stall the whole run.',
+        { min: 0, max: 128, step: 0.5 }),
+      // Remesh
+      toggle('adaptive', 'Curvature-adaptive', true, 'Spend more faces where the surface bends'),
+      number('remesh_iters', 'Remesh iterations', 10, 'Isotropic remesh passes', { min: 1, max: 100, step: 1 }),
+      number('feature_deg', 'Feature angle (°)', 30, 'Crease angle preserved as a feature', { min: 0, max: 180, step: 1 }),
+      number('calibrate_passes', 'Calibrate passes', 1, 'Rough edge-length correction passes', { min: 0, max: 10, step: 1 }),
+      // Feature preservation
+      toggle('preserve_features', 'Preserve features', false,
+        'Hard-surface mode: keep sharp creases crisp and skip smoothing/projection. For architecture and props, not characters.'),
+      number('feature_angle', 'Hard-edge angle (°)', 25,
+        'Crease angle treated as a hard edge when Preserve features is on', { min: 0, max: 180, step: 1 }),
+      // Projection
+      toggle('project', 'Project to surface', true, 'Pull the remesh back onto the original surface'),
+      number('project_iters', 'Projection iterations', 10, '', { min: 0, max: 100, step: 1 }),
+      number('project_clamp', 'Move clamp', 1.5,
+        'Max per-vertex move as a multiple of local edge length', { min: 0, max: 10, step: 0.1 }),
+      number('relax_strength', 'Relax strength', 0.4,
+        'Tangential relaxation factor per iteration', { min: 0, max: 1, step: 0.05 }),
+      // Compute
+      choice('device', 'Device', 'auto', 'The shell and projection stages run on an NVIDIA GPU when one is available; the remesh stage is always CPU.', [
+        { value: 'auto', label: 'Auto (GPU if NVIDIA)' },
+        { value: 'cpu', label: 'CPU' },
+        { value: 'cuda', label: 'CUDA (NVIDIA GPU)' }
+      ]),
+      number('seed', 'Seed', 0, 'RNG seed for reproducibility', { min: 0, step: 1 })
     ]
   },
 
@@ -328,13 +394,14 @@ export function getBatchActionDescriptor(action) {
   return ACTION_DESCRIPTORS[normalizeBatchAction(action)] || null
 }
 
-// The Auto UV options a descriptor's parameters stand for, as the service's
-// AutoUvOptions reads them. Resolved inputs in, the options object out; an
-// input that is absent falls back to the descriptor's default, which is how
-// Optimize's re-unwrap runs Auto UV at its defaults.
-export function getAutoUvActionOptions(inputs = {}) {
+// The service options an action's non-mesh parameters stand for. Resolved
+// inputs in, the options object out; an input that is absent falls back to the
+// descriptor's default, which is how Optimize's re-unwrap runs Auto UV at its
+// defaults. Shared by the two actions that forward a whole options object to a
+// Python-service schema, so neither can drift from its descriptor.
+function collectActionOptions(action, inputs = {}) {
   const options = {}
-  for (const parameter of ACTION_DESCRIPTORS[BATCH_ACTION_AUTOUV].parameters) {
+  for (const parameter of ACTION_DESCRIPTORS[action].parameters) {
     if (parameter.valueType === 'mesh') continue
     const value = inputs[parameter.id]
     if (parameter.valueType === 'boolean') {
@@ -347,6 +414,16 @@ export function getAutoUvActionOptions(inputs = {}) {
     }
   }
   return options
+}
+
+// As the service's AutoUvOptions reads them.
+export function getAutoUvActionOptions(inputs = {}) {
+  return collectActionOptions(BATCH_ACTION_AUTOUV, inputs)
+}
+
+// As the service's AutoRetopoOptions reads them.
+export function getAutoRetopoActionOptions(inputs = {}) {
+  return collectActionOptions(BATCH_ACTION_AUTORETOPO, inputs)
 }
 
 // Could this boolean be on in some group? A manual value says so outright; a

@@ -210,7 +210,7 @@ export default function AutoRetopoToolsPanel({
         <RangeField label="Smooth (sigma)" min={0} max={5} step={0.05} decimals={2}
           value={o.shell_smooth} onChange={v => setOption('shell_smooth', v)}
           disabled={fieldsDisabled || !o.watertight}
-          hint="SDF blur sigma in voxels; kills voxel ripple (lower = crisper)" />
+          hint="SDF blur sigma in voxels; kills voxel ripple (lower = crisper). The default suits characters, creatures and vegetation, where the blur mostly costs small detail — pointed hats, fingers, thin branches — because the remesh and projection stages already remove most ripple. Raise it toward 1.4 for buildings and other hard-surface models: flat walls are where voxel staircase actually shows, and there the blur earns its keep." />
         <RangeField label="Taubin polish" min={0} max={100} step={1}
           value={o.shell_taubin} onChange={v => setOption('shell_taubin', v)}
           disabled={fieldsDisabled || !o.watertight}

@@ -17,6 +17,7 @@ import path from 'node:path';
 import { findProjectAsset } from '../mcp/client.js';
 import { parseGlb, serializeGlb } from '../meshPivot.js';
 import {
+  BATCH_ACTION_AUTORETOPO,
   BATCH_ACTION_AUTORIG,
   BATCH_ACTION_AUTOUV,
   BATCH_ACTION_BAKE,
@@ -26,6 +27,7 @@ import {
   FLATTEN_SHADER_LIGHTING,
   OPTIMIZE_REUNWRAP_PARAMETER,
   describeBakeMapProblem,
+  getAutoRetopoActionOptions,
   getAutoUvActionOptions,
   getBakeActionMaps,
   getBatchActionDescriptor
@@ -212,6 +214,55 @@ async function runAutoUv(api, { projectId, inputs, onProgress }) {
   onProgress?.(5, 'Unwrapping');
   const unwrapped = await unwrapUvs(api, source.buffer, source.fileName, getAutoUvActionOptions(inputs), progressFrom(onProgress, 5, 95));
   return { source, buffer: unwrapped.buffer, stats: unwrapped.stats, warnings: unwrapped.warnings };
+}
+
+// Auto Retopo rebuilds the surface from a voxel shell, so the mesh that comes
+// back is geometry and nothing else: the service returns a bare trimesh, which
+// means no UVs, no material and no skin. Every one of those is warned about
+// rather than refused — a retopo before an unwrap and a bake is the whole point
+// of putting it in a batch, and the rig belongs after all three.
+async function runAutoRetopo(api, { projectId, inputs, onProgress }) {
+  const source = await loadMeshInput(api, projectId, inputs.mesh, 'Mesh');
+  onProgress?.(5, 'Rebuilding topology');
+
+  const form = new FormData();
+  form.append('meshFile', meshBlob(source.buffer), source.fileName);
+  form.append('format', 'glb');
+  form.append('options', JSON.stringify(getAutoRetopoActionOptions(inputs)));
+  const done = await api.apiFormSse('/meshes/auto-retopo', form, progressFrom(onProgress, 5, 95));
+  if (!done.mesh_b64) throw new Error('The Auto Retopo service returned no mesh');
+
+  // The route wraps the service's own stats under `tool`, exactly as /meshes/auto-uv
+  // does — the metrics live at stats.tool.metrics, not stats.metrics.
+  const tool = done.stats?.tool || {};
+  const topology = tool.metrics?.topology || {};
+  const quality = tool.metrics?.triangle_quality || {};
+
+  const warnings = [];
+  // The shell stage closes holes and merges parts, so a result that is still
+  // open or in pieces means the input defeated it — worth saying, because the
+  // usual fix (raise the shell resolution) is a parameter on this stage.
+  if (topology.watertight === false) {
+    warnings.push('The result is not watertight — raise the shell resolution or the close iterations');
+  }
+  if (Number(topology.components) > 1) {
+    warnings.push(`The result is in ${topology.components} pieces rather than one`);
+  }
+  warnings.push('Retopo returns geometry only: the UVs, the texture and any rig are gone — follow this stage with Auto UV, then Bake, then a rig');
+
+  return {
+    source,
+    buffer: Buffer.from(done.mesh_b64, 'base64'),
+    stats: {
+      faces: topology.faces ?? null,
+      vertices: topology.vertices ?? null,
+      watertight: topology.watertight ?? null,
+      components: topology.components ?? null,
+      well_shaped: quality.pct_well_shaped ?? null,
+      quad_faces: tool.quad_face_count ?? null
+    },
+    warnings
+  };
 }
 
 async function runAutoRig(api, { projectId, inputs, onProgress }) {
@@ -421,6 +472,7 @@ async function runFlatten(api, { projectId, inputs, onProgress }) {
 
 const RUNNERS = {
   [BATCH_ACTION_OPTIMIZE]: runOptimize,
+  [BATCH_ACTION_AUTORETOPO]: runAutoRetopo,
   [BATCH_ACTION_AUTOUV]: runAutoUv,
   [BATCH_ACTION_AUTORIG]: runAutoRig,
   [BATCH_ACTION_TRANSFER_RIG]: runTransferRig,

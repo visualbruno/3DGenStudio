@@ -61,7 +61,7 @@ const AUTO_RETOPO_OPTIONS = {
   watertight: z.boolean().default(true).describe('Build a unified voxel shell (robust to messy input) vs. remesh the surface directly (keeps open boundaries).'),
   shell_resolution: z.number().int().min(16).max(1024).default(256).describe('Voxel grid cells along the longest bbox axis (watertight only).'),
   shell_close_iter: z.number().int().min(0).max(20).default(1).describe('Morphological closing iterations to bridge cracks (watertight only).'),
-  shell_smooth: z.number().min(0).max(5).default(1.4).describe('Gaussian sigma (voxels) on the SDF; kills voxel ripple, lower = crisper (watertight only).'),
+  shell_smooth: z.number().min(0).max(5).default(0.4).describe('Gaussian sigma (voxels) on the SDF; kills voxel ripple, lower = crisper (watertight only). 0.4 suits characters, creatures and vegetation; raise toward 1.4 for hard-surface architecture, where flat walls are what voxel staircase shows on.'),
   shell_taubin: z.number().int().min(0).max(100).default(10).describe('Taubin polish steps on the dense shell, 0 disables (watertight only).'),
   shell_samples_per_pitch: z.number().min(1).max(8).default(2).describe('Surface sampling density; >=2 guarantees gap-free voxel coverage (watertight only).'),
   max_memory_gb: z.number().min(0).max(128).default(4).describe('Auto-lower shell resolution to fit this budget, 0 disables (watertight only).'),

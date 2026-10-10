@@ -96,8 +96,8 @@ class AutoRetopoOptions(BaseModel):
                                   description="Voxel grid cells along the longest bbox axis.")
     shell_close_iter: int = Field(default=1, ge=0, le=20,
                                   description="Morphological closing iterations to bridge cracks.")
-    shell_smooth: float = Field(default=1.4, ge=0.0, le=5.0,
-                                description="Gaussian sigma (voxels) on the signed-distance field; kills voxel ripple (lower = crisper).")
+    shell_smooth: float = Field(default=0.4, ge=0.0, le=5.0,
+                                description="Gaussian sigma (voxels) on the signed-distance field; kills voxel ripple (lower = crisper). Raise toward 1.4 for hard-surface architecture, where voxel staircase on flat walls is what this removes.")
     shell_taubin: int = Field(default=10, ge=0, le=100,
                               description="Taubin polish steps on the dense shell (0 disables).")
     shell_samples_per_pitch: float = Field(default=2.0, ge=1.0, le=8.0,
