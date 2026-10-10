@@ -76,6 +76,82 @@
       "title": "🔧 Image Batch To List"
     }
   },
+  "257": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "260",
+        0
+      ],
+      "source": [
+        "163",
+        0
+      ],
+      "mask": [
+        "261",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked"
+    }
+  },
+  "258": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "259",
+        0
+      ],
+      "height": [
+        "259",
+        1
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask"
+    }
+  },
+  "259": {
+    "inputs": {
+      "image": [
+        "163",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "260": {
+    "inputs": {
+      "mask": [
+        "258",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "261": {
+    "inputs": {
+      "mask": [
+        "163",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
   "164_77": {
     "inputs": {
       "ckpt_name": "sam3.1_multiplex_fp16.safetensors"
@@ -108,7 +184,7 @@
         0
       ],
       "image": [
-        "163",
+        "257",
         0
       ],
       "conditioning": [

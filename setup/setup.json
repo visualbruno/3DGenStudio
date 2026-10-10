@@ -36,7 +36,6 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
-						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -54,7 +53,6 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
-						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -116,7 +114,6 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
-						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "478",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -134,7 +131,6 @@
 						{ "Node": "475",  "Input": "batch_size", "Name": "Number of Images to Generate",  "Type": "Number" },
 						{ "Node": "475",  "Input": "width", "Name": "Width",  "Type": "Number" },
 						{ "Node": "475",  "Input": "height", "Name": "Height",  "Type": "Number" },
-						{ "Node": "477",  "Input": "steps", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "479",  "Input": "value", "Name": "Transparent Background",  "Type": "Boolean" }
 					],
 					"Outputs": [

@@ -107,6 +107,82 @@
       "title": "Preview Image"
     }
   },
+  "72": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "76",
+        0
+      ],
+      "source": [
+        "1",
+        0
+      ],
+      "mask": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked"
+    }
+  },
+  "73": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "74",
+        0
+      ],
+      "height": [
+        "74",
+        1
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask"
+    }
+  },
+  "74": {
+    "inputs": {
+      "image": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "75": {
+    "inputs": {
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "76": {
+    "inputs": {
+      "mask": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
   "8_16": {
     "inputs": {
       "sampler_name": "euler"
@@ -114,22 +190,6 @@
     "class_type": "KSamplerSelect",
     "_meta": {
       "title": "KSamplerSelect"
-    }
-  },
-  "20_12_78": {
-    "inputs": {
-      "pixels": [
-        "1",
-        0
-      ],
-      "vae": [
-        "4",
-        0
-      ]
-    },
-    "class_type": "VAEEncode",
-    "_meta": {
-      "title": "VAE Encode"
     }
   },
   "8_17": {
@@ -164,6 +224,22 @@
     "class_type": "EmptyFlux2LatentImage",
     "_meta": {
       "title": "Empty Flux 2 Latent"
+    }
+  },
+  "20_12_78": {
+    "inputs": {
+      "pixels": [
+        "72",
+        0
+      ],
+      "vae": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
     }
   },
   "20_12_76": {

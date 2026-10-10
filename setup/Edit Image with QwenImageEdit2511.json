@@ -39,7 +39,7 @@
         0
       ],
       "image1": [
-        "146",
+        "162",
         0
       ]
     },
@@ -128,7 +128,7 @@
         0
       ],
       "image1": [
-        "146",
+        "162",
         0
       ]
     },
@@ -233,6 +233,82 @@
     "class_type": "PreviewImage",
     "_meta": {
       "title": "Preview Image"
+    }
+  },
+  "158": {
+    "inputs": {
+      "image": [
+        "146",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "159": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "158",
+        0
+      ],
+      "height": [
+        "158",
+        1
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask"
+    }
+  },
+  "160": {
+    "inputs": {
+      "mask": [
+        "159",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "161": {
+    "inputs": {
+      "mask": [
+        "146",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "162": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "160",
+        0
+      ],
+      "source": [
+        "146",
+        0
+      ],
+      "mask": [
+        "161",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked"
     }
   }
 }

@@ -24,7 +24,7 @@
         0
       ],
       "images.image_1": [
-        "478",
+        "488",
         0
       ],
       "vae": [
@@ -194,6 +194,82 @@
     "class_type": "UnetLoaderGGUF",
     "_meta": {
       "title": "Unet Loader (GGUF)"
+    }
+  },
+  "485": {
+    "inputs": {
+      "mask": [
+        "486",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image"
+    }
+  },
+  "486": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "489",
+        0
+      ],
+      "height": [
+        "489",
+        1
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask"
+    }
+  },
+  "487": {
+    "inputs": {
+      "mask": [
+        "478",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask"
+    }
+  },
+  "488": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "485",
+        0
+      ],
+      "source": [
+        "478",
+        0
+      ],
+      "mask": [
+        "487",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked"
+    }
+  },
+  "489": {
+    "inputs": {
+      "image": [
+        "478",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
     }
   }
 }
