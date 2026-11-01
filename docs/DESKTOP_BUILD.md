@@ -16,7 +16,10 @@ service as child processes, then opens a window pointed at the local backend
 
 > The **Python service** uses the "require Python" model: on first launch the
 > app finds a system Python, creates a virtualenv under the user's data folder,
-> and installs `python-server/requirements.txt` (CPU-only). This first run takes
+> and installs `python-server/requirements.txt`, plus Auto Retopo's GPU
+> acceleration when an NVIDIA GPU is present: CuPy for the shell stage
+> (`cupy-cuda13x` on Windows, `cupy-cuda12x` on Linux, with NVRTC + cuBLAS as pip
+> wheels) and `warp-lang` for the projection stage. This first run takes
 > a few minutes; Auto UV / Auto Retopo are unavailable until it finishes. If no
 > Python 3 is found, the rest of the app still works — only mesh-tools are off.
 >

@@ -933,7 +933,8 @@
 				{ "FileName": "ultratex_flux2.safetensors", "Url": "https://www.modelscope.ai/models/Yibo-Zhang/UltraTex/resolve/master/flux2/lora/dit_lora.safetensors?view=false", "Size": 0.47 }
 			],
 			"UpscaleModels": [
-				{ "FileName": "4xLexicaDAT2_otf.pth", "Url": "https://huggingface.co/visualbruno/Upscalers/resolve/main/4xLexicaDAT2_otf.pth?download=true", "Size": 0.1 }
+				{ "FileName": "4xLexicaDAT2_otf.pth", "Url": "https://huggingface.co/visualbruno/Upscalers/resolve/main/4xLexicaDAT2_otf.pth?download=true", "Size": 0.1 },
+				{ "FileName": "RealESRGAN-x2plus.pth", "Url": "https://huggingface.co/visualbruno/Upscalers/resolve/main/RealESRGAN-x2plus.pth?download=true", "Size": 0.1 }
 			],			
 			"Workflows": [
 				{
@@ -942,12 +943,13 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "39",  "Input": "value", "Name": "Texture Size",  "Type": "Number", "Enums":[512,1024,2048,4096,8192] },
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "25",  "Input": "guidance", "Name": "Guidance",  "Type": "Number" },
+						{ "Node": "25",  "Input": "sparse_topk", "Name": "TopK",  "Type": "Number" },
 						{ "Node": "43",  "Input": "value", "Name": "Upscale Image",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -960,7 +962,7 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "39",  "Input": "value", "Name": "Texture Size",  "Type": "Number", "Enums":[512,1024,2048,4096,8192] },
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
@@ -978,7 +980,7 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "25",  "Input": "guidance", "Name": "Guidance",  "Type": "Number" }
@@ -993,7 +995,7 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "25",  "Input": "guidance", "Name": "Guidance",  "Type": "Number" },
@@ -1009,7 +1011,7 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "31",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "31",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "30",  "Input": "value", "Name": "Texture Size",  "Type": "Number", "Enums":[512,1024,2048,4096,8192] },
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "29",  "Input": "value", "Name": "Seed",  "Type": "Number" },
@@ -1027,7 +1029,7 @@
 					"Inputs": [
 						{ "Node": "19", "Input": "image",  "Name": "Source Image", "Type": "Image" },
 						{ "Node": "22",  "Input": "glb_path",  "Name": "Source Mesh",   "Type": "Mesh" },
-						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,1536,2048] },
+						{ "Node": "38",  "Input": "value", "Name": "Resolution",  "Type": "Number", "Enums":[512,1024,2048] },
 						{ "Node": "39",  "Input": "value", "Name": "Texture Size",  "Type": "Number", "Enums":[512,1024,2048,4096,8192] },
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
@@ -1527,6 +1529,21 @@
 			"Outputs": [
 				{ "Node": "3", "Name": "Save Image", "Type": "Image" }
 			]
-		}			
+		},
+		{
+			"Name": "Refine Mesh with Hi3D",
+			"File": "setup/Refine Mesh with Hi3D.json",
+			"Inputs": [
+				{ "Node": "12", "Input": "glb_path",  "Name": "Source Mesh", "Type": "Mesh" },
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "10",  "Input": "target_face_count",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "10",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "10",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[512,1024,1536] },
+				{ "Node": "10",  "Input": "max_tokens",  "Name": "Max Tokens",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "6", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		}
 	]
 }

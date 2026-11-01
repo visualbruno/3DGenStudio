@@ -36,7 +36,7 @@
     "_meta": {
       "title": "Load Diffusion Model",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "6": {
@@ -47,7 +47,7 @@
     "_meta": {
       "title": "Load VAE",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "7": {
@@ -89,7 +89,7 @@
     "_meta": {
       "title": "Load Image",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "22": {
@@ -277,7 +277,7 @@
         0
       ],
       "albedo_views": [
-        "25",
+        "52",
         0
       ],
       "prep_2": [
@@ -285,7 +285,7 @@
         0
       ],
       "albedo_views_2": [
-        "27",
+        "50",
         0
       ]
     },
@@ -319,7 +319,7 @@
     "_meta": {
       "title": "Resolution",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "39": {
@@ -330,7 +330,7 @@
     "_meta": {
       "title": "Texture Size",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "40": {
@@ -341,7 +341,7 @@
     "_meta": {
       "title": "Seed",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "41": {
@@ -352,7 +352,7 @@
     "_meta": {
       "title": "Steps",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "42": {
@@ -365,7 +365,7 @@
     "_meta": {
       "title": "Load CLIP",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "43": {
@@ -376,7 +376,7 @@
     "_meta": {
       "title": "Load Upscale Model",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "44": {
@@ -394,7 +394,7 @@
     "_meta": {
       "title": "Upscale Image (using Model)",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "45": {
@@ -432,7 +432,7 @@
     "_meta": {
       "title": "Invert Mask",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "47": {
@@ -454,7 +454,7 @@
     "_meta": {
       "title": "If/Else Switch",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "48": {
@@ -476,7 +476,7 @@
     "_meta": {
       "title": "If/Else Switch",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
     }
   },
   "49": {
@@ -487,7 +487,54 @@
     "_meta": {
       "title": "Upscale Image",
       "cnr_id": "comfy-core",
-      "ver": "0.42.0"
+      "ver": "0.43.0"
+    }
+  },
+  "50": {
+    "inputs": {
+      "upscale_model": [
+        "51",
+        0
+      ],
+      "image": [
+        "27",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "51": {
+    "inputs": {
+      "model_name": "RealESRGAN-x2plus.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "52": {
+    "inputs": {
+      "upscale_model": [
+        "51",
+        0
+      ],
+      "image": [
+        "25",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
     }
   }
 }

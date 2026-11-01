@@ -7,7 +7,8 @@
 // folder is read-only on macOS/Linux). This mirrors the CLI run.bat/run.sh and
 // makes the flash-attn wheel selection for rigging deterministic.
 //
-//   - Mesh Tools (python-server): always provisioned. CPU only.
+//   - Mesh Tools (python-server): always provisioned. CPU, plus CuPy + Warp for
+//     Auto Retopo when an NVIDIA GPU is present (Windows/Linux; see MESHTOOLS_GPU).
 //   - Motion Generation (kimodo): opt-in. Heavy (torch + a 1.1 GB checkpoint +
 //     a 16 GB text encoder) and needs an NVIDIA GPU. No flash-attn, so the setup
 //     is the plain run_server.bat sequence; macOS has no CUDA and is refused.
@@ -35,7 +36,51 @@ const UV_EXE = IS_WIN ? 'uv.exe' : 'uv';
 // re-run the (incremental) mesh-tools setup and pick up the new deps — the
 // marker alone only proves that SOME requirements set was installed once.
 // History: 2 = added bpy (GLB->FBX engine export, v1.5.0).
-const MESHTOOLS_REQS_TAG = 'meshtools-reqs-2';
+//          3 = GPU acceleration for Auto Retopo (MESHTOOLS_GPU).
+const MESHTOOLS_REQS_TAG = 'meshtools-reqs-3';
+
+// GPU acceleration for Auto Retopo, the two packages of requirements-nvidia.txt:
+//   - CuPy (watertight-shell stage), one CUDA major per platform — the same line
+//     the managed ComfyUI build uses there (cu130 Windows, cu128 Linux). The
+//     wheel alone is not enough on a machine without a CUDA toolkit:
+//     cupyx.scipy.ndimage JIT-compiles its kernels with NVRTC and the voxelizer's
+//     einsum calls cuBLAS, and the driver ships neither. cuda-toolkit[nvrtc,cublas]
+//     brings exactly those two as wheels (~520 MB) that cuda-pathfinder finds in
+//     site-packages; CuPy's own [ctk] extra is the whole toolkit (~1.5 GB) for
+//     libraries Auto Retopo never loads.
+//   - Warp (projection stage's closest-point queries). Self-contained: warp.dll
+//     carries its own NVRTC, so it needs nothing beyond the driver.
+// No macOS entry: there is no CUDA there.
+const MESHTOOLS_GPU = {
+  win32: ['cupy-cuda13x', 'cuda-toolkit[nvrtc,cublas]==13.*', 'warp-lang>=1.0'],
+  linux: ['cupy-cuda12x', 'cuda-toolkit[nvrtc,cublas]==12.*', 'warp-lang>=1.0'],
+};
+
+// Exercises what the two GPU stages need — CuPy's device, NVRTC (an ndimage
+// kernel) and cuBLAS (einsum); Warp seeing a CUDA device — so a driver too old
+// for a wheel's CUDA major shows up in the setup log instead of as a silent CPU
+// fallback later.
+const GPU_PROBE = [
+  'import cupy as cp',
+  'from cupyx.scipy import ndimage as ndi',
+  'a = cp.ones((16, 16, 16), cp.float32)',
+  'cp.einsum("ij,jk->ik", a[0], a[0])',
+  'ndi.gaussian_filter(ndi.distance_transform_edt(a > 0), 1.0)',
+  'cp.cuda.Device().synchronize()',
+  'print("CuPy", cp.__version__, "OK on", cp.cuda.runtime.getDeviceProperties(0)["name"].decode())',
+  'import warp as wp',
+  'wp.init()',
+  'assert wp.get_cuda_device_count() > 0, "Warp sees no CUDA device"',
+  'print("Warp", wp.__version__, "OK")',
+].join('\n');
+
+function hasNvidiaGpu() {
+  try {
+    return spawnSync('nvidia-smi', ['-L'], { timeout: 20000, stdio: 'ignore' }).status === 0;
+  } catch {
+    return false;
+  }
+}
 
 function venvPython(venvDir) {
   return IS_WIN
@@ -220,6 +265,28 @@ async function setupPythonServer({ uv, serviceDir, venvDir, onProgress }) {
     {
       label: 'Installing mesh-tools dependencies', weight: 6,
       run: (log) => runStream(uv, ['pip', 'install', '--python', vp, '-r', 'requirements.txt'], { cwd: serviceDir, env, onLine: log }).then((r) => r.code),
+    },
+    {
+      // Never fatal: gpu.py falls back to the CPU whenever CuPy or Warp is missing
+      // or unusable, so Mesh Tools works either way — just slower.
+      label: 'Installing GPU acceleration (CuPy, Warp)', weight: 2, required: false,
+      run: async (log) => {
+        const pkgs = MESHTOOLS_GPU[process.platform];
+        if (!pkgs || !hasNvidiaGpu()) {
+          log('No NVIDIA GPU detected — Auto Retopo will run on the CPU.\n');
+          return 0;
+        }
+        const r = await runStream(uv, ['pip', 'install', '--python', vp, ...pkgs], { cwd: serviceDir, env, onLine: log });
+        if (r.code !== 0) {
+          log('\nWARNING: GPU acceleration did not install. Auto Retopo will run on the CPU.\n');
+          return r.code;
+        }
+        const probe = await runStream(vp, ['-c', GPU_PROBE], { cwd: serviceDir, env, onLine: log });
+        if (probe.code !== 0) {
+          log('\nWARNING: GPU acceleration is installed but cannot use the GPU (often an NVIDIA driver too old for this CUDA version). Auto Retopo may run on the CPU.\n');
+        }
+        return probe.code;
+      },
     },
   ], onProgress);
   fs.writeFileSync(depsMarker(venvDir), `${MESHTOOLS_REQS_TAG} ${new Date().toISOString()}`);

@@ -238,3 +238,5 @@ yapf==0.43.0
 yarl==1.24.5
 zipp==4.1.0
 zstandard==0.25.0
+--find-links https://whl.natten.org
+natten==0.21.6+torch2110cu128

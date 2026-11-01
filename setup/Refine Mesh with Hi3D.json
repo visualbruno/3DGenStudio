@@ -1,0 +1,98 @@
+{
+  "1": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.42.0"
+    }
+  },
+  "3": {
+    "inputs": {
+      "vram_mode": "model_swap"
+    },
+    "class_type": "Hi3DLoadModel",
+    "_meta": {
+      "title": "Hi3D Load Model",
+      "aux_id": "Rizzlord/ComfyUI-Hi3D",
+      "ver": "15389b88ba0a209dd668df4c3cc9d7cbea339ec9"
+    }
+  },
+  "6": {
+    "inputs": {
+      "filename_prefix": "3DGenStudioRefinedHi3D",
+      "file_format": "glb",
+      "trimesh": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "Hi3DExport",
+    "_meta": {
+      "title": "Hi3D Export",
+      "aux_id": "Rizzlord/ComfyUI-Hi3D",
+      "ver": "15389b88ba0a209dd668df4c3cc9d7cbea339ec9"
+    }
+  },
+  "10": {
+    "inputs": {
+      "resolution": 1536,
+      "steps": 12,
+      "seed": 12345,
+      "scheduler": "euler",
+      "guidance_strength": 1,
+      "guidance_cutoff": 0.7,
+      "voxel_budget_scale": 1,
+      "tiled_decode": true,
+      "reduce_faces": true,
+      "target_face_count": 1000000,
+      "remove_floaters": true,
+      "floater_face_ratio": 0.005,
+      "fill_holes_max_edges": 10000,
+      "restore_input_scale": true,
+      "remove_background": false,
+      "force_offload": true,
+      "max_tokens": 300000,
+      "invert_mask": true,
+      "sigma_min": 0.002,
+      "time_rescale_factor": 2,
+      "hi3d_model": [
+        "3",
+        0
+      ],
+      "image": [
+        "1",
+        0
+      ],
+      "trimesh": [
+        "12",
+        0
+      ],
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "Hi3DRefine",
+    "_meta": {
+      "title": "Hi3D Refine",
+      "aux_id": "Rizzlord/ComfyUI-Hi3D",
+      "ver": "15389b88ba0a209dd668df4c3cc9d7cbea339ec9"
+    }
+  },
+  "12": {
+    "inputs": {
+      "glb_path": "",
+      "only_vertices_and_faces": true
+    },
+    "class_type": "Hi3DLoadMesh",
+    "_meta": {
+      "title": "Hi3D Load Mesh",
+      "aux_id": "visualbruno/ComfyUI-Hi3D",
+      "ver": "15389b88ba0a209dd668df4c3cc9d7cbea339ec9"
+    }
+  }
+}

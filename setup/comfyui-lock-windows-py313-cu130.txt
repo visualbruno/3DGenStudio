@@ -235,3 +235,4 @@ yapf==0.43.0
 yarl==1.24.5
 zipp==4.1.0
 zstandard==0.25.0
+natten @ ${NODE_DIR}/ComfyUI-Trellis2/wheels/Windows/Torch2100/CUDA%2013.1/natten-0.21.6-cp313-cp313-win_amd64.whl
