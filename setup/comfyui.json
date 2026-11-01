@@ -104,6 +104,11 @@
       "ref": "3eea253915fff622a6ddb6b377107b4c3f5af0ef"
     },
     {
+      "name": "ComfyUI-Hi3D",
+      "repo": "visualbruno/ComfyUI-Hi3D",
+      "ref": "03dea7e366ba951d7475f3f1c8a71596a87f913c"
+    },
+    {
       "name": "ComfyUI-Hunyuan3d-2-1",
       "repo": "visualbruno/ComfyUI-Hunyuan3d-2-1",
       "ref": "a0b26fbb94c9a9d32720526c52e64f87e05d2b53"
