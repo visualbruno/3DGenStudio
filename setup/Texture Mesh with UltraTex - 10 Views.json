@@ -122,7 +122,7 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": 0.2,
       "token_chunk": 8192,
       "denoise": 1,
       "model": [

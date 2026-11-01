@@ -122,7 +122,10 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": [
+        "60",
+        0
+      ],
       "token_chunk": 8192,
       "denoise": 1,
       "model": [
@@ -188,7 +191,10 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": [
+        "60",
+        0
+      ],
       "token_chunk": 8192,
       "denoise": 1,
       "model": [
@@ -529,7 +535,10 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": [
+        "60",
+        0
+      ],
       "token_chunk": 8192,
       "denoise": 1,
       "model": [
@@ -601,7 +610,10 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": [
+        "60",
+        0
+      ],
       "token_chunk": 8192,
       "denoise": 1,
       "model": [
@@ -683,6 +695,17 @@
     "class_type": "ImageUpscaleWithModel",
     "_meta": {
       "title": "Upscale Image (using Model)",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "60": {
+    "inputs": {
+      "value": 0.2
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "TopK",
       "cnr_id": "comfy-core",
       "ver": "0.43.0"
     }

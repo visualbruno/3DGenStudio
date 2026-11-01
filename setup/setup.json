@@ -967,6 +967,7 @@
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
+						{ "Node": "25",  "Input": "sparse_topk", "Name": "TopK",  "Type": "Number" },
 						{ "Node": "26",  "Input": "elevation", "Name": "Elevation",  "Type": "Number" },
 						{ "Node": "49",  "Input": "value", "Name": "Upscale Image",  "Type": "Boolean" }
 					],
@@ -1016,7 +1017,8 @@
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "29",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "32",  "Input": "value", "Name": "Steps",  "Type": "Number" },
-						{ "Node": "24",  "Input": "guidance", "Name": "Guidance",  "Type": "Number" },
+						{ "Node": "4",  "Input": "sparse_topk", "Name": "TopK Albedo",  "Type": "Number" },
+						{ "Node": "24",  "Input": "sparse_topk", "Name": "TopK PBR",  "Type": "Number" },
 						{ "Node": "40",  "Input": "value", "Name": "Upscale Image",  "Type": "Boolean" }
 					],
 					"Outputs": [
@@ -1035,6 +1037,7 @@
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
 						{ "Node": "26",  "Input": "elevation", "Name": "Elevation",  "Type": "Number" },
+						{ "Node": "60",  "Input": "value", "Name": "TopK",  "Type": "Number" },
 						{ "Node": "49",  "Input": "value", "Name": "Upscale Image",  "Type": "Boolean" }
 					],
 					"Outputs": [
