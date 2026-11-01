@@ -9952,6 +9952,61 @@ async function runGltfpack(sourceBuffer, ratio, {
   return achieved({ ...best, seamLimited: false, seamsBroken: best === sloppy });
 }
 
+// Multi-step simplification: halve the triangle count per gltfpack run until the
+// target is reached, instead of asking for the whole reduction in one go.
+//
+// Why it can beat one pass here: the error budget (-se) is measured against each
+// run's own input, and the one-shot run is the one most likely to stall above
+// 1.5x target — which, on a mesh without UVs, sends runGltfpack to the -sa pass
+// that ignores the budget. Each halving step lands near its target, so -sa never
+// fires. On a mesh where one pass already reaches the target cleanly the two
+// measured the same (1.06M -> 20k: 0.041% vs 0.038% mean deviation).
+//
+// Stops when the target is reached, when a step removes too little to matter
+// (the mesh has hit a floor and further runs would only burn time), or after
+// MAX_SIMPLIFY_STEPS runs.
+const MAX_SIMPLIFY_STEPS = 10;
+// A step that removes less than this fraction of the triangles is not progress.
+const MIN_SIMPLIFY_STEP_GAIN = 0.01;
+
+async function runGltfpackMultiStep(sourceBuffer, ratio, simplify = {}) {
+  const inputTriangles = countGlbTriangles(sourceBuffer);
+  if (ratio >= 1 || !inputTriangles) return runGltfpack(sourceBuffer, ratio, simplify);
+
+  const target = inputTriangles * ratio;
+  let buffer = sourceBuffer;
+  let current = inputTriangles;
+  let last = null;
+  let seamsBroken = false;
+  const steps = [];
+
+  while (steps.length < MAX_SIMPLIFY_STEPS && current > target) {
+    const stepTarget = Math.max(target, current / 2);
+    const result = await runGltfpack(buffer, stepTarget / current, simplify);
+    if (!result.triangles) break;
+    // An irrelevant step is discarded: the previous mesh is as good.
+    if ((current - result.triangles) / current < MIN_SIMPLIFY_STEP_GAIN) break;
+    steps.push({ from: current, target: Math.round(stepTarget), triangles: result.triangles });
+    buffer = result.buffer;
+    current = result.triangles;
+    last = result;
+    seamsBroken = seamsBroken || !!result.seamsBroken;
+  }
+
+  if (!last) return runGltfpack(sourceBuffer, ratio, simplify);
+
+  return {
+    buffer,
+    triangles: current,
+    inputTriangles,
+    achievedRatio: current / inputTriangles,
+    // Same threshold runGltfpack uses: stopped well short of the target.
+    seamLimited: current > target * 1.5,
+    seamsBroken,
+    steps,
+  };
+}
+
 function clampSimplifyRatio(value, fallback = 1) {
   const ratio = Number(value);
   if (!Number.isFinite(ratio)) return fallback;
@@ -10001,7 +10056,9 @@ app.post('/api/meshes/optimize', meshToolsUpload.single('meshFile'), async (req,
       : clampSimplifyRatio(options.simplify_ratio);
     const simplify = readSimplifyOptions(options);
 
-    const result = await runGltfpack(meshFile.buffer, ratio, simplify);
+    const result = options.multi_step
+      ? await runGltfpackMultiStep(meshFile.buffer, ratio, simplify)
+      : await runGltfpack(meshFile.buffer, ratio, simplify);
 
     res.json({
       mesh_b64: result.buffer.toString('base64'),
@@ -10014,6 +10071,7 @@ app.post('/api/meshes/optimize', meshToolsUpload.single('meshFile'), async (req,
         achieved_ratio: result.achievedRatio,
         seam_limited: !!result.seamLimited,
         seams_broken: !!result.seamsBroken,
+        ...(result.steps ? { steps: result.steps } : {}),
       },
     });
   } catch (err) {

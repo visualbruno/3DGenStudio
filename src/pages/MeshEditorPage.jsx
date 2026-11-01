@@ -346,6 +346,9 @@ const DEFAULT_OPTIMIZE_OPTIONS = {
   // simplification floor, and it scrambles the texture and the hard edges alike.
   // Under-simplifying and saying so beats silently ruining the asset.
   allow_seam_breaking: false,
+  // Halve the face count per gltfpack run (max 10 runs) instead of one big pass.
+  // Optimize only — the LOD chain always builds each level from the original.
+  multi_step: false,
   // simplify_error / permissive / lock_border / aggressive. The error budget is
   // the knob that reaches most targets, and unlike seam welding it costs nothing
   // in normals or UVs — see DEFAULT_SIMPLIFY_OPTIONS.
@@ -5198,6 +5201,9 @@ export default function MeshEditorPage() {
         // was met, without making anyone do the arithmetic.
         if (stats?.achieved_ratio != null) {
           rows.push({ label: 'Achieved ratio', value: Number(stats.achieved_ratio.toFixed(3)) })
+        }
+        if (stats?.steps?.length) {
+          rows.push({ label: 'Steps', value: stats.steps.map(s => s.triangles.toLocaleString()).join(' → ') })
         }
         if (stats?.seams_broken) {
           rows.push({ label: 'Seams welded', value: 'yes — check hard edges and texture' })

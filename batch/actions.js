@@ -134,6 +134,8 @@ const ACTION_DESCRIPTORS = {
         { min: 0.1, max: 50, step: 0.1 }),
       toggle('simplify_update', 'Optimize vertex positions', false,
         'Move the surviving vertices closer to the original surface (gltfpack -sv). Same triangle count, a better-looking mesh.'),
+      toggle('multi_step', 'Multi-step', false,
+        'Reach the target by halving the face count on each run instead of in one pass, stopping at the target, when a step no longer removes anything meaningful, or after 10 steps. Each step gets the full error budget, so a large reduction is far less likely to stall and fall back to the quality-blind pass.'),
       toggle('lock_border', 'Lock border vertices', false,
         'Pin vertices on an open edge so a mesh that is one piece of a set does not pull away from its neighbours. Costs some reduction.'),
       toggle('allow_seam_breaking', 'Allow attribute seams to break', false,

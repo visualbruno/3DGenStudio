@@ -165,6 +165,7 @@ async function runOptimize(api, { projectId, inputs, onProgress }) {
     // The field reads in percent, as it does in the Mesh Editor panel.
     simplify_error: Number(inputs.simplify_error) / 100,
     simplify_update: inputs.simplify_update === true,
+    multi_step: inputs.multi_step === true,
     lock_border: inputs.lock_border === true,
     allow_seam_breaking: inputs.allow_seam_breaking === true,
     permissive: inputs.permissive === true,
@@ -203,6 +204,8 @@ async function runOptimize(api, { projectId, inputs, onProgress }) {
       faces: stats.triangles ?? null,
       targetFaces: stats.target_faces ?? null,
       achievedRatio: stats.achieved_ratio ?? null,
+      // Face count after each kept step, when the stage ran multi-step.
+      ...(stats.steps ? { steps: stats.steps.map(step => step.triangles) } : {}),
       ...(uv ? { uv } : {})
     },
     warnings

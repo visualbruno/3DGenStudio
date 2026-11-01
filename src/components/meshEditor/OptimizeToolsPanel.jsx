@@ -111,6 +111,10 @@ export default function OptimizeToolsPanel({
           onChange={v => setOption('simplify_update', v)} disabled={fieldsDisabled}
           hint="gltfpack's -sv: instead of only choosing which vertices survive, move the survivors to sit closer to the original surface and rewrite their normals, colours and UVs to match. The triangle count is identical either way — this buys a better-looking mesh at the same cost, so it is worth leaving on unless you need the output to match an earlier run. Meshes with morph targets or a second UV set skip it automatically." />
 
+        <ToggleField label="Multi-step" value={!!o.multi_step}
+          onChange={v => setOption('multi_step', v)} disabled={fieldsDisabled}
+          hint="Reach the target by halving the face count on each run instead of in one pass, stopping at the target, when a step no longer removes anything meaningful, or after 10 steps. Each step gets the full error budget, so a large reduction is far less likely to stall and fall back to the quality-blind pass." />
+
         <ToggleField label="Lock border vertices" value={!!o.lock_border}
           onChange={v => setOption('lock_border', v)} disabled={fieldsDisabled}
           hint="Pins vertices on an open edge, so a mesh that is one piece of a larger set does not pull away from its neighbours along the shared edge. Costs some reduction." />

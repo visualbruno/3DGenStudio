@@ -678,6 +678,24 @@ test('the re-unwrap does not run when the seams held', async () => {
   assert.deepEqual(state.toolCalls.map(call => call.path), ['/meshes/optimize']);
 });
 
+test('Multi-step is off by default, and when on it is sent and its steps reported', async () => {
+  assert.equal(createStageDefaultInputs(getStageWorkflow(createStage('', 'optimize'), {})).multi_step, false);
+
+  const { state, api } = createBackend([]);
+  state.assets.set(5, { id: 5, type: 'mesh', name: 'knight', filename: 'meshes/5.glb' });
+  state.optimizeStats = { steps: [{ from: 90000, target: 45000, triangles: 44980 }, { from: 44980, target: 22490, triangles: 22470 }] };
+
+  const outcome = await executeBatchAction(api, {
+    action: 'optimize',
+    projectId: 7,
+    inputs: { mesh: 'asset:5', target_faces: 22490, simplify_error: 5, multi_step: true },
+    name: 'Knight low'
+  });
+
+  assert.equal(state.toolCalls[0].options.multi_step, true);
+  assert.deepEqual(outcome.stats.steps, [44980, 22470]);
+});
+
 test('an Auto UV stage sends its own settings and flags an overlapping layout and a lost rig', async () => {
   const { state, api } = createBackend([]);
   state.assets.set(5, { id: 5, type: 'mesh', name: 'knight', filename: 'meshes/5.glb' });
