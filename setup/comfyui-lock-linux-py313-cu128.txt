@@ -2,6 +2,7 @@
 # Reference env: /home/visualbruno/Git/comfyui
 # Python 3.13 · torch 2.11.0+cu128 · CUDA 12.8 · linux
 # Placeholders: NODE_DIR = <install>/custom_nodes, WHEEL_HOST = manifest wheelHost
+--extra-index-url https://ratharog.github.io/cumm-spconv/
 absl-py==2.5.0
 accelerate==1.14.0
 addict==2.4.0
@@ -15,11 +16,14 @@ annotated-doc==0.0.5
 annotated-types==0.8.0
 antlr4-python3-runtime==4.9.3
 anyio==4.14.2
+asttokens==3.0.2
 attrs==26.1.0
 av==18.1.0
 beautifulsoup4==4.15.0
 bitsandbytes==0.50.0
 blake3==1.0.9
+blinker==1.9.0
+ccimport==0.4.4
 certifi==2026.7.22
 cffi==2.1.0
 chardet==7.6.0
@@ -32,25 +36,28 @@ colour-science==0.4.7
 comfy-aimdo==0.6.0
 comfy-angle==0.1.0
 comfy-kitchen==0.2.40
-comfyui-embedded-docs==0.5.14
-comfyui-workflow-templates-core==0.3.387
-comfyui-workflow-templates-json==0.1.122
+comfyui-embedded-docs==0.5.15
+comfyui-workflow-templates-core==0.3.391
+comfyui-workflow-templates-json==0.1.126
 comfyui-workflow-templates-media-api==0.3.84
 comfyui-workflow-templates-media-assets-01==0.1.48
-comfyui-workflow-templates-media-assets-02==0.1.23
+comfyui-workflow-templates-media-assets-02==0.1.26
 comfyui-workflow-templates-media-image==0.3.160
 comfyui-workflow-templates-media-other==0.3.229
 comfyui-workflow-templates-media-video==0.3.101
-comfyui_frontend_package==1.57.1
-comfyui_workflow_templates==0.11.96
+comfyui_frontend_package==1.57.6
+comfyui_workflow_templates==0.11.100
+comm==0.2.3
 ConfigArgParse==1.7.5
 contourpy==1.3.3
+cryptography==50.0.2
 cuda-bindings==12.9.4
 cuda-pathfinder==1.6.0
 cuda-toolkit==12.8.1
-cryptography==50.0.2
 cumesh @ ${NODE_DIR}/ComfyUI-Trellis2/wheels/Linux/Torch2110/cumesh-1.0-cp313-cp313-linux_x86_64.whl
+cumm-cu128==0.9.1
 cycler==0.12.1
+dash==4.4.1
 dataclasses-json==0.6.7
 ddt==1.7.2
 decord==0.6.0
@@ -60,9 +67,13 @@ docutils==0.23
 easydict==1.13
 einops==0.8.2
 embreex==4.4.0
+executing==2.2.1
+fastjsonschema==2.22.2
 filelock==3.32.2
+fire==0.7.1
 fla-core==0.5.2
 flash-linear-attention==0.5.2
+Flask==3.1.3
 flatbuffers==25.12.19
 flex_gemm @ ${NODE_DIR}/ComfyUI-Trellis2/wheels/Linux/Torch2110/flex_gemm-1.0.0-cp313-cp313-linux_x86_64.whl
 fonttools==4.63.0
@@ -85,13 +96,22 @@ idna==3.18
 ImageIO==2.37.4
 importlib_metadata==9.0.0
 iopath==0.1.10
+ipython==9.17.1
+ipython_pygments_lexers==1.1.1
+ipywidgets==8.1.9
+itsdangerous==2.2.0
+janus==2.0.0
+jedi==0.20.0
 Jinja2==3.1.6
 joblib==1.5.3
 jsonschema==4.26.0
 jsonschema-specifications==2025.9.1
+jupyter_core==5.9.1
+jupyterlab_widgets==3.0.17
 kiwisolver==1.5.0
 kornia==0.8.3
 kornia_rs==0.1.14
+lark==1.3.1
 lazy-loader==0.5
 lightning-utilities==0.15.3
 llvmlite==0.48.0
@@ -103,6 +123,7 @@ markdown-it-py==4.2.0
 MarkupSafe==3.0.3
 marshmallow==3.26.2
 matplotlib==3.11.1
+matplotlib-inline==0.2.2
 mdurl==0.1.2
 mediapipe==1.0.0
 meshlib==3.1.3.297
@@ -112,10 +133,14 @@ mss==10.2.0
 multidict==6.7.1
 mypy_extensions==1.1.0
 narwhals==2.24.0
+nbformat==5.11.1
+nest-asyncio==1.6.0
 networkx==3.6.1
+ninja==1.13.2
 numba==0.66.0
 numpy==2.4.6
 nvdiffrast @ ${NODE_DIR}/ComfyUI-Trellis2/wheels/Linux/Torch2110/nvdiffrast-0.4.0-cp313-cp313-linux_x86_64.whl
+nvidia-arch==8.0.0
 nvidia-cublas==13.1.0.3
 nvidia-cublas-cu12==12.8.4.1
 nvidia-cuda-cupti==13.0.85
@@ -152,6 +177,9 @@ onnxruntime==1.28.0
 onnxruntime-gpu==1.28.0
 opencv-contrib-python==5.0.0.93
 packaging==26.2
+parso==0.8.7
+pccm==0.4.16
+pexpect==4.9.0
 piexif==1.1.3
 pillow==12.3.0
 pixeloe==0.1.4
@@ -160,9 +188,12 @@ plotly==6.9.0
 plyfile==1.1.5
 pooch==1.9.0
 portalocker==3.2.0
+prompt_toolkit==3.0.53
 propcache==0.5.2
 protobuf==5.29.6
 psutil==7.2.2
+ptyprocess==0.7.0
+pure_eval==0.2.4
 pybind11==3.0.4
 pycocotools==2.0.11
 pycollada==0.9.3
@@ -185,6 +216,7 @@ referencing==0.37.0
 regex==2026.7.19
 rembg==2.0.77
 requests==2.34.2
+retrying==1.4.2
 rich==15.0.0
 rpds-py==2026.6.3
 rtree==1.4.1
@@ -202,7 +234,9 @@ six==1.17.0
 sounddevice==0.5.5
 soupsieve==2.9.1
 spandrel==0.4.2
+spconv-cu128==2.4.1
 SQLAlchemy==2.0.51
+stack-data==0.6.3
 stringzilla==5.0.5
 supervision==0.6.0
 svg.path==7.1
@@ -216,6 +250,7 @@ tokenizers==0.22.2
 torchmetrics==1.9.0
 torchsde==0.2.6
 tqdm==4.70.0
+traitlets==5.16.1
 trampoline==0.1.2
 transformers==5.14.1
 transparent-background==1.3.4
@@ -229,7 +264,9 @@ urllib3==2.7.0
 utils3d @ https://github.com/EasternJournalist/utils3d/archive/94d1037aabbce32dea9c07a7c4849525817a1615.tar.gz
 vhacdx==0.0.10
 wcwidth==0.8.2
+Werkzeug==3.1.9
 wget==3.2
+widgetsnbextension==4.0.16
 wrapt==2.3.0
 xatlas==0.0.11
 xxhash==3.8.1
@@ -239,4 +276,4 @@ yarl==1.24.5
 zipp==4.1.0
 zstandard==0.25.0
 --find-links https://whl.natten.org
-natten==0.21.6+torch2110cu128
+natten==0.21.6+torch2110cu128 No newline at end of file
