@@ -28,6 +28,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.5.6',
+    date: '2026-11-01',
+    items: [
+			'ComfyUI: Added Refine Mesh with Hi3D',
+			'Improved Optimize',
+			'Fixed missing natten package for Pixal3D',
+			'Updated ComfyUI and nodes'
+    ]
+  },
+  {
     version: 'v3.5.5',
     date: '2026-10-25',
     items: [
