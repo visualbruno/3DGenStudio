@@ -385,7 +385,9 @@ const TENCENT_GENERATION_TYPES = new Set(['Normal', 'LowPoly', 'Geometry']);
 const TENCENT_POLYGON_TYPES = new Set(['triangle', 'quadrilaterial']);
 const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration';
 const TRIPO_API_BASE_URL = 'https://openapi.tripo3d.ai/v3';
-const TRIPO_MODEL_VERSIONS = new Set(['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']);
+const TRIPO_MODEL_VERSIONS = new Set(['v3.0-20250812', 'v3.1-20260211', 'P1-20260311', 'P2-20260801']);
+// P-series models take a reduced parameter set (see normalizeTripoMeshGenerationInput).
+const TRIPO_P_SERIES_MODEL_VERSIONS = new Set(['P1-20260311', 'P2-20260801']);
 const TRIPO_TEXTURE_ALIGNMENT_OPTIONS = new Set(['original_image', 'geometry']);
 const TRIPO_TEXTURE_QUALITY_OPTIONS = new Set(['standard', 'detailed', 'extreme']);
 const TRIPO_ORIENTATION_OPTIONS = new Set(['default', 'align_image']);
@@ -3030,7 +3032,7 @@ function normalizeTripoMeshGenerationInput({
 
   const normalizedModelVersion = TRIPO_MODEL_VERSIONS.has(String(modelVersion || '').trim())
     ? String(modelVersion || '').trim()
-    : 'v2.5-20250123';
+    : 'v3.1-20260211';
   const normalizedModelSeed = normalizeTripoNullableInteger(modelSeed, null);
   const normalizedEnableImageAutofix = normalizeTripoBoolean(enableImageAutofix, false);
   const normalizedFaceLimit = normalizeTripoNullableInteger(faceLimit, null);
@@ -3054,14 +3056,14 @@ function normalizeTripoMeshGenerationInput({
   const normalizedGeometryQuality = TRIPO_GEOMETRY_QUALITY_OPTIONS.has(String(geometryQuality || '').trim())
     ? String(geometryQuality || '').trim()
     : 'standard';
-  const isP1Model = normalizedModelVersion === 'P1-20260311';
-  const effectiveEnableImageAutofix = isP1Model ? false : normalizedEnableImageAutofix;
-  const effectiveTextureAlignment = isP1Model ? 'original_image' : normalizedTextureAlignment;
-  const effectiveOrientation = isP1Model ? 'default' : normalizedOrientation;
-  const effectiveQuad = isP1Model ? false : normalizedQuad;
-  const effectiveSmartLowPoly = isP1Model ? false : normalizedSmartLowPoly;
-  const effectiveGenerateParts = isP1Model ? false : normalizedGenerateParts;
-  const effectiveGeometryQuality = isP1Model ? 'standard' : normalizedGeometryQuality;
+  const isPSeriesModel = TRIPO_P_SERIES_MODEL_VERSIONS.has(normalizedModelVersion);
+  const effectiveEnableImageAutofix = isPSeriesModel ? false : normalizedEnableImageAutofix;
+  const effectiveTextureAlignment = isPSeriesModel ? 'original_image' : normalizedTextureAlignment;
+  const effectiveOrientation = isPSeriesModel ? 'default' : normalizedOrientation;
+  const effectiveQuad = isPSeriesModel ? false : normalizedQuad;
+  const effectiveSmartLowPoly = isPSeriesModel ? false : normalizedSmartLowPoly;
+  const effectiveGenerateParts = isPSeriesModel ? false : normalizedGenerateParts;
+  const effectiveGeometryQuality = isPSeriesModel ? 'standard' : normalizedGeometryQuality;
 
   if (hasPrompt === hasImageSource) {
     throw new Error('Provide either a prompt or an image input for Tripo AI mesh generation');
@@ -3099,7 +3101,7 @@ function normalizeTripoMeshGenerationInput({
     normalizedExportUv,
     normalizedGeometryQuality: effectiveGeometryQuality,
     supportsGeometryQuality,
-    isP1Model
+    isPSeriesModel
   };
 }
 
@@ -3210,7 +3212,7 @@ async function submitTripoMeshGenerationTask(settings, {
     export_uv: validatedInput.normalizedExportUv
   };
 
-  if (!validatedInput.isP1Model) {
+  if (!validatedInput.isPSeriesModel) {
     taskPayload.enable_image_autofix = validatedInput.normalizedEnableImageAutofix;
     taskPayload.texture_alignment = validatedInput.normalizedTextureAlignment;
     taskPayload.orientation = validatedInput.normalizedOrientation;
@@ -3231,7 +3233,7 @@ async function submitTripoMeshGenerationTask(settings, {
   if (validatedInput.normalizedModelSeed !== null) taskPayload.model_seed = validatedInput.normalizedModelSeed;
   if (validatedInput.normalizedFaceLimit !== null) taskPayload.face_limit = validatedInput.normalizedFaceLimit;
   if (validatedInput.normalizedTextureSeed !== null) taskPayload.texture_seed = validatedInput.normalizedTextureSeed;
-  if (!validatedInput.isP1Model && validatedInput.supportsGeometryQuality) {
+  if (!validatedInput.isPSeriesModel && validatedInput.supportsGeometryQuality) {
     taskPayload.geometry_quality = validatedInput.normalizedGeometryQuality;
   }
 

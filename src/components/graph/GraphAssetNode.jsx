@@ -39,6 +39,7 @@ import {
   isHitemMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
+  isTripoPSeriesModel,
   resolveImageSourceOption,
   resolveSelectedInputSource
 } from '../../utils/graphHelpers'
@@ -102,7 +103,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
   const isTencentMeshApi = isMeshGen && isTencentMeshGenerationApi(draft?.selectedApi)
   const isTripoMeshApi = isMeshGen && isTripoMeshGenerationApi(draft?.selectedApi)
   const isHitemMeshApi = isMeshGen && isHitemMeshGenerationApi(draft?.selectedApi)
-  const isTripoP1Model = isTripoMeshApi && (draft?.modelVersion || 'v2.5-20250123') === 'P1-20260311'
+  const isTripoPModel = isTripoMeshApi && isTripoPSeriesModel(draft?.modelVersion || 'v3.1-20260211')
   const hitemResolutionOptions = getHitemResolutionOptions(draft?.hitemModel || 'hitem3dv2.1')
   const hasDraftPrompt = Boolean(String(draft?.prompt || '').trim())
   const hasDraftInputSource = Boolean(String(draft?.selectedInputSource || '').trim())
@@ -718,7 +719,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         <label className="params-card__label font-label">Model</label>
                         <select
                           className="params-card__select nodrag"
-                          value={draft.modelVersion || 'v2.5-20250123'}
+                          value={draft.modelVersion || 'v3.1-20260211'}
                           onChange={event => data.onDraftFieldChange?.(data.id, 'modelVersion', event.target.value)}
                         >
                           {TRIPO_MODEL_VERSION_OPTIONS.map(option => (
@@ -736,7 +737,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           onChange={event => data.onDraftFieldChange?.(data.id, 'modelSeed', event.target.value)}
                         />
                       </div>
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <label className="params-card__checkbox-label nodrag">
                           <div
                             className={`params-card__checkbox ${draft.enableImageAutofix ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
@@ -787,7 +788,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           onChange={event => data.onDraftFieldChange?.(data.id, 'textureSeed', event.target.value)}
                         />
                       </div>
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <div className="params-card__field">
                           <label className="params-card__label font-label">Texture Alignment</label>
                           <select
@@ -822,7 +823,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         </div>
                         <span>Auto size</span>
                       </label>
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <div className="params-card__field">
                           <label className="params-card__label font-label">Orientation</label>
                           <select
@@ -836,7 +837,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           </select>
                         </div>
                       )}
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <label className="params-card__checkbox-label nodrag">
                           <div
                             className={`params-card__checkbox ${draft.quad ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
@@ -847,7 +848,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           <span>Quad topology</span>
                         </label>
                       )}
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <label className="params-card__checkbox-label nodrag">
                           <div
                             className={`params-card__checkbox ${draft.smartLowPoly ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
@@ -858,7 +859,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           <span>Smart low poly</span>
                         </label>
                       )}
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <label className="params-card__checkbox-label nodrag">
                           <div
                             className={`params-card__checkbox ${draft.generateParts ? 'params-card__checkbox--checked' : 'params-card__checkbox--unchecked'}`}
@@ -878,7 +879,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         </div>
                         <span>Export UV</span>
                       </label>
-                      {!isTripoP1Model && (
+                      {!isTripoPModel && (
                         <div className="params-card__field">
                           <label className="params-card__label font-label">Geometry Quality</label>
                           <select
@@ -892,7 +893,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                           </select>
                         </div>
                       )}
-                      {!isTripoP1Model && draft.generateParts && (draft.texture || draft.pbr || draft.quad) && (
+                      {!isTripoPModel && draft.generateParts && (draft.texture || draft.pbr || draft.quad) && (
                         <div className="graph-node__linked-input font-label">
                           generate_parts is not compatible with texture, pbr, or quad.
                         </div>

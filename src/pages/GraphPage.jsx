@@ -92,6 +92,7 @@ import {
   isHitemMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
+  isTripoPSeriesModel,
   isValueNodeKind,
   normalizeCustomApiType,
   normalizeNodeOutputValue,
@@ -1451,7 +1452,7 @@ export default function GraphPage({ project }) {
                 ? (getInputSourceSelectionValue(defaultImageInputSource) || '')
                 : (nextDraft.selectedInputSource || getInputSourceSelectionValue(defaultImageInputSource) || libraryImageOptions[0]?.sourceReference || ''),
               modelVersion: isTripoMeshGenerationApi(value)
-                ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v2.5-20250123')
+                ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v3.1-20260211')
                 : (TENCENT_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : '3.0')
             }
           }
@@ -2565,7 +2566,7 @@ export default function GraphPage({ project }) {
                 inputSource: effectiveSourceReference || null,
                 prompt: trimmedPrompt,
                 parentAssetId: connectedMeshAssetId,
-                modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                modelVersion: targetDraft.modelVersion || 'v3.1-20260211',
                 modelSeed: targetDraft.modelSeed,
                 enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
                 faceLimit: targetDraft.faceLimit,
@@ -2594,7 +2595,7 @@ export default function GraphPage({ project }) {
                   name: targetDraft.name.trim(),
                   selectedApi: targetDraft.selectedApi,
                   prompt: trimmedPrompt,
-                  modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                  modelVersion: targetDraft.modelVersion || 'v3.1-20260211',
                   modelSeed: targetDraft.modelSeed,
                   faceLimit: targetDraft.faceLimit,
                   texture: Boolean(targetDraft.texture),
@@ -2603,7 +2604,7 @@ export default function GraphPage({ project }) {
                   textureQuality: targetDraft.textureQuality || 'standard',
                   autoSize: Boolean(targetDraft.autoSize),
                   exportUv: Boolean(targetDraft.exportUv),
-                  ...(targetDraft.modelVersion === 'P1-20260311'
+                  ...(isTripoPSeriesModel(targetDraft.modelVersion)
                     ? {}
                     : {
                         enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
@@ -2621,7 +2622,7 @@ export default function GraphPage({ project }) {
                   selectedApi: response.selectedApi || targetDraft.selectedApi,
                   inputSource: effectiveSourceReference || null,
                   prompt: trimmedPrompt,
-                  modelVersion: targetDraft.modelVersion || 'v2.5-20250123',
+                  modelVersion: targetDraft.modelVersion || 'v3.1-20260211',
                   modelSeed: targetDraft.modelSeed,
                   enableImageAutofix: Boolean(targetDraft.enableImageAutofix),
                   faceLimit: targetDraft.faceLimit,
@@ -2649,7 +2650,7 @@ export default function GraphPage({ project }) {
                     params: [
                       { label: 'Prompt', type: 'string', value: trimmedPrompt },
                       { label: 'Image source', type: 'image', value: effectiveSourceReference || '' },
-                      { label: 'Model version', type: 'string', value: targetDraft.modelVersion || 'v2.5-20250123' },
+                      { label: 'Model version', type: 'string', value: targetDraft.modelVersion || 'v3.1-20260211' },
                       { label: 'Model seed', type: 'string', value: targetDraft.modelSeed },
                       { label: 'Face limit', type: 'string', value: targetDraft.faceLimit },
                       { label: 'Texture', type: 'boolean', value: Boolean(targetDraft.texture) },

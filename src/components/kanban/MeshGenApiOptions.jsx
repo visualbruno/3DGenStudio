@@ -15,7 +15,8 @@ import {
   getHitemResolutionOptions,
   isHitemMeshGenerationApi,
   isTencentMeshGenerationApi,
-  isTripoMeshGenerationApi
+  isTripoMeshGenerationApi,
+  isTripoPSeriesModel
 } from '../../utils/kanbanHelpers'
 
 // Provider-specific mesh generation fields (Tencent Cloud / Tripo AI / Hitem3D).
@@ -26,7 +27,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
   const isTencent = isTencentMeshGenerationApi(selectedApi)
   const isTripo = isTripoMeshGenerationApi(selectedApi)
   const isHitem = isHitemMeshGenerationApi(selectedApi)
-  const isTripoP1Model = isTripo && (draft?.modelVersion || 'v2.5-20250123') === 'P1-20260311'
+  const isTripoPModel = isTripo && isTripoPSeriesModel(draft?.modelVersion || 'v3.1-20260211')
 
   if (isTencent) {
     return (
@@ -119,7 +120,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           <label className="params-card__label font-label">Model</label>
           <select
             className="image-card__attribute-select"
-            value={draft.modelVersion || 'v2.5-20250123'}
+            value={draft.modelVersion || 'v3.1-20260211'}
             onChange={event => onChange('modelVersion', event.target.value)}
           >
             {TRIPO_MODEL_VERSION_OPTIONS.map(option => (
@@ -138,7 +139,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           />
         </div>
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Enable Image Autofix</label>
             <label className="params-card__checkbox-label">
@@ -192,7 +193,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           />
         </div>
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Texture Alignment</label>
             <select
@@ -230,7 +231,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </label>
         </div>
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Orientation</label>
             <select
@@ -245,7 +246,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </div>
         )}
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Quad</label>
             <label className="params-card__checkbox-label">
@@ -257,7 +258,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </div>
         )}
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Smart Low Poly</label>
             <label className="params-card__checkbox-label">
@@ -269,7 +270,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </div>
         )}
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Generate Parts</label>
             <label className="params-card__checkbox-label">
@@ -291,7 +292,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </label>
         </div>
 
-        {!isTripoP1Model && (
+        {!isTripoPModel && (
           <div className="params-card__field">
             <label className="params-card__label font-label">Geometry Quality</label>
             <select
@@ -306,7 +307,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
           </div>
         )}
 
-        {!isTripoP1Model && draft.generateParts && (draft.texture || draft.pbr || draft.quad) && (
+        {!isTripoPModel && draft.generateParts && (draft.texture || draft.pbr || draft.quad) && (
           <p className="image-card__param-hint">generate_parts is not compatible with texture, pbr, or quad.</p>
         )}
 

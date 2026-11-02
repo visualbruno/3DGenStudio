@@ -53,6 +53,7 @@ import {
   isHitemMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
+  isTripoPSeriesModel,
   normalizeCustomApiType
 } from '../utils/kanbanHelpers'
 import { saveWorkflowDefaults } from '../utils/workflowDefaults'
@@ -1380,7 +1381,7 @@ export default function KanbanPage() {
     const isTencentMeshApi = isTencentMeshGenerationApi(draft.selectedApi)
     const isTripoMeshApi = isTripoMeshGenerationApi(draft.selectedApi)
     const isHitemMeshApi = isHitemMeshGenerationApi(draft.selectedApi)
-    const isTripoP1Model = isTripoMeshApi && (draft.modelVersion || 'v2.5-20250123') === 'P1-20260311'
+    const isTripoPModel = isTripoMeshApi && isTripoPSeriesModel(draft.modelVersion || 'v3.1-20260211')
 
     // Hitem3D is image-to-3D only; the mesh source draft has no image source, so
     // it must be run from a card that already holds an image, via its Action menu.
@@ -1453,7 +1454,7 @@ export default function KanbanPage() {
           selectedApi: draft.selectedApi,
           prompt,
           cardId,
-          modelVersion: draft.modelVersion || 'v2.5-20250123',
+          modelVersion: draft.modelVersion || 'v3.1-20260211',
           modelSeed: draft.modelSeed,
           faceLimit: draft.faceLimit,
           texture: draft.texture,
@@ -1462,7 +1463,7 @@ export default function KanbanPage() {
           textureQuality: draft.textureQuality || 'standard',
           autoSize: draft.autoSize,
           exportUv: draft.exportUv,
-          ...(isTripoP1Model
+          ...(isTripoPModel
             ? {}
             : {
                 enableImageAutofix: draft.enableImageAutofix,
@@ -1488,7 +1489,7 @@ export default function KanbanPage() {
             selectedApi: queuedTask.selectedApi || draft.selectedApi,
             name,
             prompt,
-            modelVersion: draft.modelVersion || 'v2.5-20250123',
+            modelVersion: draft.modelVersion || 'v3.1-20260211',
             modelSeed: draft.modelSeed,
             enableImageAutofix: draft.enableImageAutofix,
             faceLimit: draft.faceLimit,
@@ -1542,7 +1543,7 @@ export default function KanbanPage() {
 
       if (field === 'selectedApi') {
         nextDraft.modelVersion = isTripoMeshGenerationApi(value)
-          ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v2.5-20250123')
+          ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v3.1-20260211')
           : (TENCENT_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : '3.0')
       }
 
@@ -2134,7 +2135,7 @@ export default function KanbanPage() {
         }
 
         nextDraft.modelVersion = isTripoMeshGenerationApi(value)
-          ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v2.5-20250123')
+          ? (TRIPO_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : 'v3.1-20260211')
           : (TENCENT_MODEL_VERSION_OPTIONS.includes(nextDraft.modelVersion) ? nextDraft.modelVersion : '3.0')
       }
 
@@ -2406,7 +2407,7 @@ export default function KanbanPage() {
         const isTencentMeshApi = isMeshGenCard && isTencentMeshGenerationApi(imageEditDraft.selectedApi)
         const isTripoMeshApi = isMeshGenCard && isTripoMeshGenerationApi(imageEditDraft.selectedApi)
         const isHitemMeshApi = isMeshGenCard && isHitemMeshGenerationApi(imageEditDraft.selectedApi)
-        const isTripoP1Model = isTripoMeshApi && (imageEditDraft.modelVersion || 'v2.5-20250123') === 'P1-20260311'
+        const isTripoPModel = isTripoMeshApi && isTripoPSeriesModel(imageEditDraft.modelVersion || 'v3.1-20260211')
 
         if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && (!imageEditDraft.selectedAssetId || !prompt || !name)) {
           showStatusMessage(`Select a ${sourceAssetLabel}, add a name, and provide a prompt.`, 'error')
@@ -2491,7 +2492,7 @@ export default function KanbanPage() {
               selectedApi: imageEditDraft.selectedApi,
               prompt,
               cardId: card.id,
-              modelVersion: imageEditDraft.modelVersion || 'v2.5-20250123',
+              modelVersion: imageEditDraft.modelVersion || 'v3.1-20260211',
               modelSeed: imageEditDraft.modelSeed,
               faceLimit: imageEditDraft.faceLimit,
               texture: imageEditDraft.texture,
@@ -2500,7 +2501,7 @@ export default function KanbanPage() {
               textureQuality: imageEditDraft.textureQuality || 'standard',
               autoSize: imageEditDraft.autoSize,
               exportUv: imageEditDraft.exportUv,
-              ...(isTripoP1Model
+              ...(isTripoPModel
                 ? {}
                 : {
                     enableImageAutofix: imageEditDraft.enableImageAutofix,
@@ -2527,7 +2528,7 @@ export default function KanbanPage() {
                 selectedApi: queuedTask.selectedApi || imageEditDraft.selectedApi,
                 name,
                 prompt,
-                modelVersion: imageEditDraft.modelVersion || 'v2.5-20250123',
+                modelVersion: imageEditDraft.modelVersion || 'v3.1-20260211',
                 modelSeed: imageEditDraft.modelSeed,
                 enableImageAutofix: imageEditDraft.enableImageAutofix,
                 faceLimit: imageEditDraft.faceLimit,

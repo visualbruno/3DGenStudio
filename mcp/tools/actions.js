@@ -46,20 +46,20 @@ const TENCENT_MESH_OPTIONS = {
 };
 
 const TRIPO_MESH_OPTIONS = {
-  modelVersion: z.enum(['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']).default('v2.5-20250123').describe('Tripo model version. The P1 model ignores enableImageAutofix/textureAlignment/orientation/quad/smartLowPoly/generateParts/geometryQuality.'),
+  modelVersion: z.enum(['v3.0-20250812', 'v3.1-20260211', 'P1-20260311', 'P2-20260801']).default('v3.1-20260211').describe('Tripo model version. The P-series models (P1, P2) ignore enableImageAutofix/textureAlignment/orientation/quad/smartLowPoly/generateParts/geometryQuality.'),
   modelSeed: z.number().int().optional().describe('Geometry RNG seed (optional; omit for random).'),
-  enableImageAutofix: z.boolean().default(false).describe('Fix the input image before generation (ignored by P1).'),
+  enableImageAutofix: z.boolean().default(false).describe('Fix the input image before generation (ignored by P1/P2).'),
   faceLimit: z.number().int().min(1000).optional().describe('Max face count (>=1000; optional).'),
   texture: z.boolean().default(true).describe('Generate texture maps. Incompatible with generateParts=true.'),
   pbr: z.boolean().default(true).describe('Export a PBR model. Incompatible with generateParts=true.'),
   textureSeed: z.number().int().optional().describe('Texture RNG seed (optional).'),
-  textureAlignment: z.enum(['original_image', 'geometry']).default('original_image').describe('Texture alignment (ignored by P1).'),
+  textureAlignment: z.enum(['original_image', 'geometry']).default('original_image').describe('Texture alignment (ignored by P1/P2).'),
   textureQuality: z.enum(['standard', 'detailed']).default('standard').describe('Texture quality.'),
   autoSize: z.boolean().default(false).describe('Auto-fit scale to real-world size.'),
-  orientation: z.enum(['default', 'align_image']).default('default').describe('Output orientation (ignored by P1).'),
-  quad: z.boolean().default(false).describe('Generate a quad mesh (ignored by P1). Incompatible with generateParts=true.'),
-  smartLowPoly: z.boolean().default(false).describe('Optimize for low poly (ignored by P1).'),
-  generateParts: z.boolean().default(false).describe('Split into semantic parts (ignored by P1). Incompatible with texture/pbr/quad=true.'),
+  orientation: z.enum(['default', 'align_image']).default('default').describe('Output orientation (ignored by P1/P2).'),
+  quad: z.boolean().default(false).describe('Generate a quad mesh (ignored by P1/P2). Incompatible with generateParts=true.'),
+  smartLowPoly: z.boolean().default(false).describe('Optimize for low poly (ignored by P1/P2).'),
+  generateParts: z.boolean().default(false).describe('Split into semantic parts (ignored by P1/P2). Incompatible with texture/pbr/quad=true.'),
   exportUv: z.boolean().default(true).describe('Include UVs in the output.'),
   geometryQuality: z.enum(['standard', 'detailed']).default('standard').describe('Geometry quality — only applied for v3.0/v3.1 models.')
 };
@@ -300,7 +300,7 @@ export function registerActionTools(server, { api, notifyMutation }) {
 
   server.registerTool('generate_mesh_tripo', {
     title: 'Generate 3D mesh (Tripo AI)',
-    description: 'Generate a 3D mesh with Tripo AI and save it as a project asset. Provide EITHER prompt (text-to-3D) OR imageSource (image-to-3D), not both. Every Tripo parameter is exposed under `options` with its enum/range and default. Note: the P1 model ignores several options, and generateParts is incompatible with texture/pbr/quad. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires a Tripo AI API key configured in Settings.',
+    description: 'Generate a 3D mesh with Tripo AI and save it as a project asset. Provide EITHER prompt (text-to-3D) OR imageSource (image-to-3D), not both. Every Tripo parameter is exposed under `options` with its enum/range and default. Note: the P-series models (P1, P2) ignore several options, and generateParts is incompatible with texture/pbr/quad. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires a Tripo AI API key configured in Settings.',
     inputSchema: {
       projectId: z.number().int(),
       name: z.string().min(1),

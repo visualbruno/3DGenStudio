@@ -21,7 +21,8 @@ export const TENCENT_REGION_OPTIONS = ['ap-singapore', 'eu-frankfurt', 'na-silic
 export const TENCENT_MODEL_VERSION_OPTIONS = ['3.0', '3.1']
 export const TENCENT_GENERATION_TYPE_OPTIONS = ['Normal', 'LowPoly', 'Geometry']
 export const TENCENT_POLYGON_TYPE_OPTIONS = ['triangle', 'quadrilaterial']
-export const TRIPO_MODEL_VERSION_OPTIONS = ['v2.0-20240919', 'v2.5-20250123', 'v3.0-20250812', 'v3.1-20260211', 'Turbo-v1.0-20250506', 'P1-20260311']
+export const TRIPO_MODEL_VERSION_OPTIONS = ['v3.0-20250812', 'v3.1-20260211', 'P1-20260311', 'P2-20260801']
+export const TRIPO_P_SERIES_MODEL_VERSIONS = ['P1-20260311', 'P2-20260801']
 export const TRIPO_TEXTURE_ALIGNMENT_OPTIONS = ['original_image', 'geometry']
 export const TRIPO_TEXTURE_QUALITY_OPTIONS = ['standard', 'detailed', 'extreme']
 export const TRIPO_ORIENTATION_OPTIONS = ['default', 'align_image']
@@ -85,6 +86,12 @@ export function isTencentMeshGenerationApi(selectedApi = '') {
 
 export function isTripoMeshGenerationApi(selectedApi = '') {
   return String(selectedApi || '').trim() === TRIPO_MESH_GENERATION_API_ID
+}
+
+// The P-series models (P1, P2) take a reduced parameter set: no image autofix,
+// texture alignment, orientation, quad, smart low poly, parts or geometry quality.
+export function isTripoPSeriesModel(modelVersion = '') {
+  return TRIPO_P_SERIES_MODEL_VERSIONS.includes(String(modelVersion || '').trim())
 }
 
 export function isHitemMeshGenerationApi(selectedApi = '') {
