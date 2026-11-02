@@ -793,6 +793,11 @@
   font-size: 1.1rem;
 }
 
+.assets-selection-bar__export--danger {
+  background: #a93232;
+  color: #fff;
+}
+
 .assets-selection-bar__export:disabled {
   opacity: 0.5;
   cursor: not-allowed;

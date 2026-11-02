@@ -851,6 +851,92 @@ export default function AssetsPage() {
 
   const toggleAssetSelected = asset => setAssetsSelected([asset], !isAssetSelected(asset))
 
+  const [deletingSelected, setDeletingSelected] = useState(false)
+
+  // Deletes the whole selection, filters or not. A root takes its edits/versions
+  // with it, so a child whose root is also selected is not deleted on its own
+  // (it would 404). Linked assets are refused first, then confirmed once as a
+  // group and force-deleted, like the per-card "Delete Anyway".
+  const handleDeleteSelected = async () => {
+    const roots = []
+    const children = []
+    let cascadedCount = 0
+    BATCH_EXPORT_SECTIONS.forEach(sectionKey => (libraryAssets[sectionKey] || []).forEach(root => {
+      const rootSelected = isAssetSelected(root)
+      const entries = getAssetChildren(root).map((child, index) => toChildEntry(root, child, index))
+      if (rootSelected) {
+        roots.push({ asset: root, cascaded: entries })
+        cascadedCount += entries.filter(entry => !isAssetSelected(entry)).length
+      } else {
+        entries.filter(isAssetSelected).forEach(entry => children.push({ asset: entry, cascaded: [] }))
+      }
+    }))
+    const targets = [...children, ...roots]
+    if (targets.length === 0) return
+
+    const plural = count => (count === 1 ? '' : 's')
+    const confirmed = window.confirm(
+      `Delete ${selectedCount} selected asset${plural(selectedCount)}?` +
+      (cascadedCount > 0 ? ` ${cascadedCount} unselected edit${plural(cascadedCount)}/version${plural(cascadedCount)} of the selected assets will be deleted with them.` : '') +
+      ' This cannot be undone.'
+    )
+    if (!confirmed) return
+
+    const deleteTarget = ({ asset }, force) => {
+      if (!asset.isChild) return deleteLibraryAsset({ type: asset.type, filename: asset.filename, force })
+      return asset.type === 'mesh'
+        ? deleteAssetVersion({ filePath: asset.filePath, force })
+        : deleteAssetEdit({ filePath: asset.filePath, force })
+    }
+
+    setDeletingSelected(true)
+    setImportFeedback(null)
+    const deleted = []
+    const failed = []
+
+    // One at a time: every delete is its own DB transaction plus file removal.
+    const runPass = async (list, force) => {
+      const linked = []
+      for (const target of list) {
+        try {
+          await deleteTarget(target, force)
+          deleted.push(target)
+        } catch (err) {
+          if (err.status === 409 && !force) linked.push({ ...target, projectName: err.details?.projectName || null })
+          else failed.push({ ...target, message: err.message })
+        }
+      }
+      return linked
+    }
+
+    try {
+      const linked = await runPass(targets, false)
+      if (linked.length > 0) {
+        const projectNames = [...new Set(linked.map(target => target.projectName).filter(Boolean))]
+        const forceConfirmed = window.confirm(
+          `${linked.length} selected asset${plural(linked.length)} ${linked.length === 1 ? 'is' : 'are'} linked to ` +
+          `${projectNames.length > 0 ? projectNames.join(', ') : 'a project'}. Delete ${linked.length === 1 ? 'it' : 'them'} anyway?`
+        )
+        if (forceConfirmed) await runPass(linked, true)
+        else failed.push(...linked.map(target => ({ ...target, message: 'linked to a project' })))
+      }
+
+      await loadLibrary()
+      setAssetsSelected(deleted.flatMap(target => [target.asset, ...target.cascaded]), false)
+      if (failed.length === 0) {
+        setImportFeedback({ type: 'success', message: `${deleted.length} asset${plural(deleted.length)} deleted.` })
+      } else {
+        setImportFeedback({
+          type: deleted.length > 0 ? 'warning' : 'error',
+          message: `${deleted.length} deleted, ${failed.length} not deleted: ` +
+            failed.map(target => `${target.asset.name} (${target.message || 'failed'})`).join(', ')
+        })
+      }
+    } finally {
+      setDeletingSelected(false)
+    }
+  }
+
   const selectPageRef = useRef(null)
   useEffect(() => {
     if (selectPageRef.current) {
@@ -2737,6 +2823,15 @@ export default function AssetsPage() {
                       >
                         <span className="material-symbols-outlined">download</span>
                         <span>Export Selected</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="assets-selection-bar__export assets-selection-bar__export--danger"
+                        onClick={handleDeleteSelected}
+                        disabled={selectedCount === 0 || deletingSelected}
+                      >
+                        <span className="material-symbols-outlined">delete</span>
+                        <span>{deletingSelected ? 'Deleting…' : 'Delete Selected'}</span>
                       </button>
                     </div>
                   </div>
