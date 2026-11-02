@@ -124,10 +124,12 @@ export default function Header({ showSearch = false, showCreateNew = false, onSe
     // Dismiss the alert, close the panel, then deep-link to the project. The
     // focus target travels in router state so the destination page can center
     // (Graph) or scroll to (Kanban) the originating card once it has loaded.
+    // The nonce only has to be unique per click: the notification's own id is
+    // (a UUID, and the notification is gone once clicked).
     removeNotification(notification.id)
     setShowNotifications(false)
     navigate(`/projects/${notification.projectId}`, {
-      state: { focusTargetId: notification.targetId ?? null, focusNonce: Date.now() }
+      state: { focusTargetId: notification.targetId ?? null, focusNonce: notification.id }
     })
   }
 

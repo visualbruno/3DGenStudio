@@ -176,6 +176,16 @@ export async function canvasToPngFile(canvas, filename) {
   return new File([blob], filename, { type: 'image/png' })
 }
 
+// Whether any pixel of the canvas is painted (non-zero alpha). False for no canvas.
+export function canvasHasPixels(canvas) {
+  if (!canvas) return false
+  const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data
+  for (let index = 3; index < data.length; index += 4) {
+    if (data[index] > 0) return true
+  }
+  return false
+}
+
 export function getMaskBoundingBox(canvas, padding = 0) {
   if (!canvas?.width || !canvas?.height) return null
   const imageData = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data

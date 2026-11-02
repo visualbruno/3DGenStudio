@@ -600,6 +600,19 @@ async function resolveConfiguredPort(svc, fallback) {
   return api;
 }
 
+// The GPU picked for a service in Settings (`api.gpu`, a "GPU-…" UUID) onto the
+// registry entry, read at start time like the port. A saved GPU that is gone
+// (card removed, driver reinstalled) would leave the service with NO visible
+// device at all — CUDA_VISIBLE_DEVICES naming an unknown UUID hides everything —
+// so fall back to the default device instead of failing the start.
+function resolveConfiguredGpu(svc, api) {
+  const wanted = String(api?.gpu || '').trim();
+  svc.gpu = null;
+  if (!wanted) return;
+  if (listNvidiaGpus().some((g) => g.uuid === wanted)) svc.gpu = wanted;
+  else log(`${svc.label}: the GPU chosen in Settings (${wanted}) was not found — using the default device.`);
+}
+
 // --- Services on another computer ---------------------------------------------
 // A Python service whose Settings URL names another machine (a Mac frontend
 // using an NVIDIA box's Rigging) is not ours to install, start or stop — the
@@ -701,10 +714,12 @@ function serviceRegistry() {
       // "not installed" until setup re-runs (incrementally) and re-tags it.
       label: 'Mesh Tools', venv: PY_VENV, port: PYTHON_PORT, reqsTag: MESHTOOLS_REQS_TAG, logFile: 'python.log',
       settingsKey: 'meshtools', remoteCapable: true, defaultPort: PYTHON_PORT,
-      resolveLaunch: (svc) => resolveConfiguredPort(svc, PYTHON_PORT),
+      resolveLaunch: async (svc) => {
+        resolveConfiguredGpu(svc, await resolveConfiguredPort(svc, PYTHON_PORT));
+      },
       start(port) {
         return startPythonServer({
-          serviceDir: PYTHON_DIR, venvDir: PY_VENV, port, host: this.host,
+          serviceDir: PYTHON_DIR, venvDir: PY_VENV, port, host: this.host, gpu: this.gpu,
           logStream: openLogStream('python.log'), log,
         });
       },
@@ -712,10 +727,12 @@ function serviceRegistry() {
     rigging: {
       label: 'Rigging', venv: RIG_VENV, port: RIG_PORT, logFile: 'rig.log',
       settingsKey: 'rigtools', remoteCapable: true, defaultPort: RIG_PORT,
-      resolveLaunch: (svc) => resolveConfiguredPort(svc, RIG_PORT),
+      resolveLaunch: async (svc) => {
+        resolveConfiguredGpu(svc, await resolveConfiguredPort(svc, RIG_PORT));
+      },
       start(port) {
         return startSkintokens({
-          serviceDir: SKINTOKENS_DIR, venvDir: RIG_VENV, dataDir: RIG_DATA, port, host: this.host,
+          serviceDir: SKINTOKENS_DIR, venvDir: RIG_VENV, dataDir: RIG_DATA, port, host: this.host, gpu: this.gpu,
           logStream: openLogStream('rig.log'), log,
         });
       },
@@ -723,17 +740,18 @@ function serviceRegistry() {
     motion: {
       label: 'Motion Generation', venv: MOTION_VENV, port: MOTION_PORT, logFile: 'kimodo.log',
       settingsKey: 'motiontools', remoteCapable: true, defaultPort: MOTION_PORT,
-      // Port and model folder both live in settings, so they are read at start
-      // time — changing either in Settings takes effect on the next start rather
-      // than on the next app launch.
+      // Port, model folder and GPU all live in settings, so they are read at
+      // start time — changing any of them in Settings takes effect on the next
+      // start rather than on the next app launch.
       resolveLaunch: async (svc) => {
         const api = await resolveConfiguredPort(svc, MOTION_PORT);
         svc.modelsDir = String(api.modelsPath || '').trim() || null;
+        resolveConfiguredGpu(svc, api);
       },
       start(port) {
         return startKimodo({
           serviceDir: KIMODO_DIR, venvDir: MOTION_VENV, dataDir: MOTION_DATA,
-          modelsDir: this.modelsDir, llamaBase: LLAMA_BASE, port, host: this.host,
+          modelsDir: this.modelsDir, llamaBase: LLAMA_BASE, port, host: this.host, gpu: this.gpu,
           logStream: openLogStream('kimodo.log'), log,
         });
       },
@@ -741,17 +759,18 @@ function serviceRegistry() {
     mocap: {
       label: 'Video to Motion', venv: MOCAP_VENV, port: MOCAP_PORT, logFile: 'mocap.log',
       settingsKey: 'mocaptools', remoteCapable: true, defaultPort: MOCAP_PORT,
-      // Same as motion: port and model folder are read at start time, so a
+      // Same as motion: port, model folder and GPU are read at start time, so a
       // change in Settings takes effect on the next start rather than the next
       // app launch.
       resolveLaunch: async (svc) => {
         const api = await resolveConfiguredPort(svc, MOCAP_PORT);
         svc.modelsDir = String(api.modelsPath || '').trim() || null;
+        resolveConfiguredGpu(svc, api);
       },
       start(port) {
         return startMocap({
           serviceDir: MOCAP_DIR, venvDir: MOCAP_VENV, dataDir: MOCAP_DATA,
-          modelsDir: this.modelsDir, port, host: this.host,
+          modelsDir: this.modelsDir, port, host: this.host, gpu: this.gpu,
           logStream: openLogStream('mocap.log'), log,
         });
       },
@@ -768,16 +787,7 @@ function serviceRegistry() {
       // stored in settings, so it must be read at start time, not at boot. Same
       // for the GPU picked in Settings.
       resolveLaunch: async (svc) => {
-        const api = await resolveConfiguredPort(svc, COMFY_PORT_DEFAULT);
-        const wanted = String(api.gpu || '').trim();
-        svc.gpu = null;
-        if (wanted) {
-          // A saved GPU that is gone (card removed, driver reinstalled) would
-          // leave ComfyUI with no visible device at all — fall back to the
-          // default device instead of failing the start.
-          if (listNvidiaGpus().some((g) => g.uuid === wanted)) svc.gpu = wanted;
-          else log(`ComfyUI: the GPU chosen in Settings (${wanted}) was not found — using the default device.`);
-        }
+        resolveConfiguredGpu(svc, await resolveConfiguredPort(svc, COMFY_PORT_DEFAULT));
       },
       start(port) {
         return startComfyUI({
@@ -1013,6 +1023,9 @@ function registerServicesIpc() {
     try { await ensureService(name); return { ok: true, status: serviceStatus() }; }
     catch (err) { return { ok: false, error: err.message, status: serviceStatus() }; }
   });
+  // NVIDIA GPUs a local service can be pinned to (the GPU picker on each
+  // service's Settings tab).
+  ipcMain.handle('services:list-gpus', () => ({ ok: true, gpus: listNvidiaGpus() }));
   ipcMain.handle('services:stop', (_e, { name } = {}) => {
     stopService(name);
     return { ok: true, status: serviceStatus() };
@@ -1027,8 +1040,6 @@ function registerServicesIpc() {
     return { ok: true, port: applied.port, path: COMFY_DIR, modelsPath: path.join(COMFY_DATA, 'models') };
   });
 
-  // NVIDIA GPUs the managed ComfyUI can be pinned to (Settings → ComfyUI).
-  ipcMain.handle('comfyui:list-gpus', () => ({ ok: true, gpus: listNvidiaGpus() }));
 
   // --- Managed ComfyUI upgrades ---------------------------------------------
   // Updating the app does NOT update an existing managed ComfyUI: the installer

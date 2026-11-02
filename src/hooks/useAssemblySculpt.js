@@ -57,11 +57,16 @@ export default function useAssemblySculpt({
   // A stroke in flight when the tool is switched off would otherwise be stuck
   // holding a snapshot forever.
   useEffect(() => {
-    if (!enabled) {
-      strokeRef.current = null
-      setCursor(null)
-    }
+    if (!enabled) strokeRef.current = null
   }, [enabled])
+
+  // ...and its brush cursor would stay drawn. Cleared during render rather than
+  // in the effect above, so it never paints after the tool is off.
+  const [cursorEnabled, setCursorEnabled] = useState(enabled)
+  if (cursorEnabled !== enabled) {
+    setCursorEnabled(enabled)
+    if (!enabled) setCursor(null)
+  }
 
   const pointerToNdc = useCallback((event, rect) => {
     _ndc.set(

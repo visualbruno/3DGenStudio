@@ -169,7 +169,6 @@ function applyShadowRemoverCpu(sourceCanvas, settings) {
 
     // Gamma-curve lift
     const liftGamma = 1 - effectiveMask * normalized.strength * 0.6
-    const safe = Math.max
 
     let nextRed = Math.pow(clamp(red, 0.0001, 1), liftGamma)
     let nextGreen = Math.pow(clamp(green, 0.0001, 1), liftGamma)

@@ -547,9 +547,10 @@ export default function AssetsPage() {
     }
   }, [getAllAssetTags])
 
+  // Callers that refresh an already-loaded list set workflowLoading themselves;
+  // on mount it already starts out true.
   const loadWorkflows = useCallback(async () => {
     try {
-      setWorkflowLoading(true)
       const data = await getComfyWorkflows()
       setWorkflows(data)
     } catch (err) {
@@ -561,21 +562,29 @@ export default function AssetsPage() {
   }, [getComfyWorkflows])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- all three set state only once their request resolves (the rule does not follow the await)
     loadLibrary()
     loadWorkflows()
     loadKnownTags()
   }, [loadLibrary, loadWorkflows, loadKnownTags])
 
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [activeSection, searchQuery, projectFilter, tagFilter, childView])
-
   // Reset the project and tag filters when switching type sections so a filter
-  // chosen for Images doesn't silently hide everything under Meshes.
-  useEffect(() => {
+  // chosen for Images doesn't silently hide everything under Meshes. Adjusted
+  // during render rather than in an effect, so the stale filters never paint.
+  const [filtersSection, setFiltersSection] = useState(activeSection)
+  if (filtersSection !== activeSection) {
+    setFiltersSection(activeSection)
     setProjectFilter('all')
     setTagFilter([])
-  }, [activeSection])
+  }
+
+  // Back to page 1 whenever what is listed changes (same render-time adjustment).
+  const pageResetKey = JSON.stringify([activeSection, searchQuery, projectFilter, tagFilter, childView])
+  const [pageKey, setPageKey] = useState(pageResetKey)
+  if (pageKey !== pageResetKey) {
+    setPageKey(pageResetKey)
+    setCurrentPage(1)
+  }
 
   const projectNameById = useMemo(
     () => new Map((projects || []).map(project => [String(project.id), project.name])),
@@ -608,11 +617,9 @@ export default function AssetsPage() {
   }, [workflows, getWorkflowOutputTypes])
 
   // Drop a stale type filter (e.g. the last workflow of that type was deleted).
-  useEffect(() => {
-    if (workflowTypeFilter !== 'all' && !workflowTypeOptions.some(option => option.value === workflowTypeFilter)) {
-      setWorkflowTypeFilter('all')
-    }
-  }, [workflowTypeFilter, workflowTypeOptions])
+  if (workflowTypeFilter !== 'all' && !workflowTypeOptions.some(option => option.value === workflowTypeFilter)) {
+    setWorkflowTypeFilter('all')
+  }
 
   const filteredWorkflows = useMemo(
     () => workflows
@@ -795,11 +802,9 @@ export default function AssetsPage() {
   const pageRangeStart = activeAssets.length === 0 ? 0 : pageStart + 1
   const pageRangeEnd = Math.min(pageStart + assetsPerPage, activeAssets.length)
 
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages)
-    }
-  }, [currentPage, totalPages])
+  if (currentPage > totalPages) {
+    setCurrentPage(totalPages)
+  }
 
   // --- Batch export selection --------------------------------------------------
 
@@ -1540,6 +1545,7 @@ export default function AssetsPage() {
         resetWorkflowState()
       }
 
+      setWorkflowLoading(true)
       await loadWorkflows()
       setWorkflowFeedback(`${workflow.name} deleted.`)
     } catch (err) {
@@ -1605,6 +1611,7 @@ export default function AssetsPage() {
             await importComfyWorkflow(payload)
           }
 
+          setWorkflowLoading(true)
           await loadWorkflows()
           const inputCount = parsedJson.parameters?.length || 0
           const outputCount = parsedJson.outputs?.length || 0
@@ -1714,6 +1721,7 @@ export default function AssetsPage() {
 
       resetWorkflowState()
       setWorkflowEditorOpen(false)
+      setWorkflowLoading(true)
       await loadWorkflows()
     } catch (err) {
       console.error('Failed to save workflow:', err)

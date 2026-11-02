@@ -80,9 +80,10 @@ function driverCuda() {
   }
 }
 
-// NVIDIA GPUs on this machine, for the Settings → ComfyUI device picker:
-// [{ index, uuid, name, memoryMB }]. Empty when there is no driver. The managed
-// install is CUDA-only (pickBuild), so nvidia-smi sees every GPU it could use.
+// NVIDIA GPUs on this machine, for the GPU picker on each service's Settings tab
+// (ComfyUI and the Python services): [{ index, uuid, name, memoryMB }]. Empty when
+// there is no driver. Every managed service is CUDA-only (pickBuild here, the
+// select_* scripts for the others), so nvidia-smi sees every GPU they could use.
 //
 // The UUID is what gets stored and passed to --cuda-device, not the index:
 // nvidia-smi numbers GPUs in PCI bus order while CUDA defaults to fastest-first,

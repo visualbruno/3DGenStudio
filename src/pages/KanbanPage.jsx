@@ -619,6 +619,24 @@ export default function KanbanPage() {
     }
   }
 
+  // Declared ahead of the handlers that read them (handleGenerateImage), not next
+  // to the other API lists further down.
+  const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
+
+  const imageGenerationApis = useMemo(() => ([
+    ...IMAGE_API_LIST,
+    ...customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'image-generation')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ]), [customApis])
+
+  const imageEditApis = useMemo(() => ([
+    ...IMAGE_API_LIST,
+    ...customApis
+      .filter(api => normalizeCustomApiType(api?.type) === 'image-edit')
+      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
+  ]), [customApis])
+
   const handleGenerateImage = async (draft) => {
     if (draft.mode === 'comfy') {
       if (!draft?.workflowId) return
@@ -1089,22 +1107,6 @@ export default function KanbanPage() {
         && parameterValueTypes.every(valueType => ['image', 'mesh', 'string', 'number', 'boolean'].includes(valueType))
     })
   }, [comfyWorkflows])
-
-  const customApis = useMemo(() => settings?.apis?.custom || [], [settings])
-
-  const imageGenerationApis = useMemo(() => ([
-    ...IMAGE_API_LIST,
-    ...customApis
-      .filter(api => normalizeCustomApiType(api?.type) === 'image-generation')
-      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
-  ]), [customApis])
-
-  const imageEditApis = useMemo(() => ([
-    ...IMAGE_API_LIST,
-    ...customApis
-      .filter(api => normalizeCustomApiType(api?.type) === 'image-edit')
-      .map(api => ({ id: `custom_${api.id}`, name: api.name }))
-  ]), [customApis])
 
   const meshGenerationApis = useMemo(() => (
     [

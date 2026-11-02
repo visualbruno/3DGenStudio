@@ -62,7 +62,6 @@ import {
 } from '../utils/meshTexturing'
 import {
   bakeViewToTextureGPU,
-  bakeMultiViewTextureGPU,
   isGpuBakeSupported,
   paintProjectionMaskDabGPU,
   solveViewGains
@@ -2711,6 +2710,7 @@ export default function MeshEditorPage() {
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only for a new model; blankTextureSize is read at load time and a size change must not reload the mesh
   }, [modelUrl])
 
   useEffect(() => {
@@ -3117,6 +3117,7 @@ export default function MeshEditorPage() {
         levels: tessellationPasses
       }
     )
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- booleanBrushRevision is the change signal for the mask canvas, which is edited in place
   }, [activeMenu, booleanBrushRevision, booleanStampDepth, booleanStampMatrix, booleanStampOffset, booleanStampSize, booleanTessellation, geometry])
 
   const booleanHasPreview = !!booleanStampLocalGeometry && !!booleanStampMatrix
@@ -4149,7 +4150,7 @@ export default function MeshEditorPage() {
     }
 
     canvasShellRef.current?.setPointerCapture?.(event.pointerId)
-  }, [activeMenu, animEditOpen, animPlaying, animPreview, applySculptStamp, applyWeightStamp, beginPaintStroke, booleanPlaceMode, booleanStampBasis, brushSize, captureMaskPreviewBase, computeSculptCursorPixelRadius, computeWeightCursorPixelRadius, ensureLayerMaskCanvas, ensureSculptMesh, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, pickBoneAt, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, pushSculptUndo, resetSelection, scheduleProjectionMaskPaint, sculptBrush, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptSymmetry, selectedLayerId, selectionMesh, skeleton, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady, weightBoneSkel, weightPainting])
+  }, [activeMenu, animEditOpen, animPlaying, animPreview, applySculptStamp, applyWeightStamp, beginPaintStroke, booleanPlaceMode, brushSize, captureMaskPreviewBase, computeSculptCursorPixelRadius, computeWeightCursorPixelRadius, ensureLayerMaskCanvas, ensureSculptMesh, getMeshIntersection, getPointerPosition, numericAssetId, paintBrushSize, paintColor, paintFlow, paintHardness, paintLayers, paintMode, paintRotation, pendingPatch, pickBoneAt, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, pushSculptUndo, resetSelection, scheduleProjectionMaskPaint, sculptBrush, sculptFrontFacesOnly, sculptHardness, sculptSize, sculptStampRotation, sculptSymmetry, selectedLayerId, selectionMesh, skeleton, stampBrushAtUv, syncProjectionMaskCanvasSize, texturableMesh, texturingReady, weightBoneSkel, weightPainting])
 
   const handleCanvasPointerMove = useCallback((event) => {
     if (activeMenu === 'boolean' && booleanPlaceMode) {
@@ -4663,7 +4664,7 @@ export default function MeshEditorPage() {
       startPoint: dragStateRef.current.startPoint,
       endPoint: nextPoint
     })
-  }, [activeMenu, applySculptStamp, applyWeightStamp, booleanPlaceMode, brushSize, computeSculptCursorPixelRadius, computeWeightCursorPixelRadius, ensureSculptMesh, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, projectionMaskBrushSize, projectionMaskEditLayerId, projectionMaskErase, recompositePaintTexture, scheduleProjectionMaskPaint, sculptSpacing, sculptSteadyStroke, sculptStrength, selectionMesh, stampBrushAtUv, texturableMesh, updateMaskOverlay, weightPainting])
+  }, [activeMenu, applySculptStamp, applyWeightStamp, booleanPlaceMode, booleanStampBasis, brushSize, computeSculptCursorPixelRadius, computeWeightCursorPixelRadius, ensureSculptMesh, getMeshIntersection, getPointerPosition, paintBrushSize, paintColor, paintFlow, paintHardness, paintMode, paintRotation, projectionMaskBrushSize, projectionMaskEditLayerId, recompositePaintTexture, scheduleProjectionMaskPaint, sculptSpacing, sculptSteadyStroke, sculptStrength, selectionMesh, stampBrushAtUv, texturableMesh, updateMaskOverlay, weightPainting])
 
   const handleCanvasPointerUp = useCallback((event) => {
     if (activeMenu === 'segmentation' && segmentStrokeRef.current) {
@@ -5119,6 +5120,7 @@ export default function MeshEditorPage() {
       setRunning(false)
       setProgress(null)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getExportObject and rememberBakeSource are declared further down this component, so listing them here would throw (temporal dead zone); they are read at call time
   }, [geometry, autoUvRunning, autoRetopoRunning, optimizeRunning, repairRunning, applyGeometryUpdate, buildTexturableFromGeometry, blankTextureSize, texturableMesh, modelUrl])
 
   const handleRunAutoUv = useCallback(() => {
@@ -9446,6 +9448,7 @@ export default function MeshEditorPage() {
       return 'centre'
     }
     return 'off'
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- geometryRevision is the change signal for geometry edited in place
   }, [geometry, geometryRevision])
 
   // Move the mesh's pivot to where an engine expects it. 'ground_pivot' drops the
@@ -9740,7 +9743,7 @@ export default function MeshEditorPage() {
     } finally {
       setSaving(false)
     }
-  }, [filePath, geometry, geometryRevision, meshName, modelUrl, navigate, numericAssetId, saveMeshEdit, saving, searchParams, texturableMesh, uploadAssetThumbnail, paintLayers, canvasToPngFile, savePaintDocument])
+  }, [filePath, geometry, meshName, modelUrl, navigate, numericAssetId, saveMeshEdit, saving, searchParams, texturableMesh, uploadAssetThumbnail, paintLayers, canvasToPngFile, savePaintDocument])
 
   const handleBack = useCallback(() => {
     if (returnTo) {
@@ -10161,17 +10164,18 @@ export default function MeshEditorPage() {
     }
   }, [texturableMesh, getProjectionSurfacePositions])
 
-  const projectionLayersForRebuild = useMemo(() => projectionLayers, [
-    projectionLayers.map(layer => [
-      layer.id,
-      layer.visible === false ? 0 : 1,
-      layer.opacity ?? 1,
-      layer.opacitySeams ?? 1,
-      layer.blendMode || 'source-over',
-      layer.blendPixels ?? '',
-      layer.cropBorder ?? ''
-    ].join(':')).join('|')
-  ])
+  // Only what the rebuilt texture depends on: renaming a layer must not rebuild it.
+  const projectionRebuildKey = projectionLayers.map(layer => [
+    layer.id,
+    layer.visible === false ? 0 : 1,
+    layer.opacity ?? 1,
+    layer.opacitySeams ?? 1,
+    layer.blendMode || 'source-over',
+    layer.blendPixels ?? '',
+    layer.cropBorder ?? ''
+  ].join(':')).join('|')
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on projectionRebuildKey on purpose, so unrelated layer edits keep the same array
+  const projectionLayersForRebuild = useMemo(() => projectionLayers, [projectionRebuildKey])
 
   useEffect(() => {
     if (!projectionStarted || !texturableMesh?.textureCanvas) {
@@ -10833,6 +10837,7 @@ export default function MeshEditorPage() {
     projectId,
     projectionBlendPixels,
     projectionImageParamSources,
+    projectionLayers,
     projectionReady,
     projectionStarted,
     projectionViewResolution,

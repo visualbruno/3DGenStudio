@@ -14,6 +14,8 @@
 // scene roots. Vertex data, textures, skins, and animation samplers are copied
 // through byte-for-byte.
 
+import { Buffer } from 'buffer';
+
 const GLB_MAGIC = 0x46546c67; // 'glTF'
 const CHUNK_JSON = 0x4e4f534a; // 'JSON'
 const CHUNK_BIN = 0x004e4942; // 'BIN\0'

@@ -5,7 +5,10 @@ import reactRefresh from 'eslint-plugin-react-refresh'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // Build output plus the git-ignored local installs: the managed-ComfyUI
+  // reference env (comfyui/, ~12 GB with its venv) and the Python venvs carry
+  // thousands of bundled .js files, and walking them runs ESLint out of memory.
+  globalIgnores(['dist', 'release', 'data', 'comfyui', '.kilo', '.vs', '**/.venv', '**/venv', 'thirdparty/**/checkpoints', 'thirdparty/**/build']),
   {
     files: ['**/*.{js,jsx}'],
     extends: [

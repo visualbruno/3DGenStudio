@@ -10,8 +10,10 @@ export default function useImageEditorHistory({
   setSelectedLayerId,
   layerCanvasesRef,
   maskCanvasRef,
-  setMaskRevision,
-  setRenderRevision
+  // The editor's bumpMask / bumpRender: a restore swaps the mask and every
+  // layer canvas, and these are what tell the page to re-read them.
+  onMaskChanged,
+  onCanvasChanged
 }) {
   const historyUndoRef = useRef([])
   const historyRedoRef = useRef([])
@@ -50,9 +52,9 @@ export default function useImageEditorHistory({
     maskCanvasRef.current = snapshot.maskCanvas ? cloneCanvasElement(snapshot.maskCanvas) : null
     setLayers(snapshot.layers.map(layer => ({ ...layer })))
     setSelectedLayerId(snapshot.selectedLayerId || null)
-    setMaskRevision(prev => prev + 1)
-    setRenderRevision(prev => prev + 1)
-  }, [layerCanvasesRef, maskCanvasRef, setLayers, setSelectedLayerId, setMaskRevision, setRenderRevision])
+    onMaskChanged()
+    onCanvasChanged()
+  }, [layerCanvasesRef, maskCanvasRef, setLayers, setSelectedLayerId, onMaskChanged, onCanvasChanged])
 
   const pushUndoSnapshot = useCallback(() => {
     if (layers.length === 0) return

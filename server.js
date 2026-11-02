@@ -1369,7 +1369,7 @@ app.put('/api/vfx/presets/:id', requireVfxAuthor, async (req, res) => {
     }
 
     await fs.mkdir(VFX_PRESETS_DIR, { recursive: true });
-    const { updatedAt, hasThumbnail, ...onDisk } = preset;
+    const { updatedAt: _updatedAt, hasThumbnail: _hasThumbnail, ...onDisk } = preset;
     await fs.writeFile(vfxPresetPath(id), `${JSON.stringify(onDisk, null, 2)}\n`, 'utf8');
     res.json({
       preset: await readVfxPreset(id),
@@ -8870,7 +8870,11 @@ async function proxyJsonToolJson(operationPath, req, res, {
 // Same forwarding as proxyMeshTool, for the mesh-tools endpoints that answer with
 // a single JSON body instead of an SSE stream (/meshes/inspect, /meshes/thumbnail).
 // Those produce no mesh and finish in seconds, so there is nothing to stream.
-async function proxyMeshToolJson(operationPath, req, res, { baseUrlBuilder = buildMeshToolsBaseUrl, serviceLabel = 'Mesh Tools' } = {}) {
+async function proxyMeshToolJson(operationPath, req, res, {
+  baseUrlBuilder = buildMeshToolsBaseUrl,
+  serviceLabel = 'Mesh Tools',
+  failureLabel = 'Mesh tool',
+} = {}) {
   const meshFile = req.file;
   if (!meshFile?.buffer?.length) {
     return res.status(400).json({ error: 'meshFile is required' });

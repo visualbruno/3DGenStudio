@@ -12,6 +12,7 @@ import { applySeamlessToCanvas, DEFAULT_SEAMLESS_VALUES } from '../utils/seamles
 import {
   applyAdjustmentsToCanvas,
   applyBlurSharpenToCanvas,
+  canvasHasPixels,
   canvasToPngFile,
   clamp,
   createComfyMaskCanvas,
@@ -46,6 +47,55 @@ const DEFAULT_SHADOW_REMOVER_VALUES = { strength: 40, threshold: 32, softness: 1
 const MIN_ZOOM = 0.25
 const MAX_ZOOM = 8
 const ZOOM_STEP = 1.15
+
+// The run form's starting point for a workflow: every parameter at its default,
+// and its image inputs wired to the layer composite (source) and the mask by
+// name, falling back to the first two image inputs.
+function buildWorkflowDraft(workflow) {
+  if (!workflow) return { values: {}, sources: {} }
+
+  const defaults = Object.fromEntries((workflow.parameters || []).map(parameter => {
+    const valueType = getValueType(parameter)
+    if (valueType === 'boolean') return [parameter.id, Boolean(parameter.defaultValue ?? false)]
+    if (valueType === 'number') return [parameter.id, Number(parameter.defaultValue ?? 0)]
+    if (valueType === 'image') return [parameter.id, null]
+    return [parameter.id, parameter.defaultValue ?? '']
+  }))
+
+  const imageParams = (workflow.parameters || []).filter(parameter => getValueType(parameter) === 'image')
+  let maskParamId = null
+  let sourceParamId = null
+
+  imageParams.forEach(parameter => {
+    const name = String(parameter?.name || '').toLowerCase()
+    if (!maskParamId && /mask|matte|alpha/.test(name)) {
+      maskParamId = parameter.id
+    } else if (!sourceParamId) {
+      sourceParamId = parameter.id
+    }
+  })
+
+  if (!sourceParamId && imageParams[0]) {
+    sourceParamId = imageParams[0].id
+  }
+
+  if (!maskParamId && imageParams[1]) {
+    maskParamId = imageParams[1].id
+  }
+
+  const defaultSources = {}
+  imageParams.forEach(parameter => {
+    if (parameter.id === sourceParamId) {
+      defaultSources[parameter.id] = { type: 'source' }
+    } else if (parameter.id === maskParamId) {
+      defaultSources[parameter.id] = { type: 'mask' }
+    } else {
+      defaultSources[parameter.id] = { type: 'none' }
+    }
+  })
+
+  return { values: defaults, sources: defaultSources }
+}
 
 export default function ImageEditorPage() {
   const navigate = useNavigate()
@@ -123,6 +173,26 @@ export default function ImageEditorPage() {
   const panInteractionRef = useRef({ active: false, pointerId: null, lastX: 0, lastY: 0 })
   const pointerPositionRef = useRef(null)
 
+  // The canvases live in refs and are edited imperatively, so what the UI needs
+  // from them is copied into state here, by the same calls that tell the page a
+  // canvas changed — reading the refs during render would go stale.
+  const [maskHasPixels, setMaskHasPixels] = useState(false)
+  const [docSize, setDocSize] = useState({ width: 1, height: 1 })
+
+  const bumpRender = useCallback(() => {
+    setRenderRevision(prev => prev + 1)
+    // Every layer canvas is document-sized, so any one of them gives the size.
+    const anyCanvas = layerCanvasesRef.current.values().next().value
+    const width = Math.max(1, anyCanvas?.width || 1)
+    const height = Math.max(1, anyCanvas?.height || 1)
+    setDocSize(prev => (prev.width === width && prev.height === height ? prev : { width, height }))
+  }, [])
+
+  const bumpMask = useCallback(() => {
+    setMaskRevision(prev => prev + 1)
+    setMaskHasPixels(canvasHasPixels(maskCanvasRef.current))
+  }, [])
+
   const {
     canUndo,
     canRedo,
@@ -137,8 +207,8 @@ export default function ImageEditorPage() {
     setSelectedLayerId,
     layerCanvasesRef,
     maskCanvasRef,
-    setMaskRevision,
-    setRenderRevision
+    onMaskChanged: bumpMask,
+    onCanvasChanged: bumpRender
   })
 
   const assetId = searchParams.get('assetId') || ''
@@ -160,6 +230,17 @@ export default function ImageEditorPage() {
     () => workflows.find(item => String(item.id) === String(selectedWorkflowId)) || null,
     [selectedWorkflowId, workflows]
   )
+
+  // Picking another workflow (or reloading the list) resets the run form to its
+  // defaults. Adjusted during render rather than in an effect, so the previous
+  // workflow's values never paint against the new one.
+  const [draftWorkflow, setDraftWorkflow] = useState(null)
+  if (draftWorkflow !== selectedWorkflow) {
+    setDraftWorkflow(selectedWorkflow)
+    const draft = buildWorkflowDraft(selectedWorkflow)
+    setWorkflowValues(draft.values)
+    setImageParamSources(draft.sources)
+  }
 
   const activeLayer = useMemo(
     () => layers.find(layer => layer.id === selectedLayerId) || null,
@@ -231,17 +312,6 @@ export default function ImageEditorPage() {
     const firstEditable = [...layers].reverse().find(layer => !layer.locked)
     return firstEditable?.id || null
   }, [activeLayer, layers])
-
-  const maskHasPixels = useMemo(() => {
-    void maskRevision
-    const maskCanvas = maskCanvasRef.current
-    if (!maskCanvas) return false
-    const imageData = maskCanvas.getContext('2d').getImageData(0, 0, maskCanvas.width, maskCanvas.height).data
-    for (let index = 3; index < imageData.length; index += 4) {
-      if (imageData[index] > 0) return true
-    }
-    return false
-  }, [maskRevision])
 
   const refreshCanvas = useCallback(() => {
     const displayCanvas = displayCanvasRef.current
@@ -355,14 +425,6 @@ export default function ImageEditorPage() {
       context.restore()
     }
   }, [adjustPreviewDirty, adjustValues, cropValues.height, cropValues.width, cropValues.x, cropValues.y, filterPreviewDirty, filterValues, getPreviewTargetLayerId, layers, seamlessPreviewDirty, seamlessValues, shadowRemoverPreviewDirty, shadowRemoverValues, toolGroup, toolId])
-
-  const bumpRender = useCallback(() => {
-    setRenderRevision(prev => prev + 1)
-  }, [])
-
-  const bumpMask = useCallback(() => {
-    setMaskRevision(prev => prev + 1)
-  }, [])
 
   const resetView = useCallback(() => {
     setZoom(1)
@@ -845,9 +907,8 @@ export default function ImageEditorPage() {
   }, [bumpMask, bumpRender, createEmptyCanvas, cropValues, layers, pushUndoSnapshot])
 
   const cropLimits = useMemo(() => {
-    const baseCanvas = layerCanvasesRef.current.get(layers[0]?.id)
-    const canvasWidth = Math.max(1, baseCanvas?.width || 1)
-    const canvasHeight = Math.max(1, baseCanvas?.height || 1)
+    const canvasWidth = docSize.width
+    const canvasHeight = docSize.height
 
     const xMax = Math.max(0, canvasWidth - 1)
     const yMax = Math.max(0, canvasHeight - 1)
@@ -864,7 +925,7 @@ export default function ImageEditorPage() {
       heightMin: 1,
       heightMax: Math.max(1, canvasHeight - y)
     }
-  }, [cropValues.x, cropValues.y, layers])
+  }, [cropValues.x, cropValues.y, docSize])
 
   const handleCropXChange = useCallback((value) => {
     const numeric = Number(value)
@@ -1576,6 +1637,8 @@ export default function ImageEditorPage() {
         setSelectedLayerId(baseLayerId)
         setCropValues({ x: 0, y: 0, width: baseCanvas.width, height: baseCanvas.height })
         setResizeValues({ width: baseCanvas.width, height: baseCanvas.height })
+        setDocSize({ width: Math.max(1, baseCanvas.width), height: Math.max(1, baseCanvas.height) })
+        setMaskHasPixels(false)
         resetView()
         resetHistory()
         setFeedback('Image loaded.')
@@ -1653,58 +1716,6 @@ export default function ImageEditorPage() {
       cancelled = true
     }
   }, [getComfyWorkflows])
-
-  useEffect(() => {
-    if (!selectedWorkflow) {
-      setWorkflowValues({})
-      setImageParamSources({})
-      return
-    }
-
-    const defaults = Object.fromEntries((selectedWorkflow.parameters || []).map(parameter => {
-      const valueType = getValueType(parameter)
-      if (valueType === 'boolean') return [parameter.id, Boolean(parameter.defaultValue ?? false)]
-      if (valueType === 'number') return [parameter.id, Number(parameter.defaultValue ?? 0)]
-      if (valueType === 'image') return [parameter.id, null]
-      return [parameter.id, parameter.defaultValue ?? '']
-    }))
-
-    setWorkflowValues(defaults)
-
-    const imageParams = (selectedWorkflow.parameters || []).filter(parameter => getValueType(parameter) === 'image')
-    let maskParamId = null
-    let sourceParamId = null
-
-    imageParams.forEach(parameter => {
-      const name = String(parameter?.name || '').toLowerCase()
-      if (!maskParamId && /mask|matte|alpha/.test(name)) {
-        maskParamId = parameter.id
-      } else if (!sourceParamId) {
-        sourceParamId = parameter.id
-      }
-    })
-
-    if (!sourceParamId && imageParams[0]) {
-      sourceParamId = imageParams[0].id
-    }
-
-    if (!maskParamId && imageParams[1]) {
-      maskParamId = imageParams[1].id
-    }
-
-    const defaultSources = {}
-    imageParams.forEach(parameter => {
-      if (parameter.id === sourceParamId) {
-        defaultSources[parameter.id] = { type: 'source' }
-      } else if (parameter.id === maskParamId) {
-        defaultSources[parameter.id] = { type: 'mask' }
-      } else {
-        defaultSources[parameter.id] = { type: 'none' }
-      }
-    })
-
-    setImageParamSources(defaultSources)
-  }, [selectedWorkflow])
 
   useEffect(() => {
     let cancelled = false

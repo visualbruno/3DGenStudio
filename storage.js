@@ -287,7 +287,11 @@ export const DEFAULT_SETTINGS = {
       // Desktop app: bind 0.0.0.0 instead of loopback so another computer (a
       // frontend on a machine without a GPU) can use this one's service. Same
       // flag on rigtools/motiontools/mocaptools. No auth on these services.
-      allowNetwork: false
+      allowNetwork: false,
+      // Desktop app: UUID ("GPU-…") of the NVIDIA GPU this service runs on, set
+      // as CUDA_VISIBLE_DEVICES at launch. Empty = the default device. Same
+      // field on rigtools/motiontools/mocaptools (and comfyui).
+      gpu: ''
     },
     rigtools: {
       url: 'http://127.0.0.1',
@@ -295,7 +299,8 @@ export const DEFAULT_SETTINGS = {
       // Desktop app: start the rigging service at launch. Default off — it pins
       // ~14GB of GPU memory for the whole session.
       autoStart: false,
-      allowNetwork: false
+      allowNetwork: false,
+      gpu: ''
     },
     motiontools: {
       url: 'http://127.0.0.1',
@@ -309,7 +314,8 @@ export const DEFAULT_SETTINGS = {
       // Desktop app: start the motion service at launch. Default off — the text
       // encoder alone is ~16 GB of RAM once a prompt has been encoded.
       autoStart: false,
-      allowNetwork: false
+      allowNetwork: false,
+      gpu: ''
     },
     mocaptools: {
       url: 'http://127.0.0.1',
@@ -321,7 +327,8 @@ export const DEFAULT_SETTINGS = {
       // Desktop app: start the video-to-motion service at launch. Default off —
       // a capture peaks around 10 GB of VRAM, which would sit next to rigging.
       autoStart: false,
-      allowNetwork: false
+      allowNetwork: false,
+      gpu: ''
     },
     custom: []
   },

@@ -66,23 +66,34 @@ export default function ComfyTextGenModal({ open, onClose, onResult }) {
     setRunError(null)
   }
 
-  // Load workflows whenever the modal opens; reset everything when it closes.
+  // Reset the run when the modal closes, and show the loading state as it opens.
+  // Adjusted during render rather than in the effect below, so neither the last
+  // run nor a stale error paints for a frame.
+  const [wasOpen, setWasOpen] = useState(open)
+  if (wasOpen !== open) {
+    setWasOpen(open)
+    if (open) {
+      setLoadingWorkflows(true)
+      setLoadError(null)
+    } else {
+      setPhase('config')
+      setProgress(null)
+      setResultText('')
+      setRunError(null)
+    }
+  }
+
+  // Load workflows whenever the modal opens; drop the progress stream when it closes.
   useEffect(() => {
     if (!open) {
       if (unsubscribeRef.current) {
         unsubscribeRef.current()
         unsubscribeRef.current = null
       }
-      setPhase('config')
-      setProgress(null)
-      setResultText('')
-      setRunError(null)
       return
     }
 
     let cancelled = false
-    setLoadingWorkflows(true)
-    setLoadError(null)
     getComfyWorkflows()
       .then(allWorkflows => {
         if (cancelled) return

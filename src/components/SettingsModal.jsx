@@ -78,36 +78,48 @@ function ManagedComfyControls({ managed, onChanged }) {
   )
 }
 
-// Desktop-only: which NVIDIA GPU the managed ComfyUI runs on (--cuda-device). Stored
-// as the GPU's UUID rather than its index — see listNvidiaGpus in comfysetup.cjs.
-// Read at start time, so a change applies the next time ComfyUI starts.
-function ComfyGpuPicker({ managed, value, onChange }) {
+// The NVIDIA GPU list, fetched once and shared: the Mesh Tools tab shows four
+// pickers, and each fetch runs nvidia-smi in the main process. Cards don't come
+// and go during a session, so there's nothing to refresh.
+let gpuListPromise = null
+function loadGpus(bridge) {
+  if (!gpuListPromise) {
+    gpuListPromise = bridge.listGpus().then(res => res?.gpus || []).catch(() => [])
+  }
+  return gpuListPromise
+}
+
+// Desktop-only: which NVIDIA GPU a service runs on. Stored as the GPU's UUID rather
+// than its index — see listNvidiaGpus in comfysetup.cjs. Read when the service
+// starts, so a change applies the next time it starts. `enabled` is false for a
+// ComfyUI the app doesn't manage (we don't launch it, so can't pass the flag).
+function GpuPicker({ label, value, onChange, enabled = true }) {
   const bridge = typeof window !== 'undefined' ? window.genStudioServices : null
-  const isDesktop = !!bridge?.isDesktop && typeof bridge.listComfyGpus === 'function'
+  const isDesktop = !!bridge?.isDesktop && typeof bridge.listGpus === 'function'
   const [gpus, setGpus] = useState(null)
 
   useEffect(() => {
-    if (!isDesktop || !managed) return undefined
+    if (!isDesktop || !enabled) return undefined
     let alive = true
-    bridge.listComfyGpus().then(res => { if (alive) setGpus(res?.gpus || []) }).catch(() => { if (alive) setGpus([]) })
+    loadGpus(bridge).then(list => { if (alive) setGpus(list) })
     return () => { alive = false }
-  }, [isDesktop, managed, bridge])
+  }, [isDesktop, enabled, bridge])
 
-  if (!isDesktop || !managed || !gpus?.length) return null
+  if (!isDesktop || !enabled || !gpus?.length) return null
 
   const missing = !!value && !gpus.some(g => g.uuid === value)
-  const label = g => `GPU ${g.index}: ${g.name}${g.memoryMB ? ` (${Math.round(g.memoryMB / 1024)} GB)` : ''}`
+  const optionLabel = g => `GPU ${g.index}: ${g.name}${g.memoryMB ? ` (${Math.round(g.memoryMB / 1024)} GB)` : ''}`
 
   return (
     <div className="settings-input-group" style={{ marginTop: '10px' }}>
       <label className="settings-label">GPU</label>
       <select className="settings-input" value={value || ''} onChange={e => onChange(e.target.value)}>
         <option value="">Default (GPU 0)</option>
-        {gpus.map(g => <option key={g.uuid} value={g.uuid}>{label(g)}</option>)}
+        {gpus.map(g => <option key={g.uuid} value={g.uuid}>{optionLabel(g)}</option>)}
         {missing && <option value={value}>Saved GPU not found — the default is used</option>}
       </select>
       <p className="settings-helper-text">
-        The graphics card ComfyUI generates on. Takes effect the next time ComfyUI starts — stop and start it below after saving.
+        The graphics card {label} runs on. Takes effect the next time it starts — stop and start it below after saving.
       </p>
     </div>
   )
@@ -808,10 +820,13 @@ export default function SettingsModal({ onClose }) {
   const [showAddCustom, setShowAddCustom] = useState(false)
   const [newCustom, setNewCustom] = useState({ name: '', url: '', headers: '', body: '', type: 'image-generation' })
 
-  // Ensure local state is updated if context settings load/change
-  useEffect(() => {
+  // Ensure local state is updated if context settings load/change. Adjusted
+  // during render rather than in an effect, so the form never paints stale values.
+  const [syncedSettings, setSyncedSettings] = useState(settings)
+  if (syncedSettings !== settings) {
+    setSyncedSettings(settings)
     setLocalSettings(settings)
-  }, [settings])
+  }
 
   // Server-side truth, not the form copy: the managed flag is written by the main
   // process, and gating the inputs on the local copy would let a stale form make
@@ -1330,8 +1345,9 @@ export default function SettingsModal({ onClose }) {
                 {/* Desktop only: an install made by an older app version keeps that
                     version's ComfyUI, node pack refs and packages until updated here. */}
                 <ComfyUpdatePanel />
-                <ComfyGpuPicker
-                  managed={comfyManaged}
+                <GpuPicker
+                  label="ComfyUI"
+                  enabled={comfyManaged}
                   value={localSettings?.apis?.comfyui?.gpu}
                   onChange={v => setApiField('comfyui', 'gpu', v)}
                 />
@@ -1411,6 +1427,11 @@ export default function SettingsModal({ onClose }) {
                   allowNetwork={localSettings?.apis?.meshtools?.allowNetwork}
                   onAllowNetworkChange={v => setApiField('meshtools', 'allowNetwork', v)}
                 >
+                  <GpuPicker
+                    label="Mesh Tools"
+                    value={localSettings?.apis?.meshtools?.gpu}
+                    onChange={v => setApiField('meshtools', 'gpu', v)}
+                  />
                   <ServiceControl name="meshtools" />
                   <AutoStartToggle
                     checked={localSettings?.apis?.meshtools?.autoStart}
@@ -1486,6 +1507,11 @@ export default function SettingsModal({ onClose }) {
                     buttonLabel="Install rigging service"
                     readyText="Rigging service is installed and ready."
                     note="One-time install; downloads several GB and needs an NVIDIA GPU (≥14 GB)."
+                  />
+                  <GpuPicker
+                    label="the rigging service"
+                    value={localSettings?.apis?.rigtools?.gpu}
+                    onChange={v => setApiField('rigtools', 'gpu', v)}
                   />
                   <ServiceControl name="rigging" />
                   <AutoStartToggle
@@ -1594,6 +1620,11 @@ export default function SettingsModal({ onClose }) {
                     readyText="Motion service is installed and ready."
                     note="One-time install; downloads ~17 GB and needs an NVIDIA GPU."
                     blockedReason={llamaAccepted ? '' : 'Accept the Meta Llama 3 Community License above first — the text encoder downloads Meta Llama 3 weights.'}
+                  />
+                  <GpuPicker
+                    label="the motion service"
+                    value={localSettings?.apis?.motiontools?.gpu}
+                    onChange={v => setApiField('motiontools', 'gpu', v)}
                   />
                   <ServiceControl name="motion" />
                   <AutoStartToggle
@@ -1706,6 +1737,11 @@ export default function SettingsModal({ onClose }) {
                     buttonLabel="Install video-to-motion service"
                     readyText="Video-to-motion service is installed and ready."
                     note="One-time install; downloads roughly 3 GB (PyTorch, Blender-as-a-module and the checkpoint) and needs an NVIDIA GPU."
+                  />
+                  <GpuPicker
+                    label="the video-to-motion service"
+                    value={localSettings?.apis?.mocaptools?.gpu}
+                    onChange={v => setApiField('mocaptools', 'gpu', v)}
                   />
                   <ServiceControl name="mocap" />
                   <AutoStartToggle

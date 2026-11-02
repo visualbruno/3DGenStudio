@@ -87,6 +87,7 @@ export default function useAssemblyScene(doc) {
     // next person to add something to it.)
     if (stale.length) {
       for (const entry of stale) disposeAssemblyEntry(entry)
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- must follow the GPU disposal above (a side effect, so it cannot move into render) or the scene would draw disposed meshes
       setEntries(surviving)
     }
 

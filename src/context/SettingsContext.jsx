@@ -175,6 +175,7 @@ export function SettingsProvider({ children }) {
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- state is only set once the request resolves (the rule does not follow the await)
     fetchSettings()
   }, [fetchSettings])
 

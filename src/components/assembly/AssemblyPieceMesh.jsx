@@ -86,6 +86,7 @@ export default function AssemblyPieceMesh({
     const meshes = entry?.meshes
     if (!meshes?.length) return
     for (const mesh of meshes) {
+      // eslint-disable-next-line react-hooks/immutability -- three.js scene objects are mutable by design; this is how their shadow flags are set
       mesh.castShadow = showShadows
       mesh.receiveShadow = showShadows
     }

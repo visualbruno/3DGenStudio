@@ -90,9 +90,9 @@ export default function BoardAiPanel({ projectId, projectName, boardId, onImageG
     return () => { cancelled = true }
   }, [getComfyWorkflows])
 
-  useEffect(() => {
-    if (imageApis.length && !selectedApi) setSelectedApi(imageApis[0].id)
-  }, [imageApis, selectedApi])
+  // Default to the first API once the list is known (adjusted during render, not
+  // in an effect, so the empty selection never paints).
+  if (imageApis.length && !selectedApi) setSelectedApi(imageApis[0].id)
 
   // Workflow ids are numeric but <select> values are strings — match loosely
   // (same approach as GraphAssetNode) so the selected workflow resolves.

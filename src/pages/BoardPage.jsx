@@ -110,12 +110,22 @@ export default function BoardPage() {
   }, [projectId, boardId, getProjectBoards, createBoard, setSearchParams])
 
   // ---- Load the selected board + build Excalidraw initialData --------------
+  // Opening another board drops the previous one's canvas and save status.
+  // Adjusted during render rather than in the effect below, so the old board
+  // never paints under the new id.
+  const [shownBoardId, setShownBoardId] = useState(boardId)
+  if (shownBoardId !== boardId) {
+    setShownBoardId(boardId)
+    if (boardId) {
+      setInitialData(null)
+      setSaveStatus('idle')
+    }
+  }
+
   useEffect(() => {
     let cancelled = false
     if (!boardId) return undefined
 
-    setInitialData(null)
-    setSaveStatus('idle')
     imageRefsRef.current = {}
     uploadingRef.current = new Set()
     latestSceneRef.current = null

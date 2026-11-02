@@ -1143,30 +1143,23 @@ export default function GraphPage({ project }) {
 
   // Rig Mesh and Flatten to Albedo nodes show their parameters permanently (there
   // is no mode menu to open them from), so seed a draft for any such node that has
-  // none yet — freshly created ones, and older ones saved before this ran.
-  useEffect(() => {
-    if (loading) {
-      return
-    }
-
-    const seededNodes = nodes.filter(node => (
-      SINGLE_MESH_TOOL_NODE_KINDS.includes(node.data.nodeKind) && !actionDraftsByNodeId[String(node.id)]
-    ))
-
-    if (seededNodes.length === 0) {
-      return
-    }
-
+  // none yet — freshly created ones, and older ones saved before this ran. Done
+  // during render rather than in an effect, so such a node never paints without
+  // its parameters; the next render finds nothing left to seed and stops.
+  const unseededNodes = loading ? [] : nodes.filter(node => (
+    SINGLE_MESH_TOOL_NODE_KINDS.includes(node.data.nodeKind) && !actionDraftsByNodeId[String(node.id)]
+  ))
+  if (unseededNodes.length > 0) {
     setActionDraftsByNodeId(currentDrafts => {
       const nextDrafts = { ...currentDrafts }
-      for (const node of seededNodes) {
+      for (const node of unseededNodes) {
         if (!nextDrafts[String(node.id)]) {
           nextDrafts[String(node.id)] = createSingleMeshToolDraft(node.data.nodeKind, getInputSource(nodes, edges, node.id, 'mesh').asset)
         }
       }
       return nextDrafts
     })
-  }, [actionDraftsByNodeId, createSingleMeshToolDraft, edges, loading, nodes])
+  }
 
   // BACK: rewind an open panel to the mode menu without closing it.
   const openActionDraft = useCallback((nodeId, nodeKind) => {
@@ -3265,7 +3258,7 @@ export default function GraphPage({ project }) {
       onToggleDraftCollapsed: toggleDraftCollapsed,
       isDraftCollapsed: collapsedDraftNodeIds.has(String(node.id))
     }
-  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, handleCancelNodeRun, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, setNodes, updateProjectNode])
+  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, handleCancelNodeRun, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]
@@ -3618,7 +3611,16 @@ export default function GraphPage({ project }) {
     }
   })), [edges, handleDeleteConnection])
 
-  useEffect(() => {
+  // Keep every open draft in step with the graph: drop drafts of deleted nodes and
+  // re-point input selections/bindings whose connection is gone. Runs during
+  // render whenever one of its inputs changes (all of them are state or memoized,
+  // so an unchanged input keeps its identity) rather than in an effect, so a
+  // draft never paints pointing at an input that no longer exists. The updater
+  // returns the same object when nothing changed, which ends the re-render.
+  const draftSyncInputs = [edges, nodes, libraryImageOptions, imageEditWorkflows, imageGenerationWorkflows, meshGenerationWorkflows, textGenerationWorkflows]
+  const [syncedDraftInputs, setSyncedDraftInputs] = useState(null)
+  if (!syncedDraftInputs || draftSyncInputs.some((value, index) => value !== syncedDraftInputs[index])) {
+    setSyncedDraftInputs(draftSyncInputs)
     setActionDraftsByNodeId(currentDrafts => {
       const nextDrafts = Object.entries(currentDrafts).reduce((accumulator, [nodeId, draft]) => {
         const node = nodes.find(item => item.id === nodeId)
@@ -3671,7 +3673,7 @@ export default function GraphPage({ project }) {
 
               // Re-point a binding whose connected input is gone. "None" and "custom"
               // are deliberate choices, not stale wiring, so they are left alone —
-              // this effect also runs on every node/edge change (selecting a node
+              // this sync also runs on every node/edge change (selecting a node
               // counts), which would otherwise undo the user's pick immediately.
               if (currentSource !== 'custom'
                 && !isWorkflowInputNone(currentSource)
@@ -3707,7 +3709,7 @@ export default function GraphPage({ project }) {
       const nextSerialized = JSON.stringify(nextDrafts)
       return currentSerialized === nextSerialized ? currentDrafts : nextDrafts
     })
-  }, [edges, imageEditWorkflows, imageGenerationWorkflows, libraryImageOptions, meshGenerationWorkflows, textGenerationWorkflows, nodes])
+  }
 
   useEffect(() => {
     hasAutoFitOnLoadRef.current = false

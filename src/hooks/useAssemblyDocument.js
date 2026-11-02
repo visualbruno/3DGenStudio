@@ -35,7 +35,7 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
   const [assemblies, setAssemblies] = useState([])
   const [meta, setMeta] = useState(null)          // { id, name, thumbnailPath, ... }
   const [doc, setDoc] = useState(null)            // the normalized document
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!!assemblyId)
   const [loadError, setLoadError] = useState('')
   const [saveStatus, setSaveStatus] = useState('idle') // idle | saving | saved | error
 
@@ -88,33 +88,41 @@ export default function useAssemblyDocument({ assemblyId, onAssemblyIdChange }) 
     return () => { cancelled = true }
   }, [assemblyId, onAssemblyIdChange])
 
+  // Switching assembly resets the UI state that belonged to the previous one.
+  // Adjusted during render rather than in the effect below, so the old history
+  // depth / save status never paint against the new selection. The refs are
+  // reset in the effect, where mutating them is allowed.
+  const [docAssemblyId, setDocAssemblyId] = useState(assemblyId)
+  if (docAssemblyId !== assemblyId) {
+    setDocAssemblyId(assemblyId)
+    setHistoryDepth({ undo: 0, redo: 0 })
+    if (!assemblyId) {
+      // Nothing selected — which happens after deleting the last assembly. The
+      // document has to be cleared, or the page keeps rendering the piece list
+      // of the assembly that was just deleted.
+      setMeta(null)
+      setDoc(null)
+      setLoading(false)
+    } else {
+      setLoading(true)
+      setLoadError('')
+      setSaveStatus('idle')
+    }
+  }
+
   // The selected document.
   useEffect(() => {
     let cancelled = false
 
-    // Nothing selected — which happens after deleting the last assembly. The
-    // document has to be cleared, or the page keeps rendering the piece list
-    // of the assembly that was just deleted.
+    undoRef.current = []
+    redoRef.current = []
     if (!assemblyId) {
       assemblyIdRef.current = null
       latestDocRef.current = null
       lastSavedSigRef.current = ''
-      undoRef.current = []
-      redoRef.current = []
-      setHistoryDepth({ undo: 0, redo: 0 })
-      setMeta(null)
-      setDoc(null)
-      setLoading(false)
       return undefined
     }
-
-    setLoading(true)
-    setLoadError('')
-    setSaveStatus('idle')
     assemblyIdRef.current = assemblyId
-    undoRef.current = []
-    redoRef.current = []
-    setHistoryDepth({ undo: 0, redo: 0 })
 
     ;(async () => {
       try {

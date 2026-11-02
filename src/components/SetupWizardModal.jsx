@@ -78,8 +78,22 @@ export default function SetupWizardModal({ onComplete, onClose }) {
   const [config, setConfig] = useState(null)
   const [loadError, setLoadError] = useState('')
 
-  const [comfyPath, setComfyPath] = useState('')
-  const [modelsPath, setModelsPath] = useState('')
+  const savedComfyPath = settings?.apis?.comfyui?.path || ''
+  const savedModelsPath = settings?.apis?.comfyui?.modelsPath || ''
+  const [comfyPath, setComfyPath] = useState(savedComfyPath)
+  const [modelsPath, setModelsPath] = useState(savedModelsPath)
+  // Follow the saved paths when settings load or change, adjusted during render
+  // rather than in an effect so the inputs never paint the stale value.
+  const [syncedComfyPath, setSyncedComfyPath] = useState(savedComfyPath)
+  if (syncedComfyPath !== savedComfyPath) {
+    setSyncedComfyPath(savedComfyPath)
+    setComfyPath(savedComfyPath)
+  }
+  const [syncedModelsPath, setSyncedModelsPath] = useState(savedModelsPath)
+  if (syncedModelsPath !== savedModelsPath) {
+    setSyncedModelsPath(savedModelsPath)
+    setModelsPath(savedModelsPath)
+  }
   const [pathBusy, setPathBusy] = useState(false)
   const [pathError, setPathError] = useState('')
   const [browseBusy, setBrowseBusy] = useState(false)
@@ -119,14 +133,6 @@ export default function SetupWizardModal({ onComplete, onClose }) {
     })()
     return () => { cancelled = true }
   }, [])
-
-  useEffect(() => {
-    setComfyPath(settings?.apis?.comfyui?.path || '')
-  }, [settings?.apis?.comfyui?.path])
-
-  useEffect(() => {
-    setModelsPath(settings?.apis?.comfyui?.modelsPath || '')
-  }, [settings?.apis?.comfyui?.modelsPath])
 
   useEffect(() => () => {
     eventSourceRef.current?.close()

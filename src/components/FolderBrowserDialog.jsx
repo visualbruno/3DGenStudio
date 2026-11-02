@@ -4,7 +4,8 @@ import './FolderBrowserDialog.css'
 
 export default function FolderBrowserDialog({ initialPath = '', onSelect, onClose }) {
   const [listing, setListing] = useState(null)
-  const [loading, setLoading] = useState(false)
+  // True from the start: the dialog opens by listing initialPath.
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [manualPath, setManualPath] = useState(initialPath || '')
 
@@ -23,6 +24,7 @@ export default function FolderBrowserDialog({ initialPath = '', onSelect, onClos
   }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- on open the synchronous setLoading(true)/setError('') are no-ops (already the state); the listing is set after the request resolves
     navigate(initialPath || '')
   }, [navigate, initialPath])
 

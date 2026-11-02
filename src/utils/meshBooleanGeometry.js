@@ -283,8 +283,6 @@ export function deformGeometryWithBooleanStamp(baseGeometry, mask, stampMatrix, 
   }
 
   const pos = positionAttr.array
-  const normalAttr = result.attributes.normal
-  const normals = normalAttr?.array || null
   const vertexCount = positionAttr.count
 
   const stampWidth = Math.max(1e-5, size * (mask.width / Math.max(mask.width, mask.height)))

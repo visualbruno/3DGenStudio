@@ -573,7 +573,6 @@ function getOrBuildIslandPath(paintTarget, islandIndex) {
 }
 
 export async function loadMeshRootFromUrl(url) {
-  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
   const extension = getExtensionFromUrl(url)
 
   if (extension === '.glb' || extension === '.gltf') {
@@ -618,15 +617,12 @@ export async function loadMeshRootFromUrl(url) {
 }
 
 export async function loadTexturableMeshFromUrl(url) {
-  const startedAt = typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
   const root = await loadMeshRootFromUrl(url)
 
-  return loadTexturableMeshFromRoot(root, { url, startedAt })
+  return loadTexturableMeshFromRoot(root)
 }
 
-export async function loadTexturableMeshFromRoot(root, { url = '', startedAt: explicitStartedAt = null, blankTextureSize = 1024 } = {}) {
-  const startedAt = explicitStartedAt ?? (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now())
-
+export async function loadTexturableMeshFromRoot(root, { blankTextureSize = 1024 } = {}) {
   if (!root) {
     throw new Error('No mesh data found')
   }

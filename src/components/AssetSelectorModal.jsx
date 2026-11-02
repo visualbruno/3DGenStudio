@@ -156,11 +156,11 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   }, [assets, projectNameById]);
 
   // Drop a stale project filter when the available options no longer include it.
-  useEffect(() => {
-    if (projectFilter !== 'all' && !projectFilterOptions.some(option => option.key === projectFilter)) {
-      setProjectFilter('all');
-    }
-  }, [projectFilter, projectFilterOptions]);
+  // Adjusted during render rather than in an effect, so the stale filter is never
+  // painted (React re-renders straight away, before committing).
+  if (projectFilter !== 'all' && !projectFilterOptions.some(option => option.key === projectFilter)) {
+    setProjectFilter('all');
+  }
 
   // Tag options with counts, derived from what is actually listed here.
   const tagFilterOptions = useMemo(() => {
@@ -194,9 +194,13 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
     });
   }, [assets, normalizedSearch, projectFilter, tagFilter]);
 
-  useEffect(() => {
+  // Back to page 1 whenever the filters change (same render-time adjustment).
+  const filterKey = JSON.stringify([normalizedSearch, projectFilter, tagFilter]);
+  const [pageFilterKey, setPageFilterKey] = useState(filterKey);
+  if (pageFilterKey !== filterKey) {
+    setPageFilterKey(filterKey);
     setCurrentPage(1);
-  }, [normalizedSearch, projectFilter, tagFilter]);
+  }
 
   const assetsPerPage = previewMode === 'thumbnail' ? MESHES_PER_PAGE : ASSETS_PER_PAGE;
   const totalPages = Math.max(1, Math.ceil(filteredAssets.length / assetsPerPage));
@@ -205,11 +209,9 @@ export default function AssetSelectorModal({ assetType, onSelect, onClose, showE
   const pageRangeStart = filteredAssets.length === 0 ? 0 : pageStart + 1;
   const pageRangeEnd = Math.min(pageStart + assetsPerPage, filteredAssets.length);
 
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
+  if (currentPage > totalPages) {
+    setCurrentPage(totalPages);
+  }
 
   const handleSelectAsset = (assetKey) => {
     if (!multiple) {

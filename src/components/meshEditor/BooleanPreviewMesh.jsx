@@ -29,6 +29,10 @@ export default function BooleanPreviewMesh({
     uPreviewColor: { value: new THREE.Color('#72ff9d') }
   }), [])
 
+  // Uniforms are updated IN PLACE, the three.js way: the renderer keeps the
+  // uniforms object it compiled the material with, so a fresh object per change
+  // would never reach the GPU. The compiler rule doesn't model that.
+  /* eslint-disable react-hooks/immutability -- three.js uniforms must be mutated, not replaced */
   useEffect(() => {
     const maxDim = Math.max(maskWidth || 1, maskHeight || 1)
     const stampWidth = Math.max(1e-5, size * ((maskWidth || 1) / maxDim))
@@ -47,6 +51,7 @@ export default function BooleanPreviewMesh({
     const stampZ = new THREE.Vector3().setFromMatrixColumn(stampMatrix, 2).normalize()
     uniforms.uStampZ.value.copy(stampZ)
   }, [depth, maskHeight, maskTexture, maskWidth, offset, operation, previewColor, size, stampMatrix, threshold, uniforms])
+  /* eslint-enable react-hooks/immutability */
 
   useEffect(() => () => {
     uniforms.uPreviewColor.value?.dispose?.()

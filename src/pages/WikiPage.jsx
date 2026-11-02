@@ -16,6 +16,22 @@ const ICON_SUGGESTIONS = [
 
 const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm4v']
 
+// Markdown toolbar. Plain data, applied by the editor's runToolbarItem: each item
+// either wraps the selection (`wrap`: before, after, placeholder), prefixes its
+// lines (`prefix`) or inserts a snippet at the cursor (`insert`).
+const TOOLBAR = [
+  { icon: 'format_bold', title: 'Bold', wrap: ['**', '**', 'bold text'] },
+  { icon: 'format_italic', title: 'Italic', wrap: ['*', '*', 'italic text'] },
+  { icon: 'title', title: 'Heading', prefix: '## ' },
+  { icon: 'format_list_bulleted', title: 'Bulleted list', prefix: '- ' },
+  { icon: 'format_list_numbered', title: 'Numbered list', prefix: '1. ' },
+  { icon: 'format_quote', title: 'Quote', prefix: '> ' },
+  { icon: 'code', title: 'Inline code', wrap: ['`', '`', 'code'] },
+  { icon: 'data_object', title: 'Code block', wrap: ['\n```\n', '\n```\n', 'code'] },
+  { icon: 'link', title: 'Link', wrap: ['[', '](https://)', 'link text'] },
+  { icon: 'horizontal_rule', title: 'Divider', insert: '\n\n---\n\n' },
+]
+
 function formatTimestamp(value) {
   if (!value) return ''
   try {
@@ -228,12 +244,17 @@ export default function WikiPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Deselecting clears the shown page. Adjusted during render rather than in
+  // the effect below, so the old page never paints with nothing selected.
+  const [shownPageId, setShownPageId] = useState(activeId)
+  if (shownPageId !== activeId) {
+    setShownPageId(activeId)
+    if (!activeId) setCurrentPage(null)
+  }
+
   // Load selected page content
   useEffect(() => {
-    if (!activeId) {
-      setCurrentPage(null)
-      return undefined
-    }
+    if (!activeId) return undefined
     let active = true
     ;(async () => {
       try {
@@ -448,18 +469,11 @@ export default function WikiPage() {
     }
   }
 
-  const TOOLBAR = [
-    { icon: 'format_bold', title: 'Bold', action: () => wrapSelection('**', '**', 'bold text') },
-    { icon: 'format_italic', title: 'Italic', action: () => wrapSelection('*', '*', 'italic text') },
-    { icon: 'title', title: 'Heading', action: () => prefixLines('## ') },
-    { icon: 'format_list_bulleted', title: 'Bulleted list', action: () => prefixLines('- ') },
-    { icon: 'format_list_numbered', title: 'Numbered list', action: () => prefixLines('1. ') },
-    { icon: 'format_quote', title: 'Quote', action: () => prefixLines('> ') },
-    { icon: 'code', title: 'Inline code', action: () => wrapSelection('`', '`', 'code') },
-    { icon: 'data_object', title: 'Code block', action: () => wrapSelection('\n```\n', '\n```\n', 'code') },
-    { icon: 'link', title: 'Link', action: () => wrapSelection('[', '](https://)', 'link text') },
-    { icon: 'horizontal_rule', title: 'Divider', action: () => insertAtCursor('\n\n---\n\n') },
-  ]
+  const runToolbarItem = (item) => {
+    if (item.wrap) wrapSelection(...item.wrap)
+    else if (item.prefix) prefixLines(item.prefix)
+    else if (item.insert) insertAtCursor(item.insert)
+  }
 
   const flatPages = useMemo(() => flattenTree(tree), [tree])
   const searchResults = useMemo(() => {
@@ -693,7 +707,7 @@ export default function WikiPage() {
 
               <div className="wiki-toolbar">
                 {TOOLBAR.map(item => (
-                  <button key={item.title} type="button" className="wiki-toolbar__btn" title={item.title} onClick={item.action}>
+                  <button key={item.title} type="button" className="wiki-toolbar__btn" title={item.title} onClick={() => runToolbarItem(item)}>
                     <span className="material-symbols-outlined">{item.icon}</span>
                   </button>
                 ))}

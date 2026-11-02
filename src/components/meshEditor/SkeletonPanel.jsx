@@ -147,9 +147,19 @@ function BoneEditCard({ index, name, position, influence, canTakeWeights, edit }
   const [x, y, z] = position
 
   // Adopt whatever the rig now says whenever it changes underneath (selection,
-  // gizmo drag, undo) — except for the field being typed in.
-  useEffect(() => { setDraftName(name) }, [name])
-  useEffect(() => { setDraftAxes(null) }, [index, x, y, z])
+  // gizmo drag, undo) — except for the field being typed in. Adjusted during
+  // render rather than in an effect, so a stale draft never paints.
+  const [syncedName, setSyncedName] = useState(name)
+  if (syncedName !== name) {
+    setSyncedName(name)
+    setDraftName(name)
+  }
+  const boneKey = `${index}|${x}|${y}|${z}`
+  const [syncedBoneKey, setSyncedBoneKey] = useState(boneKey)
+  if (syncedBoneKey !== boneKey) {
+    setSyncedBoneKey(boneKey)
+    setDraftAxes(null)
+  }
 
   const commitName = () => {
     if (draftName.trim() && draftName !== name) edit.onRename(index, draftName)

@@ -151,6 +151,7 @@ export default function BatchPage({ project }) {
   // once on return from an editor so anything finished while away shows up.
   useEffect(() => {
     if (!loading) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- state is only set once the request resolves (the rule does not follow the await)
       refreshAssets()
     }
   }, [resultsVersion, loading, refreshAssets])
