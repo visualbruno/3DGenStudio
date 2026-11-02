@@ -1547,6 +1547,16 @@
 			"Outputs": [
 				{ "Node": "6", "Name": "Save Mesh", "Type": "Mesh" }
 			]
-		}
+		},
+		{
+			"Name": "Upscale Image with InvSR",
+			"File": "setup/Upscale Image with InvSR.json",
+			"Inputs": [
+				{ "Node": "5", "Input": "image",  "Name": "Source Image", "Type": "Image" }
+			],
+			"Outputs": [
+				{ "Node": "9", "Name": "Save Image", "Type": "Image" }
+			]
+		}		
 	]
 }

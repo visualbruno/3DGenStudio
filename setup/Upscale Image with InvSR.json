@@ -1,0 +1,153 @@
+{
+  "1": {
+    "inputs": {
+      "value": 0,
+      "width": [
+        "6",
+        0
+      ],
+      "height": [
+        "6",
+        1
+      ]
+    },
+    "class_type": "SolidMask",
+    "_meta": {
+      "title": "Create Solid Mask",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "2": {
+    "inputs": {
+      "mask": [
+        "5",
+        1
+      ]
+    },
+    "class_type": "InvertMask",
+    "_meta": {
+      "title": "Invert Mask",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "3": {
+    "inputs": {
+      "mask": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "4": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "3",
+        0
+      ],
+      "source": [
+        "5",
+        0
+      ],
+      "mask": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "6": {
+    "inputs": {
+      "image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "7": {
+    "inputs": {
+      "sd_model": "stabilityai/sd-turbo",
+      "invsr_model": "noise_predictor_sd_turbo_v5_diftune.pth",
+      "dtype": "fp16",
+      "tiled_vae": true
+    },
+    "class_type": "LoadInvSRModels",
+    "_meta": {
+      "title": "Load InvSR Models",
+      "aux_id": "visualbruno/ComfyUI_InvSR",
+      "ver": "4f10c57f662761c569ec128d4b35192e7a37f14f"
+    }
+  },
+  "8": {
+    "inputs": {
+      "num_steps": 1,
+      "cfg": 1,
+      "batch_size": 1,
+      "chopping_batch_size": 1,
+      "chopping_size": 128,
+      "color_fix": "none",
+      "seed": 123,
+      "keep_model_loaded": false,
+      "invsr_pipe": [
+        "7",
+        0
+      ],
+      "images": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "InvSRSampler",
+    "_meta": {
+      "title": "InvSRSampler",
+      "aux_id": "visualbruno/ComfyUI_InvSR",
+      "ver": "4f10c57f662761c569ec128d4b35192e7a37f14f"
+    }
+  },
+  "9": {
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  }
+}

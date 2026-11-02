@@ -1,102 +1,142 @@
 {
   "1": {
     "inputs": {
-      "image": ""
+      "value": 0,
+      "width": [
+        "6",
+        0
+      ],
+      "height": [
+        "6",
+        1
+      ]
     },
-    "class_type": "LoadImage",
+    "class_type": "SolidMask",
     "_meta": {
-      "title": "Load Image"
+      "title": "Create Solid Mask",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
     }
   },
   "2": {
     "inputs": {
-      "model_name": "4xLexicaDAT2_otf.pth"
+      "mask": [
+        "5",
+        1
+      ]
     },
-    "class_type": "UpscaleModelLoader",
+    "class_type": "InvertMask",
     "_meta": {
-      "title": "Load Upscale Model"
+      "title": "Invert Mask",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
     }
   },
   "3": {
     "inputs": {
-      "upscale_model": [
+      "mask": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "MaskToImage",
+    "_meta": {
+      "title": "Convert Mask to Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "4": {
+    "inputs": {
+      "x": 0,
+      "y": 0,
+      "resize_source": false,
+      "destination": [
+        "3",
+        0
+      ],
+      "source": [
+        "5",
+        0
+      ],
+      "mask": [
         "2",
+        0
+      ]
+    },
+    "class_type": "ImageCompositeMasked",
+    "_meta": {
+      "title": "Image Composite Masked",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.35"
+    }
+  },
+  "5": {
+    "inputs": {
+      "image": "AnimeCatGirl.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "6": {
+    "inputs": {
+      "image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "10": {
+    "inputs": {
+      "upscale_model": [
+        "11",
         0
       ],
       "image": [
-        "1",
+        "4",
         0
       ]
     },
     "class_type": "ImageUpscaleWithModel",
     "_meta": {
-      "title": "Upscale Image (using Model)"
+      "title": "Upscale Image (using Model)",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
     }
   },
-  "4": {
+  "11": {
     "inputs": {
-      "filename_prefix": [
-        "6",
-        0
-      ],
+      "model_name": "4x-UltraSharp.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
+    }
+  },
+  "12": {
+    "inputs": {
       "images": [
-        "3",
+        "10",
         0
       ]
     },
-    "class_type": "SaveImage",
+    "class_type": "PreviewImage",
     "_meta": {
-      "title": "Save Image"
-    }
-  },
-  "5": {
-    "inputs": {
-      "string": "Images/Image_"
-    },
-    "class_type": "StringConstant",
-    "_meta": {
-      "title": "String Constant"
-    }
-  },
-  "6": {
-    "inputs": {
-      "delimiter": "",
-      "string1": [
-        "5",
-        0
-      ],
-      "string2": [
-        "9",
-        0
-      ]
-    },
-    "class_type": "JoinStrings",
-    "_meta": {
-      "title": "Join Strings"
-    }
-  },
-  "7": {
-    "inputs": {
-      "image": [
-        "3",
-        0
-      ]
-    },
-    "class_type": "GetImageSize+",
-    "_meta": {
-      "title": "🔧 Get Image Size"
-    }
-  },
-  "9": {
-    "inputs": {
-      "input1": [
-        "7",
-        0
-      ]
-    },
-    "class_type": "ConvertAny2String",
-    "_meta": {
-      "title": "Convert to String"
+      "title": "Preview Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.43.0"
     }
   }
 }
