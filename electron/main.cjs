@@ -38,6 +38,7 @@ const {
   isAvailableHere: comfyAvailableHere,
   setupComfyUI,
   startComfyUI,
+  listNvidiaGpus,
   planComfyUpdate,
   updateComfyUI,
 } = require('./comfysetup.cjs');
@@ -764,12 +765,26 @@ function serviceRegistry() {
       // Venv AND code dir must both be present — see comfyReady().
       isInstalled: () => comfyReady(),
       // The port is chosen at install time (to dodge a user's own ComfyUI) and
-      // stored in settings, so it must be read at start time, not at boot.
-      resolveLaunch: (svc) => resolveConfiguredPort(svc, COMFY_PORT_DEFAULT),
-      start: (port) => startComfyUI({
-        appRoot: APP_ROOT, installDir: COMFY_DIR, dataDir: COMFY_DATA, venvDir: COMFY_VENV,
-        port, logStream: openLogStream('comfyui.log'), log,
-      }),
+      // stored in settings, so it must be read at start time, not at boot. Same
+      // for the GPU picked in Settings.
+      resolveLaunch: async (svc) => {
+        const api = await resolveConfiguredPort(svc, COMFY_PORT_DEFAULT);
+        const wanted = String(api.gpu || '').trim();
+        svc.gpu = null;
+        if (wanted) {
+          // A saved GPU that is gone (card removed, driver reinstalled) would
+          // leave ComfyUI with no visible device at all — fall back to the
+          // default device instead of failing the start.
+          if (listNvidiaGpus().some((g) => g.uuid === wanted)) svc.gpu = wanted;
+          else log(`ComfyUI: the GPU chosen in Settings (${wanted}) was not found — using the default device.`);
+        }
+      },
+      start(port) {
+        return startComfyUI({
+          appRoot: APP_ROOT, installDir: COMFY_DIR, dataDir: COMFY_DATA, venvDir: COMFY_VENV,
+          port, gpu: this.gpu, logStream: openLogStream('comfyui.log'), log,
+        });
+      },
     },
   };
 }
@@ -1011,6 +1026,9 @@ function registerServicesIpc() {
     log(`Re-pointed settings at the managed ComfyUI on port ${applied.port}.`);
     return { ok: true, port: applied.port, path: COMFY_DIR, modelsPath: path.join(COMFY_DATA, 'models') };
   });
+
+  // NVIDIA GPUs the managed ComfyUI can be pinned to (Settings → ComfyUI).
+  ipcMain.handle('comfyui:list-gpus', () => ({ ok: true, gpus: listNvidiaGpus() }));
 
   // --- Managed ComfyUI upgrades ---------------------------------------------
   // Updating the app does NOT update an existing managed ComfyUI: the installer

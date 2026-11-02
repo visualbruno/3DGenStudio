@@ -80,6 +80,34 @@ function driverCuda() {
   }
 }
 
+// NVIDIA GPUs on this machine, for the Settings → ComfyUI device picker:
+// [{ index, uuid, name, memoryMB }]. Empty when there is no driver. The managed
+// install is CUDA-only (pickBuild), so nvidia-smi sees every GPU it could use.
+//
+// The UUID is what gets stored and passed to --cuda-device, not the index:
+// nvidia-smi numbers GPUs in PCI bus order while CUDA defaults to fastest-first,
+// so on a mixed-GPU machine "1" can name a different card in each. CUDA accepts
+// a "GPU-…" UUID in CUDA_VISIBLE_DEVICES (which --cuda-device sets), and a UUID
+// also survives a card being added or moved to another slot.
+function listNvidiaGpus() {
+  try {
+    const r = spawnSync('nvidia-smi', ['--query-gpu=index,uuid,name,memory.total', '--format=csv,noheader,nounits'], {
+      encoding: 'utf8', timeout: 20000, windowsHide: true,
+    });
+    if (r.status !== 0 || !r.stdout) return [];
+    return r.stdout.split(/\r?\n/).map((line) => line.split(',').map((s) => s.trim())).filter((f) => f.length >= 4 && f[1].startsWith('GPU-')).map((f) => ({
+      index: Number(f[0]),
+      uuid: f[1],
+      // A name with a comma in it would split in two; rejoin everything between
+      // the UUID and the trailing memory column.
+      name: f.slice(2, -1).join(', '),
+      memoryMB: Number(f[f.length - 1]) || null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // Normalise a CUDA string ("13", "13.0", "13.0.0") to a comparable float.
 function cudaKey(text) {
   const m = String(text).match(/\s*(\d+)(?:\.(\d+))?/);
@@ -1373,7 +1401,9 @@ async function updateComfyUI({ uv, appRoot, installDir, dataDir, venvDir, appVer
 }
 
 // ---- launcher ---------------------------------------------------------------
-function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, logStream, log }) {
+// `gpu` is a GPU UUID from listNvidiaGpus (already checked to be present), or
+// null for ComfyUI's own default — which on Windows is "force device 0".
+function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, gpu, logStream, log }) {
   const write = (s) => { try { logStream && logStream.write(s); } catch { /* ignore */ } };
   const vp = venvPython(venvDir);
   if (!fs.existsSync(vp) || !fs.existsSync(path.join(installDir, 'main.py'))) {
@@ -1425,6 +1455,9 @@ function startComfyUI({ appRoot, installDir, dataDir, venvDir, port, logStream, 
     // real user dir; forward slashes so SQLAlchemy's URL parser doesn't have to
     // deal with backslashes.
     '--database-url', `sqlite:///${path.resolve(dirs.user, 'comfyui.db').replace(/\\/g, '/')}`,
+    // Hides every other GPU from this ComfyUI (CUDA_VISIBLE_DEVICES), so the
+    // chosen card shows up inside it as cuda:0.
+    ...(gpu ? ['--cuda-device', gpu] : []),
     ...extraArgs,
   ];
 
@@ -1487,6 +1520,7 @@ module.exports = {
   isAvailableHere,
   pickBuild,
   driverCuda,
+  listNvidiaGpus,
   extractTarGz,
   selectFlashAttn,
   setupComfyUI,

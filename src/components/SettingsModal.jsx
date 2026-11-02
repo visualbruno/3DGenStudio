@@ -78,6 +78,41 @@ function ManagedComfyControls({ managed, onChanged }) {
   )
 }
 
+// Desktop-only: which NVIDIA GPU the managed ComfyUI runs on (--cuda-device). Stored
+// as the GPU's UUID rather than its index — see listNvidiaGpus in comfysetup.cjs.
+// Read at start time, so a change applies the next time ComfyUI starts.
+function ComfyGpuPicker({ managed, value, onChange }) {
+  const bridge = typeof window !== 'undefined' ? window.genStudioServices : null
+  const isDesktop = !!bridge?.isDesktop && typeof bridge.listComfyGpus === 'function'
+  const [gpus, setGpus] = useState(null)
+
+  useEffect(() => {
+    if (!isDesktop || !managed) return undefined
+    let alive = true
+    bridge.listComfyGpus().then(res => { if (alive) setGpus(res?.gpus || []) }).catch(() => { if (alive) setGpus([]) })
+    return () => { alive = false }
+  }, [isDesktop, managed, bridge])
+
+  if (!isDesktop || !managed || !gpus?.length) return null
+
+  const missing = !!value && !gpus.some(g => g.uuid === value)
+  const label = g => `GPU ${g.index}: ${g.name}${g.memoryMB ? ` (${Math.round(g.memoryMB / 1024)} GB)` : ''}`
+
+  return (
+    <div className="settings-input-group" style={{ marginTop: '10px' }}>
+      <label className="settings-label">GPU</label>
+      <select className="settings-input" value={value || ''} onChange={e => onChange(e.target.value)}>
+        <option value="">Default (GPU 0)</option>
+        {gpus.map(g => <option key={g.uuid} value={g.uuid}>{label(g)}</option>)}
+        {missing && <option value={value}>Saved GPU not found — the default is used</option>}
+      </select>
+      <p className="settings-helper-text">
+        The graphics card ComfyUI generates on. Takes effect the next time ComfyUI starts — stop and start it below after saving.
+      </p>
+    </div>
+  )
+}
+
 // Turn an update plan from the main process into the short list of lines a user
 // can actually act on. Deliberately concrete about names and counts: "an update is
 // available" tells nobody whether it's a 50 MB node pack or a 3 GB PyTorch swap.
@@ -1295,6 +1330,11 @@ export default function SettingsModal({ onClose }) {
                 {/* Desktop only: an install made by an older app version keeps that
                     version's ComfyUI, node pack refs and packages until updated here. */}
                 <ComfyUpdatePanel />
+                <ComfyGpuPicker
+                  managed={comfyManaged}
+                  value={localSettings?.apis?.comfyui?.gpu}
+                  onChange={v => setApiField('comfyui', 'gpu', v)}
+                />
                 <ServiceControl name="comfyui" />
                 <AutoStartToggle
                   checked={localSettings?.apis?.comfyui?.autoStart}

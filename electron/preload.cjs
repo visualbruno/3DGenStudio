@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('genStudioServices', {
   // Re-point apis.comfyui.* at the managed install. Resolves { ok, port, path,
   // modelsPath } or { ok: false, error }.
   useManagedComfy: () => ipcRenderer.invoke('comfyui:use-managed'),
+  // NVIDIA GPUs on this computer -> { ok, gpus: [{ index, uuid, name, memoryMB }] }.
+  // The managed ComfyUI runs on the one whose uuid is in apis.comfyui.gpu.
+  listComfyGpus: () => ipcRenderer.invoke('comfyui:list-gpus'),
 
   // Managed ComfyUI upgrades. Installing a newer app version leaves an existing
   // ComfyUI on its old pins, so Settings offers this explicitly.

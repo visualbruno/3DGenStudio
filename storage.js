@@ -273,7 +273,10 @@ export const DEFAULT_SETTINGS = {
       managed: false,
       // Desktop app: start the managed ComfyUI at launch. Default off — it is a
       // heavy process and most sessions start on demand instead.
-      autoStart: false
+      autoStart: false,
+      // Desktop app: UUID ("GPU-…") of the NVIDIA GPU the managed ComfyUI runs
+      // on, passed as --cuda-device. Empty = ComfyUI's default (device 0).
+      gpu: ''
     },
     meshtools: {
       url: 'http://127.0.0.1',
