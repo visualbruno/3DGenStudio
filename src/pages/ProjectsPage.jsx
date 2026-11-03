@@ -28,6 +28,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v3.5.7',
+    date: '2026-11-03',
+    items: [
+			'Assets Page: Can delete selected assets',
+			'ComfyUI and MeshTools: Can select the GPU (nVidia only)',
+			'Tripo AI: Removed deprecated models',
+			'SetupWizard: Fixed download UltraTex PBR model'
+    ]
+  },
+  {
     version: 'v3.5.6',
     date: '2026-11-01',
     items: [

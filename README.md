@@ -19,6 +19,8 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-11-03** | Assets Page: Can delete selected assets<br>ComfyUI and MeshTools: Can select the GPU (nVidia only)<br>Tripo AI: Removed deprecated models<br>SetupWizard: Fixed download UltraTex PBR model |
+| **2026-11-01** | ComfyUI: Added Refine Mesh with Hi3D<br>Improved Optimize tool<br>Fixed missing natten package for Pixal3D |
 | **2026-10-25** | SetupWizard: Added Fibo 2.0 Image Model<br>Improved AutoRetopo<br>Improved UltraTex |
 | **2026-10-18** | Batch Project: Added Stage Action "Auto Retopo"<br>SetupWizard: Added Qwen Image 2.1 Turbo<br>SetupWizard: Added MOSS Image<br>SetupWizard: Added Flux3 Klein<br>SetupWizard: Can resume a download<br>AutoUV: Improved and added more options<br>Fixed bugs |
 | **2026-10-06** | Batch Project: Added Stage Actions "AutoUV","Transfer Rig","Flatten to Albedo"<br>SetupWizard: Added UltraTex<br>Desktop App: Can use services from a remote computer<br>Fixed bugs |
