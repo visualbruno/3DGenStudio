@@ -930,7 +930,8 @@
 			],
 			"TextEncoder": [{ "FileName": "qwen_3_8b_fp8mixed.safetensors", "Url": "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-9b/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors?download=true",          "Size": 5.6 }],
 			"LoRA":[        				
-				{ "FileName": "ultratex_flux2.safetensors", "Url": "https://www.modelscope.ai/models/Yibo-Zhang/UltraTex/resolve/master/flux2/lora/dit_lora.safetensors?view=false", "Size": 0.47 }
+				{ "FileName": "ultratex_flux2.safetensors", "Url": "https://www.modelscope.ai/models/Yibo-Zhang/UltraTex/resolve/master/flux2/lora/dit_lora.safetensors?view=false", "Size": 0.47 },
+				{ "FileName": "ultratex_flux2_mr.safetensors", "Url": "https://www.modelscope.ai/models/Yibo-Zhang/UltraTex/resolve/master/flux2_mr/lora/dit_lora.safetensors?view=false", "Size": 0.47 }
 			],
 			"UpscaleModels": [
 				{ "FileName": "4xLexicaDAT2_otf.pth", "Url": "https://huggingface.co/visualbruno/Upscalers/resolve/main/4xLexicaDAT2_otf.pth?download=true", "Size": 0.1 },
