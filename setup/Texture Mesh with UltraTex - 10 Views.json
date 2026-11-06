@@ -36,7 +36,7 @@
     "_meta": {
       "title": "Load Diffusion Model",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "6": {
@@ -47,7 +47,7 @@
     "_meta": {
       "title": "Load VAE",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "7": {
@@ -89,7 +89,7 @@
     "_meta": {
       "title": "Load Image",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "22": {
@@ -188,7 +188,7 @@
       "drop_background_tokens": true,
       "memory_factor": 0,
       "attention": "ultratex_sparse",
-      "sparse_topk": 0.4,
+      "sparse_topk": 0.2,
       "token_chunk": 8192,
       "denoise": 1,
       "model": [
@@ -319,7 +319,7 @@
     "_meta": {
       "title": "Resolution",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "39": {
@@ -330,7 +330,7 @@
     "_meta": {
       "title": "Texture Size",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "40": {
@@ -341,7 +341,7 @@
     "_meta": {
       "title": "Seed",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "41": {
@@ -352,7 +352,7 @@
     "_meta": {
       "title": "Steps",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "42": {
@@ -365,7 +365,7 @@
     "_meta": {
       "title": "Load CLIP",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "43": {
@@ -376,7 +376,7 @@
     "_meta": {
       "title": "Load Upscale Model",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "44": {
@@ -394,7 +394,7 @@
     "_meta": {
       "title": "Upscale Image (using Model)",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "45": {
@@ -432,7 +432,7 @@
     "_meta": {
       "title": "Invert Mask",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "47": {
@@ -454,7 +454,7 @@
     "_meta": {
       "title": "If/Else Switch",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "48": {
@@ -476,7 +476,7 @@
     "_meta": {
       "title": "If/Else Switch",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "49": {
@@ -487,7 +487,7 @@
     "_meta": {
       "title": "Upscale Image",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "50": {
@@ -505,7 +505,7 @@
     "_meta": {
       "title": "Upscale Image (using Model)",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "51": {
@@ -516,7 +516,7 @@
     "_meta": {
       "title": "Load Upscale Model",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   },
   "52": {
@@ -534,7 +534,7 @@
     "_meta": {
       "title": "Upscale Image (using Model)",
       "cnr_id": "comfy-core",
-      "ver": "0.43.0"
+      "ver": "0.44.0"
     }
   }
 }

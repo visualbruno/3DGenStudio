@@ -968,7 +968,6 @@
 						{ "Node": "2",  "Input": "uv_mode", "Name": "UV Mode",  "Type": "String", "Enums":["comfy_gpu","xatlas","keep_existing"] },
 						{ "Node": "40",  "Input": "value", "Name": "Seed",  "Type": "Number" },
 						{ "Node": "41",  "Input": "value", "Name": "Steps",  "Type": "Number" },
-						{ "Node": "25",  "Input": "sparse_topk", "Name": "TopK",  "Type": "Number" },
 						{ "Node": "26",  "Input": "elevation", "Name": "Elevation",  "Type": "Number" },
 						{ "Node": "49",  "Input": "value", "Name": "Upscale Image",  "Type": "Boolean" }
 					],

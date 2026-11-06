@@ -112,7 +112,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Projects | `list_projects`, `get_project`, `create_project`, `update_project`, `delete_project`, `export_project`, `import_project` |
 | Kanban cards | `list_cards`, `create_card`, `move_card`, `delete_card`, `list_card_attributes`, `create_card_attribute`, `update_card_attribute`, `delete_card_attribute` |
 | Graph | `get_graph`, `create_node`, `update_node`, `move_node`, `delete_node`, `connect_nodes`, `disconnect_nodes` |
-| Batch projects | `get_batch`, `update_batch`, `run_batch` |
+| Batch projects | `get_batch`, `update_batch`, `add_batch_groups`, `update_batch_group`, `remove_batch_groups`, `run_batch` |
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
 | AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx` (all fully-typed), `run_mesh_tool` (the same operations, untyped), `export_mesh` |
@@ -127,7 +127,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 95 tools cost ~121 KB of JSON plus ~5 KB of server instructions — roughly **34,500 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 98 tools cost ~121 KB of JSON plus ~5 KB of server instructions — roughly **34,500 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -211,12 +211,15 @@ When you *do* pass an image/mesh parameter in `inputs` (e.g. in a kanban project
 
 ### Batch projects
 
-A **Batch** project is a grid, not a graph. `variables` are declared once, each `group` is one **row** of values for them, and `stages` are a linear chain run once per row — ComfyUI workflows, or the Mesh Editor's own tools (`optimize`, `autouv`, `autorig`, `bake`), each saving a new version of its input mesh — so 4 groups x 3 stages is 12 generations, each saved as an ordinary result card in the project. Three tools cover it:
+A **Batch** project is a grid, not a graph. `variables` are declared once, each `group` is one **row** of values for them, and `stages` are a linear chain run once per row — ComfyUI workflows, or the Mesh Editor's own tools (`optimize`, `autouv`, `autorig`, `bake`), each saving a new version of its input mesh — so 4 groups x 3 stages is 12 generations, each saved as an ordinary result card in the project. Six tools cover it:
 
 | Tool | What it does |
 |---|---|
 | `get_batch` | The whole recipe: variables, group rows, the stage chain with every parameter's source and value, the problems that would block a run, and the results already produced |
 | `update_batch` | Writes it. Each section you pass (`variables` / `groups` / `stages`) **replaces that whole section**; a section you omit is untouched |
+| `add_batch_groups` | Appends (or inserts at a position) one or more rows, leaving the existing ones untouched |
+| `update_batch_group` | Edits one row in place: rename it, and/or merge in new values (`null` / `""` clears one) |
+| `remove_batch_groups` | Removes rows by position or name; the other rows keep their results. The removed rows' cards and assets stay in the project |
 | `run_batch` | Runs the grid, one generation per cell, streaming progress |
 
 **Sources, not ids.** A stage parameter is fed by one of three things, written the same way in both directions: `"manual"` (the stage's own value), `"variable:<name>"` (the current row supplies it), or `"stage:<n>"` (the output of an earlier stage, 1-based, strictly earlier — which is why a batch chain can never contain a cycle). The document's internal ids never appear: variables are named and stages and groups are positions.
@@ -225,7 +228,7 @@ A **Batch** project is a grid, not a graph. `variables` are declared once, each 
 
 **A stage name is a template.** `"{{character}} - {{resolution}}px"` is resolved per row and becomes the result's name, so a result carries the values that produced it.
 
-**Positions carry identity.** A result card's key embeds the group and the stage it came from, so `update_batch` keeps their ids wherever it can: a row or a stage left at the same position keeps the results already sitting in its cells, and a stage keeps its manual values and bindings while its workflow is unchanged. Changing a stage's workflow re-seeds it from that workflow's defaults, because the old values were keyed to parameter ids that no longer exist.
+**Rows and stages keep their identity.** A result card's key embeds the group and the stage it came from, so `update_batch` keeps their ids wherever it can: a row is matched to the existing one by **name** (falling back to its position when it was renamed), so removing or inserting a row through `update_batch` does not shift the other rows' results onto each other; a stage left at the same position keeps the results already sitting in its cells, and a stage keeps its manual values and bindings while its workflow is unchanged. Changing a stage's workflow re-seeds it from that workflow's defaults, because the old values were keyed to parameter ids that no longer exist.
 
 **Running is resumable.** `run_batch` **continues** by default: a cell that already produced an asset is kept and reused as the input for the stages after it, so a stopped, failed or half-finished grid picks up where it left off. `mode: "restart"` regenerates instead, and `groups` / `stages` narrow the walk to some rows or some steps — a filtered restart is how you regenerate a single cell without touching the rest. Long grids are budgeted (`maxSeconds`): when the budget runs out the tool returns what finished, and calling it again carries on.
 

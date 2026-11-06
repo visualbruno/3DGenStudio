@@ -349,6 +349,112 @@ test('editing a row keeps its id, so its results stay in its cells', async () =>
   assert.deepEqual(backend.state.config.stages.map(stage => stage.id), stagesBefore);
 });
 
+test('dropping a row through update_batch does not hand its id to the next row', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await chain(call);
+  const [knightId, dragonId] = backend.state.config.groups.map(group => group.id);
+
+  // Matched by position, Dragon used to inherit Knight's id — and Knight's results.
+  await call('update_batch', { projectId: 7, groups: [{ name: 'Dragon', values: { Subject: 'a dragon' } }] });
+  assert.deepEqual(backend.state.config.groups.map(group => group.id), [dragonId]);
+
+  // An insert above an existing row does not steal its id either…
+  await call('update_batch', { projectId: 7, groups: [
+    { name: 'Golem', values: { Subject: 'a golem' } },
+    { name: 'Dragon', values: { Subject: 'a dragon' } }
+  ] });
+  const [golemId, keptDragon] = backend.state.config.groups.map(group => group.id);
+  assert.equal(keptDragon, dragonId);
+  assert.notEqual(golemId, knightId);
+  assert.notEqual(golemId, dragonId);
+
+  // …while a rename in place still keeps its position's id.
+  await call('update_batch', { projectId: 7, groups: [
+    { name: 'Stone Golem', values: { Subject: 'a golem' } },
+    { name: 'Dragon', values: { Subject: 'a dragon' } }
+  ] });
+  assert.deepEqual(backend.state.config.groups.map(group => group.id), [golemId, dragonId]);
+});
+
+test('add_batch_groups appends or inserts without touching the other rows', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await chain(call);
+  const before = backend.state.config.groups.map(group => ({ ...group }));
+
+  const added = await call('add_batch_groups', { projectId: 7, groups: [{ name: 'Golem', values: { Subject: 'a golem' } }] });
+  assert.deepEqual(added.added, [{ position: 3, name: 'Golem' }]);
+  assert.equal(added.plannedRuns, 6);
+
+  await call('add_batch_groups', { projectId: 7, position: 1, groups: [{ name: 'Elf', values: { Subject: 'an elf' } }] });
+  const groups = backend.state.config.groups;
+  assert.deepEqual(groups.map(group => group.name), ['Elf', 'Knight', 'Dragon', 'Golem']);
+  assert.deepEqual(groups.slice(1, 3), before, 'existing rows are stored exactly as they were');
+
+  await assert.rejects(
+    () => call('add_batch_groups', { projectId: 7, groups: [{ values: { Nope: 1 } }] }),
+    /no variable named "Nope"/
+  );
+  assert.equal(backend.state.config.groups.length, 4, 'a rejected add writes nothing');
+});
+
+test('update_batch_group merges values into one row and keeps its id', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await call('update_batch', {
+    projectId: 7,
+    variables: [{ name: 'Subject', type: 'string' }, { name: 'Style', type: 'string' }],
+    groups: [
+      { name: 'Knight', values: { Subject: 'a knight', Style: 'gothic' } },
+      { name: 'Dragon', values: { Subject: 'a dragon', Style: 'ink' } }
+    ],
+    stages: [{ workflowId: 1, bindings: { '6.text': 'variable:Subject' } }]
+  });
+  const ids = backend.state.config.groups.map(group => group.id);
+  const dragonBefore = { ...backend.state.config.groups[1] };
+
+  const out = await call('update_batch_group', { projectId: 7, group: 'knight', name: 'Paladin', values: { Subject: 'a paladin' } });
+  assert.deepEqual(out.group.values, { Subject: 'a paladin', Style: 'gothic' }, 'Style was left alone');
+  assert.equal(out.group.name, 'Paladin');
+
+  await call('update_batch_group', { projectId: 7, group: 1, values: { Style: null } });
+  const batch = await call('get_batch', { projectId: 7, includeResults: false });
+  assert.deepEqual(batch.groups[0].values, { Subject: 'a paladin' }, 'null clears one value');
+  assert.deepEqual(backend.state.config.groups.map(group => group.id), ids);
+  assert.deepEqual(backend.state.config.groups[1], dragonBefore);
+
+  await assert.rejects(() => call('update_batch_group', { projectId: 7, group: 9, name: 'x' }), /No group "9"/);
+  await assert.rejects(() => call('update_batch_group', { projectId: 7, group: 1 }), /Nothing to update/);
+});
+
+test('remove_batch_groups drops rows by name or position and keeps the rest', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await chain(call);
+  await call('add_batch_groups', { projectId: 7, groups: [{ name: 'Golem' }, { name: 'Elf' }] });
+  const [, dragonId, , elfId] = backend.state.config.groups.map(group => group.id);
+
+  const out = await call('remove_batch_groups', { projectId: 7, groups: ['Knight', 3] });
+  assert.deepEqual(out.removed, ['Knight', 'Golem']);
+  assert.deepEqual(backend.state.config.groups.map(group => group.id), [dragonId, elfId]);
+
+  await assert.rejects(() => call('remove_batch_groups', { projectId: 7, groups: ['Nobody'] }), /No group "Nobody"/);
+});
+
+test('the row tools refuse while the batch is running', async () => {
+  const backend = createBackend();
+  const call = createTools(backend);
+  await chain(call);
+  const apiJson = backend.api.apiJson;
+  backend.api.apiJson = (method, path, options) => (path.startsWith('/comfyui/batch-runs/')
+    ? Promise.resolve({ run: { status: 'running' } })
+    : apiJson(method, path, options));
+
+  await assert.rejects(() => call('remove_batch_groups', { projectId: 7, groups: [1] }), /is running/);
+  assert.equal(backend.state.config.groups.length, 2);
+});
+
 test('changing a stage workflow re-seeds it; keeping it preserves manual values', async () => {
   const backend = createBackend();
   const call = createTools(backend);

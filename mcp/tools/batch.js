@@ -465,37 +465,102 @@ async function resolveGroupValue(api, projectId, variable, value) {
   });
 }
 
-// Replace the group rows. Ids are kept by position so a row that is only being
-// edited keeps the results already sitting in its cells.
+// Write `values` (variable NAME -> value) into one group's value map. A blank
+// value CLEARS that variable for the row rather than being an error: a group is
+// sparse on purpose, and the stage's own manual value fills the gap.
+async function writeGroupValues(api, projectId, config, values, target, where) {
+  for (const [key, value] of Object.entries(values || {})) {
+    const { index: variableIndex, item: variable } = findByLabel(config.variables, key, getVariableLabel);
+    if (variableIndex === -1) {
+      throw new Error(`${where}: no variable named "${key}". Declared variables: ${config.variables.map((item, position) => getVariableLabel(item, position)).join(', ') || '(none)'}.`);
+    }
+    if (value === undefined || value === null || String(value).trim() === '') {
+      delete target[variable.id];
+      continue;
+    }
+    target[variable.id] = await resolveGroupValue(api, projectId, {
+      ...variable,
+      name: getVariableLabel(variable, variableIndex)
+    }, value);
+  }
+  return target;
+}
+
+// Which existing group each incoming row IS, so it keeps that group's id (and
+// with it the results sitting in its cells). By name first — matching purely by
+// position meant that dropping row 2 handed row 3 row 2's id, and row 2's
+// results then showed up under row 3's values. A row whose name matches nothing
+// falls back to the group at its own position, which is how a rename in place
+// keeps its results, but only when that group's name is not claimed by another
+// incoming row (an insert must not steal the id of the row it pushed down).
+function matchIncomingGroups(existingGroups, incoming) {
+  const nameOf = group => String(group?.name || '').trim().toLowerCase();
+  const incomingNames = new Set(incoming.map(entry => nameOf(entry)).filter(Boolean));
+  const claimed = new Set();
+  const matches = new Array(incoming.length).fill(null);
+
+  incoming.forEach((entry, index) => {
+    const name = nameOf(entry);
+    if (!name) return;
+    const candidates = existingGroups.filter(group => nameOf(group) === name && !claimed.has(group.id));
+    if (candidates.length === 0) return;
+    // Duplicate names: prefer the one at this position, else the first free one.
+    const pick = candidates.find(group => group === existingGroups[index]) || candidates[0];
+    claimed.add(pick.id);
+    matches[index] = pick;
+  });
+
+  incoming.forEach((entry, index) => {
+    if (matches[index]) return;
+    const atPosition = existingGroups[index];
+    if (!atPosition || claimed.has(atPosition.id)) return;
+    if (nameOf(atPosition) && incomingNames.has(nameOf(atPosition))) return;
+    claimed.add(atPosition.id);
+    matches[index] = atPosition;
+  });
+
+  return matches;
+}
+
+// Replace the group rows.
 async function applyGroups(api, projectId, config, incoming) {
+  const matches = matchIncomingGroups(config.groups, incoming);
   const groups = [];
 
   for (const [index, entry] of incoming.entries()) {
-    const existing = config.groups[index] || null;
+    const existing = matches[index];
     const group = {
       ...(existing || createGroup()),
       name: entry?.name !== undefined ? String(entry.name) : (existing?.name || ''),
       values: {}
     };
-
-    for (const [key, value] of Object.entries(entry?.values || {})) {
-      const { index: variableIndex, item: variable } = findByLabel(config.variables, key, getVariableLabel);
-      if (variableIndex === -1) {
-        throw new Error(`Group ${index + 1}: no variable named "${key}". Declared variables: ${config.variables.map((item, position) => getVariableLabel(item, position)).join(', ') || '(none)'}.`);
-      }
-      // A blank value is not an error: a group is sparse on purpose, and the
-      // stage's own manual value fills the gap.
-      if (value === undefined || value === null || String(value).trim() === '') continue;
-      group.values[variable.id] = await resolveGroupValue(api, projectId, {
-        ...variable,
-        name: getVariableLabel(variable, variableIndex)
-      }, value);
-    }
-
+    await writeGroupValues(api, projectId, config, entry?.values, group.values, `Group ${index + 1}`);
     groups.push(group);
   }
 
   return { ...config, groups };
+}
+
+// A group named by the caller: a 1-based position (number or numeric string)
+// or its name / label.
+function findGroup(groups, reference) {
+  const text = String(reference ?? '').trim();
+  const position = Number(text);
+  if (text && Number.isInteger(position)) {
+    if (position >= 1 && position <= groups.length) return position - 1;
+  } else {
+    const { index } = findByLabel(groups, text, getGroupLabel);
+    if (index !== -1) return index;
+  }
+  throw new Error(`No group "${text}". This batch's groups: ${groups.map((group, index) => `${index + 1}. ${getGroupLabel(group, index)}`).join(', ') || '(none)'}.`);
+}
+
+// The page locks the recipe while its run is in flight; so do the row tools.
+async function assertNotRunning(api, projectId) {
+  const backendRun = await api.apiJson('GET', `/comfyui/batch-runs/${projectId}`).catch(() => null);
+  if (['running', 'cancelling'].includes(backendRun?.run?.status)) {
+    throw new Error('This batch is running. Wait for it to finish, or stop it from the Batch page, before editing its groups.');
+  }
 }
 
 // --- run selection ---------------------------------------------------------
@@ -545,7 +610,7 @@ export function registerBatchTools(server, { api, notifyMutation }) {
 
   server.registerTool('update_batch', {
     title: 'Update batch project',
-    description: 'Write a Batch project\'s recipe. Each section you pass REPLACES that whole section (a section you omit is untouched), so read it with get_batch first and send the full list back with your changes. `variables` declares what varies, by name and type (string/number/boolean/image/mesh). `groups` are the rows: values is a map of variable NAME -> value, and an image/mesh variable takes an asset id (the asset is linked to the project for you); a variable a group leaves out falls back to the stage\'s own manual value. `stages` is the chain, in order: each takes an action (default "comfyui", which takes a workflowId that must produce an image or a mesh; or "optimize" / "autouv" / "autorig" / "transferrig" / "bake", the Mesh Editor tools), an optional name — a template, where "{{variable name}}" is replaced per group and becomes the result\'s name — plus `inputs` (parameter id -> manual value) and `bindings` (parameter id -> "manual" | "variable:<name>" | "stage:<n>", 1-based and strictly EARLIER). inputs/bindings are merged into the stage, so pass only what changes. Image/mesh parameters cannot take a manual value: bind them. Positions carry identity — a group or stage kept at the same position keeps the results already in its cells, and a stage keeps its values while its workflow is unchanged.',
+    description: 'Write a Batch project\'s recipe. Each section you pass REPLACES that whole section (a section you omit is untouched), so read it with get_batch first and send the full list back with your changes. `variables` declares what varies, by name and type (string/number/boolean/image/mesh). `groups` are the rows: values is a map of variable NAME -> value, and an image/mesh variable takes an asset id (the asset is linked to the project for you); a variable a group leaves out falls back to the stage\'s own manual value. `stages` is the chain, in order: each takes an action (default "comfyui", which takes a workflowId that must produce an image or a mesh; or "optimize" / "autouv" / "autorig" / "transferrig" / "bake", the Mesh Editor tools), an optional name — a template, where "{{variable name}}" is replaced per group and becomes the result\'s name — plus `inputs` (parameter id -> manual value) and `bindings` (parameter id -> "manual" | "variable:<name>" | "stage:<n>", 1-based and strictly EARLIER). inputs/bindings are merged into the stage, so pass only what changes. Image/mesh parameters cannot take a manual value: bind them. A group keeps the results already in its cells when it keeps its name (or, renamed, its position); a stage keeps its results and values while it stays at the same position running the same workflow. To add, edit or remove ONE row without resending them all, use add_batch_groups / update_batch_group / remove_batch_groups.',
     inputSchema: {
       projectId: z.number().int(),
       variables: z.array(z.object({
@@ -589,6 +654,96 @@ export function registerBatchTools(server, { api, notifyMutation }) {
 
     return { projectId, updated: true, ...configView(next, workflowsById) };
   }));
+
+  // --- single-row edits -------------------------------------------------------
+  //
+  // update_batch replaces the whole group list, which for a long batch means
+  // resending every row (and every asset id) to touch one. These edit rows in
+  // place: the groups they do not name are left exactly as stored, ids included,
+  // so their results stay in their cells.
+
+  const groupValuesInput = z.record(z.string(), z.any()).default({}).describe('Variable NAME -> value. Scalar for string/number, true/false for boolean, an asset id (number or "asset:<id>") for image/mesh.');
+
+  async function writeGroups(projectId, mutate) {
+    await assertNotRunning(api, projectId);
+    const [{ config }, workflowsById] = await Promise.all([
+      loadBatch(api, projectId),
+      loadStageWorkflows(api)
+    ]);
+    const { next, ...extra } = await mutate(config);
+    await saveBatch(api, projectId, next);
+    notifyMutation(projectId);
+    const view = configView(next, workflowsById);
+    return { projectId, updated: true, ...extra, plannedRuns: view.plannedRuns, groups: view.groups, problems: view.problems };
+  }
+
+  server.registerTool('add_batch_groups', {
+    title: 'Add batch groups',
+    description: 'Add one or more group ROWS to a Batch project without touching the existing ones (their results stay in their cells). Each new row runs the whole stage chain on the next run_batch (mode "continue" generates only the new rows). values is a map of variable NAME -> value; a variable left out falls back to the stage\'s manual value. Appends by default; `position` inserts before that 1-based row.',
+    inputSchema: {
+      projectId: z.number().int(),
+      groups: z.array(z.object({
+        name: z.string().optional().describe('Row label, also usable in a stage name template'),
+        values: groupValuesInput
+      })).min(1),
+      position: z.number().int().min(1).optional().describe('1-based row to insert before (default: append at the end)')
+    }
+  }, toolHandler(({ projectId, groups: incoming, position }) => writeGroups(projectId, async config => {
+    const created = [];
+    for (const [offset, entry] of incoming.entries()) {
+      const group = createGroup(entry?.name !== undefined ? String(entry.name) : '');
+      await writeGroupValues(api, projectId, config, entry?.values, group.values, `New group ${offset + 1}`);
+      created.push(group);
+    }
+    const at = position === undefined ? config.groups.length : Math.min(position - 1, config.groups.length);
+    const groups = [...config.groups];
+    groups.splice(at, 0, ...created);
+    return {
+      next: { ...config, groups },
+      added: created.map((group, offset) => ({ position: at + offset + 1, name: getGroupLabel(group, at + offset) }))
+    };
+  })));
+
+  server.registerTool('update_batch_group', {
+    title: 'Update batch group',
+    description: 'Edit ONE group row of a Batch project in place: rename it and/or change some of its values. values is MERGED into the row — variables you leave out keep their value, and a null/"" value clears that variable for the row (it then falls back to the stage\'s manual value). The row keeps its identity, so the results already in its cells stay; re-run it with run_batch groups:[<row>] mode "restart" if the new values should regenerate them.',
+    inputSchema: {
+      projectId: z.number().int(),
+      group: z.union([z.number().int(), z.string()]).describe('The row: its 1-based position or its name'),
+      name: z.string().optional().describe('New row label'),
+      values: z.record(z.string(), z.any()).optional().describe('Variable NAME -> new value, merged into the row; null or "" clears it')
+    }
+  }, toolHandler(({ projectId, group: reference, name, values }) => {
+    if (name === undefined && values === undefined) {
+      throw new Error('Nothing to update: pass name and/or values.');
+    }
+    return writeGroups(projectId, async config => {
+      const index = findGroup(config.groups, reference);
+      const current = config.groups[index];
+      const group = {
+        ...current,
+        ...(name !== undefined ? { name: String(name) } : {}),
+        values: await writeGroupValues(api, projectId, config, values, { ...(current.values || {}) }, `Group ${index + 1}`)
+      };
+      const groups = config.groups.map((item, position) => (position === index ? group : item));
+      return { next: { ...config, groups }, group: groupView(group, index, config.variables) };
+    });
+  }));
+
+  server.registerTool('remove_batch_groups', {
+    title: 'Remove batch groups',
+    description: 'Remove one or more group ROWS from a Batch project. The other rows keep their identity, so their results stay in their cells (removing through update_batch would require resending every remaining row). The removed rows\' result cards and assets are NOT deleted — they stay in the project and the asset library.',
+    inputSchema: {
+      projectId: z.number().int(),
+      groups: z.array(z.union([z.number().int(), z.string()])).min(1).describe('Rows to remove, by 1-based position or name (positions refer to the batch as it is before the removal)')
+    }
+  }, toolHandler(({ projectId, groups: references }) => writeGroups(projectId, async config => {
+    const indexes = new Set(references.map(reference => findGroup(config.groups, reference)));
+    return {
+      next: { ...config, groups: config.groups.filter((_, index) => !indexes.has(index)) },
+      removed: [...indexes].sort((a, b) => a - b).map(index => getGroupLabel(config.groups[index], index))
+    };
+  })));
 
   server.registerTool('run_batch', {
     title: 'Run batch project',
