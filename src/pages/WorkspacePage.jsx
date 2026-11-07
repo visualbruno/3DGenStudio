@@ -64,6 +64,16 @@ function sourceFromAsset(asset, sourceReference) {
   }
 }
 
+const BONE_LABELS_KEY = 'workspace.boneLabels.v1'
+
+function readBoneLabels() {
+  try {
+    return window.localStorage.getItem(BONE_LABELS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
 export default function WorkspacePage({ project }) {
   const projectId = project.id
   const navigate = useNavigate()
@@ -88,6 +98,17 @@ export default function WorkspacePage({ project }) {
   // work on: { assetId, name, filename, filePath, thumbnail }.
   const [meshTarget, setMeshTarget] = useState(null)
   const [meshTargetBusy] = useState(false)
+  // Rig module "Show bone labels": a view setting, so it lives here (the center
+  // view draws them) and survives a reload.
+  const [showBoneLabels, setShowBoneLabelsState] = useState(readBoneLabels)
+  const setShowBoneLabels = (value) => {
+    setShowBoneLabelsState(value)
+    try {
+      window.localStorage.setItem(BONE_LABELS_KEY, value ? '1' : '0')
+    } catch {
+      // storage unavailable — the setting just won't survive a reload
+    }
+  }
   const [reuse, setReuse] = useState(null)
   // The Animate module asks the viewer to play the clip it just saved.
   const [clipRequest, setClipRequest] = useState(null)
@@ -604,6 +625,8 @@ export default function WorkspacePage({ project }) {
               selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
               onResult={handleMeshToolResult}
               onOpenInEditor={(asset) => openInEditor({ asset })}
+              showBoneLabels={showBoneLabels}
+              onShowBoneLabelsChange={setShowBoneLabels}
               onPendingAdd={addCloudPending}
               onPendingUpdate={updateCloudPending}
               onPendingRemove={removeCloudPending}
@@ -640,6 +663,7 @@ export default function WorkspacePage({ project }) {
             onRig={rigFromEntry}
             onAnimate={animateFromEntry}
             clipRequest={clipRequest}
+            showBoneLabels={showBoneLabels}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
             onOpenInEditor={openInEditor}

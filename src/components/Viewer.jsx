@@ -75,7 +75,13 @@ function normalizeLoadedModel(asset, fitMode = 'ground') {
 
     root.scale.setScalar(scale)
 
-    if (fitMode === 'center') {
+    // 'actual' keeps the model where it really is: the uniform scale above is
+    // about the origin, so its height above (or below) the grid stays true —
+    // what a "drop it on the ground" tool needs to be seen doing. 'center' and
+    // 'ground' re-place every model, so they cannot show its placement.
+    if (fitMode === 'actual') {
+      root.position.set(0, 0, 0)
+    } else if (fitMode === 'center') {
       root.position.set(
         -center.x * scale,
         -center.y * scale,
@@ -95,7 +101,11 @@ function normalizeLoadedModel(asset, fitMode = 'ground') {
     const maxScaledDimension = Math.max(size.x, size.y, size.z) * scale
     const distance = Math.max(maxScaledDimension * 1.5, 2)
 
-    if (fitMode === 'center') {
+    if (fitMode === 'actual') {
+      // Aim at the model wherever it sits, from the same angle as 'center'.
+      target.copy(center).multiplyScalar(scale)
+      cameraPosition.set(target.x + distance, target.y + Math.max(distance * 0.7, 1.75), target.z + distance)
+    } else if (fitMode === 'center') {
       target.set(0, 0, 0)
       cameraPosition.set(distance, Math.max(distance * 0.7, 1.75), distance)
     } else {
@@ -322,6 +332,9 @@ export default function Viewer({
   wireframeColor = '#ffffff',
   wireframeOpacity = 0.36,
   showSkeleton = false,
+  // One floating name label per joint (the Mesh Editor's "Show bone names").
+  // Drawn only with the skeleton, and like it hidden while a clip plays.
+  showBoneNames = false,
   // Name of a clip in the GLB to play (looping), or null for the rest pose.
   animationClip = null,
   onModelLoaded = null,
@@ -452,7 +465,15 @@ export default function Viewer({
           {renderedModel && <primitive object={renderedModel} />}
             {renderedModel && <ClipPlayer root={renderedModel} clip={activeClip} />}
             {/* The overlay is the REST skeleton - hidden while a clip moves the mesh. */}
-            {skeleton && <SkeletonOverlay skeleton={skeleton} visible={showSkeleton && !activeClip} />}
+            {skeleton && (
+              <SkeletonOverlay
+                skeleton={skeleton}
+                visible={showSkeleton && !activeClip}
+                // The labels are DOM (drei Html), so the group's visibility does
+                // not hide them — gate them on the same condition explicitly.
+                showNames={showBoneNames && showSkeleton && !activeClip}
+              />
+            )}
             {showGrid && (
               <Grid
                 infiniteGrid

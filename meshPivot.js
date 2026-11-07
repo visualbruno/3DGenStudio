@@ -243,8 +243,11 @@ export const PIVOT_MODES = ['ground_pivot', 'centre_pivot'];
 // prop that snaps to the floor when placed); 'centre_pivot' puts the bounding-box
 // centre on the origin (so the asset rotates about itself).
 //
-// Returns { buffer, moved, offset, bounds, boundsAfter }. `moved` is false when
-// the pivot was already in place — the input bytes come back untouched.
+// Returns { buffer, moved, offset, delta, bounds, boundsAfter }. `moved` is false
+// when the pivot was already in place — the input bytes come back untouched.
+// `offset` is the wrapper's ABSOLUTE translation; `delta` is how far the mesh
+// actually moved this time (offset minus any earlier wrapper's translation), which
+// is what a caller reports — on a file a previous run already moved, the two differ.
 export function moveGlbPivot(buffer, mode = 'ground_pivot') {
   if (!PIVOT_MODES.includes(mode)) {
     throw new Error(`Unknown pivot mode "${mode}" (expected ${PIVOT_MODES.join(' or ')}).`);
@@ -283,8 +286,9 @@ export function moveGlbPivot(buffer, mode = 'ground_pivot') {
   const current = existing
     ? (Array.isArray(existing.node.translation) ? existing.node.translation : [0, 0, 0])
     : [0, 0, 0];
+  const delta = offset.map((value, axis) => value - current[axis]);
   if (offset.every((value, axis) => Math.abs(value - current[axis]) < EPSILON)) {
-    return { buffer, moved: false, offset: current.slice(), bounds, boundsAfter };
+    return { buffer, moved: false, offset: current.slice(), delta: [0, 0, 0], bounds, boundsAfter };
   }
 
   if (existing) {
@@ -298,5 +302,5 @@ export function moveGlbPivot(buffer, mode = 'ground_pivot') {
     scene.nodes = [nodes.length - 1];
   }
 
-  return { buffer: serializeGlb(json, bin), moved: true, offset, bounds, boundsAfter };
+  return { buffer: serializeGlb(json, bin), moved: true, offset, delta, bounds, boundsAfter };
 }

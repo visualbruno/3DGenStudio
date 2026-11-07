@@ -75,3 +75,19 @@ export async function submitCloudMeshGeneration(body) {
   })
   return await readJson(res, 'Failed to submit the mesh generation')
 }
+
+// Put a mesh on the ground (lowest point on Y = 0, centred on X / Z) — the
+// backend's ground pivot (meshPivot.js), which edits only the glTF node tree so
+// skins and animations survive. Resolves { blob, stats: { moved, offset, ... } };
+// `moved` false means the mesh was already in place (the bytes are unchanged).
+export async function alignMeshToGround(meshBlob, fileName = 'mesh.glb') {
+  const form = new FormData()
+  form.append('meshFile', meshBlob, fileName)
+  form.append('options', JSON.stringify({ mode: 'ground_pivot' }))
+  const res = await fetch(`${API_BASE}/meshes/pivot`, { method: 'POST', body: form })
+  const data = await readJson(res, 'Could not align the mesh to the ground')
+  const binary = atob(data.mesh_b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+  return { blob: new Blob([bytes], { type: 'model/gltf-binary' }), stats: data.stats || {} }
+}

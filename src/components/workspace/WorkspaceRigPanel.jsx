@@ -14,7 +14,7 @@ import {
   pickAutoRigOptions
 } from '../../utils/meshTools'
 import { createMeshThumbnailFile } from '../../utils/meshThumbnail'
-import { uploadAssetThumbnail } from '../../utils/workspaceApi'
+import { alignMeshToGround, uploadAssetThumbnail } from '../../utils/workspaceApi'
 import { fetchAssetBlob, saveMeshVersion } from '../../utils/workspaceRetopo'
 import AssetSelectorModal from '../AssetSelectorModal'
 import WorkspaceMeshSlot from './WorkspaceMeshSlot'
@@ -39,6 +39,17 @@ function writeSettings(settings) {
   }
 }
 
+function groundedName(asset) {
+  const base = String(asset?.name || 'Mesh').replace(/\.[^.]+$/, '').replace(/\s*\((grounded)\)$/i, '')
+  return `${base} (grounded)`
+}
+
+function formatMetres(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '0'
+  return `${number >= 0 ? '+' : ''}${(Math.round(number * 1000) / 1000).toString()} m`
+}
+
 function riggedName(asset) {
   const base = String(asset?.name || 'Mesh').replace(/\.[^.]+$/, '').replace(/\s*\((retopo|repaired|optimized|uv|textured|baked|rigged)\)$/i, '')
   return `${base} (rigged)`
@@ -53,6 +64,8 @@ export default function WorkspaceRigPanel({
   selectedMeshEntry,
   onResult,
   onOpenInEditor,
+  showBoneLabels = false,
+  onShowBoneLabelsChange,
   onPendingAdd,
   onPendingUpdate,
   onPendingRemove,
@@ -61,6 +74,7 @@ export default function WorkspaceRigPanel({
   const { addNotification } = useNotifications()
   const [options, setOptions] = useState(readSettings)
   const [running, setRunning] = useState(false)
+  const [aligning, setAligning] = useState(false)
   const [progress, setProgress] = useState(null)
   const [status, setStatus] = useState(null)
   const [lastResult, setLastResult] = useState(null) // { assetId, rows, asset }
@@ -76,7 +90,7 @@ export default function WorkspaceRigPanel({
   }
 
   const set = (key, value) => setOptions(prev => ({ ...prev, [key]: value }))
-  const busy = running || targetBusy || slotBusy
+  const busy = running || aligning || targetBusy || slotBusy
   const currentResult = lastResult && lastResult.assetId === target?.assetId ? lastResult : null
 
   const fillTarget = async (load) => {
@@ -88,6 +102,52 @@ export default function WorkspaceRigPanel({
       setStatus({ tone: 'error', message: err.message || 'Could not use that mesh.' })
     } finally {
       setSlotBusy(false)
+    }
+  }
+
+  // Put the mesh on the ground: lowest point on Y = 0, centred on X / Z (the
+  // backend's ground pivot, which edits only the node tree, so a rig, its
+  // weights and its clips come through untouched). Saved as a version.
+  const alignToGround = async () => {
+    if (!target || busy) return
+    const runTarget = target
+    setAligning(true)
+    setStatus(null)
+    try {
+      const meshBlob = await fetchAssetBlob(runTarget)
+      const { blob, stats } = await alignMeshToGround(meshBlob, String(runTarget.filename || 'mesh.glb').split('/').pop() || 'mesh.glb')
+      if (!stats?.moved) {
+        setStatus({ tone: 'info', message: 'Already on the ground — nothing to change.' })
+        return
+      }
+      let saved = await saveMeshVersion({ id: runTarget.assetId, name: runTarget.name }, blob, groundedName(runTarget))
+      try {
+        const thumbnail = await createMeshThumbnailFile(new File([blob], 'mesh.glb', { type: 'model/gltf-binary' }))
+        if (thumbnail) saved = { ...saved, ...(await uploadAssetThumbnail(saved.id, thumbnail)) }
+      } catch (err) {
+        console.warn('Could not render the grounded mesh thumbnail', err)
+      }
+      // `delta` = the real movement; `offset` is the absolute pivot wrapper value,
+      // which differs when the file had already been moved once.
+      const offset = Array.isArray(stats.delta) ? stats.delta : (Array.isArray(stats.offset) ? stats.offset : [0, 0, 0])
+      const rows = [
+        { label: 'Moved', value: `X ${formatMetres(offset[0])}, Y ${formatMetres(offset[1])}, Z ${formatMetres(offset[2])}` },
+        { label: 'Lowest point', value: 'Y = 0, centred on X / Z' }
+      ]
+      await onResult({
+        asset: saved,
+        module: 'rig',
+        label: 'Align to the Ground',
+        source: runTarget,
+        params: { tool: 'ground', summary: rows }
+      })
+      setLastResult({ assetId: saved.id, rows, asset: saved, label: 'Align to the Ground' })
+    } catch (err) {
+      console.error('Workspace Align to the Ground failed', err)
+      setStatus({ tone: 'error', message: err.message || 'Could not align the mesh.' })
+      addNotification({ title: 'Align to the Ground failed', message: err.message || 'Could not align the mesh', tone: 'error', source: 'Align to the Ground', projectId })
+    } finally {
+      setAligning(false)
     }
   }
 
@@ -134,7 +194,7 @@ export default function WorkspaceRigPanel({
         source: runTarget,
         params: { tool: 'autorig', options: runOptions, summary: rows }
       })
-      setLastResult({ assetId: saved.id, rows, asset: saved })
+      setLastResult({ assetId: saved.id, rows, asset: saved, label: 'Auto Rig' })
     } catch (err) {
       console.error('Workspace Auto Rig failed', err)
       setStatus({ tone: 'error', message: err.message || 'Auto Rig failed.' })
@@ -165,6 +225,26 @@ export default function WorkspaceRigPanel({
           onDropEntry={(entry) => fillTarget(() => importers.fromEntry(entry))}
           onClear={() => onTargetChange(null)}
         />
+
+        <div className="workspace-section">
+          <div className="workspace-section__head"><span>Placement &amp; View</span></div>
+          <button
+            type="button"
+            className="workspace-action-btn workspace-action-btn--wide"
+            onClick={alignToGround}
+            disabled={!target || busy}
+            title="Move the mesh so its lowest point sits on the ground (Y = 0), centred on X / Z. Keeps the rig and animations. Saved as a new version."
+          >
+            <span className="material-symbols-outlined">vertical_align_bottom</span>
+            {aligning ? 'Aligning…' : 'Align to the Ground'}
+          </button>
+          <Switch
+            label="Show bone labels"
+            value={showBoneLabels}
+            onChange={value => onShowBoneLabelsChange?.(value)}
+            hint="Write each bone's name next to it in the 3D view (rigged meshes; shows the skeleton too)."
+          />
+        </div>
 
         <div className="workspace-section">
           <span className="workspace-hint">
@@ -217,7 +297,7 @@ export default function WorkspaceRigPanel({
           <div className="workspace-section">
             <div className="workspace-section__head">
               <span>Last Result</span>
-              <span className="workspace-section__aside">Auto Rig</span>
+              <span className="workspace-section__aside">{currentResult.label}</span>
             </div>
             <ResultRows rows={currentResult.rows} />
             <span className="workspace-hint">Turn on Skeleton in the viewer toolbar to see the bones. Bone editing, weight painting and animations are in the Mesh Editor.</span>

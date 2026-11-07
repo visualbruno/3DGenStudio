@@ -41,7 +41,7 @@ function writeViewSettings(settings) {
 
 // Keyed by asset id by the caller, so the stats reset with the model. The
 // display settings live one level up, so they carry over between meshes.
-function MeshStage({ url, view, onViewChange, clipRequest }) {
+function MeshStage({ url, view, onViewChange, clipRequest, showBoneLabels = false }) {
   const [stats, setStats] = useState(null)
   const [rigged, setRigged] = useState(false)
   const [clips, setClips] = useState([])
@@ -79,14 +79,19 @@ function MeshStage({ url, view, onViewChange, clipRequest }) {
       <Viewer
         height="100%"
         modelUrl={url}
-        fitMode="center"
+        // True placement: a mesh that floats or sinks shows it, and Align to
+        // the Ground is seen to drop it onto the grid.
+        fitMode="actual"
         showWireframe={view.wireframe}
         showSolid={view.shading === 'solid'}
         wireframeColor={view.shading === 'solid' ? '#22262b' : '#ffffff'}
         wireframeOpacity={view.shading === 'solid' ? 0.55 : 0.36}
         showNormals={view.shading === 'normal'}
         showAlbedo={view.shading === 'textured' && view.texture === 'unlit'}
-        showSkeleton={rigged && Boolean(view.skeleton)}
+        // Bone labels (Rig module) bring the skeleton with them: names floating
+        // over hidden bones would only confuse.
+        showSkeleton={rigged && (Boolean(view.skeleton) || showBoneLabels)}
+        showBoneNames={rigged && showBoneLabels}
         animationClip={clip}
         onModelLoaded={({ stats: loaded, isRigged, clips: loadedClips }) => {
           setStats(loaded || null)
@@ -119,7 +124,8 @@ export default function WorkspaceCenterView({
   onSelectEntry,
   onOpenInEditor,
   onAnimate,
-  clipRequest
+  clipRequest,
+  showBoneLabels = false
 }) {
   const [view, setView] = useState(readViewSettings)
   const changeView = (next) => {
@@ -158,6 +164,7 @@ export default function WorkspaceCenterView({
             view={view}
             onViewChange={changeView}
             clipRequest={clipRequest?.assetId === asset.id ? clipRequest : null}
+            showBoneLabels={showBoneLabels}
           />
         )}
         {!isImage && !isMesh && (

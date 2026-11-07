@@ -10506,6 +10506,9 @@ app.post('/api/meshes/pivot', meshToolsUpload.single('meshFile'), async (req, re
         mode,
         moved: result.moved,
         offset: result.offset,
+        // How far the mesh actually moved this run (offset is the absolute
+        // wrapper translation, which differs on a file already moved once).
+        delta: result.delta,
         bounds_before: result.bounds,
         bounds_after: result.boundsAfter,
       },
