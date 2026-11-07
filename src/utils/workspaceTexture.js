@@ -105,3 +105,38 @@ export function resolveTextureRoles(workflow) {
 }
 
 export const TEXTURE_SIZE_PRESETS = [1024, 2048, 4096, 8192]
+
+// --- Refine (Retopo module) -------------------------------------------------
+// The other side of isTexturing(): a mesh + one image in, a mesh out, and the
+// workflow is NOT about texture — it rebuilds the GEOMETRY from the image
+// ("Refine Mesh with Trellis2", "Refine Mesh with Hi3D"). Defined here, next to
+// the texture rule, so the two lists can never overlap or both miss a workflow.
+export function isRefineWorkflow(workflow) {
+  const types = typesOf(workflow)
+  return outputsMesh(workflow) && !types.includes('video')
+    && count(types, 'mesh') === 1 && count(types, 'image') === 1 && !isTexturing(workflow)
+}
+
+export function refineWorkflowLabel(workflow) {
+  const name = String(workflow?.name || '').trim()
+  const stripped = name.replace(/^refine\s+mesh\s+with\s+/i, '').replace(/\s+-\s+/g, ' · ').trim()
+  return stripped || name || `Workflow ${workflow?.id ?? ''}`.trim()
+}
+
+export function filterRefineWorkflows(workflows = []) {
+  return workflows
+    .filter(isRefineWorkflow)
+    .sort((a, b) => refineWorkflowLabel(a).localeCompare(refineWorkflowLabel(b), undefined, { sensitivity: 'base' }))
+}
+
+export function resolveRefineRoles(workflow) {
+  const parameters = workflow?.parameters || []
+  const numbers = parameters.filter(p => getParameterValueType(p) === 'number')
+  const mesh = parameters.find(p => getParameterValueType(p) === 'mesh') || null
+  const image = parameters.find(p => getParameterValueType(p) === 'image') || null
+  const faces = numbers.find(p => /face\s*(number|count)|target\s*faces?|^faces$/i.test(nameOf(p))) || null
+  const seed = numbers.find(p => /seed/i.test(nameOf(p))) || null
+  const claimed = new Set([mesh, image, faces, seed].filter(Boolean))
+  const advanced = parameters.filter(p => !claimed.has(p) && !['image', 'video', 'mesh'].includes(getParameterValueType(p)))
+  return { mesh, image, faces, seed, advanced }
+}

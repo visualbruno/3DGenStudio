@@ -546,11 +546,14 @@ export default function WorkspacePage({ project }) {
           <section className="workspace-panel" hidden={activeModule !== 'retopo'}>
             <WorkspaceRetopoPanel
               projectId={projectId}
+              projectName={project?.name || ''}
               target={meshTarget}
               targetBusy={meshTargetBusy}
               importers={meshImporters}
+              imageImporters={importers}
               onTargetChange={setMeshTarget}
               selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
+              selectedImageEntry={selectedEntry?.asset.type === 'image' ? selectedEntry : null}
               onResult={handleMeshToolResult}
               onPendingAdd={addCloudPending}
               onPendingUpdate={updateCloudPending}
