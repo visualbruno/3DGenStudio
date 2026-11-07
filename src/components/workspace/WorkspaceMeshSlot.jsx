@@ -13,7 +13,18 @@ function isMeshFile(file) {
   return MESH_FILE_EXTENSIONS.includes(ext)
 }
 
-export default function WorkspaceMeshSlot({ value, busy, onFile, onPickAsset, onUseSelected, onDropEntry, onClear }) {
+export default function WorkspaceMeshSlot({
+  value,
+  busy,
+  label = 'Source mesh',
+  emptyLabel = 'Choose a mesh',
+  hint = 'Click a mesh in the history, drag one here, or upload',
+  onFile,
+  onPickAsset,
+  onUseSelected,
+  onDropEntry,
+  onClear
+}) {
   const fileRef = useRef(null)
   const [dragOver, setDragOver] = useState(false)
 
@@ -47,13 +58,13 @@ export default function WorkspaceMeshSlot({ value, busy, onFile, onPickAsset, on
       <div className="workspace-meshslot__meta">
         {value ? (
           <>
-            <span className="workspace-meshslot__label">Source mesh</span>
+            <span className="workspace-meshslot__label">{label}</span>
             <span className="workspace-meshslot__name" title={value.name}>{value.name}</span>
           </>
         ) : (
           <>
-            <span className="workspace-meshslot__name">{busy ? 'Loading…' : 'Choose a mesh'}</span>
-            <span className="workspace-meshslot__hint">Click a mesh in the history, drag one here, or upload</span>
+            <span className="workspace-meshslot__name">{busy ? 'Loading…' : emptyLabel}</span>
+            <span className="workspace-meshslot__hint">{hint}</span>
           </>
         )}
         <div className="workspace-meshslot__actions">

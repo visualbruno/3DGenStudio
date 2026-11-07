@@ -12,12 +12,14 @@ import ImportProjectDialog from '../components/ImportProjectDialog'
 import graphPreview from '../assets/GraphPage.png'
 import kanbanPreview from '../assets/KanbanBoard.png'
 import batchPreview from '../assets/Batch.png'
+import workspacePreview from '../assets/Workspace.png'
 import './ProjectsPage.css'
 
 const PRESET_PREVIEWS = {
   Graph: graphPreview,
   Kanban: kanbanPreview,
   Batch: batchPreview,
+  Workspace: workspacePreview,
 }
 
 const PRESETS = [

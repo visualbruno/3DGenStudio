@@ -36,6 +36,7 @@ export default function WorkspaceHistoryPanel({
   onMakeMesh,
   onRetopo,
   onAutoUv,
+  onTexture,
   onOpenInEditor,
   onRemove,
   onCancelJob
@@ -171,6 +172,12 @@ export default function WorkspaceHistoryPanel({
                       <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onAutoUv(entry) }} title="Unwrap new UVs for this mesh">
                         <span className="material-symbols-outlined">view_quilt</span>
                         Auto UV
+                      </button>
+                    )}
+                    {entry.asset.type === 'mesh' && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onTexture(entry) }} title="Texture this mesh">
+                        <span className="material-symbols-outlined">texture</span>
+                        Texture
                       </button>
                     )}
                     {entry.asset.type === 'mesh' && (

@@ -1617,3 +1617,14 @@
   background: #ffffff;
   border: 1px solid var(--outline-variant);
 }
+
+/* Three tabs in a 340px panel: drop the icons so the labels stay on one line. */
+.workspace-tabs--compact .workspace-tab {
+  padding: 8px 6px;
+  white-space: nowrap;
+  font-size: 0.8rem;
+}
+
+.workspace-tabs--compact .workspace-tab .material-symbols-outlined {
+  display: none;
+}

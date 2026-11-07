@@ -77,6 +77,7 @@ export default function WorkspaceCenterView({
   onMakeMesh,
   onRetopo,
   onAutoUv,
+  onTexture,
   onReuse,
   onSelectEntry,
   onOpenInEditor
@@ -194,6 +195,12 @@ export default function WorkspaceCenterView({
             <button type="button" className="workspace-action-btn" onClick={() => onAutoUv(entry)} title="Unwrap new UVs for this mesh">
               <span className="material-symbols-outlined">view_quilt</span>
               Auto UV
+            </button>
+          )}
+          {isMesh && (
+            <button type="button" className="workspace-action-btn" onClick={() => onTexture(entry)} title="Texture this mesh from an image, or bake a high poly onto it">
+              <span className="material-symbols-outlined">texture</span>
+              Texture
             </button>
           )}
           {entry.action !== 'import' && (

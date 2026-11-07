@@ -5,38 +5,12 @@
 // pipeline does: bake the source's colour (and optionally its roughness /
 // metallic) onto the new layout with /meshes/bake, then embed the maps in the
 // GLB with /meshes/apply-maps (the Batch bake stage's applyBakedMapsToGlb).
-import { API_BASE } from '../config'
 import { autoUv, bakeMaps, ensureDesktopService } from './meshTools'
+import { applyMaps, slice } from './workspaceBake'
 import { fetchAssetBlob } from './workspaceRetopo'
 
 export const UV_RESOLUTIONS = [1024, 2048, 4096]
 export const BAKE_RESOLUTIONS = [1024, 2048, 4096]
-
-function base64ToBlob(base64, type) {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
-  return new Blob([bytes], { type })
-}
-
-async function applyMaps(meshBlob, maps, ormChannels) {
-  const form = new FormData()
-  form.append('meshFile', meshBlob, 'mesh.glb')
-  for (const [name, blob] of Object.entries(maps)) form.append(name, blob, `${name}.png`)
-  form.append('options', JSON.stringify({ ormChannels }))
-  const res = await fetch(`${API_BASE}/meshes/apply-maps`, { method: 'POST', body: form })
-  const data = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error(data?.error || 'Could not put the texture back on the mesh')
-  return { blob: base64ToBlob(data.mesh_b64, 'model/gltf-binary'), applied: data.applied || [] }
-}
-
-// Remap a tool's 0..1 progress into a slice of the whole run.
-function slice(onProgress, from, to) {
-  return (evt) => {
-    const frac = Number(evt?.frac)
-    onProgress?.({ ...evt, frac: Number.isFinite(frac) ? from + frac * (to - from) : from })
-  }
-}
 
 // Resolves { blob, stats, previewUrl, bake }.
 export async function runWorkspaceAutoUv(asset, { uvOptions, keepTexture, bakeResolution, bakePbr, onProgress }) {
