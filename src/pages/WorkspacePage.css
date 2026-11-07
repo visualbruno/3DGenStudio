@@ -85,15 +85,6 @@
   font-size: 24px;
 }
 
-.workspace-rail__soon {
-  font-size: 0.6rem;
-  line-height: 1;
-  padding: 2px 5px;
-  border-radius: var(--radius-full);
-  background: var(--surface-container-highest);
-  color: var(--outline);
-}
-
 .workspace-panel {
   width: 340px;
   min-height: 0;
@@ -531,32 +522,6 @@
 
 .workspace-status--error {
   color: var(--error);
-}
-
-.workspace-soon-pill {
-  margin-left: auto;
-  padding: 3px 9px;
-  border-radius: var(--radius-full);
-  background: var(--surface-container-highest);
-  color: var(--on-surface-variant);
-  font: 500 0.7rem var(--font-label);
-}
-
-.workspace-draft__summary {
-  margin: 0;
-  font-size: 0.92rem;
-  line-height: 1.5;
-}
-
-.workspace-draft__list {
-  margin: 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  color: var(--on-surface-variant);
 }
 
 /* ---- center ---- */

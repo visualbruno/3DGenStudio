@@ -37,6 +37,7 @@ export default function WorkspaceHistoryPanel({
   onRetopo,
   onAutoUv,
   onTexture,
+  onRig,
   onOpenInEditor,
   onRemove,
   onCancelJob
@@ -178,6 +179,12 @@ export default function WorkspaceHistoryPanel({
                       <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onTexture(entry) }} title="Texture this mesh">
                         <span className="material-symbols-outlined">texture</span>
                         Texture
+                      </button>
+                    )}
+                    {entry.asset.type === 'mesh' && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onRig(entry) }} title="Add a skeleton and skin weights">
+                        <span className="material-symbols-outlined">accessibility_new</span>
+                        Auto Rig
                       </button>
                     )}
                     {entry.asset.type === 'mesh' && (

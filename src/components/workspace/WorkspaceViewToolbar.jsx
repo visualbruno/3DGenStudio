@@ -12,7 +12,7 @@ const TEXTURE_MODES = [
   { id: 'unlit', label: 'Unlit', title: 'Unlit — the base colour (albedo) only, no lighting' }
 ]
 
-export default function WorkspaceViewToolbar({ settings, onChange }) {
+export default function WorkspaceViewToolbar({ settings, onChange, rigged = false }) {
   const set = (patch) => onChange({ ...settings, ...patch })
   const textured = settings.shading === 'textured'
 
@@ -63,6 +63,21 @@ export default function WorkspaceViewToolbar({ settings, onChange }) {
           <span className="workspace-viewbar__sr">{mode.label}</span>
         </button>
       ))}
+
+      {rigged && (
+        <>
+          <span className="workspace-viewbar__divider" aria-hidden="true" />
+          <button
+            type="button"
+            className={`workspace-viewbar__btn ${settings.skeleton ? 'workspace-viewbar__btn--active' : ''}`}
+            onClick={() => set({ skeleton: !settings.skeleton })}
+            aria-pressed={Boolean(settings.skeleton)}
+            title={settings.skeleton ? 'Hide the skeleton' : 'Show the skeleton'}
+          >
+            <span className="material-symbols-outlined">skeleton</span>
+          </button>
+        </>
+      )}
     </div>
   )
 }

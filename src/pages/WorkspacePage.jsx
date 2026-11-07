@@ -2,7 +2,7 @@
 // Mesh, Retopo, UV, Texture, Rig) and the active module's panel; center, the
 // selected result; right, the project's history (WorkspaceHistory table).
 //
-// Image, Mesh, Retopo, UV and Texture are built. Rig shows a draft panel for now.
+// Each module's panel stays mounted (hidden when another is active).
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
@@ -16,7 +16,7 @@ import WorkspaceUvPanel from '../components/workspace/WorkspaceUvPanel'
 import WorkspaceTexturePanel from '../components/workspace/WorkspaceTexturePanel'
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
-import WorkspaceModuleDraft from '../components/workspace/WorkspaceModuleDraft'
+import WorkspaceRigPanel from '../components/workspace/WorkspaceRigPanel'
 import useWorkspaceCloudTasks from '../hooks/useWorkspaceCloudTasks'
 import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { useNotifications } from '../context/NotificationContext'
@@ -36,7 +36,7 @@ import './WorkspacePage.css'
 
 const HISTORY_PAGE = 120
 // Modules that work on the shared mesh source (meshTarget).
-const MESH_MODULES = ['retopo', 'uv', 'texture']
+const MESH_MODULES = ['retopo', 'uv', 'texture', 'rig']
 const TERMINAL_JOB_STATUSES = ['completed', 'error', 'cancelled']
 
 // Newest first, no duplicates (a run can report entries already loaded).
@@ -377,6 +377,7 @@ export default function WorkspacePage({ project }) {
   const retopoFromEntry = (entry) => openMeshModule('retopo', entry)
   const uvFromEntry = (entry) => openMeshModule('uv', entry)
   const textureFromEntry = (entry) => openMeshModule('texture', entry)
+  const rigFromEntry = (entry) => openMeshModule('rig', entry)
 
   const makeMeshFromEntry = (entry) => {
     if (entry.asset.type !== 'image') return
@@ -462,6 +463,8 @@ export default function WorkspacePage({ project }) {
         ? { title: 'Unwrap a mesh', text: 'Choose a mesh on the left, then Unwrap UVs.' }
         : activeModule === 'texture'
           ? { title: 'Texture a mesh', text: 'Choose a mesh and a reference image, or a high poly to bake from.' }
+          : activeModule === 'rig'
+            ? { title: 'Rig a character', text: 'Choose a mesh on the left, then Auto Rig.' }
       : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
 
   return (
@@ -558,11 +561,22 @@ export default function WorkspacePage({ project }) {
               reuse={reuse?.entry.module === 'texture' ? reuse : null}
             />
           </section>
-          {!['image', 'mesh', 'retopo', 'uv', 'texture'].includes(activeModule) && (
-            <section className="workspace-panel">
-              <WorkspaceModuleDraft moduleId={activeModule} />
-            </section>
-          )}
+          <section className="workspace-panel" hidden={activeModule !== 'rig'}>
+            <WorkspaceRigPanel
+              projectId={projectId}
+              target={meshTarget}
+              targetBusy={meshTargetBusy}
+              importers={meshImporters}
+              onTargetChange={setMeshTarget}
+              selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
+              onResult={handleMeshToolResult}
+              onOpenInEditor={(asset) => openInEditor({ asset })}
+              onPendingAdd={addCloudPending}
+              onPendingUpdate={updateCloudPending}
+              onPendingRemove={removeCloudPending}
+              reuse={reuse?.entry.module === 'rig' ? reuse : null}
+            />
+          </section>
         </div>
 
         <main className="workspace-main">
@@ -576,6 +590,7 @@ export default function WorkspacePage({ project }) {
             onRetopo={retopoFromEntry}
             onAutoUv={uvFromEntry}
             onTexture={textureFromEntry}
+            onRig={rigFromEntry}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
             onOpenInEditor={openInEditor}
@@ -596,6 +611,7 @@ export default function WorkspacePage({ project }) {
           onRetopo={retopoFromEntry}
           onAutoUv={uvFromEntry}
           onTexture={textureFromEntry}
+          onRig={rigFromEntry}
           onOpenInEditor={openInEditor}
           onRemove={removeEntry}
           onCancelJob={cancelPendingJob}

@@ -19,7 +19,7 @@ function formatDate(timestamp) {
 }
 
 const VIEW_SETTINGS_KEY = 'workspace.meshView.v1'
-const DEFAULT_VIEW_SETTINGS = { wireframe: false, shading: 'textured', texture: 'pbr' }
+const DEFAULT_VIEW_SETTINGS = { wireframe: false, shading: 'textured', texture: 'pbr', skeleton: true }
 
 // Per-viewer convenience: the display mode survives a reload when storage works.
 function readViewSettings() {
@@ -43,9 +43,10 @@ function writeViewSettings(settings) {
 // display settings live one level up, so they carry over between meshes.
 function MeshStage({ url, view, onViewChange }) {
   const [stats, setStats] = useState(null)
+  const [rigged, setRigged] = useState(false)
   return (
     <div className="workspace-center__mesh">
-      <WorkspaceViewToolbar settings={view} onChange={onViewChange} />
+      <WorkspaceViewToolbar settings={view} onChange={onViewChange} rigged={rigged} />
       <Viewer
         height="100%"
         modelUrl={url}
@@ -56,7 +57,11 @@ function MeshStage({ url, view, onViewChange }) {
         wireframeOpacity={view.shading === 'solid' ? 0.55 : 0.36}
         showNormals={view.shading === 'normal'}
         showAlbedo={view.shading === 'textured' && view.texture === 'unlit'}
-        onModelLoaded={({ stats: loaded }) => setStats(loaded || null)}
+        showSkeleton={rigged && Boolean(view.skeleton)}
+        onModelLoaded={({ stats: loaded, isRigged }) => {
+          setStats(loaded || null)
+          setRigged(Boolean(isRigged))
+        }}
       />
       {stats && (
         <div className="workspace-center__stats">
@@ -78,6 +83,7 @@ export default function WorkspaceCenterView({
   onRetopo,
   onAutoUv,
   onTexture,
+  onRig,
   onReuse,
   onSelectEntry,
   onOpenInEditor
@@ -201,6 +207,12 @@ export default function WorkspaceCenterView({
             <button type="button" className="workspace-action-btn" onClick={() => onTexture(entry)} title="Texture this mesh from an image, or bake a high poly onto it">
               <span className="material-symbols-outlined">texture</span>
               Texture
+            </button>
+          )}
+          {isMesh && (
+            <button type="button" className="workspace-action-btn" onClick={() => onRig(entry)} title="Add a skeleton and skin weights">
+              <span className="material-symbols-outlined">accessibility_new</span>
+              Auto Rig
             </button>
           )}
           {entry.action !== 'import' && (
