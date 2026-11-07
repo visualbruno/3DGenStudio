@@ -139,7 +139,13 @@ function buildAlbedoMaterial(sourceMaterial) {
   return new THREE.MeshBasicMaterial(params)
 }
 
-function applyDisplayMaterial(object, showNormals, showShadows, showAlbedo) {
+// Untextured "clay" look: one neutral lit material, so the shape reads on
+// its own without the texture.
+function buildSolidMaterial() {
+  return new THREE.MeshStandardMaterial({ color: '#c4c7cc', metalness: 0.05, roughness: 0.62 })
+}
+
+function applyDisplayMaterial(object, showNormals, showShadows, showAlbedo, showSolid = false) {
   object?.traverse(child => {
     if (!child.isMesh) {
       return
@@ -158,6 +164,15 @@ function applyDisplayMaterial(object, showNormals, showShadows, showAlbedo) {
       }
 
       child.material = child.userData.normalMat
+      return
+    }
+
+    if (showSolid) {
+      if (!child.userData.solidMat) {
+        child.userData.solidMat = buildSolidMaterial()
+      }
+
+      child.material = child.userData.solidMat
       return
     }
 
@@ -181,7 +196,9 @@ function applyDisplayMaterial(object, showNormals, showShadows, showAlbedo) {
   })
 }
 
-function applyWireframeOverlay(object, showWireframe) {
+// White lines read on textured / normal views but vanish on light clay, so a
+// caller can pass its own colour and opacity.
+function applyWireframeOverlay(object, showWireframe, { color = '#ffffff', opacity = 0.36 } = {}) {
   if (!showWireframe || !object) {
     return
   }
@@ -197,10 +214,10 @@ function applyWireframeOverlay(object, showWireframe) {
     const overlay = new THREE.Mesh(
       mesh.geometry,
       new THREE.MeshBasicMaterial({
-        color: '#ffffff',
+        color,
         wireframe: true,
         transparent: true,
-        opacity: 0.36,
+        opacity,
         depthWrite: false
       })
     )
@@ -277,6 +294,9 @@ export default function Viewer({
   showShadows = true,
   showAlbedo = false,
   showWireframe = false,
+  showSolid = false,
+  wireframeColor = '#ffffff',
+  wireframeOpacity = 0.36,
   showSkeleton = false,
   onModelLoaded = null,
   lightIntensity = 2.2,
@@ -330,10 +350,10 @@ export default function Viewer({
     }
 
     const modelClone = modelState.object.clone(true)
-    applyDisplayMaterial(modelClone, showNormals, showShadows, showAlbedo)
-    applyWireframeOverlay(modelClone, showWireframe)
+    applyDisplayMaterial(modelClone, showNormals, showShadows, showAlbedo, showSolid)
+    applyWireframeOverlay(modelClone, showWireframe, { color: wireframeColor, opacity: wireframeOpacity })
     return modelClone
-  }, [modelState, modelUrl, showNormals, showShadows, showAlbedo, showWireframe])
+  }, [modelState, modelUrl, showNormals, showShadows, showAlbedo, showSolid, showWireframe, wireframeColor, wireframeOpacity])
 
   // Bone data for the optional skeleton overlay. Read from the loaded object
   // rather than the display clone: three's `clone()` leaves a SkinnedMesh

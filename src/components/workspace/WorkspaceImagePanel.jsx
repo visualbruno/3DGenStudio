@@ -15,7 +15,6 @@ import { useNotifications } from '../../context/NotificationContext'
 import { useWorkflowJobs } from '../../context/WorkflowJobsContext'
 import { assetUrl } from '../../config'
 import { createComfyExecutionId } from '../../utils/ids'
-import { getWorkflowEnumOptions, resolveWorkflowEnumValue } from '../../utils/workflowEnums'
 import { addWorkspaceHistory, fetchComfyWorkflows, resolveSourceReference } from '../../utils/workspaceApi'
 import {
   ASPECT_RATIOS,
@@ -39,6 +38,7 @@ import {
   workflowLabel
 } from '../../utils/workspaceImage'
 import ComfyTextButton from '../comfy/ComfyTextButton'
+import WorkspaceParamField from './WorkspaceParamField'
 import AssetSelectorModal from '../AssetSelectorModal'
 
 const SETTINGS_KEY = 'workspace.image.settings.v1'
@@ -438,83 +438,17 @@ export default function WorkspaceImagePanel({
     }
   }
 
-  const renderScalarField = (parameter) => {
-    const valueType = getParameterValueType(parameter)
-    const value = values[parameter.id]
-    const label = parameter.name || parameter.id
-    const isSeed = roles?.seed === parameter
-
-    const enumOptions = getWorkflowEnumOptions(parameter, value)
-    if (enumOptions) {
-      return (
-        <label className="workspace-field" key={parameter.id}>
-          <span className="workspace-field__label">{label}</span>
-          <select
-            className="workspace-input"
-            value={value == null ? '' : String(value)}
-            onChange={event => setValue(parameter.id, resolveWorkflowEnumValue(parameter, event.target.value))}
-          >
-            {enumOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-      )
-    }
-
-    if (valueType === 'boolean') {
-      return (
-        <label className="workspace-toggle-row" key={parameter.id}>
-          <span>{label}</span>
-          <input
-            type="checkbox"
-            className="workspace-switch"
-            checked={Boolean(value)}
-            onChange={event => setValue(parameter.id, event.target.checked)}
-          />
-        </label>
-      )
-    }
-
-    if (valueType === 'number') {
-      return (
-        <div className="workspace-field" key={parameter.id}>
-          <span className="workspace-field__label">{label}</span>
-          <div className="workspace-field__row">
-            <input
-              className="workspace-input"
-              type="number"
-              value={isSeed && settings.randomSeed ? '' : (value ?? '')}
-              placeholder={isSeed && settings.randomSeed ? 'Random each run' : ''}
-              disabled={isSeed && settings.randomSeed}
-              onChange={event => setValue(parameter.id, event.target.value)}
-            />
-            {isSeed && (
-              <button
-                type="button"
-                className={`workspace-icon-btn ${settings.randomSeed ? 'workspace-icon-btn--active' : ''}`}
-                onClick={() => updateSettings({ randomSeed: !settings.randomSeed })}
-                title={settings.randomSeed ? 'Random seed on — click to use a fixed seed' : 'Fixed seed — click to randomize each run'}
-                aria-pressed={settings.randomSeed}
-              >
-                <span className="material-symbols-outlined">casino</span>
-              </button>
-            )}
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <label className="workspace-field" key={parameter.id}>
-        <span className="workspace-field__label">{label}</span>
-        <input
-          className="workspace-input"
-          type="text"
-          value={value ?? ''}
-          onChange={event => setValue(parameter.id, event.target.value)}
-        />
-      </label>
-    )
-  }
+  const renderScalarField = (parameter) => (
+    <WorkspaceParamField
+      key={parameter.id}
+      parameter={parameter}
+      value={values[parameter.id]}
+      onChange={setValue}
+      {...(roles?.seed === parameter
+        ? { randomSeed: settings.randomSeed, onToggleRandomSeed: () => updateSettings({ randomSeed: !settings.randomSeed }) }
+        : {})}
+    />
+  )
 
   const sizeSupportsAspect = roles?.sizeMode === 'wh'
   const showSize = Boolean(roles?.sizeMode)

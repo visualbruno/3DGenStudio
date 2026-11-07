@@ -2,25 +2,29 @@
 // Mesh, Retopo, UV, Texture, Rig) and the active module's panel; center, the
 // selected result; right, the project's history (WorkspaceHistory table).
 //
-// Only the Image module is built. The others show a draft panel for now.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+// Image and Mesh are built. The other modules show a draft panel for now.
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
 import Footer from '../components/Footer'
 import SettingsModal from '../components/SettingsModal'
 import WorkspaceToolRail from '../components/workspace/WorkspaceToolRail'
 import WorkspaceImagePanel from '../components/workspace/WorkspaceImagePanel'
+import WorkspaceMeshPanel from '../components/workspace/WorkspaceMeshPanel'
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
 import WorkspaceModuleDraft from '../components/workspace/WorkspaceModuleDraft'
 import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { useNotifications } from '../context/NotificationContext'
-import { buildImageEditorPath } from '../utils/graphHelpers'
+import { assetUrl } from '../config'
+import { buildImageEditorPath, buildMeshEditorPath } from '../utils/graphHelpers'
+import { createMeshThumbnailFileFromUrl } from '../utils/meshThumbnail'
 import {
   addWorkspaceHistory,
   deleteWorkspaceHistoryEntry,
   fetchWorkspaceHistory,
   resolveSourceReference,
+  uploadAssetThumbnail,
   uploadDetachedAsset
 } from '../utils/workspaceApi'
 import './WorkspacePage.css'
@@ -67,6 +71,8 @@ export default function WorkspacePage({ project }) {
   const [selectedEntryId, setSelectedEntryId] = useState(null)
   const [source, setSource] = useState(null)
   const [sourceBusy, setSourceBusy] = useState(false)
+  const [meshSource, setMeshSource] = useState(null)
+  const [meshSourceBusy, setMeshSourceBusy] = useState(false)
   const [reuse, setReuse] = useState(null)
   // Cloud API requests in flight (they have no ComfyUI job to show).
   const [cloudPending, setCloudPending] = useState([])
@@ -88,6 +94,35 @@ export default function WorkspacePage({ project }) {
       })
     return () => { cancelled = true }
   }, [projectId])
+
+  // Meshes saved without a thumbnail (the mesh-tools service was not running,
+  // or the mesh came from elsewhere) get one rendered here, once per session.
+  const thumbnailAttemptsRef = useRef(new Set())
+  useEffect(() => {
+    const missing = history.filter(entry => entry.asset.type === 'mesh'
+      && !entry.asset.thumbnail
+      && entry.asset.filename
+      && !thumbnailAttemptsRef.current.has(entry.asset.id))
+    if (!missing.length) return
+    missing.forEach(entry => thumbnailAttemptsRef.current.add(entry.asset.id))
+
+    ;(async () => {
+      for (const entry of missing) {
+        try {
+          const fileName = String(entry.asset.filename).split('/').pop() || 'mesh.glb'
+          const file = await createMeshThumbnailFileFromUrl(assetUrl(entry.asset.filename), fileName)
+          if (!file) continue
+          const updated = await uploadAssetThumbnail(entry.asset.id, file)
+          if (!updated?.thumbnail) continue
+          setHistory(prev => prev.map(candidate => (candidate.asset.id === entry.asset.id
+            ? { ...candidate, asset: { ...candidate.asset, thumbnail: updated.thumbnail } }
+            : candidate)))
+        } catch (err) {
+          console.warn(`Could not render a thumbnail for mesh ${entry.asset.id}`, err)
+        }
+      }
+    })()
+  }, [history])
 
   const loadMore = async () => {
     const last = history[history.length - 1]
@@ -138,67 +173,110 @@ export default function WorkspacePage({ project }) {
     setSelectedEntryId(entries[0].id)
   }, [])
 
-  // A file from the computer: becomes a root project asset, is logged as an
-  // import, and is attached as the image to edit.
-  const pickSourceFile = async (file) => {
-    setSourceBusy(true)
-    try {
-      const asset = await uploadDetachedAsset(projectId, file, 'image')
-      const entries = await addWorkspaceHistory(projectId, [{ assetId: asset.id, module: 'image', action: 'import' }])
-      setHistory(prev => mergeEntries(entries, prev))
-      if (entries[0]) setSelectedEntryId(entries[0].id)
-      setSource(sourceFromAsset(asset, `asset:${asset.id}`))
-    } catch (err) {
-      reportError('Image import failed', err)
-    } finally {
-      setSourceBusy(false)
-    }
+  // --- image inputs, shared by every module ---------------------------------
+  // Each returns the `source` a panel feeds to a workflow:
+  // { assetId, name, filename, thumbnail, width, height, sourceReference }.
+
+  // A file from the computer: becomes a root project asset and is logged as an
+  // import.
+  const importImageFile = async (file) => {
+    const asset = await uploadDetachedAsset(projectId, file, 'image')
+    const entries = await addWorkspaceHistory(projectId, [{ assetId: asset.id, module: 'image', action: 'import' }])
+    setHistory(prev => mergeEntries(entries, prev))
+    if (entries[0]) setSelectedEntryId(entries[0].id)
+    return sourceFromAsset(asset, `asset:${asset.id}`)
   }
 
   // An image from the Assets library (a root or an edit). Linked to the project
   // if it was not already, and logged as an import the first time it shows up.
-  const pickSourceAsset = async (asset) => {
+  const importLibraryImage = async (asset) => {
+    const { sourceReference, assetId } = await resolveSourceReference(projectId, 'image', asset.filename || asset.filePath)
+    const resolvedId = assetId ?? asset.id
+    const existing = history.find(entry => entry.asset.id === resolvedId)
+    if (existing) {
+      setSelectedEntryId(existing.id)
+    } else if (resolvedId != null) {
+      const entries = await addWorkspaceHistory(projectId, [{ assetId: resolvedId, module: 'image', action: 'import' }])
+      setHistory(prev => mergeEntries(entries, prev))
+      if (entries[0]) setSelectedEntryId(entries[0].id)
+    }
+    return sourceFromAsset({ ...asset, id: resolvedId }, sourceReference)
+  }
+
+  // An image already in the history.
+  const sourceFromEntry = async (entry) => {
+    const { sourceReference } = await resolveSourceReference(projectId, 'image', entry.asset.filePath || entry.asset.filename)
+    return sourceFromAsset(entry.asset, sourceReference)
+  }
+
+  const importers = { fromFile: importImageFile, fromAsset: importLibraryImage, fromEntry: sourceFromEntry }
+
+  // Image module: the image being edited.
+  const loadImageSource = async (load, errorTitle) => {
     setSourceBusy(true)
     try {
-      const { sourceReference, assetId } = await resolveSourceReference(projectId, 'image', asset.filename || asset.filePath)
-      const resolvedId = assetId ?? asset.id
-      const existing = history.find(entry => entry.asset.id === resolvedId)
-      if (existing) {
-        setSelectedEntryId(existing.id)
-      } else if (resolvedId != null) {
-        const entries = await addWorkspaceHistory(projectId, [{ assetId: resolvedId, module: 'image', action: 'import' }])
-        setHistory(prev => mergeEntries(entries, prev))
-        if (entries[0]) setSelectedEntryId(entries[0].id)
-      }
-      setSource(sourceFromAsset({ ...asset, id: resolvedId }, sourceReference))
+      setSource(await load())
     } catch (err) {
-      reportError('Could not use that image', err)
+      reportError(errorTitle, err)
     } finally {
       setSourceBusy(false)
     }
   }
 
-  const editEntry = async (entry) => {
+  // Mesh module: the image turned into 3D.
+  const loadMeshSource = async (load) => {
+    setMeshSourceBusy(true)
+    try {
+      setMeshSource(await load())
+    } catch (err) {
+      reportError('Could not use that image', err)
+    } finally {
+      setMeshSourceBusy(false)
+    }
+  }
+
+  const editEntry = (entry) => {
     if (entry.asset.type !== 'image') return
     setActiveModule('image')
     setSelectedEntryId(entry.id)
-    setSourceBusy(true)
-    try {
-      const { sourceReference } = await resolveSourceReference(projectId, 'image', entry.asset.filePath || entry.asset.filename)
-      setSource(sourceFromAsset(entry.asset, sourceReference))
-    } catch (err) {
-      reportError('Could not edit that image', err)
-    } finally {
-      setSourceBusy(false)
+    loadImageSource(() => sourceFromEntry(entry), 'Could not edit that image')
+  }
+
+  const makeMeshFromEntry = (entry) => {
+    if (entry.asset.type !== 'image') return
+    setActiveModule('mesh')
+    setSelectedEntryId(entry.id)
+    loadMeshSource(() => sourceFromEntry(entry))
+  }
+
+  // Clicking an image while the Mesh module is open makes it the image to turn
+  // into 3D (as in Tripo); anything else just shows the entry.
+  const selectEntry = (entry) => {
+    setSelectedEntryId(entry.id)
+    if (activeModule === 'mesh' && entry.asset.type === 'image' && entry.asset.id !== meshSource?.assetId) {
+      loadMeshSource(() => sourceFromEntry(entry))
+    }
+  }
+
+  // Opening the Mesh module with an image selected starts from that image.
+  const selectModule = (moduleId) => {
+    setActiveModule(moduleId)
+    if (moduleId === 'mesh' && !meshSource && selectedEntry?.asset.type === 'image') {
+      loadMeshSource(() => sourceFromEntry(selectedEntry))
     }
   }
 
   const reuseEntry = (entry) => {
-    setActiveModule(entry.module || 'image')
+    const module = entry.module || 'image'
+    setActiveModule(module)
     setReuse({ entry, nonce: `${entry.id}:${Date.now()}` })
-    if (entry.action === 'edit') {
-      const original = history.find(candidate => candidate.asset.id === entry.sourceAssetId)
-      if (original) editEntry(original)
+    const original = entry.sourceAssetId
+      ? history.find(candidate => candidate.asset.id === entry.sourceAssetId)
+      : null
+    if (module === 'mesh') {
+      if (original?.asset.type === 'image') loadMeshSource(() => sourceFromEntry(original))
+    } else if (entry.action === 'edit') {
+      if (original) loadImageSource(() => sourceFromEntry(original), 'Could not edit that image')
     } else {
       setSource(null)
     }
@@ -220,9 +298,14 @@ export default function WorkspacePage({ project }) {
     }
   }
 
-  const openInImageEditor = (entry) => {
-    navigate(buildImageEditorPath({ asset: entry.asset, projectId, returnTo: `/projects/${projectId}` }))
+  const openInEditor = (entry) => {
+    const options = { asset: entry.asset, projectId, returnTo: `/projects/${projectId}` }
+    navigate(entry.asset.type === 'mesh' ? buildMeshEditorPath(options) : buildImageEditorPath(options))
   }
+
+  const emptyState = activeModule === 'mesh'
+    ? { title: 'Ready for a new 3D model?', text: 'Pick an image on the left, then Generate Mesh.' }
+    : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
 
   return (
     <div className="workspace-page">
@@ -236,38 +319,56 @@ export default function WorkspacePage({ project }) {
 
       <div className="workspace-body">
         <div className="workspace-left">
-          <WorkspaceToolRail activeModule={activeModule} onSelect={setActiveModule} />
-          <section className="workspace-panel">
-            {activeModule === 'image' ? (
-              <WorkspaceImagePanel
-                projectId={projectId}
-                projectName={project?.name || ''}
-                source={source}
-                sourceBusy={sourceBusy}
-                onPickSourceFile={pickSourceFile}
-                onPickSourceAsset={pickSourceAsset}
-                onClearSource={() => setSource(null)}
-                onRunComplete={handleRunComplete}
-                onPendingAdd={addCloudPending}
-                onPendingRemove={removeCloudPending}
-                reuse={reuse}
-              />
-            ) : (
-              <WorkspaceModuleDraft moduleId={activeModule} />
-            )}
+          <WorkspaceToolRail activeModule={activeModule} onSelect={selectModule} />
+          {/* The built panels stay mounted (hidden when not active), so each
+              keeps its prompt, picks and settings while another is open. */}
+          <section className="workspace-panel" hidden={activeModule !== 'image'}>
+            <WorkspaceImagePanel
+              projectId={projectId}
+              projectName={project?.name || ''}
+              source={source}
+              sourceBusy={sourceBusy}
+              onPickSourceFile={(file) => loadImageSource(() => importImageFile(file), 'Image import failed')}
+              onPickSourceAsset={(asset) => loadImageSource(() => importLibraryImage(asset), 'Could not use that image')}
+              onClearSource={() => setSource(null)}
+              onRunComplete={handleRunComplete}
+              onPendingAdd={addCloudPending}
+              onPendingRemove={removeCloudPending}
+              reuse={reuse && (reuse.entry.module || 'image') === 'image' ? reuse : null}
+            />
           </section>
+          <section className="workspace-panel" hidden={activeModule !== 'mesh'}>
+            <WorkspaceMeshPanel
+              projectId={projectId}
+              projectName={project?.name || ''}
+              source={meshSource}
+              sourceBusy={meshSourceBusy}
+              onSourceChange={setMeshSource}
+              importers={importers}
+              selectedImageEntry={selectedEntry?.asset.type === 'image' ? selectedEntry : null}
+              onRunComplete={handleRunComplete}
+              onGoToImageModule={() => setActiveModule('image')}
+              reuse={reuse?.entry.module === 'mesh' ? reuse : null}
+            />
+          </section>
+          {!['image', 'mesh'].includes(activeModule) && (
+            <section className="workspace-panel">
+              <WorkspaceModuleDraft moduleId={activeModule} />
+            </section>
+          )}
         </div>
 
         <main className="workspace-main">
           <WorkspaceCenterView
             entry={selectedEntry}
             sourceEntry={sourceEntry}
-            emptyTitle={historyLoading ? 'Loading…' : 'Create your first image!'}
-            emptyText={historyLoading ? '' : 'Describe it on the left, or import an image to edit it.'}
+            emptyTitle={historyLoading ? 'Loading…' : emptyState.title}
+            emptyText={historyLoading ? '' : emptyState.text}
             onEdit={editEntry}
+            onMakeMesh={makeMeshFromEntry}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
-            onOpenInEditor={openInImageEditor}
+            onOpenInEditor={openInEditor}
           />
         </main>
 
@@ -279,8 +380,10 @@ export default function WorkspacePage({ project }) {
           onLoadMore={loadMore}
           pendingJobs={pendingJobs}
           selectedEntryId={selectedEntry?.id ?? null}
-          onSelect={(entry) => setSelectedEntryId(entry.id)}
+          onSelect={selectEntry}
           onEdit={editEntry}
+          onMakeMesh={makeMeshFromEntry}
+          onOpenInEditor={openInEditor}
           onRemove={removeEntry}
           onCancelJob={cancelPendingJob}
         />

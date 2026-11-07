@@ -1,8 +1,8 @@
-// The Workspace modules, in rail order. Only Image is built so far; the others
+// The Workspace modules, in rail order. Image and Mesh are built; the others
 // open a draft panel describing what they will do.
 export const WORKSPACE_MODULES = [
   { id: 'image', label: 'Image', icon: 'imagesmode', ready: true },
-  { id: 'mesh', label: 'Mesh', icon: 'deployed_code', ready: false },
+  { id: 'mesh', label: 'Mesh', icon: 'deployed_code', ready: true },
   { id: 'retopo', label: 'Retopo', icon: 'grid_4x4', ready: false },
   { id: 'uv', label: 'UV', icon: 'view_quilt', ready: false },
   { id: 'texture', label: 'Texture', icon: 'texture', ready: false },
@@ -11,16 +11,6 @@ export const WORKSPACE_MODULES = [
 
 // What each module not built yet is going to do, shown in its draft panel.
 export const MODULE_DRAFTS = {
-  mesh: {
-    title: 'Generate Mesh',
-    summary: 'Turn the selected image (or several views) into a 3D model.',
-    points: [
-      'Source image picked from the history, the computer or the Assets library',
-      'Dropdown of the ComfyUI image-to-mesh workflows (Trellis2, Pixal3D, Hunyuan…)',
-      'Face count and texture size as simple controls, the rest under Advanced',
-      'A new mesh is a root asset; a refine of an existing mesh is saved as its version'
-    ]
-  },
   retopo: {
     title: 'Retopology',
     summary: 'Rebuild the selected mesh with clean, lighter topology.',

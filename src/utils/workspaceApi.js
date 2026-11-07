@@ -56,3 +56,11 @@ export async function resolveSourceReference(projectId, type, filePath) {
   const res = await fetch(`${API_BASE}/assets/resolve-source?${query.toString()}`)
   return await readJson(res, 'Failed to resolve the asset')
 }
+
+// Attach a rendered thumbnail to an asset; returns the updated asset view.
+export async function uploadAssetThumbnail(assetId, file) {
+  const form = new FormData()
+  form.append('thumbnail', file)
+  const res = await fetch(`${API_BASE}/assets/${assetId}/thumbnail`, { method: 'POST', body: form })
+  return await readJson(res, 'Failed to save the thumbnail')
+}

@@ -1044,3 +1044,377 @@
     opacity: 0.5;
   }
 }
+
+/* Built panels stay mounted; [hidden] has to beat the panel's display:flex. */
+.workspace-panel[hidden] {
+  display: none;
+}
+
+/* ---- tabs (Mesh: Single Image / Multi-View) ---- */
+
+.workspace-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-container);
+  border: 1px solid var(--outline-variant);
+}
+
+.workspace-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: 500 0.85rem var(--font-label);
+  cursor: pointer;
+}
+
+.workspace-tab .material-symbols-outlined {
+  font-size: 18px;
+}
+
+.workspace-tab--active {
+  background: var(--on-surface);
+  color: var(--background);
+}
+
+/* ---- image slots ---- */
+
+.workspace-slot {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 14px;
+  border: 1px dashed var(--outline-variant);
+  overflow: hidden;
+  background-color: #111214;
+  background-image:
+    linear-gradient(45deg, #17181b 25%, transparent 25%),
+    linear-gradient(-45deg, #17181b 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #17181b 75%),
+    linear-gradient(-45deg, transparent 75%, #17181b 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0;
+  transition: border-color 0.15s;
+}
+
+.workspace-slot--filled {
+  border-style: solid;
+}
+
+.workspace-slot--drag {
+  border-color: var(--primary);
+}
+
+.workspace-slot--disabled {
+  opacity: 0.5;
+}
+
+.workspace-slot__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  color: var(--on-surface-variant);
+  text-align: center;
+  cursor: pointer;
+}
+
+.workspace-slot__empty:hover:not(:disabled) {
+  color: var(--on-surface);
+}
+
+.workspace-slot__icon {
+  font-size: 30px;
+}
+
+.workspace-slot__label {
+  font: 500 0.85rem var(--font-label);
+}
+
+.workspace-slot__hint {
+  max-width: 220px;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: var(--outline);
+}
+
+.workspace-slot__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.workspace-slot__tag {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(13, 14, 16, 0.85);
+  font: 500 0.7rem var(--font-label);
+}
+
+.workspace-slot__clear {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: rgba(13, 14, 16, 0.85);
+  color: var(--on-surface);
+  cursor: pointer;
+}
+
+.workspace-slot__clear .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.workspace-slot__actions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  gap: 6px;
+}
+
+.workspace-slot__action {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--outline-variant);
+  border-radius: 50%;
+  background: var(--surface-container-high);
+  color: var(--on-surface-variant);
+  cursor: pointer;
+}
+
+.workspace-slot__action:hover:not(:disabled) {
+  color: var(--on-surface);
+  background: var(--surface-container-highest);
+}
+
+.workspace-slot__action .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.workspace-slot--small .workspace-slot__icon {
+  font-size: 22px;
+}
+
+.workspace-slot--small .workspace-slot__label {
+  font-size: 0.75rem;
+}
+
+.workspace-slot--small .workspace-slot__empty {
+  justify-content: flex-start;
+  padding-top: 14%;
+}
+
+.workspace-slot--small .workspace-slot__actions {
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  justify-content: center;
+  gap: 4px;
+}
+
+.workspace-slot--small .workspace-slot__action {
+  width: 24px;
+  height: 24px;
+}
+
+.workspace-slot--small .workspace-slot__action .material-symbols-outlined {
+  font-size: 14px;
+}
+
+.workspace-views {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-views > .workspace-slot {
+  aspect-ratio: 4 / 3;
+}
+
+.workspace-views__row {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-link-btn {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font: 500 0.85rem var(--font-label);
+  cursor: pointer;
+}
+
+.workspace-link-btn .material-symbols-outlined {
+  font-size: 18px;
+}
+
+/* ---- 3D stage ---- */
+
+.workspace-center__stage--mesh {
+  padding: 0;
+  background: radial-gradient(ellipse at center, #2a2c30 0%, #141518 75%);
+}
+
+.workspace-center__mesh {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-center__stats {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--on-surface-variant);
+  pointer-events: none;
+}
+
+.workspace-center__stats strong {
+  color: var(--on-surface);
+  font-weight: 600;
+}
+
+/* ---- 3D display toolbar (top of the stage) ---- */
+
+.workspace-viewbar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-radius: var(--radius-full);
+  background: rgba(24, 26, 28, 0.94);
+  border: 1px solid var(--outline-variant);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.workspace-viewbar__btn {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.workspace-viewbar__btn:hover {
+  background: var(--surface-container-highest);
+}
+
+.workspace-viewbar__btn--active,
+.workspace-viewbar__btn--active:hover {
+  background: var(--surface-bright);
+  box-shadow: inset 0 0 0 1px var(--outline);
+}
+
+.workspace-viewbar__btn--dim {
+  opacity: 0.45;
+}
+
+.workspace-viewbar__btn--dim:hover {
+  opacity: 0.8;
+}
+
+.workspace-viewbar__btn .material-symbols-outlined {
+  font-size: 22px;
+}
+
+.workspace-viewbar__divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: var(--outline-variant);
+}
+
+.workspace-viewbar__sphere {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: block;
+}
+
+/* Matte clay. */
+.workspace-viewbar__sphere--solid {
+  background: radial-gradient(circle at 32% 28%, #ffffff 0%, #d7d9dc 30%, #8c8f94 75%, #5d6065 100%);
+}
+
+/* Patterned + lit: the texture under the lights. */
+.workspace-viewbar__sphere--textured {
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 38%),
+    radial-gradient(circle at 70% 75%, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 60%),
+    repeating-linear-gradient(135deg, #e0a03a 0 4px, #b5621f 4px 8px);
+}
+
+/* Normal-map colours. */
+.workspace-viewbar__sphere--normal {
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 35%),
+    conic-gradient(from 200deg, #7f7fff, #ff6fd8, #ff9f7f, #7fffd4, #6fa8ff, #7f7fff);
+}
+
+/* Glossy metal: strong highlight, deep falloff. */
+.workspace-viewbar__sphere--pbr {
+  background: radial-gradient(circle at 30% 26%, #ffffff 0%, #c9ccd1 14%, #6f7378 45%, #2b2d31 80%, #8a8d92 100%);
+}
+
+/* Flat colour, no shading at all. */
+.workspace-viewbar__sphere--unlit {
+  background: #6fd6cf;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.workspace-viewbar__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

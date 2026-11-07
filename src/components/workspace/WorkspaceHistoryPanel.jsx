@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { assetUrl } from '../../config'
 
 const FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'generate', label: 'Generated' },
-  { id: 'edit', label: 'Edited' },
-  { id: 'import', label: 'Imported' }
+  { id: 'all', label: 'All', test: () => true },
+  { id: 'image', label: 'Images', test: entry => entry.asset.type === 'image' },
+  { id: 'mesh', label: 'Meshes', test: entry => entry.asset.type === 'mesh' },
+  { id: 'edit', label: 'Edits', test: entry => entry.action === 'edit' },
+  { id: 'import', label: 'Imports', test: entry => entry.action === 'import' }
 ]
 
 const ACTION_BADGES = {
@@ -31,13 +32,16 @@ export default function WorkspaceHistoryPanel({
   selectedEntryId,
   onSelect,
   onEdit,
+  onMakeMesh,
+  onOpenInEditor,
   onRemove,
   onCancelJob
 }) {
   const [filter, setFilter] = useState('all')
   const [menuEntryId, setMenuEntryId] = useState(null)
 
-  const visible = filter === 'all' ? entries : entries.filter(entry => entry.action === filter)
+  const activeFilter = FILTERS.find(option => option.id === filter) || FILTERS[0]
+  const visible = entries.filter(activeFilter.test)
 
   return (
     <aside className="workspace-history" aria-label="History">
@@ -135,9 +139,21 @@ export default function WorkspaceHistoryPanel({
                 {menuEntryId === entry.id && (
                   <div className="workspace-history__menu" role="menu" onClick={(event) => event.stopPropagation()}>
                     {entry.asset.type === 'image' && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onMakeMesh(entry) }} title="Turn this image into a 3D model">
+                        <span className="material-symbols-outlined">deployed_code</span>
+                        Make 3D
+                      </button>
+                    )}
+                    {entry.asset.type === 'image' && (
                       <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onEdit(entry) }} title="Use this image as the source of an edit">
                         <span className="material-symbols-outlined">edit</span>
                         Edit
+                      </button>
+                    )}
+                    {entry.asset.type === 'mesh' && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onOpenInEditor(entry) }} title="Open in the full Mesh Editor">
+                        <span className="material-symbols-outlined">open_in_new</span>
+                        Mesh Editor
                       </button>
                     )}
                     <a role="menuitem" href={assetUrl(entry.asset.filename)} download onClick={() => setMenuEntryId(null)} title="Download the file">
