@@ -50,7 +50,7 @@ export function normalizeSpec(input) {
   const layerCheck = normalizeLayers(raw.layers, { duration: duration > 0 ? duration : 1, loop: Boolean(raw.loop) });
   errors.push(...layerCheck.errors);
   warnings.push(...layerCheck.warnings);
-  if (!keys.length && !layerCheck.layers.length) errors.push('Give at least one key ({ "time": 0, "pose": { ... } }) or one layer ({ "type": "gait" }).');
+  if (!keys.length && !layerCheck.layers.length && !raw.base) errors.push('Give at least one key ({ "time": 0, "pose": { ... } }), one layer ({ "type": "gait" }) or a base clip.');
 
   const outKeys = [];
   keys.forEach((key, i) => {
@@ -109,6 +109,23 @@ export function normalizeSpec(input) {
     keys: outKeys
   };
   if (layerCheck.layers.length) spec.layers = layerCheck.layers;
+  if (raw.base !== undefined && raw.base !== null) {
+    const b = raw.base;
+    if (typeof b !== 'object' || (!b.library && !b.assetId) || !b.clip) {
+      errors.push('"base" must be { "library": "<species>" or "assetId": <id>, "clip": "<clip name>" }.');
+    } else {
+      spec.base = {
+        ...(b.library ? { library: String(b.library) } : { assetId: Number(b.assetId) }),
+        clip: String(b.clip),
+        ...(b.chainMap && typeof b.chainMap === 'object' ? { chainMap: b.chainMap } : {}),
+        ...(b.boneMap && typeof b.boneMap === 'object' ? { boneMap: b.boneMap } : {}),
+        matchRestPose: b.matchRestPose !== false,
+        groundAlign: b.groundAlign !== false,
+        speed: Number.isFinite(Number(b.speed)) && Number(b.speed) > 0 ? Number(b.speed) : 1,
+        offset: Number.isFinite(Number(b.offset)) ? Number(b.offset) : 0
+      };
+    }
+  }
   if (raw.description) spec.description = String(raw.description).slice(0, 500);
   return { spec, errors, warnings };
 }
@@ -208,7 +225,9 @@ export function poseInputsAt(spec, channels, t) {
  * rotations: Map(jointIndex -> Float32Array xyzw per frame), translation:
  * { joint, values: Float32Array } | null }.
  */
-export function compileSpec(ctx, spec) {
+// options.base: { sample(t) -> { rot, rootT } } - a retargeted clip to build
+// on (see retarget.js); keys and layers then add on top of it.
+export function compileSpec(ctx, spec, { base = null } = {}) {
   const { rig } = ctx;
   const channels = collectChannels(spec);
   const holdWarnings = singleKeyWarnings(spec, channels);
@@ -249,7 +268,7 @@ export function compileSpec(ctx, spec) {
   // (measured: a 42-51 degree hock flip on the closing frame of a horse walk;
   // a quarter-cycle pre-roll was not enough - IK is path dependent).
   if (spec.loop && usesIk) {
-    for (let f = 0; f < frameCount - 1; f += 1) buildPose(ctx, { ...inputsAt(evalTimes[f]), warm });
+    for (let f = 0; f < frameCount - 1; f += 1) buildPose(ctx, { ...inputsAt(evalTimes[f]), warm, base: base ? base.sample(evalTimes[f]) : null });
   }
 
   const results = [];
@@ -257,7 +276,7 @@ export function compileSpec(ctx, spec) {
     // The closing frame of a loop IS the first frame - the same object, not
     // re-solved, so the seam is exact even where IK converges differently.
     const closing = spec.loop && f === frameCount - 1 && f > 0;
-    const result = closing ? firstResult : buildPose(ctx, { ...inputsAt(evalTimes[f]), warm });
+    const result = closing ? firstResult : buildPose(ctx, { ...inputsAt(evalTimes[f]), warm, base: base ? base.sample(evalTimes[f]) : null });
     if (f === 0) firstResult = result;
     for (const w of result.warnings) warnings.add(w);
     results.push(result);

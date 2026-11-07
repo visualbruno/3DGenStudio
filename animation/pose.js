@@ -51,8 +51,14 @@ export function createPoseContext(rig, description) {
     // For IK the chain ends at its last bone that MOVES VERTICES: end-marker
     // bones (Front_Leg_Tip_L, *_leaf) are weightless, and locking one as the
     // "foot" leaves the real foot to the solver, which folds it.
+    // ...but only a SHORT marker: on a rigid robot the unweighted end joint is
+    // the tip of the whole shin, and trimming it left the solver placing the
+    // knee where the foot should go.
     const ikJoints = joints.slice();
-    while (ikJoints.length > 2 && !(weightedOf.get(rig.joints[ikJoints[ikJoints.length - 1]].name) > 0)) ikJoints.pop();
+    const segLen = (a, b) => P[a].distanceTo(P[b]);
+    const chainLen = joints.slice(1).reduce((s2, j, i) => s2 + segLen(j, joints[i]), 0);
+    while (ikJoints.length > 3 && !(weightedOf.get(rig.joints[ikJoints[ikJoints.length - 1]].name) > 0)
+      && segLen(ikJoints[ikJoints.length - 1], ikJoints[ikJoints.length - 2]) < 0.25 * chainLen) ikJoints.pop();
     return [c.label, { ...c, joints, ikJoints }];
   }));
   const jointChainLabel = description.jointChain;
@@ -215,7 +221,11 @@ export function controlRotation(ctx, joint, dir, controls, share = 1) {
  * { targets: {target: controls}, root: {...}, ik: {chain: {forward, up, left}} }.
  * Returns { pose, localRot (Quaternion[] by joint), rootTranslation, warnings, ikReport }.
  */
-export function buildPose(ctx, { targets = {}, root = null, ik = null, warm = null } = {}) {
+// `base` (optional) is a pose to build ON: { rot: (Quaternion|null)[] local per
+// joint, rootT: Vector3|null } - a retargeted clip's frame. Controls then add
+// to the base instead of to the rest pose (still measured in the rest frame,
+// which is what "add a tail wag on top" needs).
+export function buildPose(ctx, { targets = {}, root = null, ik = null, warm = null, base = null } = {}) {
   const { rig } = ctx;
   const warnings = [];
   // Accumulate world deltas per joint (several targets may hit one bone).
@@ -251,7 +261,7 @@ export function buildPose(ctx, { targets = {}, root = null, ik = null, warm = nu
   }
 
   const localRot = rig.joints.map((joint, j) => {
-    const rest = rig.nodes[joint.node].rest.r;
+    const rest = (base && base.rot && base.rot[j]) || rig.nodes[joint.node].rest.r;
     const qw = ctx.restWorldRot[j];
     // local = rest * (qw^-1 * D * qw)
     const local = qw.clone().invert().multiply(delta[j]).multiply(qw);
@@ -260,12 +270,15 @@ export function buildPose(ctx, { targets = {}, root = null, ik = null, warm = nu
 
   const pose = new Map();
   rig.joints.forEach((joint, j) => pose.set(joint.node, { r: localRot[j] }));
-  if (rootTranslation) {
+  if (rootTranslation || (base && base.rootT)) {
     const node = rig.nodes[rig.joints[ctx.skeletonRoot].node];
-    const parentWorld = node.parent >= 0 ? computeNodeWorlds(rig, null)[node.parent] : new THREE.Matrix4();
-    const inv = new THREE.Matrix3().setFromMatrix4(parentWorld).invert();
-    const localOffset = rootTranslation.clone().applyMatrix3(inv);
-    pose.get(node.index).t = node.rest.t.clone().add(localOffset);
+    const start = (base && base.rootT) ? base.rootT.clone() : node.rest.t.clone();
+    if (rootTranslation) {
+      const parentWorld = node.parent >= 0 ? computeNodeWorlds(rig, null)[node.parent] : new THREE.Matrix4();
+      const inv = new THREE.Matrix3().setFromMatrix4(parentWorld).invert();
+      start.add(rootTranslation.clone().applyMatrix3(inv));
+    }
+    pose.get(node.index).t = start;
   }
 
   let ikReport = null;
@@ -325,7 +338,10 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
     if (!offset || typeof offset !== 'object') continue;
     const joints = chain.ikJoints;
     const n = joints.length;
-    const lockFoot = n >= 3;
+    // Lock the last segment only when it is FOOT-sized: a hoof or a toe. A
+    // two-segment leg whose last segment is the whole shin must bend there.
+    const ikLen = joints.slice(1).reduce((s2, j, i) => s2 + P[j].distanceTo(P[joints[i]]), 0);
+    const lockFoot = n >= 3 && P[joints[n - 1]].distanceTo(P[joints[n - 2]]) < 0.35 * ikLen;
     // Effector: the ankle (start of the last segment) when the foot is locked.
     const effector = lockFoot ? joints[n - 2] : joints[n - 1];
     const solveCount = lockFoot ? n - 2 : n - 1; // joints[0 .. solveCount-1] rotate

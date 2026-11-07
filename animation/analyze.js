@@ -202,7 +202,13 @@ export function describeRig(rig, profile = null) {
   for (let j = 0; j < n; j += 1) {
     const all = subtreeOf(rig, j);
     const rel = all.filter(k => relevant[k]);
-    if (rel.length && rel.every(k => paired(k) || (k === j))) subtreePaired[j] = rel.some(k => paired(k)) ? 1 : 0;
+    // ...but only when the pairs are all on ONE side. A joint whose subtree holds
+    // both legs of a pair is a girdle (a rigid robot's pelvis, parent of
+    // nothing but its two legs), not the start of a limb.
+    if (rel.length && rel.every(k => paired(k) || (k === j))) {
+      const sides = new Set(rel.filter(k => paired(k)).map(k => Math.sign(lateralOf(P[k]))));
+      subtreePaired[j] = sides.size === 1 ? 1 : 0;
+    }
   }
 
   // ---- trunk: the longest path through central joints ------------------
@@ -452,7 +458,9 @@ export function describeRig(rig, profile = null) {
       // a spider's legs sprawl sideways and still stand on the floor.
       const attachHeight = P[b.attach][1] - groundY;
       if (b.tipHeight < 0.18 * bodyHeight && b.drop > 0.5 * attachHeight) b.kind = 'leg';
-      else if (trunkVertical && b.along > 0.45 && b.along < 0.9) b.kind = 'arm';
+      // Upright: arms hang off the upper trunk. 0.3, not higher - a rigid robot's
+      // shoulders sit on its torso joint, mid-trunk.
+      else if (trunkVertical && b.along > 0.3 && b.along < 0.9) b.kind = 'arm';
       else if (b.reach > 0.3 * Math.max(bodyLength, bodyHeight) && b.tipHeight > 0.18 * bodyHeight && b.along > 0.25 && b.along < 0.85) b.kind = 'wing';
       else if (b.along > 0.85) b.kind = 'head_appendage';
       else b.kind = 'arm_candidate';

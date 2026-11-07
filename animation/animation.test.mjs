@@ -12,11 +12,14 @@ import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import { loadRig, skinPositions, computeNodeWorlds } from './gltfRig.js';
 import { describeRig } from './analyze.js';
-import { inspectRig } from './inspect.js';
+import { inspectRig, deformationTest } from './inspect.js';
 import { createPoseContext, buildPose } from './pose.js';
 import { normalizeSpec, compileSpec, analyzeMotion, sampleChannel } from './compile.js';
 import { writeClip, listClips, clipSampler, removeClip } from './glbAnimation.js';
-import { openRig, renderRigViews, previewSpec } from './index.js';
+import { openRig, renderRigViews, previewSpec, buildBase, buildLibraryDocument } from './index.js';
+import { renameBones, namingScheme, addBone, splitBone, smoothWeights, rebuildWeights } from './rigEdit.js';
+import { mapRigs } from './retarget.js';
+import { readStaticMesh, soupGlb, islandLabels, planRigidRig, buildRigidRig } from './rigid.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = name => fs.readFileSync(path.join(ROOT, 'resources', 'animations', `${name}-animations.glb`));
@@ -346,6 +349,137 @@ test('spring layer: the tail lags behind a turning body and the loop still close
   assert.ok(at(stiff, 8).distanceTo(at(floppy, 8)) > 0.02, 'the spring changes the tail');
   assert.ok(stiff.clip.rotations.size < floppy.clip.rotations.size || floppy.clip.rotations.has(tip));
   assert.ok(analyzeMotion(ctx, floppy).loopSeamDeg < 0.5);
+});
+
+// ---- phase 3: rig prep, retargeting, library, rigid rigs ------------------------------
+
+const restError = (buffer) => {
+  const r = loadRig(buffer);
+  const p = skinPositions(r, null);
+  let e = 0;
+  for (let i = 0; i < p.length; i += 1) e = Math.max(e, Math.abs(p[i] - r.geometry.positions[i]));
+  return e;
+};
+
+test('rename: semantic names keep every chain label; mixamo is refused on a quadruped', () => {
+  const { buffer, rig, description } = get('fox');
+  const map = namingScheme(rig, description, 'semantic');
+  const out = renameBones(buffer, map);
+  assert.ok(out.renamed.length > 30);
+  const d2 = describeRig(loadRig(out.buffer));
+  assert.deepEqual(d2.chains.map(c => c.label), description.chains.map(c => c.label));
+  assert.throws(() => namingScheme(rig, description, 'mixamo'), /humanoid/);
+});
+
+test('rename: mixamo names a humanoid hand thumb-first and the arm from the hand back', () => {
+  const { rig, description } = get('human-base');
+  const m = namingScheme(rig, description, 'mixamo');
+  assert.equal(m.pelvis, 'mixamorig:Hips');
+  assert.equal(m.hand_l, 'mixamorig:LeftHand');
+  assert.equal(m.thumb_01_l, 'mixamorig:LeftHandThumb1');
+  assert.equal(m.index_01_l, 'mixamorig:LeftHandIndex1');
+  assert.equal(m.thigh_r, 'mixamorig:RightUpLeg');
+});
+
+test('add_bone / split_bone keep the rest pose exact and the new bones move vertices', () => {
+  const { buffer, rig } = get('fox');
+  const tip = new THREE.Vector3().setFromMatrixPosition(rig.inverseBind[rig.jointByName.get('Tail_End')].clone().invert());
+  const mid = new THREE.Vector3().setFromMatrixPosition(rig.inverseBind[rig.jointByName.get('Tail_Mid.001')].clone().invert());
+  const added = addBone(buffer, { parent: 'Tail_End', name: 'Tail_Extra', position: tip.clone().add(tip.clone().sub(mid).multiplyScalar(0.6)) });
+  assert.ok(added.moved > 0);
+  assert.ok(restError(added.buffer) < 1e-4);
+  const split = splitBone(buffer, { bone: 'Tail_Base', parts: 3 });
+  assert.equal(split.added.length, 2);
+  assert.ok(restError(split.buffer) < 1e-4);
+  const r = loadRig(split.buffer);
+  assert.equal(r.joints[r.joints[r.jointByName.get(split.child)].parent].name, split.added[1], 'child re-parented under the last new bone');
+  const ctx = createPoseContext(r, describeRig(r));
+  const moved = skinPositions(r, buildPose(ctx, { targets: { [split.added[0]]: { left: 40 } } }).pose);
+  let mv = 0;
+  for (let i = 0; i < moved.length; i += 1) mv = Math.max(mv, Math.abs(moved[i] - r.geometry.positions[i]));
+  assert.ok(mv > 0.1, `new joint moves the tail (${mv})`);
+});
+
+test('rebind_weights: smoothing and rebuilding keep the rest pose; rebuild never leaks across the body', () => {
+  const { buffer, rig, description } = get('fox');
+  assert.ok(restError(smoothWeights(buffer, { iterations: 2 }).buffer) < 1e-4);
+  const rebuilt = rebuildWeights(buffer, { description });
+  assert.ok(restError(rebuilt.buffer) < 1e-4);
+  const r = loadRig(rebuilt.buffer);
+  const leaks = inspectRig(r, describeRig(r), { deformation: false }).issues.filter(i => i.check === 'weights');
+  assert.equal(leaks.length, 0, JSON.stringify(leaks));
+  assert.ok(rebuilt.bonesUsed > 20);
+  assert.ok(rig.joints.length === r.joints.length, 'skeleton unchanged');
+});
+
+test('deformation test: hand-made reference rigs pass', () => {
+  for (const name of ['fox', 'human-base', 'spider']) {
+    const { rig, description } = get(name);
+    const d = deformationTest(rig, description);
+    assert.ok(d.tested > 10);
+    assert.ok(!d.problems.some(p => p.severity === 'warning'), `${name}: ${JSON.stringify(d.problems.slice(0, 2))}`);
+  }
+});
+
+test('retarget by body chains: horse clip onto the fox, across names and bone counts', () => {
+  const target = { rig: get('fox').rig, description: get('fox').description };
+  const source = openRig(fixture('horse'));
+  const base = buildBase(target, source, { clip: 'Walk' }, { loop: true });
+  assert.ok(base.report.mappedBones > 30);
+  assert.ok(base.report.chains.some(c => c.target === 'leg_front_L' && c.source === 'leg_front_L'));
+  const r = previewSpec(target.rig, target.description, { name: 'w', duration: base.duration, loop: true, base: { library: 'horse', clip: 'Walk' } }, { frames: 2 }, { base });
+  assert.ok(r.analysis.animatedBones > 20);
+  assert.ok(Math.abs(r.analysis.lowestPoint) < 0.02, `floor alignment: lowest ${r.analysis.lowestPoint}`);
+});
+
+test('retarget chainMap: four spider leg pairs fall back onto two fox leg pairs by order', () => {
+  const target = { rig: get('spider').rig, description: get('spider').description };
+  const source = { rig: get('fox').rig, description: get('fox').description };
+  const { chains } = mapRigs(source, source.description, target, target.description);
+  const legs = Object.fromEntries(chains.filter(c => c.target.startsWith('leg_')).map(c => [c.target, c.source]));
+  assert.equal(legs.leg_1_L, 'leg_front_L');
+  assert.equal(legs.leg_4_L, 'leg_hind_L');
+  assert.throws(() => mapRigs(source, source.description, target, target.description, { chainMap: { tail: 'nope' } }), /no chain "nope"/);
+});
+
+test('library document: version 2, pre-order bones, sanitised node-name tracks', () => {
+  const { buffer, rig, description } = get('fox');
+  const ctx = createPoseContext(rig, description);
+  const { spec } = normalizeSpec(WAG);
+  const out = writeClip(buffer, rig, compileSpec(ctx, spec).clip, { spec });
+  const r = loadRig(out);
+  const idx = listClips(out).find(c => c.name === 'wag').index;
+  const doc = buildLibraryDocument(r, idx);
+  assert.equal(doc.version, 2);
+  assert.equal(doc.bones[0].parent, -1);
+  assert.ok(doc.bones.every((b, i) => b.parent < i), 'parents precede children');
+  assert.ok(doc.clip.tracks.every(t => /\.(quaternion|position)$/.test(t.name)));
+  assert.ok(doc.clip.tracks.some(t => t.name === 'Tail_Mid001.quaternion'), 'names sanitised like GLTFLoader ("Tail_Mid.001" -> "Tail_Mid001")');
+});
+
+test('rigid rig: separate box parts become a hinged skeleton that walks', () => {
+  const box = (cx, cy, cz, sx, sy, sz) => {
+    const g = new THREE.BoxGeometry(sx, sy, sz).translate(cx, cy, cz);
+    return { p: Float32Array.from(g.attributes.position.array), i: Uint32Array.from(g.index.array) };
+  };
+  const boxes = [box(0, 1.25, 0, 0.6, 0.7, 0.35), box(0, 0.85, 0, 0.5, 0.12, 0.3), box(0, 1.74, 0, 0.3, 0.28, 0.3),
+    box(0.15, 0.58, 0, 0.2, 0.42, 0.2), box(0.15, 0.2, 0, 0.18, 0.38, 0.18), box(-0.15, 0.58, 0, 0.2, 0.42, 0.2), box(-0.15, 0.2, 0, 0.18, 0.38, 0.18)];
+  let vo = 0;
+  const pos = [];
+  const idx = [];
+  for (const b of boxes) { pos.push(...b.p); idx.push(...Array.from(b.i, k => k + vo)); vo += b.p.length / 3; }
+  const glb = soupGlb({ positions: Float32Array.from(pos), indices: Uint32Array.from(idx), vertexCount: vo });
+  const mesh = readStaticMesh(glb);
+  const plan = planRigidRig(mesh, islandLabels(mesh));
+  assert.equal(plan.parts.length, 7);
+  const { buffer } = buildRigidRig(mesh, plan);
+  assert.ok(restError(buffer) < 1e-5);
+  const { rig, description } = openRig(buffer);
+  assert.equal(description.chains.filter(c => c.kind === 'leg').length, 2, JSON.stringify(description.chains.map(c => c.label)));
+  const r = previewSpec(rig, description, { name: 'w', duration: 1, loop: true, layers: [{ type: 'gait' }] }, { frames: 1 });
+  assert.equal(r.analysis.pops.length, 0);
+  assert.ok(Object.values(r.analysis.contacts).every(c => c.treadmillSpeed), JSON.stringify(r.analysis.contacts));
+  assert.throws(() => readStaticMesh(fixture('fox')), /already rigged/);
 });
 
 test('rig views render a PNG with a legend', () => {

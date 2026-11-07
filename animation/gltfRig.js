@@ -216,7 +216,10 @@ function collectGeometry(rig) {
         for (let i = 0; i < count; i += 1) indices[i] = i;
       }
 
-      parts.push({ positions, joints: jointsOut, weights: weightsOut, indices, skinned, rigid: rigidJoint >= 0 });
+      parts.push({
+        positions, joints: jointsOut, weights: weightsOut, indices, skinned, rigid: rigidJoint >= 0,
+        nodeIndex, meshIndex: rawNode.mesh, primitiveIndex: (mesh.primitives || []).indexOf(primitive), remapped: Boolean(remap)
+      });
       vertexCount += count;
       triangleCount += Math.floor(indices.length / 3);
     }
@@ -230,7 +233,14 @@ function collectGeometry(rig) {
   let vOff = 0;
   let iOff = 0;
   let rigidParts = 0;
+  // Where each primitive's vertices sit in the merged arrays, so an edit to
+  // the merged weights can be written back primitive by primitive.
+  const ranges = [];
   for (const part of parts) {
+    ranges.push({
+      nodeIndex: part.nodeIndex, meshIndex: part.meshIndex, primitiveIndex: part.primitiveIndex,
+      offset: vOff, count: part.positions.length / 3, skinned: part.skinned, remapped: part.remapped, rigid: part.rigid
+    });
     positions.set(part.positions, vOff * 3);
     joints.set(part.joints, vOff * 4);
     weights.set(part.weights, vOff * 4);
@@ -245,7 +255,7 @@ function collectGeometry(rig) {
   }
 
   return {
-    positions, joints, weights, indices, vertexCount, triangleCount, rigidMask,
+    positions, joints, weights, indices, vertexCount, triangleCount, rigidMask, ranges,
     rigidParts, skippedPrimitives, previewDecimation: triangleCount > MAX_PREVIEW_TRIANGLES
       ? Math.ceil(triangleCount / MAX_PREVIEW_TRIANGLES) : 1
   };

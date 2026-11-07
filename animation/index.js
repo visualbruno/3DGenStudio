@@ -12,6 +12,10 @@ import { normalizeSpec, compileSpec, analyzeMotion } from './compile.js';
 import { writeClip, removeClip, listClips, listClipsInJson, clipSampler } from './glbAnimation.js';
 import { viewBasis, viewExtent, renderTile, composeGrid, PALETTE } from './render.js';
 import * as THREE from 'three';
+import { mapRigs, createRetarget, MOTION_LIBRARY } from './retarget.js';
+import { buildLibraryDocument } from './library.js';
+
+export { MOTION_LIBRARY, buildLibraryDocument };
 
 export { normalizeSpec, listClips, listClipsInJson, inspectRig };
 
@@ -109,7 +113,7 @@ function renderPoses(rig, description, poses, times, { frames = 8, views = ['lef
 }
 
 /** Compile a spec and render a filmstrip of it, with motion checks. */
-export function previewSpec(rig, description, rawSpec, options = {}) {
+export function previewSpec(rig, description, rawSpec, options = {}, { base = null } = {}) {
   const { spec, errors, warnings } = normalizeSpec(rawSpec);
   if (errors.length) {
     const err = new Error(`The spec is invalid:\n- ${errors.join('\n- ')}`);
@@ -117,7 +121,7 @@ export function previewSpec(rig, description, rawSpec, options = {}) {
     throw err;
   }
   const ctx = createPoseContext(rig, description);
-  const compiled = compileSpec(ctx, spec);
+  const compiled = compileSpec(ctx, spec, { base });
   const analysis = analyzeMotion(ctx, compiled);
   const render = renderPoses(rig, description, compiled.poses, compiled.clip.times, options);
   return { spec, png: render.png, frames: render.frames, analysis, warnings: [...warnings, ...compiled.warnings] };
@@ -153,11 +157,11 @@ export function previewPose(rig, description, { pose = {}, root = null, ik = nul
  * Compile a spec and write it into the GLB as a clip (replacing a clip of the
  * same name). Returns { buffer, spec, analysis, warnings }.
  */
-export function bakeSpec(buffer, rig, description, rawSpec) {
+export function bakeSpec(buffer, rig, description, rawSpec, { base = null } = {}) {
   const { spec, errors, warnings } = normalizeSpec(rawSpec);
   if (errors.length) throw new Error(`The spec is invalid:\n- ${errors.join('\n- ')}`);
   const ctx = createPoseContext(rig, description);
-  const compiled = compileSpec(ctx, spec);
+  const compiled = compileSpec(ctx, spec, { base });
   const analysis = analyzeMotion(ctx, compiled);
   const out = writeClip(buffer, rig, compiled.clip, { spec });
   return { buffer: out, spec, analysis, warnings: [...warnings, ...compiled.warnings] };
@@ -199,4 +203,61 @@ export function summarizeDescription(description, { bones = false } = {}) {
     out.positionAxes = 'position = [forward, up, left] in model units from the ground point under the body centre';
   }
   return out;
+}
+
+/**
+ * Build the retargeted base a spec plays on. `source` is { rig, description }
+ * of the rig the clip lives on (a library species or another asset), `base`
+ * the spec's base block. Returns { sample, duration, report }.
+ */
+export function buildBase(target, source, base, { loop = false } = {}) {
+  const clips = listClipsInJson(source.rig.json);
+  const wanted = String(base.clip).toLowerCase();
+  const clip = clips.find(c => c.name === base.clip) || clips.find(c => c.name.toLowerCase() === wanted);
+  if (!clip) throw new Error(`The source has no clip "${base.clip}". Its clips: ${clips.map(c => c.name).join(', ')}.`);
+  const sampler = clipSampler(source.rig, clip.index);
+  const { mapping, chains, unmatched } = mapRigs(source, source.description, target, target.description, base);
+  if (!mapping.size) throw new Error('No chain of this rig matches the source rig - pass base.chainMap, e.g. {"leg_1_L": "leg_front_L"}.');
+  const speed = base.speed || 1;
+  const offset = base.offset || 0;
+  const dur = sampler.duration;
+  const poseAt = (t) => {
+    let st = t * speed + offset;
+    st = loop ? (((st % dur) + dur) % dur) : Math.min(dur, Math.max(0, st));
+    return sampler.sample(st);
+  };
+  const rt = createRetarget(source, source.description, target, target.description, mapping, poseAt, { matchRestPose: base.matchRestPose !== false });
+  // Floor alignment (default on): proportions differ, so a borrowed gait can
+  // float or sink (a fox walk put a horse 7.7 cm in the air). Measure the
+  // lowest point over the clip and shift the body so it touches the floor -
+  // one constant, the same "auto-align to floor" the editor applies.
+  let groundShift = 0;
+  if (base.groundAlign !== false) {
+    const ctx = createPoseContext(target.rig, target.description);
+    const scratch = new Float32Array(target.rig.geometry.positions.length);
+    const stride = 3 * Math.max(1, Math.floor(target.rig.geometry.vertexCount / 8000));
+    let lowest = Infinity;
+    for (let k = 0; k < 12; k += 1) {
+      const pose = buildPose(ctx, { base: rt.sample((k / 12) * (dur / speed)) }).pose;
+      const pos = skinPositions(target.rig, pose, scratch);
+      for (let i = 1; i < pos.length; i += stride) if (pos[i] < lowest) lowest = pos[i];
+    }
+    if (Number.isFinite(lowest)) {
+      groundShift = target.description.size.groundY - lowest;
+      rt.setGroundOffset(groundShift);
+    }
+  }
+  return {
+    sample: rt.sample,
+    duration: Math.round((dur / speed) * 1000) / 1000,
+    report: {
+      sourceClip: clip.name,
+      sourceDuration: Math.round(dur * 1000) / 1000,
+      chains,
+      unmatchedTargetChains: unmatched,
+      mappedBones: mapping.size,
+      ...(groundShift ? { floorShift: Math.round(groundShift * 1000) / 1000 } : {}),
+      ...rt.report
+    }
+  };
 }

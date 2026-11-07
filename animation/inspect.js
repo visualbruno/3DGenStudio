@@ -8,6 +8,8 @@
 import * as THREE from 'three';
 import { restJointWorlds } from './gltfRig.js';
 import { weightedJointCounts } from './analyze.js';
+import { createPoseContext, buildPose } from './pose.js';
+import { skinPositions } from './gltfRig.js';
 
 const SIDE_LEFT = /(^|[^a-z])(left|l)([^a-z]|$)|Left|[a-z0-9]L$|_l$|\.l$|_L$|\.L$/;
 const SIDE_RIGHT = /(^|[^a-z])(right|r)([^a-z]|$)|Right|[a-z0-9]R$|_r$|\.r$|_R$|\.R$/;
@@ -28,7 +30,7 @@ function nameSide(name) {
  * Inspect a rig. Returns { verdict, issues[], stats }. Each issue:
  * { severity: 'error'|'warning'|'info', check, message, fixTool?, fixArgs? }.
  */
-export function inspectRig(rig, description) {
+export function inspectRig(rig, description, { deformation = true } = {}) {
   const issues = [];
   const add = (severity, check, message, fix = {}) => issues.push({ severity, check, message, ...fix });
   const n = rig.joints.length;
@@ -177,6 +179,16 @@ export function inspectRig(rig, description) {
   const generic = description.chains.filter(c => ['appendage', 'extra'].includes(c.kind));
   if (generic.length) add('info', 'labels', `${generic.length} chain(s) got generic labels (${generic.map(c => c.label).slice(0, 6).join(', ')}). Rename them with annotate_rig { chainRenames } so poses read naturally.`, { fixTool: 'annotate_rig' });
 
+  // ---- deformation ------------------------------------------------------------------------
+  let deform = null;
+  if (deformation) {
+    deform = deformationTest(rig, description);
+    for (const r of deform.problems.slice(0, 6)) {
+      add(r.severity, 'deformation', r.message, { fixTool: 'rebind_weights', fixArgs: { mode: 'smooth', bones: [r.bone] } });
+    }
+    if (deform.skipped) add('info', 'deformation', deform.skipped);
+  }
+
   const order = { error: 0, warning: 1, info: 2 };
   issues.sort((a, b) => order[a.severity] - order[b.severity]);
   const errors = issues.filter(i => i.severity === 'error').length;
@@ -190,7 +202,89 @@ export function inspectRig(rig, description) {
       vertices: vertexCount,
       triangles: rig.geometry.triangleCount,
       unskinnedVertices: unskinned,
-      roots
+      roots,
+      ...(deform && !deform.skipped ? { jointsBendTested: deform.tested } : {})
     }
   };
+}
+
+/**
+ * Bend (and, on limbs, twist) each important joint and measure what the
+ * surface around it does - the check an animator makes by grabbing a bone and
+ * wiggling it. Triangles that stretch several times their length or fold flat
+ * mean the weights change too sharply at that joint (or a vertex belongs to
+ * the wrong bone); either shows as tearing or pinching the moment the clip
+ * plays.
+ */
+export function deformationTest(rig, description, { angle = 45, twist = 45, maxJoints = 28 } = {}) {
+  const g = rig.geometry;
+  if (g.vertexCount > 200000) {
+    return { tested: 0, problems: [], skipped: `Deformation test skipped: ${g.vertexCount} vertices is too many to bend-test quickly. Decimate a copy to test it.` };
+  }
+  const ctx = createPoseContext(rig, description);
+  const kinds = ['leg', 'arm', 'wing', 'neck', 'tail', 'spine', 'head', 'body'];
+  const priority = { leg: 0, arm: 0, wing: 1, neck: 2, tail: 3, spine: 3, head: 4, body: 3 };
+  const weighted = weightedJointCounts(rig);
+  const candidates = [];
+  for (const chain of description.chains) {
+    if (!kinds.includes(chain.kind)) continue;
+    chain.bones.forEach((name, i) => {
+      const j = rig.jointByName.get(name);
+      if (j === undefined || rig.joints[j].parent < 0 || !(weighted[j] > 0)) return;
+      if (i === 0 && ['spine', 'body'].includes(chain.kind)) return; // the hips move everything
+      // A limb's first bone is its anchor (pelvis, scapula, collar): bending
+      // it swings the whole limb out of the body and stretches the hip skin on
+      // ANY rig - the hand-made reference rigs fail it as much as bad ones.
+      if (i === 0 && ['leg', 'arm', 'wing'].includes(chain.kind)) return;
+      candidates.push({ j, chain, limb: ['leg', 'arm', 'wing'].includes(chain.kind) });
+    });
+  }
+  candidates.sort((a, b) => priority[a.chain.kind] - priority[b.chain.kind]);
+  const tests = candidates.slice(0, maxJoints);
+
+  // Triangle edges per joint region (vertices the joint or its parent holds).
+  const tri = g.indices;
+  const rest = g.positions;
+  const edgeLen = (pos, a, b) => Math.hypot(pos[a * 3] - pos[b * 3], pos[a * 3 + 1] - pos[b * 3 + 1], pos[a * 3 + 2] - pos[b * 3 + 2]);
+  const holds = (v, set) => { for (let k = 0; k < 4; k += 1) if (set.has(g.joints[v * 4 + k]) && g.weights[v * 4 + k] > 0.05) return true; return false; };
+  const scratch = new Float32Array(rest.length);
+  const problems = [];
+  for (const { j, chain, limb } of tests) {
+    const region = new Set([j, rig.joints[j].parent]);
+    const edges = [];
+    for (let t = 0; t + 2 < tri.length; t += 3 * g.previewDecimation) {
+      const a = tri[t], b = tri[t + 1], c = tri[t + 2];
+      if (!(holds(a, region) || holds(b, region) || holds(c, region))) continue;
+      for (const [x, y] of [[a, b], [b, c], [c, a]]) {
+        const l = edgeLen(rest, x, y);
+        if (l > 1e-9) edges.push([x, y, l]);
+      }
+    }
+    if (edges.length < 6) continue;
+    const dir = ctx.boneDir[j];
+    const control = Math.abs(dir.dot(ctx.F)) > 0.85 ? 'up' : 'forward';
+    const trials = [{ label: `bending it ${angle} degrees`, controls: { [control]: angle } }];
+    if (limb) trials.push({ label: `twisting it ${twist} degrees`, controls: { twist } });
+    for (const trial of trials) {
+      const { pose } = buildPose(ctx, { targets: { [rig.joints[j].name]: trial.controls } });
+      const posed = skinPositions(rig, pose, scratch);
+      const ratios = edges.map(([x, y, l]) => edgeLen(posed, x, y) / l).sort((p, q) => p - q);
+      const hi = ratios[Math.floor(0.99 * (ratios.length - 1))];
+      const lo = ratios[Math.floor(0.01 * (ratios.length - 1))];
+      // Thresholds calibrated on the hand-made mesh2motion rigs, which stay
+      // under ~2.5x / over ~0.25x at 45 degrees.
+      if (hi > 2.6 || lo < 0.22) {
+        const what = hi > 2.6 ? `stretches triangles to ${hi.toFixed(1)}x their length` : `folds triangles to ${lo.toFixed(2)}x`;
+        problems.push({
+          bone: rig.joints[j].name,
+          chain: chain.label,
+          severity: hi > 4 || lo < 0.12 ? 'warning' : 'info',
+          score: Math.max(hi / 2.6, 0.22 / Math.max(lo, 1e-3)),
+          message: `${trial.label === `bending it ${angle} degrees` ? 'Bending' : 'Twisting'} ${rig.joints[j].name} (${chain.label}) ${trial.label.replace(/^(bending|twisting) it /, '')} ${what} around the joint - the weights change too sharply there (or some vertices belong to the wrong bone). Smooth them with rebind_weights.`
+        });
+      }
+    }
+  }
+  problems.sort((a, b) => b.score - a.score);
+  return { tested: tests.length, problems };
 }

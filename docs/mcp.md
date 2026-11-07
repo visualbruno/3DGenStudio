@@ -123,7 +123,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Procedural trees | `list_tree_presets`, `preview_tree_skeleton`, `generate_tree` |
 | Particle effects | `describe_vfx_catalog`, `list_vfx_assets`, `get_vfx_graph`, `compile_vfx_graph`, `list_vfx_sprites`, `install_vfx_sprite`, `set_vfx_texture`, `render_vfx_preview`, `save_vfx_graph`, `export_vfx_bundle` |
 | Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `add_building_wing`, `save_building` |
-| Animation (any rigged mesh) | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation` |
+| Animation (any rigged mesh) | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation`, `list_motion_library`, `publish_animation`; rig prep: `rebind_weights`, `rename_bones`, `add_bone`, `split_bone`, `rig_rigid_parts` |
 | System | `get_settings` (secrets redacted), `update_settings`, `get_system_stats` |
 
 ### Context cost and loading only the groups you need
@@ -265,6 +265,16 @@ Humanoids are well served by motion libraries and text-to-motion models; robots,
 3. **Look before saving** — `preview_animation` renders a filmstrip (or, with `pose`, one pose from several views) on the CPU and measures what an animator checks by eye: floor penetration, feet sliding on contact chains (and recognises an in-place treadmill cycle, reporting the root-motion speed), frame-to-frame pops, the loop seam. Single-key channels that hold a value for the whole clip are flagged.
 4. **Save** — `save_animation` bakes the clip into the GLB (a new version by default; other clips are kept) and stores the spec inside it, so `list_animations` with a clip name returns the spec for the next edit. `delete_animation` removes one clip.
 
+5. **Reuse existing motion**: give the spec a `base`, either `{"library": "fox", "clip": "Walk"}` (`list_motion_library` lists the bundled mesh2motion species and clips) or `{"assetId": 123, "clip": "Run"}`. That clip is **retargeted by body chains**: `leg_front_L` drives `leg_front_L`, a tail drives a tail, and when labels differ the pairing falls back to kind + side + order (a spider's four leg pairs onto a fox's two). Bones inside a chain are matched by relative position, so names and bone counts do not need to agree. Limbs and tails are swung onto the source's rest directions first (`matchRestPose`), the body is shifted to touch the floor (`groundAlign`), and `chainMap` / `boneMap` override the pairing. Keys and layers add on top, for example a fox walk with a tail `wave` layer. `publish_animation` saves any stored clip to the app's custom animation library, where the Mesh Editor's Custom tab can apply it to other meshes.
+
+**Preparing a rig.** `inspect_rig` also bend-tests every limb, neck and tail joint (45 degrees, and a twist on limbs) and flags triangles that stretch or fold. Its thresholds are calibrated so that the hand-made reference rigs pass. The fixes run in the backend:
+- `rebind_weights` either smooths the existing weights, or rebuilds them from the skeleton: each vertex goes to the nearest bones it can see, never to a limb on the other side of the body, and is then smoothed. On an Auto Rig horse the rebuilt weights deformed better than the originals.
+- `rename_bones` applies `semantic` names (`tail_3`), `mixamo` names for humanoids, or your own map. Stored specs, the rig profile and saved bone mappings are renamed too.
+- `add_bone` adds a child bone that takes over the vertices beyond it.
+- `split_bone` turns one bone into a bendable chain.
+
+**Robots and other rigid meshes.** `rig_rigid_parts` rigs an *unrigged* mesh with no learned weights. It finds the parts either from the mesh's separate pieces (`islands`) or, for a fused mesh, from Smart Segmentation (`segment`, which needs the mesh-tools service). Parts that touch are linked, with the biggest part as the root and each part hanging from the neighbour it touches most. Joints sit at the contact points, and each vertex is weighted 1.0 to its part. The tool returns the part tree so you can correct it with `reparent`.
+
 Everything runs in the app backend (`animation/` at the repo root): no GPU, no Python service. Previews are flat-shaded silhouettes — enough to judge motion, not materials.
 
 ### Small and local models (LM Studio, Ollama, …)
@@ -356,6 +366,7 @@ Two behaviours worth knowing:
 | `optimize_mesh`, `generate_lods` | nothing extra (bundled gltfpack) |
 | `move_mesh_pivot`, `transfer_rig` | nothing extra (runs in the app backend) |
 | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation` | nothing extra (runs in the app backend); the mesh must be a rigged GLB |
+| `rig_rigid_parts` with `method: "segment"` | Python mesh-tools service (`:8200`); `islands` needs nothing extra |
 
 ## Limitations
 

@@ -4,8 +4,13 @@ import { Buffer } from 'node:buffer';
 import { findProjectAsset, createProgressReporter } from '../client.js';
 import {
   openRig, renderRigViews, previewSpec, previewStoredClip, previewPose, bakeSpec, deleteClip,
-  summarizeDescription, inspectRig, listClipsInJson, listClips, VIEWS
+  summarizeDescription, inspectRig, listClipsInJson, listClips, VIEWS,
+  buildBase, buildLibraryDocument, MOTION_LIBRARY
 } from '../../animation/index.js';
+import { renameBones, namingScheme, addBone, splitBone, smoothWeights, rebuildWeights } from '../../animation/rigEdit.js';
+import { deformationTest } from '../../animation/inspect.js';
+import { readStaticMesh, soupGlb, islandLabels, labelsFromSegmentation, planRigidRig, buildRigidRig, describePlan } from '../../animation/rigid.js';
+import * as THREE from 'three';
 
 // "Animate with AI": let an agent animate ANY rigged mesh - robots, monsters,
 // spiders, dragons - not just humanoids.
@@ -105,12 +110,23 @@ const LAYER = z.object({
 }).passthrough();
 const SPEC = z.object({
   name: z.string().min(1).max(80).describe('Clip name, e.g. "walk", "attack", "idle". Saving replaces a clip of the same name.'),
-  duration: z.number().positive().max(60).describe('Seconds.'),
+  duration: z.number().positive().max(60).optional().describe('Seconds. Required unless a base clip is given (then it defaults to the base clip length).'),
   fps: z.number().int().min(1).max(120).default(30).optional(),
   loop: z.boolean().default(false).optional().describe('Wrap the motion so the end flows into the start (cycles: walk, idle, flap).'),
   interpolation: z.enum(['smooth', 'linear']).default('smooth').optional(),
   description: z.string().max(500).optional(),
   keys: z.array(KEY).optional().describe('Sparse keyframes: each key lists only what is set at that time; every (target, control) is interpolated over the keys that mention it, and stays at rest if none do. Optional when layers are given.'),
+  base: z.object({
+    library: z.string().optional().describe('A motion-library species (list_motion_library): human, fox, horse, bird, dragon, kaiju, shark, snake, spider.'),
+    assetId: z.number().int().optional().describe('Or another mesh asset (same project) whose clip to borrow.'),
+    clip: z.string().describe('Clip name in that source.'),
+    chainMap: z.record(z.string(), z.string()).optional().describe('Target chain -> source chain, where the automatic pairing (same label, else same kind/side/order) is wrong. Map to "" to leave a chain at rest.'),
+    boneMap: z.record(z.string(), z.string()).optional().describe('Target bone -> source bone overrides.'),
+    matchRestPose: z.boolean().optional().describe('Swing limbs/tails onto the source rest directions first (default true) so a different rest stance does not carry into the motion.'),
+    groundAlign: z.boolean().optional().describe('Shift the body so the clip touches the floor (default true).'),
+    speed: z.number().optional().describe('Playback rate of the source clip (default 1).'),
+    offset: z.number().optional().describe('Seconds into the source clip to start.')
+  }).passthrough().optional().describe('RETARGET: play an existing clip from another rig on this one, matched by body chains (works across species), then add keys/layers on top.'),
   layers: z.array(LAYER).optional().describe('Procedural motion ADDED on top of the keys, evaluated every frame. Prefer a gait layer over hand-keyed steps, a wave over keyed tail swings. Keys hold the acting (poses, accents); layers hold the cycles.')
 });
 
@@ -136,17 +152,106 @@ async function loadRigged(api, projectId, assetId) {
     profile = null;
   }
   const { rig, description } = openRig(buffer, profile);
-  return { asset, buffer, profile, rig, description };
+  return { asset, buffer, profile, rig, description, metadata: await readMetadata(api, assetId) };
 }
 
-async function saveVersion(api, asset, buffer, { saveMode = 'version', name } = {}) {
+async function readMetadata(api, assetId) {
+  try {
+    const record = await api.apiJson('GET', '/assets/record', { query: { assetId } });
+    return typeof record?.metadata === 'string' ? JSON.parse(record.metadata || '{}') : (record?.metadata || {});
+  } catch {
+    return {};
+  }
+}
+
+// Save a rig edit as a new version and carry the rig profile across. The
+// editor save copies metadata, but a renamed bone must also be renamed in the
+// profile and in stored bone mappings, or both silently stop matching.
+async function saveRigEdit(api, notifyMutation, projectId, loaded, buffer, { saveMode = 'version', name, rename = null } = {}) {
+  const { asset, profile, metadata } = loaded;
+  let boneMappings = null;
+  let nextProfile = profile;
+  if (rename && rename.size) {
+    if (metadata?.boneMappings && typeof metadata.boneMappings === 'object') {
+      boneMappings = {};
+      for (const [source, mapping] of Object.entries(metadata.boneMappings)) {
+        boneMappings[source] = Object.fromEntries(Object.entries(mapping || {}).map(([target, src]) => [rename.get(target) || target, src]));
+      }
+    }
+    if (profile?.boneChains) {
+      nextProfile = { ...profile, boneChains: Object.fromEntries(Object.entries(profile.boneChains).map(([b, c]) => [rename.get(b) || b, c])) };
+    }
+  }
+  const saved = await saveVersion(api, asset, buffer, { saveMode, name, boneMappings });
+  const savedId = saved?.id ?? saved?.asset?.id ?? asset.id;
+  if (nextProfile && nextProfile !== profile) {
+    await api.apiJson('PUT', `/assets/${savedId}/rig-profile`, { body: { rigProfile: nextProfile } });
+  }
+  notifyMutation(projectId);
+  return savedId;
+}
+
+function deformationSummary(rig, description) {
+  const d = deformationTest(rig, description);
+  return {
+    jointsTested: d.tested,
+    problems: d.problems.length,
+    worst: d.problems.slice(0, 4).map(p => ({ bone: p.bone, chain: p.chain, severity: p.severity }))
+  };
+}
+
+const SAVE = {
+  saveMode: z.enum(['version', 'replace']).default('version').optional().describe('"version" (default) adds a new version; "replace" overwrites this asset\'s file.'),
+  name: z.string().optional().describe('Display name for the saved version.')
+};
+
+async function saveVersion(api, asset, buffer, { saveMode = 'version', name, boneMappings } = {}) {
   const form = new FormData();
   form.append('assetId', String(asset.id));
   form.append('filePath', '');
   form.append('name', name || asset.name || 'Mesh');
   form.append('saveMode', saveMode);
+  if (boneMappings) form.append('boneMappings', JSON.stringify(boneMappings));
   form.append('meshFile', new Blob([buffer], { type: 'model/gltf-binary' }), 'mesh.glb');
   return api.apiForm('POST', '/meshes/editor/save', form);
+}
+
+const libraryCache = new Map();
+async function loadLibrarySpecies(api, species) {
+  const files = MOTION_LIBRARY[species];
+  if (!files) throw new Error(`Unknown motion-library species "${species}". Available: ${Object.keys(MOTION_LIBRARY).join(', ')}.`);
+  const out = [];
+  for (const file of files) {
+    if (!libraryCache.has(file)) {
+      const res = await fetch(`${api.base}/resources/animations/${file}`);
+      if (!res.ok) throw new Error(`Could not load the motion library file ${file} (HTTP ${res.status}).`);
+      libraryCache.set(file, openRig(Buffer.from(await res.arrayBuffer())));
+    }
+    out.push(libraryCache.get(file));
+  }
+  return out;
+}
+
+// Resolve a spec's `base` (retarget source) against the loaded target. Fills
+// the spec duration from the base clip when none was given. Returns
+// { spec, base: {sample,...} | null, report }.
+async function resolveSpecBase(api, projectId, loaded, rawSpec) {
+  if (!rawSpec || !rawSpec.base) return { spec: rawSpec, base: null, report: null };
+  const b = rawSpec.base;
+  let source = null;
+  if (b.library) {
+    const rigs = await loadLibrarySpecies(api, String(b.library));
+    const want = String(b.clip || '').toLowerCase();
+    source = rigs.find(r => listClipsInJson(r.rig.json).some(c => c.name.toLowerCase() === want)) || rigs[0];
+  } else if (b.assetId) {
+    const other = await loadRigged(api, projectId, Number(b.assetId));
+    source = { rig: other.rig, description: other.description };
+  } else {
+    throw new Error('base needs "library" (a species) or "assetId", plus "clip".');
+  }
+  const built = buildBase({ rig: loaded.rig, description: loaded.description }, source, b, { loop: Boolean(rawSpec.loop) });
+  const spec = { ...rawSpec, duration: rawSpec.duration ?? built.duration };
+  return { spec, base: built, report: built.report };
 }
 
 function imageResult(png, payload) {
@@ -207,13 +312,17 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
   server.registerTool('inspect_rig', {
     title: 'Check a rig before animating',
     description: 'Quality-check a rigged mesh BEFORE animating it: floor/pivot placement, facing, unit scale, unweighted vertices, weights leaking across the body '
-      + '(a leg pulling the other leg), left/right limbs that do not mirror at rest, bone names that contradict where the bone sits, helper bones. '
+      + '(a leg pulling the other leg), left/right limbs that do not mirror at rest, bone names that contradict where the bone sits, helper bones, and a '
+      + 'DEFORMATION test (each limb/neck/tail joint is bent 45 degrees and limbs twisted; triangles that stretch or fold badly mean the weights are too sharp there). '
       + 'Each issue has a severity and, when one exists, the tool that fixes it (fixTool/fixArgs). Read-only.',
-    inputSchema: LOCATE,
+    inputSchema: {
+      ...LOCATE,
+      deformation: z.boolean().default(true).optional().describe('Run the bend/twist deformation test (a second or so on big meshes).')
+    },
     annotations: { readOnlyHint: true }
-  }, guarded(async ({ projectId, assetId }) => {
+  }, guarded(async ({ projectId, assetId, deformation = true }) => {
     const { asset, rig, description } = await loadRigged(api, projectId, assetId);
-    const report = inspectRig(rig, description);
+    const report = inspectRig(rig, description, { deformation });
     return textResult({ assetId: asset.id, assetName: asset.name, bodyPlan: description.bodyPlan, ...report });
   }));
 
@@ -251,6 +360,203 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
     });
   }));
 
+  server.registerTool('rig_rigid_parts', {
+    title: 'Rig a robot / mechanical mesh by its parts',
+    description: 'Build a skeleton for an UNRIGGED mesh made of rigid parts (robots, mechs, turrets, vehicles, armour) - no GPU, no learned weights: every '
+      + 'vertex belongs to one part, joints sit where parts touch, the biggest part is the root, each part hangs from the neighbour it touches most. '
+      + 'method "islands" uses the mesh\'s separate pieces (how robots are usually modelled; specks under minPart join the part they sit on). '
+      + 'method "segment" splits a FUSED mesh with Smart Segmentation (needs the Python mesh-tools service) into `parts` pieces. '
+      + 'Returns the part tree (id, parent, size share, pivot) so you can check it; fix wrong parents with reparent {childId: parentId} and run again. '
+      + 'Then describe_rig labels it like any rig. For organic creatures use auto_rig_mesh instead. Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      method: z.enum(['islands', 'segment']).default('islands').optional(),
+      parts: z.number().int().min(2).max(64).optional().describe('segment: how many parts (default: the segmenter\'s suggestion).'),
+      minPart: z.number().min(0).max(0.2).optional().describe('Pieces smaller than this share of the surface join their neighbour (default 0.01).'),
+      reparent: z.record(z.string(), z.number().int()).optional().describe('Corrections from a previous run: { "<partId>": <parentPartId> }.'),
+      names: z.record(z.string(), z.string()).optional().describe('Bone names per part id, e.g. {"0": "body", "3": "arm_upper_L"} (default body / part_<id>).'),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, method = 'islands', parts, minPart = 0.01, reparent, names, saveMode = 'version', name }, extra) => {
+    const reportProgress = createProgressReporter(extra);
+    const asset = await findProjectAsset(api, projectId, assetId);
+    const file = asset.filename || asset.filePath;
+    if (!/\.glb$/i.test(String(file))) throw new Error('rig_rigid_parts reads GLB meshes.');
+    const buffer = Buffer.from(await api.fetchAssetBuffer(file));
+    const mesh = readStaticMesh(buffer);
+    let labels;
+    let segmentNote = null;
+    if (method === 'segment') {
+      await reportProgress(10, 100, 'Segmenting (mesh-tools service)');
+      const form = new FormData();
+      form.append('meshFile', new Blob([soupGlb(mesh)], { type: 'model/gltf-binary' }), 'parts.glb');
+      form.append('options', JSON.stringify({}));
+      const done = await api.apiFormSse('/meshes/segment', form, () => {});
+      const decode = (b64) => { const b = Buffer.from(String(b64 || ''), 'base64'); return new Int32Array(b.buffer, b.byteOffset, b.byteLength >> 2); };
+      const seg = { history: decode(done.history_b64), mapping: decode(done.mapping_b64), proxyFaceCount: done.proxyFaceCount, faceCount: done.faceCount };
+      if (seg.faceCount !== mesh.triCount) throw new Error(`The segmenter saw ${seg.faceCount} faces, the mesh has ${mesh.triCount}; cannot map its parts back.`);
+      // `parts` means SIGNIFICANT parts. The merge hierarchy often splits off
+      // slivers first (a gun at 6 segments: one piece held 99% of the faces),
+      // so raise the level until that many pieces survive the speck filter.
+      const want = parts ?? Math.max(3, done.suggestedParts ?? 6);
+      const significant = (l) => {
+        const counts = new Map();
+        for (const x of l) counts.set(x, (counts.get(x) || 0) + 1);
+        return [...counts.values()].filter(c => c >= minPart * l.length).length;
+      };
+      let k = want;
+      labels = labelsFromSegmentation(seg, k);
+      while (significant(labels) < want && k < seg.proxyFaceCount / 2) {
+        k = Math.ceil(k * 1.5);
+        labels = labelsFromSegmentation(seg, k);
+      }
+      segmentNote = { partsRequested: want, segmentLevel: k, significantParts: significant(labels), suggestedParts: done.suggestedParts ?? null };
+    } else {
+      labels = islandLabels(mesh);
+    }
+    await reportProgress(50, 100, 'Building the part tree');
+    const plan = planRigidRig(mesh, labels, { minPart, reparent: reparent || {} });
+    if (plan.parts.length < 2) {
+      throw new Error(method === 'islands'
+        ? 'The mesh is one piece, so there are no parts to hinge. Use method "segment" (Smart Segmentation) to split it, or auto_rig_mesh for an organic shape.'
+        : 'Segmentation produced a single part - ask for more parts.');
+    }
+    const partNames = names ? Object.fromEntries(Object.entries(names).map(([k2, v]) => [Number(k2), v])) : null;
+    const built = buildRigidRig(mesh, plan, { names: partNames });
+    await reportProgress(80, 100, 'Saving');
+    const saved = await saveVersion(api, asset, built.buffer, { saveMode, name });
+    notifyMutation(projectId);
+    return textResult({
+      sourceAssetId: asset.id,
+      assetId: saved?.id ?? saved?.asset?.id ?? asset.id,
+      method,
+      ...(segmentNote ? { segmentation: segmentNote } : {}),
+      parts: describePlan(plan),
+      joints: built.joints,
+      next: 'describe_rig to see how it reads as a body; reparent / names and run again to correct the tree.'
+    });
+  }));
+
+  server.registerTool('rename_bones', {
+    title: 'Rename the bones of a rig',
+    description: 'Rename bones so names match what they are. scheme "semantic" names every bone after its chain (tail_1, leg_front_L_2, head_1) - readable and '
+      + 'stable; "mixamo" gives a humanoid biped the Mixamo names (Hips, LeftUpLeg, RightHandIndex1...) so name-based retargeting and engine humanoid setup work; '
+      + '"map" applies your own {old: new} map. Stored specs, the rig profile and saved bone mappings are updated to the new names. Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      scheme: z.enum(['semantic', 'mixamo', 'map']).describe('Naming scheme.'),
+      map: z.record(z.string(), z.string()).optional().describe('scheme "map": old bone name -> new name.'),
+      prefix: z.string().optional().describe('scheme "mixamo": name prefix (default "mixamorig:").'),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, scheme, map, prefix, saveMode, name }) => {
+    const loaded = await loadRigged(api, projectId, assetId);
+    const plan = scheme === 'map' ? (map || {}) : namingScheme(loaded.rig, loaded.description, scheme, prefix === undefined ? {} : { prefix });
+    if (!Object.keys(plan).length) return textResult({ assetId: loaded.asset.id, renamed: 0, note: 'Every bone already has that name.' });
+    const result = renameBones(loaded.buffer, plan);
+    const savedId = await saveRigEdit(api, notifyMutation, projectId, loaded, result.buffer, { saveMode, name, rename: new Map(result.renamed) });
+    return textResult({ sourceAssetId: loaded.asset.id, assetId: savedId, renamed: result.renamed.length, sample: result.renamed.slice(0, 12).map(([a, b]) => `${a} -> ${b}`) });
+  }));
+
+  server.registerTool('add_bone', {
+    title: 'Add a bone to a rig',
+    description: 'Add a child bone - a tail tip, a jaw, an antenna, a finger the rig is missing. Place it with `position` (offset from the PARENT joint in body axes, '
+      + 'model units) or `extend` (continue the parent bone direction by this fraction of its length). With takeWeights (default) the parent hands the new bone '
+      + 'the vertices that lie beyond it, blended smoothly, so the bone moves something right away. Chain labels update on the next describe_rig. Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      parent: z.string().describe('Exact name of the parent bone (describe_rig with bones:true lists them).'),
+      name: z.string().optional().describe('Name for the new bone (default <parent>_child).'),
+      position: OFFSET.optional().describe('Offset from the parent joint: {forward, up, left} in model units.'),
+      extend: z.number().optional().describe('Continue the parent bone direction by this fraction of its length (e.g. 0.6). Used when position is not given.'),
+      takeWeights: z.boolean().default(true).optional(),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, parent, name: boneName, position, extend, takeWeights = true, saveMode, name }) => {
+    const loaded = await loadRigged(api, projectId, assetId);
+    const { rig, description } = loaded;
+    const pj = rig.jointByName.get(parent);
+    if (pj === undefined) throw new Error(`No bone named "${parent}". describe_rig with bones:true lists them.`);
+    const v = description.frame.vectors;
+    const restPos = j => new THREE.Vector3().setFromMatrixPosition(rig.inverseBind[j].clone().invert());
+    const origin = restPos(pj);
+    let target;
+    if (position) {
+      target = origin.clone()
+        .addScaledVector(new THREE.Vector3().fromArray(v.forward), Number(position.forward) || 0)
+        .addScaledVector(new THREE.Vector3().fromArray(v.up), Number(position.up) || 0)
+        .addScaledVector(new THREE.Vector3().fromArray(v.left), Number(position.left) || 0);
+    } else {
+      const gp = rig.joints[pj].parent;
+      if (gp < 0) throw new Error('The parent is a root bone with no direction to extend - give a position instead.');
+      const dir = origin.clone().sub(restPos(gp));
+      target = origin.clone().addScaledVector(dir, extend === undefined ? 0.6 : Number(extend));
+    }
+    if (target.distanceTo(origin) < 1e-6) throw new Error('The new bone would sit on its parent joint - give a position or extend > 0.');
+    const result = addBone(loaded.buffer, { parent, name: boneName, position: target, takeWeights });
+    const savedId = await saveRigEdit(api, notifyMutation, projectId, loaded, result.buffer, { saveMode, name });
+    return textResult({
+      sourceAssetId: loaded.asset.id, assetId: savedId, added: result.name, verticesTakenFromParent: result.moved,
+      ...(takeWeights && !result.moved ? { note: 'No vertex of the parent lies beyond the new bone, so it moves nothing yet. Place it further out, or rebind_weights mode "rebuild".' } : {})
+    });
+  }));
+
+  server.registerTool('split_bone', {
+    title: 'Split a bone into several',
+    description: 'Split one bone into `parts` bones along the line to its child, spreading its weights along them - a one-bone tail or neck becomes a bendable chain. '
+      + 'The child keeps its world position (it is re-parented under the last new bone). Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      bone: z.string().describe('Exact name of the bone to split.'),
+      parts: z.number().int().min(2).max(8).default(2).optional(),
+      child: z.string().optional().describe('Which child to split toward when the bone has several (default: the farthest).'),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, bone, parts = 2, child, saveMode, name }) => {
+    const loaded = await loadRigged(api, projectId, assetId);
+    const result = splitBone(loaded.buffer, { bone, parts, child: child ?? null });
+    const savedId = await saveRigEdit(api, notifyMutation, projectId, loaded, result.buffer, { saveMode, name });
+    return textResult({ sourceAssetId: loaded.asset.id, assetId: savedId, added: result.added, child: result.child, verticesReweighted: result.moved });
+  }));
+
+  server.registerTool('rebind_weights', {
+    title: 'Fix or rebuild skin weights',
+    description: 'Repair the skin weights while keeping the skeleton. mode "smooth" blurs the existing weights over the surface (fixes the pinching/stretching that '
+      + 'the inspect_rig deformation test reports; pass bones to limit it). mode "rebuild" recomputes every weight from the bones: each vertex goes to the nearest bones '
+      + 'it can see, never to a limb on the other side of the body, then smoothed - use it when weights leak across the body or after add_bone/split_bone. '
+      + 'No GPU or service needed. Returns the deformation test before and after. Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      mode: z.enum(['smooth', 'rebuild']),
+      bones: z.array(z.string()).optional().describe('smooth: only vertices these bones touch.'),
+      iterations: z.number().int().min(1).max(20).optional().describe('Smoothing passes (smooth default 3, rebuild default 12).'),
+      strength: z.number().min(0.05).max(1).optional().describe('smooth: how far each pass blends toward the neighbours (default 0.5).'),
+      exclude: z.array(z.string()).optional().describe('rebuild: bones that must get no weight (helpers, end markers).'),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, mode, bones, iterations, strength, exclude, saveMode, name }, extra) => {
+    const reportProgress = createProgressReporter(extra);
+    const loaded = await loadRigged(api, projectId, assetId);
+    const before = deformationSummary(loaded.rig, loaded.description);
+    await reportProgress(20, 100, mode === 'rebuild' ? 'Rebuilding weights' : 'Smoothing weights');
+    const result = mode === 'smooth'
+      ? smoothWeights(loaded.buffer, { iterations: iterations ?? 3, strength: strength ?? 0.5, bones: bones && bones.length ? bones : null })
+      : rebuildWeights(loaded.buffer, { smoothing: iterations ?? 12, exclude: exclude || [], description: loaded.description });
+    const reopened = openRig(result.buffer, loaded.profile);
+    const after = deformationSummary(reopened.rig, reopened.description);
+    const leaks = inspectRig(reopened.rig, reopened.description, { deformation: false }).issues.filter(i => i.check === 'weights').map(i => i.message);
+    await reportProgress(80, 100, 'Saving');
+    const savedId = await saveRigEdit(api, notifyMutation, projectId, loaded, result.buffer, { saveMode, name });
+    return textResult({
+      sourceAssetId: loaded.asset.id, assetId: savedId, mode,
+      deformationBefore: before,
+      deformationAfter: after,
+      weightIssuesAfter: leaks,
+      ...(result.note ? { note: result.note } : {}),
+      ...(result.skipped?.length ? { untouchedPrimitives: result.skipped } : {})
+    });
+  }));
+
   server.registerTool('preview_animation', {
     title: 'Preview a pose or an animation',
     description: 'SEE motion before saving it. Give ONE of: `spec` (an animation spec - compiled and rendered as a filmstrip, with motion checks: '
@@ -284,12 +590,14 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
       const r = previewStoredClip(rig, description, clip, options);
       return imageResult(r.png, { assetId: asset.id, clip, duration: r.duration, framesShownAt: r.frames });
     }
-    const r = previewSpec(rig, description, spec, options);
+    const resolved = await resolveSpecBase(api, projectId, { rig, description }, spec);
+    const r = previewSpec(rig, description, resolved.spec, options, { base: resolved.base });
     return imageResult(r.png, {
       assetId: asset.id,
       clip: r.spec.name,
       duration: r.spec.duration,
       framesShownAt: r.frames,
+      ...(resolved.report ? { retarget: resolved.report } : {}),
       checks: r.analysis,
       warnings: r.warnings
     });
@@ -310,7 +618,8 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
     const reportProgress = createProgressReporter(extra);
     const { asset, buffer, rig, description } = await loadRigged(api, projectId, assetId);
     await reportProgress(30, 100, 'Compiling');
-    const baked = bakeSpec(buffer, rig, description, spec);
+    const resolved = await resolveSpecBase(api, projectId, { rig, description }, spec);
+    const baked = bakeSpec(buffer, rig, description, resolved.spec, { base: resolved.base });
     await reportProgress(70, 100, 'Saving');
     const saved = await saveVersion(api, asset, baked.buffer, { saveMode, name });
     notifyMutation(projectId);
@@ -321,6 +630,7 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
       clip: baked.spec.name,
       duration: baked.spec.duration,
       clips: listClips(baked.buffer).map(c => c.name),
+      ...(resolved.report ? { retarget: resolved.report } : {}),
       checks: baked.analysis,
       warnings: baked.warnings
     });
@@ -344,6 +654,53 @@ export function registerAnimationTools(server, { api, notifyMutation }) {
       return textResult({ assetId: asset.id, name: clip.name, duration: clip.duration, spec: clip.spec, note: clip.spec ? undefined : 'This clip was not made from a spec (imported or retargeted), so there is no spec to edit.' });
     }
     return textResult({ assetId: asset.id, clips: clips.map(c => ({ name: c.name, duration: c.duration, fromSpec: c.hasSpec, channels: c.channels })) });
+  }));
+
+  server.registerTool('list_motion_library', {
+    title: 'List the reference motion library',
+    description: 'List the bundled reference clips (mesh2motion, MIT) that a spec can borrow as its `base`: species human, fox, horse, bird, dragon, kaiju, '
+      + 'shark, snake, spider, each with its clips and durations, plus the chains its skeleton has (so you can see how it will pair with your rig). '
+      + 'Retargeting is by body chains, so a species need not match your creature exactly - a fox walk drives any quadruped, a kaiju clip any big biped with a tail.',
+    inputSchema: {
+      species: z.string().optional().describe('Only this species (default: all, clip names only).')
+    },
+    annotations: { readOnlyHint: true }
+  }, guarded(async ({ species }) => {
+    const names = species ? [species] : Object.keys(MOTION_LIBRARY);
+    const out = [];
+    for (const name of names) {
+      const rigs = await loadLibrarySpecies(api, name);
+      const clips = rigs.flatMap(r => listClipsInJson(r.rig.json).map(c => (species ? { name: c.name, duration: c.duration } : c.name)));
+      out.push({
+        species: name,
+        bodyPlan: rigs[0].description.bodyPlan,
+        clips,
+        ...(species ? { chains: rigs[0].description.chains.filter(c => !['helper', 'extra', 'part'].includes(c.kind)).map(c => c.label) } : {})
+      });
+    }
+    return textResult({ library: out });
+  }));
+
+  server.registerTool('publish_animation', {
+    title: 'Save a clip to the animation library',
+    description: 'Save one clip of a mesh (authored, retargeted or imported) to the app\'s custom animation library, with the skeleton it was made on. It then '
+      + 'appears in the Mesh Editor Custom tab and can be applied to any other rigged mesh there. Does not change the mesh.',
+    inputSchema: {
+      ...LOCATE,
+      clip: z.string().describe('Clip name in the mesh (list_animations).'),
+      name: z.string().optional().describe('Library name (default: "<mesh> - <clip>").')
+    }
+  }, guarded(async ({ projectId, assetId, clip, name }) => {
+    const { asset, rig } = await loadRigged(api, projectId, assetId);
+    const clips = listClipsInJson(rig.json);
+    const found = clips.find(c => c.name === clip);
+    if (!found) throw new Error(`No clip named "${clip}". This mesh has: ${clips.map(c => c.name).join(', ') || 'none'}.`);
+    const doc = buildLibraryDocument(rig, found.index);
+    const libraryName = (name || `${asset.name || 'Mesh'} - ${clip}`).slice(0, 120);
+    const saved = await api.apiJson('POST', '/animations/library', {
+      body: { name: libraryName, data: doc, sourceMesh: asset.name || '', sourceClip: clip, rigKey: doc.rigKey }
+    });
+    return textResult({ libraryId: saved?.animation?.id, name: libraryName, rigKey: doc.rigKey, bones: doc.bones.length, frames: doc.frameCount });
   }));
 
   server.registerTool('delete_animation', {

@@ -131,7 +131,7 @@ export function readAccessor(json, bin, index) {
 //
 // Nodes outside the scene graph get identity: they are not rendered, and giving
 // them a parent's transform would be inventing one.
-function nodeWorldMatrices(json) {
+export function nodeWorldMatrices(json) {
   const nodes = json.nodes || [];
   const world = new Array(nodes.length).fill(null);
   const scene = (json.scenes || [])[json.scene ?? 0];
@@ -170,7 +170,7 @@ function nodeWorldMatrices(json) {
 // already is the rest-pose world position. meshPivot.js measures bounds on the
 // same rule, and three.js bakes the same values through `matrixWorld` in the
 // editor, which is what makes the browser and this agree.
-function collectPrimitives(json, bin) {
+export function collectPrimitives(json, bin) {
   const nodes = json.nodes || [];
   const meshes = json.meshes || [];
   const world = nodeWorldMatrices(json);
