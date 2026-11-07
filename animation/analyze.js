@@ -592,6 +592,14 @@ export function describeRig(rig, profile = null) {
     if (bones.length) chains.push({ label, kind: label, side: 0, bones, attach: -1 });
   }
 
+  // Every chain runs parent -> child: its first bone is the one nearest the
+  // skeleton root. "chain" poses swing from the base and waves travel from
+  // it, so a chain listed against the hierarchy (a snake's body, collected
+  // tail-first along the trunk) would swing the wrong end.
+  for (const chain of chains) {
+    if (chain.bones.length > 1 && depthOf(chain.bones[0]) > depthOf(chain.bones[chain.bones.length - 1])) chain.bones.reverse();
+  }
+
   // ---- profile overrides ---------------------------------------------------
   const renames = profile?.chainRenames || {};
   for (const chain of chains) {

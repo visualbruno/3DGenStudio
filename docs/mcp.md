@@ -251,6 +251,17 @@ Humanoids are well served by motion libraries and text-to-motion models; robots,
    ```
 
    `forward` / `up` / `left` / `out` swing a chain's tip that way (degrees; `out` = away from the mid line, so one value mirrors on `_L` and `_R`), `turn` / `pitch` / `roll` rotate about the body's axes, `twist` about the bone. `"leg_front_L"` swings the whole limb from its base, `"tail.*"` spreads the angle over the chain (a curl), `"tail[2]"` is one bone. `root` moves and turns the whole body (pitch/roll pivot at the hips). `ik` places a chain's tip as an offset from its rest position, fixed in the world — `{}` plants a foot while the body moves; feet keep their orientation, knees keep their rest bend direction.
+   **Layers** describe cycles instead of keying them, and are added on top of the keys every frame:
+
+   ```json
+   { "name": "trot", "duration": 0.8, "loop": true,
+     "layers": [
+       { "type": "gait", "pattern": "trot", "bob": 0.015 },
+       { "type": "wave", "chain": "tail", "control": "up", "amplitude": 6, "cycles": 2 },
+       { "type": "spring", "chain": "tail", "stiffness": 0.2 } ] }
+   ```
+
+   `gait` steps any number of legs with feet planted by IK: `pattern` walk / trot / pace / bound / gallop for four legs, alternate / tripod for six or eight, wave for a metachronal crawl (auto picks by leg count). Stride defaults to what every leg can comfortably reach, and the body crouches automatically so no leg works at full extension (that is an IK singularity, and it pops). `travel: "in_place"` loops on the spot, while `"forward"` advances the root (a root-motion clip). `wave` sends a travelling wave down a chain (slither, tail wag, tentacles), `oscillate` swings one control periodically (wing flaps with `shape: "flap"`, breathing, `root.up` for hops), `noise` adds smooth loop-safe idle fidget, and `spring` makes a chain lag and overshoot behind the motion. Every layer can be windowed with `start` / `end` / `fade`. On a looping clip, whole-number `cycles` keep the seam closed. Chains always run parent → child, so a wave travels away from the body.
 3. **Look before saving** — `preview_animation` renders a filmstrip (or, with `pose`, one pose from several views) on the CPU and measures what an animator checks by eye: floor penetration, feet sliding on contact chains (and recognises an in-place treadmill cycle, reporting the root-motion speed), frame-to-frame pops, the loop seam. Single-key channels that hold a value for the whole clip are flagged.
 4. **Save** — `save_animation` bakes the clip into the GLB (a new version by default; other clips are kept) and stores the spec inside it, so `list_animations` with a clip name returns the spec for the next edit. `delete_animation` removes one clip.
 

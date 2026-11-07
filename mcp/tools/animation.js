@@ -62,6 +62,47 @@ const KEY = z.object({
   root: ROOT.optional(),
   ik: IK.optional()
 }).passthrough();
+const NAMES = z.union([z.string(), z.array(z.string())]);
+const LAYER = z.object({
+  type: z.enum(['gait', 'wave', 'oscillate', 'noise', 'spring']).describe(
+    'gait = legs stepping with planted feet (walk cycles, any leg count); wave = travelling wave down a chain (slither, tail wag, tentacle); '
+    + 'oscillate = periodic swing of one control (wing flap, breathing, nod); noise = smooth loop-safe fidget (idles); '
+    + 'spring = follow-through, the chain lags and overshoots behind the motion (tails, ears, antennae).'),
+  // gait
+  legs: z.union([z.literal('auto'), z.array(z.string())]).optional().describe('gait: leg chains (default "auto" = every leg describe_rig found).'),
+  pattern: z.enum(['auto', 'walk', 'trot', 'pace', 'bound', 'gallop', 'alternate', 'tripod', 'wave']).optional()
+    .describe('gait: footfall pattern. auto = alternate for 2 legs, walk for 4, tripod for 6/8, wave otherwise.'),
+  phases: z.record(z.string(), z.number()).optional().describe('gait: override when each leg starts its stance (0..1 of the step cycle), per leg chain.'),
+  stride: z.number().optional().describe('gait: step length in model units (default: what every leg can comfortably reach).'),
+  lift: z.number().optional().describe('gait: foot lift height (default 12% of leg length).'),
+  duty: z.number().optional().describe('gait: fraction of the cycle a foot is on the ground (0.2-0.95; walk ~0.65, trot 0.5, gallop 0.4).'),
+  travel: z.enum(['in_place', 'forward']).optional().describe('gait: in_place (default, loops on the spot; engines add root motion) or forward (the root advances: a root-motion clip).'),
+  bob: z.number().optional().describe('gait: body dip per footfall (model units).'),
+  sway: z.number().optional().describe('gait: body roll per cycle (degrees).'),
+  // wave / spring
+  chain: NAMES.optional().describe('wave / spring: chain label(s).'),
+  waves: z.number().optional().describe('wave: how many wavelengths fit along the chain (default 1).'),
+  falloff: z.enum(['tip', 'even', 'base']).optional().describe('wave: where the amplitude is largest (default tip).'),
+  direction: z.enum(['base_to_tip', 'tip_to_base']).optional().describe('wave: which way crests travel (default base_to_tip).'),
+  // oscillate / noise
+  target: NAMES.optional().describe('oscillate / noise: pose target(s) - same syntax as a key pose ("wing_L", "spine.*", "tail[0]"); "root" with control root.<control> moves the body.'),
+  control: z.string().optional().describe('wave / oscillate: which control (forward, up, left, out, turn, pitch, roll, twist; oscillate also root.up etc.).'),
+  controls: z.array(z.string()).optional().describe('noise: controls to jitter (default turn, pitch).'),
+  amplitude: z.number().optional().describe('wave: peak degrees per bone; oscillate: peak value; noise: typical degrees.'),
+  offset: z.number().optional().describe('oscillate: value the swing is centred on.'),
+  shape: z.enum(['sine', 'flap', 'pulse']).optional().describe('oscillate: flap = fast power stroke, slow recovery.'),
+  speed: z.number().optional().describe('noise: how busy (whole number of slow cycles per layer).'),
+  seed: z.number().optional().describe('noise: variation seed.'),
+  stiffness: z.number().optional().describe('spring: 0.02-1, lower = floppier (default 0.25).'),
+  damping: z.number().optional().describe('spring: 0-0.95, higher = less overshoot (default 0.3).'),
+  // shared
+  cycles: z.number().optional().describe('Periodic layers: cycles over the layer (whole numbers keep a loop seamless; default 1).'),
+  phase: z.number().optional().describe('wave / oscillate: phase offset as a fraction of a cycle.'),
+  weight: z.number().optional().describe('Scale this layer (default 1).'),
+  start: z.number().optional().describe('Seconds the layer starts (default 0).'),
+  end: z.number().optional().describe('Seconds the layer ends (default the duration).'),
+  fade: z.number().optional().describe('Seconds to blend in/out at start/end.')
+}).passthrough();
 const SPEC = z.object({
   name: z.string().min(1).max(80).describe('Clip name, e.g. "walk", "attack", "idle". Saving replaces a clip of the same name.'),
   duration: z.number().positive().max(60).describe('Seconds.'),
@@ -69,7 +110,8 @@ const SPEC = z.object({
   loop: z.boolean().default(false).optional().describe('Wrap the motion so the end flows into the start (cycles: walk, idle, flap).'),
   interpolation: z.enum(['smooth', 'linear']).default('smooth').optional(),
   description: z.string().max(500).optional(),
-  keys: z.array(KEY).min(1).describe('Sparse keyframes: each key lists only what is set at that time; every (target, control) is interpolated over the keys that mention it, and stays at rest if none do.')
+  keys: z.array(KEY).optional().describe('Sparse keyframes: each key lists only what is set at that time; every (target, control) is interpolated over the keys that mention it, and stays at rest if none do. Optional when layers are given.'),
+  layers: z.array(LAYER).optional().describe('Procedural motion ADDED on top of the keys, evaluated every frame. Prefer a gait layer over hand-keyed steps, a wave over keyed tail swings. Keys hold the acting (poses, accents); layers hold the cycles.')
 });
 
 const VIEW = z.enum(VIEWS);

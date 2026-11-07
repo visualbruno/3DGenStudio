@@ -282,6 +282,17 @@ function signedAngle(a, b, axis) {
   return new THREE.Vector3().crossVectors(a, b).dot(axis) < 0 ? -angle : angle;
 }
 
+// The bend at a hinge, measured IN the hinge's plane. Bones of a splayed limb
+// are not perpendicular to the bend axis, and measuring their raw angle made
+// the sign wobble near straight - the no-flip clamp then fired on phantom
+// flips (measured: an 87 degree foot jump on a dragon's hind leg).
+function hingeAngle(a, b, axis) {
+  const pa = a.clone().projectOnPlane(axis);
+  const pb = b.clone().projectOnPlane(axis);
+  if (pa.lengthSq() < 1e-18 || pb.lengthSq() < 1e-18) return 0;
+  return signedAngle(pa, pb, axis);
+}
+
 /**
  * Limb IK the way animal rigs do it:
  *  - FOOT LOCK: the chain's last segment (hoof, foot, claw) keeps its rest
@@ -323,6 +334,7 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
       .addScaledVector(ctx.U, Number(offset.up) || 0)
       .addScaledVector(ctx.L, Number(offset.left) || 0);
     const target = P[effector].clone().add(shift);
+    const requested = target.clone();
 
     // Bend axis. A LEG bends in the vertical plane through it: for an upright
     // leg that is the sagittal plane (axis = left), for a sprawling one (a
@@ -352,16 +364,22 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
       const a = new THREE.Vector3().subVectors(P[joints[i]], P[joints[i - 1]]);
       const b = new THREE.Vector3().subVectors(P[joints[i + 1]], P[joints[i]]);
       if (a.length() < 1e-9 || b.length() < 1e-9) return 0;
-      const ang = signedAngle(a, b, bend);
+      const ang = hingeAngle(a, b, bend);
       return Math.abs(ang) > 4 * DEG ? Math.sign(ang) : 0;
     });
     const hingeLocal = joints.map(j => bend.clone().applyQuaternion(ctx.restWorldRot[j].clone().invert()));
 
-    // Warm start.
+    // Warm start from the previous frame, pulled 20% back toward this frame's
+    // FK pose. A limb with more joints than a foot position needs is
+    // redundant, and a pure warm start lets the solution drift through that
+    // freedom: after one cycle the leg stands in a different posture than it
+    // started in, and the loop seam jumps (measured: 13 degrees on a horse
+    // foreleg). Pulling toward FK makes the solve forget, so a cycle converges
+    // to a periodic posture.
     const prev = warm?.get(label);
     if (prev && prev.length === n) {
       for (let i = 0; i < solveCount; i += 1) {
-        localRot[joints[i]] = prev[i].clone();
+        localRot[joints[i]] = prev[i].clone().slerp(localRot[joints[i]], 0.2).normalize();
         pose.get(rig.joints[joints[i]].node).r = localRot[joints[i]];
       }
     }
@@ -375,6 +393,18 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
       worlds[nodeIndex].decompose(new THREE.Vector3(), q, new THREE.Vector3());
       return q;
     };
+    // Keep the target inside the limb's reach (from the POSED base). Asking a
+    // nearly straight leg - a horse's foreleg - to reach a hair further than
+    // it can makes the solve strain and then snap back once the target comes
+    // in range (measured: a 28 degree humerus pop at every touch-down).
+    // Clamped, the leg simply extends toward it and the foot hovers a few
+    // millimetres, continuously.
+    {
+      const base = posOf(joints[0]);
+      const toTarget = target.clone().sub(base);
+      const maxReach = 0.985 * chainLength;
+      if (toTarget.length() > maxReach) target.copy(base.add(toTarget.setLength(maxReach)));
+    }
     let error = posOf(effector).distanceTo(target);
     // Damped least squares (Jacobian) rather than CCD: CCD fixes one joint at a
     // time from the tip, so on a five-hinge horse leg it piles the correction
@@ -425,7 +455,7 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
             const a = pj.clone().sub(posOf(joints[i - 1]));
             const b = posOf(joints[i + 1]).sub(pj);
             if (a.length() > 1e-9 && b.length() > 1e-9) {
-              const current = signedAngle(a, b, d.axis);
+              const current = hingeAngle(a, b, d.axis);
               const lo = restSign[i] > 0 ? 2 * DEG : -170 * DEG;
               const hi = restSign[i] > 0 ? 170 * DEG : -2 * DEG;
               angle = Math.max(lo, Math.min(hi, current + angle)) - current;
@@ -475,7 +505,8 @@ function solveIk(ctx, pose, localRot, ik, warnings, warm) {
     }
 
     if (warm) warm.set(label, joints.map(j => localRot[j].clone()));
-    const reach = P[joints[0]].distanceTo(target);
+    const reach = posOf(joints[0]).distanceTo(requested);
+    error = posOf(effector).distanceTo(requested);
     report[label] = { error: Math.round(error * 1e4) / 1e4, reachable: reach <= chainLength * 1.001 };
     if (error > 0.02 * ctx.scale) {
       warnings.push(`IK on ${label} missed its target by ${error.toFixed(3)} (${reach > chainLength ? 'out of reach' : 'could not bend that way'}).`);

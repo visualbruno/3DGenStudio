@@ -244,7 +244,8 @@ test('treadmill walks are recognised as in-place cycles, not sliding', () => {
   }
   const r = previewSpec(rig, description, { name: 'walk', duration: 1, loop: true, interpolation: 'linear', keys: [...keys.values()] }, { frames: 2 });
   assert.ok(r.analysis.notes.some(n => /In-place cycle/.test(n)), JSON.stringify(r.analysis.notes));
-  assert.ok(r.analysis.largestFrameStepDeg < 30, `pop of ${r.analysis.largestFrameStepDeg} deg on ${r.analysis.largestFrameStepBone}`);
+  assert.ok(r.analysis.largestFrameStepDeg < 30, `step of ${r.analysis.largestFrameStepDeg} deg on ${r.analysis.largestFrameStepBone}`);
+  assert.equal(r.analysis.pops.length, 0, JSON.stringify(r.analysis.pops));
   assert.equal(r.analysis.loopSeamDeg, 0);
   assert.ok(r.png.length > 1000);
 });
@@ -258,6 +259,93 @@ test('a control keyed once while its target is keyed elsewhere is flagged', () =
   ] });
   const { warnings } = compileSpec(ctx, spec);
   assert.ok(warnings.some(w => /leg_hind_L\.up is keyed only at 0\.5s/.test(w)), JSON.stringify(warnings));
+});
+
+// ---- layers ------------------------------------------------------------------------
+
+test('layers: bad layers are errors, non-integer cycles on a loop warn', () => {
+  assert.ok(normalizeSpec({ duration: 1, layers: [{ type: 'dance' }] }).errors.length);
+  assert.ok(normalizeSpec({ duration: 1, layers: [{ type: 'wave' }] }).errors.some(e => /chain/.test(e)));
+  const { errors, warnings, spec } = normalizeSpec({ duration: 1, loop: true, layers: [{ type: 'oscillate', target: 'tail', cycles: 1.5 }] });
+  assert.equal(errors.length, 0);
+  assert.equal(spec.keys.length, 0, 'keys are optional with layers');
+  assert.ok(warnings.some(w => /whole number/.test(w)));
+});
+
+test('gait layer: one line walks a quadruped - treadmill, no pops, exact seam', () => {
+  const { rig, description } = openRig(fixture('horse'));
+  const r = previewSpec(rig, description, { name: 'walk', duration: 1.2, loop: true, layers: [{ type: 'gait' }] }, { frames: 2 });
+  assert.equal(r.analysis.gaits[0].pattern, 'walk');
+  assert.equal(r.analysis.gaits[0].legs.length, 4);
+  assert.ok(r.analysis.notes.some(n => /In-place cycle/.test(n)), JSON.stringify(r.analysis.notes));
+  assert.equal(r.analysis.pops.length, 0, JSON.stringify(r.analysis.pops));
+  assert.equal(r.analysis.loopSeamDeg, 0);
+  assert.ok(r.analysis.lowestPoint > -0.02);
+});
+
+test('gait layer: eight legs get a tripod gait within reach (no IK misses)', () => {
+  const { rig, description } = get('spider');
+  const r = previewSpec(rig, description, { name: 'scuttle', duration: 0.8, loop: true, layers: [{ type: 'gait', cycles: 2 }] }, { frames: 2 });
+  assert.equal(r.analysis.gaits[0].pattern, 'tripod');
+  assert.equal(r.analysis.gaits[0].legs.length, 8);
+  assert.ok(!r.warnings.some(w => /missed/.test(w)), JSON.stringify(r.warnings));
+  assert.equal(r.analysis.pops.length, 0, JSON.stringify(r.analysis.pops));
+});
+
+test('gait layer: a stride longer than the legs reach is reported', () => {
+  const { rig, description } = get('spider');
+  const r = previewSpec(rig, description, { name: 's', duration: 1, loop: true, layers: [{ type: 'gait', stride: 2 }] }, { frames: 1 });
+  assert.ok(r.warnings.some(w => /longer than .* can reach/.test(w)), JSON.stringify(r.warnings));
+});
+
+test('gait travel forward moves the root (root motion) with feet planted in the world', () => {
+  const { rig, description } = openRig(fixture('horse'));
+  const ctx = createPoseContext(rig, description);
+  const { spec } = normalizeSpec({ name: 'w', duration: 1.2, layers: [{ type: 'gait', travel: 'forward' }] });
+  const c = compileSpec(ctx, spec);
+  assert.ok(c.clip.translation, 'root translation track');
+  const a = analyzeMotion(ctx, c);
+  for (const [label, s] of Object.entries(a.contacts)) assert.ok(s.slide < 0.05, `${label} slides ${s.slide}`);
+});
+
+test('wave layer: chains run parent-first, so a snake wave travels head to tail', () => {
+  const { description } = get('snake');
+  const body = description.chains.find(c => c.label === 'body');
+  assert.equal(body.bones[0], 'neck');
+  const { rig } = get('snake');
+  const r = previewSpec(rig, description, { name: 'slither', duration: 2, loop: true, layers: [{ type: 'wave', chain: 'body', control: 'left', amplitude: 12, waves: 1.5 }] }, { frames: 1 });
+  assert.equal(r.analysis.loopSeamDeg, 0);
+  assert.equal(r.analysis.pops.length, 0);
+});
+
+test('oscillate on root and a windowed layer contribute only inside the window', () => {
+  const { rig, description } = get('fox');
+  const ctx = createPoseContext(rig, description);
+  const { spec } = normalizeSpec({ name: 'o', duration: 1, layers: [
+    { type: 'oscillate', target: 'root', control: 'root.up', amplitude: 0.1, cycles: 1, phase: 0.25 },
+    { type: 'oscillate', target: 'head', control: 'turn', amplitude: 30, start: 0.5, end: 1, fade: 0.1 }
+  ] });
+  const c = compileSpec(ctx, spec);
+  assert.ok(c.clip.translation);
+  const head = rig.jointByName.get(description.chains.find(ch => ch.label === 'head').bones[0]);
+  const q = c.clip.rotations.get(head);
+  const rest = rig.nodes[rig.joints[head].node].rest.r;
+  const dot = f => Math.abs(q[f * 4] * rest.x + q[f * 4 + 1] * rest.y + q[f * 4 + 2] * rest.z + q[f * 4 + 3] * rest.w);
+  assert.ok(1 - dot(5) < 1e-7, 'head at rest before the window');
+  assert.ok(1 - dot(23) > 1e-4, 'head turns inside the window');
+});
+
+test('spring layer: the tail lags behind a turning body and the loop still closes', () => {
+  const { rig, description } = get('fox');
+  const ctx = createPoseContext(rig, description);
+  const base = { name: 's', duration: 1, loop: true, keys: [{ time: 0, root: { turn: 25 } }, { time: 0.5, root: { turn: -25 } }] };
+  const stiff = compileSpec(ctx, normalizeSpec(base).spec);
+  const floppy = compileSpec(ctx, normalizeSpec({ ...base, layers: [{ type: 'spring', chain: 'tail', stiffness: 0.1, damping: 0.2 }] }).spec);
+  const tip = rig.jointByName.get('Tail_End');
+  const at = (c, f) => tipOf(rig, c.poses[f], 'Tail_End');
+  assert.ok(at(stiff, 8).distanceTo(at(floppy, 8)) > 0.02, 'the spring changes the tail');
+  assert.ok(stiff.clip.rotations.size < floppy.clip.rotations.size || floppy.clip.rotations.has(tip));
+  assert.ok(analyzeMotion(ctx, floppy).loopSeamDeg < 0.5);
 });
 
 test('rig views render a PNG with a legend', () => {

@@ -25,6 +25,7 @@
 import * as THREE from 'three';
 import { buildPose, ALL_CONTROLS, ROOT_CONTROLS } from './pose.js';
 import { computeNodeWorlds, skinPositions } from './gltfRig.js';
+import { normalizeLayers, layerInputsAt, mergeInputs } from './layers.js';
 
 export const SPEC_VERSION = 1;
 const MAX_DURATION = 60;
@@ -46,7 +47,10 @@ export function normalizeSpec(input) {
   if (duration * fps > MAX_FRAMES) errors.push(`That is ${Math.round(duration * fps)} frames; the limit is ${MAX_FRAMES}.`);
   const interpolation = raw.interpolation === 'linear' ? 'linear' : 'smooth';
   const keys = Array.isArray(raw.keys) ? raw.keys : [];
-  if (!keys.length) errors.push('"keys" must list at least one key: { "time": 0, "pose": { ... } }.');
+  const layerCheck = normalizeLayers(raw.layers, { duration: duration > 0 ? duration : 1, loop: Boolean(raw.loop) });
+  errors.push(...layerCheck.errors);
+  warnings.push(...layerCheck.warnings);
+  if (!keys.length && !layerCheck.layers.length) errors.push('Give at least one key ({ "time": 0, "pose": { ... } }) or one layer ({ "type": "gait" }).');
 
   const outKeys = [];
   keys.forEach((key, i) => {
@@ -104,6 +108,7 @@ export function normalizeSpec(input) {
     interpolation,
     keys: outKeys
   };
+  if (layerCheck.layers.length) spec.layers = layerCheck.layers;
   if (raw.description) spec.description = String(raw.description).slice(0, 500);
   return { spec, errors, warnings };
 }
@@ -208,9 +213,13 @@ export function compileSpec(ctx, spec) {
   const channels = collectChannels(spec);
   const holdWarnings = singleKeyWarnings(spec, channels);
   const frameCount = Math.max(2, Math.round(spec.duration * spec.fps) + 1);
-  const times = new Float32Array(frameCount);
-  for (let f = 0; f < frameCount; f += 1) times[f] = Math.min(spec.duration, f / spec.fps);
-  times[frameCount - 1] = spec.duration;
+  // Evaluate at exact (float64) times; the clip stores float32. Evaluating at
+  // the stored value put the last frame at 1.2000000477 - just outside a
+  // layer ending at 1.2, which switched the whole layer off on that frame.
+  const evalTimes = new Float64Array(frameCount);
+  for (let f = 0; f < frameCount; f += 1) evalTimes[f] = Math.min(spec.duration, f / spec.fps);
+  evalTimes[frameCount - 1] = spec.duration;
+  const times = Float32Array.from(evalTimes);
 
   const warnings = new Set();
   const rotations = rig.joints.map(() => new Float32Array(frameCount * 4));
@@ -218,28 +227,47 @@ export function compileSpec(ctx, spec) {
   const translation = new Float32Array(frameCount * 3);
   let anyTranslation = false;
   const poses = [];
+  const layers = (spec.layers || []).map(l => ({ ...l }));
+  const motionLayers = layers.filter(l => l.type !== 'spring');
+  const springLayers = layers.filter(l => l.type === 'spring');
+  const gaits = new Map();
+  const inputsAt = (t) => {
+    const base = poseInputsAt(spec, channels, t);
+    if (!motionLayers.length) return base;
+    const extra = layerInputsAt(ctx, motionLayers, t, spec.duration);
+    for (const g of extra.meta.gaits) if (!gaits.has(g.legs.join())) gaits.set(g.legs.join(), g);
+    for (const w of extra.meta.warnings) warnings.add(w);
+    return mergeInputs(base, extra);
+  };
   // IK warm start: each frame begins from the previous frame's solution.
   const warm = new Map();
   let firstResult = null;
+  const usesIk = [...channels.keys()].some(k => k.startsWith('ik|')) || motionLayers.some(l => l.type === 'gait');
   // A looping clip's first frame must continue from its LAST: run the whole
   // cycle once to warm IK up, then record the second lap. Starting cold, the
   // two sides of the seam settle on different IK solutions and the wrap pops
   // (measured: a 42-51 degree hock flip on the closing frame of a horse walk;
   // a quarter-cycle pre-roll was not enough - IK is path dependent).
-  if (spec.loop && [...channels.keys()].some(k => k.startsWith('ik|'))) {
-    for (let f = 0; f < frameCount - 1; f += 1) {
-      buildPose(ctx, { ...poseInputsAt(spec, channels, times[f]), warm });
-    }
+  if (spec.loop && usesIk) {
+    for (let f = 0; f < frameCount - 1; f += 1) buildPose(ctx, { ...inputsAt(evalTimes[f]), warm });
   }
 
+  const results = [];
   for (let f = 0; f < frameCount; f += 1) {
-    const t = times[f];
-    // The closing frame of a loop IS the first frame - copied, not re-solved,
-    // so the seam is exact even where IK converges from a different start.
+    // The closing frame of a loop IS the first frame - the same object, not
+    // re-solved, so the seam is exact even where IK converges differently.
     const closing = spec.loop && f === frameCount - 1 && f > 0;
-    const result = closing ? firstResult : buildPose(ctx, { ...poseInputsAt(spec, channels, t), warm });
+    const result = closing ? firstResult : buildPose(ctx, { ...inputsAt(evalTimes[f]), warm });
     if (f === 0) firstResult = result;
     for (const w of result.warnings) warnings.add(w);
+    results.push(result);
+  }
+
+  if (springLayers.length) applySprings(ctx, results, springLayers, spec, evalTimes);
+
+  for (let f = 0; f < frameCount; f += 1) {
+    const result = results[f];
+    const closing = spec.loop && f === frameCount - 1 && f > 0;
     result.localRot.forEach((q0, j) => {
       const q = closing ? q0.clone() : q0;
       // Keep the quaternion on the same hemisphere as the previous frame, or
@@ -282,8 +310,62 @@ export function compileSpec(ctx, spec) {
     },
     poses,
     loop: spec.loop,
+    gaits: [...gaits.values()],
     warnings: [...holdWarnings, ...collapseIkWarnings([...warnings])]
   };
+}
+
+// Follow-through: each bone of a spring chain chases the direction the rest
+// of the animation gives it, with stiffness and damping, so a tail lags behind
+// a turning body and overshoots when it stops. Simulated in frame order, base
+// to tip (a child chases its parent's ALREADY-lagged pose). A looping clip is
+// simulated twice and the second lap kept, so the lag at frame 0 is the lag
+// the end of the cycle hands it.
+function applySprings(ctx, results, springs, spec, times) {
+  const { rig } = ctx;
+  const count = spec.loop ? results.length - 1 : results.length;
+  const rotOf = (m) => { const q = new THREE.Quaternion(); m.decompose(new THREE.Vector3(), q, new THREE.Vector3()); return q; };
+  for (const layer of springs) {
+    for (const label of layer.chains) {
+      const chain = ctx.chains.get(label);
+      if (!chain || !chain.joints.length) continue;
+      const restDirLocal = chain.joints.map(j => ctx.boneDir[j].clone().applyQuaternion(ctx.restWorldRot[j].clone().invert()));
+      const cur = chain.joints.map(() => null);
+      const vel = chain.joints.map(() => new THREE.Vector3());
+      const passes = spec.loop ? 2 : 1;
+      for (let pass = 0; pass < passes; pass += 1) {
+        const write = pass === passes - 1;
+        for (let f = 0; f < count; f += 1) {
+          const result = results[f];
+          const t = times[f];
+          let w = t < layer.start || t > layer.end ? 0 : layer.weight;
+          if (layer.fade > 0 && w) {
+            if (layer.start > 1e-9) w *= Math.min(1, (t - layer.start) / layer.fade);
+            if (layer.end < spec.duration - 1e-9) w *= Math.min(1, (layer.end - t) / layer.fade);
+          }
+          const pose = write ? result.pose : new Map([...result.pose].map(([k, v]) => [k, { ...v, r: v.r ? v.r.clone() : v.r }]));
+          let worlds = computeNodeWorlds(rig, pose);
+          chain.joints.forEach((j, i) => {
+            const node = rig.joints[j].node;
+            const worldRot = rotOf(worlds[node]);
+            const dirFk = restDirLocal[i].clone().applyQuaternion(worldRot).normalize();
+            if (!cur[i]) cur[i] = dirFk.clone();
+            vel[i].multiplyScalar(1 - layer.damping).addScaledVector(dirFk.clone().sub(cur[i]), layer.stiffness);
+            cur[i].add(vel[i]).normalize();
+            if (!w) return;
+            const wanted = dirFk.clone().lerp(cur[i], Math.min(1, w)).normalize();
+            const delta = new THREE.Quaternion().setFromUnitVectors(dirFk, wanted);
+            const parentNode = rig.nodes[node].parent;
+            const parentRot = parentNode >= 0 ? rotOf(worlds[parentNode]) : new THREE.Quaternion();
+            const local = parentRot.invert().multiply(delta.multiply(worldRot)).normalize();
+            pose.get(node).r = local;
+            if (write) result.localRot[j] = local;
+            worlds = computeNodeWorlds(rig, pose);
+          });
+        }
+      }
+    }
+  }
 }
 
 // A control keyed ONCE holds that value for the whole clip - correct, but
@@ -357,11 +439,12 @@ export function analyzeMotion(ctx, compiled, { sampleFrames = 24 } = {}) {
   const step = Math.max(1, Math.floor(n / sampleFrames));
   let lowest = Infinity;
   let lowestFrame = 0;
+  let lowestVertex = -1;
   const scratch = new Float32Array(rig.geometry.positions.length);
   for (let f = 0; f < n; f += step) {
     const pos = skinPositions(rig, poses[f], scratch);
     for (let i = 1; i < pos.length; i += 3 * Math.max(1, Math.floor(rig.geometry.vertexCount / 20000))) {
-      if (pos[i] < lowest) { lowest = pos[i]; lowestFrame = f; }
+      if (pos[i] < lowest) { lowest = pos[i]; lowestFrame = f; lowestVertex = (i - 1) / 3; }
     }
   }
 
@@ -407,24 +490,44 @@ export function analyzeMotion(ctx, compiled, { sampleFrames = 24 } = {}) {
     };
   }
 
+  // A POP is a discontinuity, not speed: a fast smooth swing turns a lot per
+  // frame too. Flag a step that towers over both of its neighbours.
   let maxStep = 0;
   let maxStepBone = null;
   let seam = 0;
+  const pops = [];
+  const stepOf = (values, a, b) => {
+    const d = Math.abs(values[a] * values[b] + values[a + 1] * values[b + 1] + values[a + 2] * values[b + 2] + values[a + 3] * values[b + 3]);
+    return 2 * Math.acos(Math.min(1, d)) * 180 / Math.PI;
+  };
   for (const [j, values] of clip.rotations) {
-    for (let f = 1; f < n; f += 1) {
-      const a = f * 4, b = (f - 1) * 4;
-      const d = Math.abs(values[a] * values[b] + values[a + 1] * values[b + 1] + values[a + 2] * values[b + 2] + values[a + 3] * values[b + 3]);
-      const angle = 2 * Math.acos(Math.min(1, d)) * 180 / Math.PI;
-      if (angle > maxStep) { maxStep = angle; maxStepBone = rig.joints[j].name; }
-    }
-    const a = (n - 1) * 4;
-    const d = Math.abs(values[a] * values[0] + values[a + 1] * values[1] + values[a + 2] * values[2] + values[a + 3] * values[3]);
-    seam = Math.max(seam, 2 * Math.acos(Math.min(1, d)) * 180 / Math.PI);
+    const steps = [];
+    for (let f = 1; f < n; f += 1) steps.push(stepOf(values, f * 4, (f - 1) * 4));
+    steps.forEach((st, i) => {
+      if (st > maxStep) { maxStep = st; maxStepBone = rig.joints[j].name; }
+      // On a loop the neighbours wrap (the last frame IS the first).
+      const prev = i > 0 ? steps[i - 1] : (compiled.loop ? steps[steps.length - 1] : 0);
+      const next = i < steps.length - 1 ? steps[i + 1] : (compiled.loop ? steps[0] : 0);
+      if (st > 8 && st > 2.2 * Math.max(prev, next, 1)) pops.push({ bone: rig.joints[j].name, frame: i + 1, deg: Math.round(st * 10) / 10 });
+    });
+    seam = Math.max(seam, stepOf(values, (n - 1) * 4, 0));
   }
+  pops.sort((a, b) => b.deg - a.deg);
 
   const penetration = groundY - lowest;
+  // Which part dipped: the chain of the bone holding the lowest vertex most.
+  let lowestPart = null;
+  if (lowestVertex >= 0) {
+    let best = -1;
+    let bestW = 0;
+    for (let k = 0; k < 4; k += 1) {
+      const w = rig.geometry.weights[lowestVertex * 4 + k];
+      if (w > bestW) { bestW = w; best = rig.geometry.joints[lowestVertex * 4 + k]; }
+    }
+    if (best >= 0) lowestPart = description.jointChain[best];
+  }
   const notes = [];
-  if (penetration > 0.01 * height) notes.push(`The mesh dips ${penetration.toFixed(3)} below the floor (frame ${lowestFrame}). Raise root.up there, or lift the limb.`);
+  if (penetration > 0.01 * height) notes.push(`The mesh dips ${penetration.toFixed(3)} below the floor at frame ${lowestFrame}${lowestPart ? ` (the ${lowestPart})` : ''}. Raise root.up there, or lift that part.`);
   const treadmills = Object.entries(slide).filter(([, s]) => s.treadmillSpeed);
   const speeds = treadmills.map(([, s]) => s.treadmillSpeed);
   if (treadmills.length && treadmills.length === Object.values(slide).filter(s => s.contactFrames > 2).length) {
@@ -435,17 +538,26 @@ export function analyzeMotion(ctx, compiled, { sampleFrames = 24 } = {}) {
       if (s.contactFrames > 2 && s.slide > 0.05 * height && !s.treadmillSpeed) notes.push(`${label} slides ${s.slide} while on the floor - plant it with "ik" or match the body's travel.`);
     }
   }
-  const clipFps = clip.times.length > 1 ? (clip.times.length - 1) / clip.duration : 30;
-  if (maxStep > 360 / clipFps) notes.push(`${maxStepBone} turns ${maxStep.toFixed(1)} degrees in one frame - that will pop. Spread the change over more time.`);
+  for (const p of pops.slice(0, 3)) notes.push(`${p.bone} jumps ${p.deg} degrees at frame ${p.frame} (far more than the frames around it) - that will pop. Smooth the key or target there.`);
   if (compiled.loop && seam > 1) notes.push(`The loop seam jumps ${seam.toFixed(1)} degrees.`);
 
   return {
+    ...(compiled.gaits && compiled.gaits.length ? {
+      gaits: compiled.gaits.map(g => ({
+        pattern: g.pattern, legs: g.legs, duty: g.duty,
+        stride: Math.round(g.stride * 1000) / 1000, lift: Math.round(g.lift * 1000) / 1000,
+        stepPeriod: Math.round(g.period * 1000) / 1000, groundSpeed: g.speed,
+        ...(g.bodyDrop ? { bodyDrop: g.bodyDrop } : {})
+      }))
+    } : {}),
     frames: n,
     lowestPoint: Math.round((lowest - groundY) * 1000) / 1000,
     lowestFrame,
+    ...(lowestPart ? { lowestPart } : {}),
     contacts: slide,
     largestFrameStepDeg: Math.round(maxStep * 10) / 10,
     largestFrameStepBone: maxStepBone,
+    pops: pops.slice(0, 5),
     loopSeamDeg: Math.round(seam * 10) / 10,
     animatedBones: clip.rotations.size,
     notes
