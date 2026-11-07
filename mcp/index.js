@@ -6,8 +6,8 @@
 // app. Tools call the running backend over loopback HTTP (see client.js).
 //
 // Context cost: a client injects the WHOLE tool catalog into the model's system
-// prompt on every request, before it reads the user's message. The full 81-tool
-// catalog is ~123 KB of JSON (~35k tokens) plus ~5 KB of instructions. Clients
+// prompt on every request, before it reads the user's message. The full 98-tool
+// catalog is ~159 KB of JSON (~44k tokens) plus ~5 KB of instructions. Clients
 // that load tool schemas lazily pay almost nothing; the rest pay it per session.
 // For those, TOOL_GROUPS below lets a client load only the groups it needs —
 // see resolveGroups(). Instructions are assembled to match (buildInstructions),
@@ -46,18 +46,18 @@ const APP_VERSION = readAppVersion();
 // (~3.6 chars per token) so a client can budget its context. The cost figures
 // are documentation, not logic — refresh them when tools are added or reworded.
 const TOOL_GROUPS = {
-  projects: { register: registerProjectTools, cost: 4035 },
-  cards: { register: registerCardTools, cost: 4437 },
-  graph: { register: registerGraphTools, cost: 5266 },
-  batch: { register: registerBatchTools, cost: 6650 },
-  workflows: { register: registerWorkflowTools, cost: 10183 },
-  actions: { register: registerActionTools, cost: 23338 },
-  mesh: { register: registerMeshToolTools, cost: 31972 },
-  tree: { register: registerTreeTools, cost: 12368 },
-  vfx: { register: registerVfxTools, cost: 5400 },
-  building: { register: registerBuildingTools, cost: 6200 },
-  assets: { register: registerAssetTools, cost: 12542 },
-  settings: { register: registerSettingsTools, cost: 1684 }
+  projects: { register: registerProjectTools, cost: 4209 },
+  cards: { register: registerCardTools, cost: 5960 },
+  graph: { register: registerGraphTools, cost: 5274 },
+  batch: { register: registerBatchTools, cost: 13720 },
+  workflows: { register: registerWorkflowTools, cost: 10172 },
+  actions: { register: registerActionTools, cost: 23354 },
+  mesh: { register: registerMeshToolTools, cost: 44288 },
+  tree: { register: registerTreeTools, cost: 12476 },
+  vfx: { register: registerVfxTools, cost: 11746 },
+  building: { register: registerBuildingTools, cost: 12508 },
+  assets: { register: registerAssetTools, cost: 14093 },
+  settings: { register: registerSettingsTools, cost: 1688 }
 };
 
 const GROUP_NAMES = Object.keys(TOOL_GROUPS);

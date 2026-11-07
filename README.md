@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-11-07** | New project type "Workspace" |
 | **2026-11-03** | Assets Page: Can delete selected assets<br>ComfyUI and MeshTools: Can select the GPU (nVidia only)<br>Tripo AI: Removed deprecated models<br>SetupWizard: Fixed download UltraTex PBR model |
 | **2026-11-01** | ComfyUI: Added Refine Mesh with Hi3D<br>Improved Optimize tool<br>Fixed missing natten package for Pixal3D |
 | **2026-10-25** | SetupWizard: Added Fibo 2.0 Image Model<br>Improved AutoRetopo<br>Improved UltraTex |

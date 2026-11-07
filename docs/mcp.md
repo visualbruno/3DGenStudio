@@ -127,7 +127,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 98 tools cost ~121 KB of JSON plus ~5 KB of server instructions — roughly **34,500 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~33k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 98 tools cost ~159 KB of JSON plus ~5 KB of server instructions — roughly **45,700 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~45k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -159,19 +159,19 @@ Unset, empty, or `all` loads every group, so nothing changes for an existing con
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 95 | ~33,300 tokens | — |
-| `-mesh` | 80 | ~24,700 | 26% |
-| `-mesh,-actions` | 70 | ~18,400 | 45% |
-| `projects,graph,workflows,assets` | 34 | ~8,600 | 73% |
-| `projects,mesh,assets` | 35 | ~13,100 | 59% |
-| `projects,cards,assets` | 29 | ~5,600 | 82% |
-| `projects,settings` | 10 | ~1,500 | 95% |
+| *(unset)* / `all` | 98 | ~44,300 tokens | — |
+| `-mesh` | 84 | ~32,000 | 28% |
+| `-mesh,-actions` | 74 | ~25,500 | 42% |
+| `projects,graph,workflows,assets` | 34 | ~9,400 | 79% |
+| `projects,mesh,assets` | 35 | ~17,400 | 61% |
+| `projects,cards,assets` | 29 | ~6,700 | 85% |
+| `projects,settings` | 10 | ~1,600 | 96% |
 
 The server instructions are assembled to match, so dropping a group also drops its guidance, and the model is told which groups were left out — it reports them as "not exposed in this session" rather than claiming the app can't do it.
 
 Over the HTTP endpoint the same selector is available per request as `POST /mcp?tools=graph,workflows`, or as `settings.mcp.tools` for a persistent default.
 
-The heaviest groups are `mesh` (~8,600 tokens across 14 tools), `actions` (~6,300 across 10), `tree` (~3,300 across 3) and `assets` (~3,400 across 14) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~1,700 across 3 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~1,700 across 9, and `vfx` ~1,500 across 10, because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
+The heaviest groups are `mesh` (~12,300 tokens across 14 tools), `actions` (~6,500 across 10), `assets` (~3,900 across 14) and `tree` (~3,500 across 3) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~3,800 across 6 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~3,500 across 10, and `vfx` ~3,300 across 10, lighter per tool than their scope suggests because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
 
 #### Tool *results* cost context too
 

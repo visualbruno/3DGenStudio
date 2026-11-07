@@ -31,6 +31,14 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v4.0.0',
+    date: '2026-11-07',
+    items: [
+			'New project type: Workspace',
+			'MCP: Added more functions for the Batch project type'
+    ]
+  },
+  {
     version: 'v3.5.7',
     date: '2026-11-03',
     items: [
