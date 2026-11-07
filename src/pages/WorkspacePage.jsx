@@ -17,6 +17,7 @@ import WorkspaceTexturePanel from '../components/workspace/WorkspaceTexturePanel
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
 import WorkspaceRigPanel from '../components/workspace/WorkspaceRigPanel'
+import WorkspaceAnimatePanel from '../components/workspace/WorkspaceAnimatePanel'
 import useWorkspaceCloudTasks from '../hooks/useWorkspaceCloudTasks'
 import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { useNotifications } from '../context/NotificationContext'
@@ -36,7 +37,7 @@ import './WorkspacePage.css'
 
 const HISTORY_PAGE = 120
 // Modules that work on the shared mesh source (meshTarget).
-const MESH_MODULES = ['retopo', 'uv', 'texture', 'rig']
+const MESH_MODULES = ['retopo', 'uv', 'texture', 'rig', 'animate']
 const TERMINAL_JOB_STATUSES = ['completed', 'error', 'cancelled']
 
 // Newest first, no duplicates (a run can report entries already loaded).
@@ -70,6 +71,9 @@ export default function WorkspacePage({ project }) {
   const { addNotification } = useNotifications()
 
   const [showSettings, setShowSettings] = useState(false)
+  // Bumped when Settings closes, so panels that read settings (Animate's
+  // provider list) refresh after a key or model was set.
+  const [settingsVersion, setSettingsVersion] = useState(0)
   const [activeModule, setActiveModule] = useState('image')
   const [history, setHistory] = useState([])
   const [historyLoading, setHistoryLoading] = useState(true)
@@ -85,6 +89,8 @@ export default function WorkspacePage({ project }) {
   const [meshTarget, setMeshTarget] = useState(null)
   const [meshTargetBusy] = useState(false)
   const [reuse, setReuse] = useState(null)
+  // The Animate module asks the viewer to play the clip it just saved.
+  const [clipRequest, setClipRequest] = useState(null)
   // Cloud API requests in flight (they have no ComfyUI job to show).
   const [cloudPending, setCloudPending] = useState([])
 
@@ -336,6 +342,27 @@ export default function WorkspacePage({ project }) {
     setMeshTarget(meshTargetFromAsset(entries[0]?.asset || asset))
   }, [projectId, handleRunComplete])
 
+  // Animate module: the agent saved a new version (a clip, a rig fix...).
+  // Log it, make it the mesh being animated, and play the new clip.
+  const handleAnimateResult = useCallback(async (ev) => {
+    try {
+      const entries = await addWorkspaceHistory(projectId, [{
+        assetId: ev.assetId,
+        module: 'animate',
+        action: 'edit',
+        sourceAssetId: ev.sourceAssetId ?? null,
+        workflowName: ev.clip ? `Animate · ${ev.clip}` : 'Animate',
+        params: { tool: ev.tool, clip: ev.clip || null }
+      }])
+      handleRunComplete(entries)
+      const asset = entries[0]?.asset
+      if (asset) setMeshTarget(meshTargetFromAsset(asset))
+      if (ev.clip) setClipRequest({ assetId: ev.assetId, clip: ev.clip, nonce: `${ev.assetId}:${Date.now()}` })
+    } catch (err) {
+      reportError('Could not add the animation to the history', err)
+    }
+  }, [projectId, handleRunComplete, reportError])
+
   // Image module: the image being edited.
   const loadImageSource = async (load, errorTitle) => {
     setSourceBusy(true)
@@ -378,6 +405,7 @@ export default function WorkspacePage({ project }) {
   const uvFromEntry = (entry) => openMeshModule('uv', entry)
   const textureFromEntry = (entry) => openMeshModule('texture', entry)
   const rigFromEntry = (entry) => openMeshModule('rig', entry)
+  const animateFromEntry = (entry) => openMeshModule('animate', entry)
 
   const makeMeshFromEntry = (entry) => {
     if (entry.asset.type !== 'image') return
@@ -465,6 +493,8 @@ export default function WorkspacePage({ project }) {
           ? { title: 'Texture a mesh', text: 'Choose a mesh and a reference image, or a high poly to bake from.' }
           : activeModule === 'rig'
             ? { title: 'Rig a character', text: 'Choose a mesh on the left, then Auto Rig.' }
+            : activeModule === 'animate'
+              ? { title: 'Animate with AI', text: 'Choose a rigged mesh on the left and describe the motion.' }
       : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
 
   return (
@@ -475,7 +505,7 @@ export default function WorkspacePage({ project }) {
         centerTitle
         projectId={projectId}
       />
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal onClose={() => { setShowSettings(false); setSettingsVersion(v => v + 1) }} initialTab={typeof showSettings === 'string' ? showSettings : undefined} />}
 
       <div className="workspace-body">
         <div className="workspace-left">
@@ -577,6 +607,20 @@ export default function WorkspacePage({ project }) {
               reuse={reuse?.entry.module === 'rig' ? reuse : null}
             />
           </section>
+          <section className="workspace-panel" hidden={activeModule !== 'animate'}>
+            <WorkspaceAnimatePanel
+              projectId={projectId}
+              target={meshTarget}
+              targetBusy={meshTargetBusy}
+              importers={meshImporters}
+              onTargetChange={setMeshTarget}
+              selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
+              onResult={handleAnimateResult}
+              onOpenInEditor={(asset) => openInEditor({ asset })}
+              onOpenSettings={() => setShowSettings('agent')}
+              settingsVersion={settingsVersion}
+            />
+          </section>
         </div>
 
         <main className="workspace-main">
@@ -591,6 +635,8 @@ export default function WorkspacePage({ project }) {
             onAutoUv={uvFromEntry}
             onTexture={textureFromEntry}
             onRig={rigFromEntry}
+            onAnimate={animateFromEntry}
+            clipRequest={clipRequest}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
             onOpenInEditor={openInEditor}

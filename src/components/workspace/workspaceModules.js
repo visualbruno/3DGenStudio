@@ -5,5 +5,6 @@ export const WORKSPACE_MODULES = [
   { id: 'retopo', label: 'Retopo', icon: 'grid_4x4' },
   { id: 'uv', label: 'UV', icon: 'view_quilt' },
   { id: 'texture', label: 'Texture', icon: 'texture' },
-  { id: 'rig', label: 'Rig', icon: 'accessibility_new' }
+  { id: 'rig', label: 'Rig', icon: 'accessibility_new' },
+  { id: 'animate', label: 'Animate', icon: 'animation' }
 ]

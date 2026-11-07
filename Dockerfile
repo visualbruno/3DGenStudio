@@ -86,6 +86,7 @@ COPY --chown=node:node building ./building
 COPY --chown=node:node batch ./batch
 # "Animate with AI" (rig perception, spec compiler, CPU previews), imported by mcp/.
 COPY --chown=node:node animation ./animation
+COPY --chown=node:node agent ./agent
 # The particle simulation, and the one place src/ is copied. vfxPreview.js needs
 # it to render an effect server-side with no GPU; the subtree imports nothing
 # but vfx/ and has always run in plain Node. See the same note in

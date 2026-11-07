@@ -136,6 +136,10 @@ export const DEFAULT_SETTINGS = {
   },
   initialSetupComplete: false,
   apis: {
+    // Claude (Messages API) for the Workspace "Animate" agent.
+    anthropic: {
+      apiKey: ''
+    },
     google: {
       apiKey: '',
       imageGeneration: {
@@ -337,6 +341,25 @@ export const DEFAULT_SETTINGS = {
   mcp: {
     enabled: true,
     token: ''
+  },
+  // The Workspace "Animate" agent. provider: anthropic | openai | compatible
+  // (any OpenAI-compatible server: LM Studio, Ollama, vLLM...) | claude_code |
+  // codex. The two CLI providers run the user's own installed, logged-in
+  // Claude Code / Codex (subscription), the API ones need a key (tokens).
+  agent: {
+    provider: 'claude_code',
+    models: {
+      anthropic: 'claude-opus-5-5',
+      openai: '',
+      compatible: '',
+      claude_code: '',
+      codex: ''
+    },
+    effort: 'medium',
+    compatible: { baseUrl: '', apiKey: '', images: true },
+    claudePath: '',
+    codexPath: '',
+    maxTurns: 40
   }
 };
 

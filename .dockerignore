@@ -54,6 +54,7 @@
 # build dies at vite.
 !batch/
 !animation/
+!agent/
 !vfxPreview.js
 
 # File-based wiki (resolved against the module dir, not cwd).

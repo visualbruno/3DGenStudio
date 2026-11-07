@@ -52,7 +52,8 @@ export function mountMcp(app, { baseUrl, getSettings, notifyMutation }) {
       // for a catalog it will not use. Falls back to settings.mcp.tools, then
       // the MCP_TOOLS env var, then every group.
       const groups = req.query?.tools ?? mcpSettings.tools ?? undefined;
-      const server = buildMcpServer({ baseUrl, notifyMutation, groups });
+      const agentRunId = typeof req.headers['x-genstudio-agent-run'] === 'string' ? req.headers['x-genstudio-agent-run'] : undefined;
+      const server = buildMcpServer({ baseUrl, notifyMutation, groups, agentRunId });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       res.on('close', () => {
         transport.close();

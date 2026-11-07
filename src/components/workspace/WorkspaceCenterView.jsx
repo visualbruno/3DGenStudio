@@ -41,12 +41,41 @@ function writeViewSettings(settings) {
 
 // Keyed by asset id by the caller, so the stats reset with the model. The
 // display settings live one level up, so they carry over between meshes.
-function MeshStage({ url, view, onViewChange }) {
+function MeshStage({ url, view, onViewChange, clipRequest }) {
   const [stats, setStats] = useState(null)
   const [rigged, setRigged] = useState(false)
+  const [clips, setClips] = useState([])
+  const [clip, setClip] = useState(null)
+  const [appliedRequest, setAppliedRequest] = useState(null)
+  // The Animate module asks for the clip it just saved; honoured once the
+  // model (and its clip list) has loaded.
+  if (clipRequest && clipRequest.nonce !== appliedRequest && clips.some(c => c.name === clipRequest.clip)) {
+    setAppliedRequest(clipRequest.nonce)
+    setClip(clipRequest.clip)
+  }
   return (
     <div className="workspace-center__mesh">
       <WorkspaceViewToolbar settings={view} onChange={onViewChange} rigged={rigged} />
+      {clips.length > 0 && (
+        <div className="workspace-center__clips" role="toolbar" aria-label="Animations">
+          <span className="material-symbols-outlined" title="Animations in this mesh">animation</span>
+          <button type="button" className={`workspace-center__clip ${clip ? '' : 'workspace-center__clip--active'}`} onClick={() => setClip(null)} title="Rest pose">
+            <span className="material-symbols-outlined">stop</span>
+          </button>
+          {clips.map(c => (
+            <button
+              key={c.name}
+              type="button"
+              className={`workspace-center__clip ${clip === c.name ? 'workspace-center__clip--active' : ''}`}
+              onClick={() => setClip(clip === c.name ? null : c.name)}
+              title={`${c.name} - ${c.duration}s`}
+            >
+              {clip === c.name && <span className="material-symbols-outlined">play_arrow</span>}
+              {c.name}
+            </button>
+          ))}
+        </div>
+      )}
       <Viewer
         height="100%"
         modelUrl={url}
@@ -58,9 +87,11 @@ function MeshStage({ url, view, onViewChange }) {
         showNormals={view.shading === 'normal'}
         showAlbedo={view.shading === 'textured' && view.texture === 'unlit'}
         showSkeleton={rigged && Boolean(view.skeleton)}
-        onModelLoaded={({ stats: loaded, isRigged }) => {
+        animationClip={clip}
+        onModelLoaded={({ stats: loaded, isRigged, clips: loadedClips }) => {
           setStats(loaded || null)
           setRigged(Boolean(isRigged))
+          setClips(Array.isArray(loadedClips) ? loadedClips : [])
         }}
       />
       {stats && (
@@ -86,7 +117,9 @@ export default function WorkspaceCenterView({
   onRig,
   onReuse,
   onSelectEntry,
-  onOpenInEditor
+  onOpenInEditor,
+  onAnimate,
+  clipRequest
 }) {
   const [view, setView] = useState(readViewSettings)
   const changeView = (next) => {
@@ -118,7 +151,15 @@ export default function WorkspaceCenterView({
         {isImage && (
           <img key={asset.id} src={assetUrl(asset.filename)} alt={asset.name} className="workspace-center__image" />
         )}
-        {isMesh && <MeshStage key={asset.id} url={assetUrl(asset.filename)} view={view} onViewChange={changeView} />}
+        {isMesh && (
+          <MeshStage
+            key={asset.id}
+            url={assetUrl(asset.filename)}
+            view={view}
+            onViewChange={changeView}
+            clipRequest={clipRequest?.assetId === asset.id ? clipRequest : null}
+          />
+        )}
         {!isImage && !isMesh && (
           <div className="workspace-center__empty-text">No preview for this kind of asset.</div>
         )}
@@ -213,6 +254,12 @@ export default function WorkspaceCenterView({
             <button type="button" className="workspace-action-btn" onClick={() => onRig(entry)} title="Add a skeleton and skin weights">
               <span className="material-symbols-outlined">accessibility_new</span>
               Auto Rig
+            </button>
+          )}
+          {isMesh && onAnimate && (
+            <button type="button" className="workspace-action-btn" onClick={() => onAnimate(entry)} title="Describe a motion and let an AI animate this rigged mesh">
+              <span className="material-symbols-outlined">animation</span>
+              Animate
             </button>
           )}
           {entry.action !== 'import' && (

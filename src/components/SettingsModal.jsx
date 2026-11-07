@@ -810,10 +810,10 @@ function BrowseFolderButton({ description, initialPath, onPick }) {
   )
 }
 
-export default function SettingsModal({ onClose }) {
+export default function SettingsModal({ onClose, initialTab = 'apis' }) {
   const { settings, updateSettings, addCustomApi, refreshSettings } = useSettings()
   const [localSettings, setLocalSettings] = useState(settings)
-  const [activeTab, setActiveTab] = useState('apis')
+  const [activeTab, setActiveTab] = useState(initialTab)
   // Whether the Meta Llama 3 licence has been accepted — the motion installer is
   // blocked until it is (the main process enforces the same rule).
   const [llamaAccepted, setLlamaAccepted] = useState(false)
@@ -837,6 +837,17 @@ export default function SettingsModal({ onClose }) {
   const setApiField = (key, field, value) => setLocalSettings(prev => ({
     ...prev,
     apis: { ...prev?.apis, [key]: { ...prev?.apis?.[key], [field]: value } }
+  }))
+
+  // The Animate agent's settings (settings.agent).
+  const setAgentField = (field, value) => setLocalSettings(prev => ({ ...prev, agent: { ...prev?.agent, [field]: value } }))
+  const setAgentModel = (provider, value) => setLocalSettings(prev => ({
+    ...prev,
+    agent: { ...prev?.agent, models: { ...prev?.agent?.models, [provider]: value } }
+  }))
+  const setAgentCompatible = (field, value) => setLocalSettings(prev => ({
+    ...prev,
+    agent: { ...prev?.agent, compatible: { ...prev?.agent?.compatible, [field]: value } }
   }))
 
   const handleSave = async () => {
@@ -901,6 +912,12 @@ export default function SettingsModal({ onClose }) {
               onClick={() => setActiveTab('meshtools')}
             >
               Mesh Tools
+            </button>
+            <button
+              className={`settings-tab ${activeTab === 'agent' ? 'settings-tab--active' : ''}`}
+              onClick={() => setActiveTab('agent')}
+            >
+              AI Agent
             </button>
             <button
               className={`settings-tab ${activeTab === 'server' ? 'settings-tab--active' : ''}`}
@@ -1749,6 +1766,119 @@ export default function SettingsModal({ onClose }) {
                     onChange={v => setApiField('mocaptools', 'autoStart', v)}
                   />
                 </ServiceConnection>
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'agent' && (
+            <section className="settings-section">
+              <h3 className="settings-section-title font-label">AI Agent (Workspace › Animate)</h3>
+              <p className="settings-hint" style={{ margin: '0 0 12px' }}>
+                The Animate module's AI. <strong>Claude Code</strong> and <strong>OpenAI Codex</strong> use your own installed, logged-in CLI - billed to your subscription, no API key.
+                The <strong>APIs</strong> need a key and bill per token; <strong>OpenAI-compatible</strong> covers a local server such as LM Studio or Ollama.
+              </p>
+              <div className="settings-grid">
+                <div className="settings-api-card">
+                  <div className="settings-api-header">
+                    <div className="settings-api-icon"><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>smart_toy</span></div>
+                    <span className="settings-api-name">Default provider</span>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Provider</label>
+                    <select className="settings-input" value={localSettings?.agent?.provider || 'claude_code'} onChange={e => setAgentField('provider', e.target.value)}>
+                      <option value="claude_code">Claude Code (subscription)</option>
+                      <option value="codex">OpenAI Codex (subscription)</option>
+                      <option value="anthropic">Claude API (per token)</option>
+                      <option value="openai">OpenAI API (per token)</option>
+                      <option value="compatible">OpenAI-compatible / local</option>
+                    </select>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Max agent steps per message</label>
+                    <input type="number" min="5" max="100" className="settings-input" value={localSettings?.agent?.maxTurns ?? 40} onChange={e => setAgentField('maxTurns', Math.max(5, Math.min(100, Number(e.target.value) || 40)))} />
+                  </div>
+                </div>
+
+                <div className="settings-api-card">
+                  <div className="settings-api-header">
+                    <div className="settings-api-icon"><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>terminal</span></div>
+                    <span className="settings-api-name">Claude Code / Codex</span>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Claude Code model (blank = its default)</label>
+                    <input type="text" className="settings-input" placeholder="e.g. opus, sonnet" value={localSettings?.agent?.models?.claude_code || ''} onChange={e => setAgentModel('claude_code', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Codex model (blank = its default)</label>
+                    <input type="text" className="settings-input" value={localSettings?.agent?.models?.codex || ''} onChange={e => setAgentModel('codex', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">claude executable (blank = from PATH)</label>
+                    <input type="text" className="settings-input" value={localSettings?.agent?.claudePath || ''} onChange={e => setAgentField('claudePath', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">codex executable (blank = from PATH)</label>
+                    <input type="text" className="settings-input" value={localSettings?.agent?.codexPath || ''} onChange={e => setAgentField('codexPath', e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="settings-api-card">
+                  <div className="settings-api-header">
+                    <div className="settings-api-icon"><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>key</span></div>
+                    <span className="settings-api-name">Claude API</span>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Anthropic API key</label>
+                    <input type="password" className="settings-input" placeholder="sk-ant-..." value={localSettings?.apis?.anthropic?.apiKey || ''} onChange={e => setApiField('anthropic', 'apiKey', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Model</label>
+                    <input type="text" className="settings-input" placeholder="claude-opus-5-5" value={localSettings?.agent?.models?.anthropic || ''} onChange={e => setAgentModel('anthropic', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Effort</label>
+                    <select className="settings-input" value={localSettings?.agent?.effort || 'medium'} onChange={e => setAgentField('effort', e.target.value)}>
+                      <option value="low">low (cheapest)</option>
+                      <option value="medium">medium</option>
+                      <option value="high">high</option>
+                      <option value="xhigh">xhigh</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="settings-api-card">
+                  <div className="settings-api-header">
+                    <div className="settings-api-icon"><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>bolt</span></div>
+                    <span className="settings-api-name">OpenAI API</span>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Model (uses the OpenAI key from the APIs tab)</label>
+                    <input type="text" className="settings-input" value={localSettings?.agent?.models?.openai || ''} onChange={e => setAgentModel('openai', e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="settings-api-card">
+                  <div className="settings-api-header">
+                    <div className="settings-api-icon"><span className="material-symbols-outlined" style={{ fontSize: '18px' }}>dns</span></div>
+                    <span className="settings-api-name">OpenAI-compatible / local</span>
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Server URL</label>
+                    <input type="text" className="settings-input" placeholder="http://127.0.0.1:1234/v1" value={localSettings?.agent?.compatible?.baseUrl || ''} onChange={e => setAgentCompatible('baseUrl', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">Model</label>
+                    <input type="text" className="settings-input" value={localSettings?.agent?.models?.compatible || ''} onChange={e => setAgentModel('compatible', e.target.value)} />
+                  </div>
+                  <div className="settings-input-group">
+                    <label className="settings-label">API key (if the server needs one)</label>
+                    <input type="password" className="settings-input" value={localSettings?.agent?.compatible?.apiKey || ''} onChange={e => setAgentCompatible('apiKey', e.target.value)} />
+                  </div>
+                  <label className="settings-label" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input type="checkbox" checked={localSettings?.agent?.compatible?.images !== false} onChange={e => setAgentCompatible('images', e.target.checked)} />
+                    The model can see images (send preview filmstrips)
+                  </label>
+                </div>
               </div>
             </section>
           )}

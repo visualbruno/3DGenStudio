@@ -104,6 +104,10 @@ files:
   # server.js imports mcp/, so the whole directory ships - same rule as
   # building/ and batch/. Pure Node + three, no DOM.
   - animation/**/*
+  # The "Animate with AI" agent runner (Workspace Animate module): provider
+  # loops for the Claude/OpenAI APIs and launchers for Claude Code / Codex.
+  # server.js imports it statically - same rule as animation/.
+  - agent/**/*
   # THE PARTICLE SIMULATION, and the one place src/ ships. The rule everywhere
   # else is that src/ is browser code and only dist/ is packaged - this subtree
   # is the exception because it is provably neither: system.js, emitter.js,

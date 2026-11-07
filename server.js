@@ -39,6 +39,7 @@ import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
 import { addMissingNormals } from './meshNormals.js';
 import { previewResponseBody, renderVfxFrames } from './vfxPreview.js';
 import { transferRig } from './meshRigTransfer.js';
+import { runAgent, providerStatus as agentProviderStatus, cancelRun as cancelAgentRun, postArtifact as postAgentArtifact } from './agent/index.js';
 // The self-managed PostgreSQL for a shared server that is not running Docker.
 import * as pgEmbedded from './pgEmbedded.js';
 import { mountAuth, resolveJwtSecret, seedAdminFromEnv } from './auth.js';
@@ -615,6 +616,73 @@ if (SERVER_MODE !== 'server') mountMcp(app, {
     ...(detail || {})
   })
 });
+
+// "Animate with AI" - the Workspace Animate module's agent (agent/). One POST
+// streams a whole run as SSE: the agent's text, its tool calls, the preview
+// images and every new version it saves. Providers: the Claude / OpenAI APIs
+// or a local OpenAI-compatible server (tool loop runs here), or the user's own
+// Claude Code / Codex CLI (subscription; they call /mcp or mcp/stdio.js).
+if (SERVER_MODE !== 'server') {
+  const agentNotify = (projectId, detail) => publishAppEvent({ type: 'externalMutation', projectId: projectId ?? null, ...(detail || {}) });
+
+  app.get('/api/agent/providers', async (req, res) => {
+    try {
+      res.json(await agentProviderStatus(await getSettings()));
+    } catch (err) {
+      res.status(500).json({ error: err.message || 'Failed to read the agent providers' });
+    }
+  });
+
+  app.post('/api/agent/runs', async (req, res) => {
+    const { projectId, assetId, assetName, message, conversationId, provider } = req.body || {};
+    if (!projectId || !assetId || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({ error: 'projectId, assetId and a message are required' });
+    }
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    let runId = null;
+    let finished = false;
+    const heartbeat = setInterval(() => { if (!finished) res.write(': keep-alive\n\n'); }, 15000);
+    // Closing the panel or the page stops the run (and kills a CLI agent).
+    res.on('close', () => { if (!finished && runId) cancelAgentRun(runId); });
+    try {
+      await runAgent({
+        settings: await getSettings(),
+        baseUrl: `http://127.0.0.1:${PORT}`,
+        notifyMutation: agentNotify,
+        projectId: Number(projectId),
+        assetId: Number(assetId),
+        assetName: typeof assetName === 'string' ? assetName.slice(0, 200) : '',
+        message: message.slice(0, 8000),
+        conversationId: typeof conversationId === 'string' ? conversationId : null,
+        provider: typeof provider === 'string' ? provider : null,
+        emit: (event) => {
+          if (event.type === 'start') runId = event.runId;
+          if (!res.writableEnded) res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }
+      });
+    } finally {
+      finished = true;
+      clearInterval(heartbeat);
+      if (!res.writableEnded) res.end();
+    }
+  });
+
+  app.post('/api/agent/runs/:runId/cancel', (req, res) => {
+    res.json({ cancelled: cancelAgentRun(String(req.params.runId)) });
+  });
+
+  // Previews and new versions posted by the MCP tools while a CLI agent drives
+  // them. Loopback only: it injects into a live run.
+  app.post('/api/agent/runs/:runId/artifacts', (req, res) => {
+    const remote = req.socket.remoteAddress;
+    if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) return res.status(403).json({ error: 'loopback only' });
+    res.json({ accepted: postAgentArtifact(String(req.params.runId), req.body) });
+  });
+}
 
 // Service logs (GET /api/logs, GET /api/logs/:id) — read-only tails of the log
 // files the desktop shell writes for itself, the backend, the two Python

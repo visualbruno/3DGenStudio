@@ -1,4 +1,4 @@
-import { Canvas, useThree } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Environment, Grid, OrbitControls, PerspectiveCamera } from '@react-three/drei'
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js'
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
+import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import SkeletonOverlay from './meshEditor/SkeletonOverlay'
 import { extractSkeletonFromObject } from '../utils/skeleton'
 
@@ -107,6 +108,8 @@ function normalizeLoadedModel(asset, fitMode = 'ground') {
     object: container,
     target,
     cameraPosition,
+    // glTF clips, played by ClipPlayer when the caller picks one.
+    animations: Array.isArray(asset?.animations) ? asset.animations : [],
     stats: { vertexCount, faceCount }
   }
 }
@@ -260,6 +263,27 @@ async function loadModelFromUrl(url, fitMode = 'ground') {
   throw new Error('Unsupported mesh format')
 }
 
+// Plays one glTF clip on the displayed model (looping). Stopping a clip puts
+// every skinned mesh back in its bind pose - an AnimationMixer leaves bones
+// wherever the last frame put them.
+function ClipPlayer({ root, clip }) {
+  const mixerRef = useRef(null)
+  useEffect(() => {
+    if (!root) return undefined
+    const mixer = new THREE.AnimationMixer(root)
+    mixerRef.current = mixer
+    if (clip) mixer.clipAction(clip).reset().setLoop(THREE.LoopRepeat, Infinity).play()
+    return () => {
+      mixer.stopAllAction()
+      mixer.uncacheRoot(root)
+      root.traverse(child => { if (child.isSkinnedMesh) child.skeleton.pose() })
+      mixerRef.current = null
+    }
+  }, [root, clip])
+  useFrame((_, delta) => { mixerRef.current?.update(delta) })
+  return null
+}
+
 function CameraController({ autoRotate, target, cameraPosition }) {
   const { camera } = useThree()
   const controlsRef = useRef(null)
@@ -298,6 +322,8 @@ export default function Viewer({
   wireframeColor = '#ffffff',
   wireframeOpacity = 0.36,
   showSkeleton = false,
+  // Name of a clip in the GLB to play (looping), or null for the rest pose.
+  animationClip = null,
   onModelLoaded = null,
   lightIntensity = 2.2,
   fitMode = 'ground'
@@ -349,7 +375,12 @@ export default function Viewer({
       return null
     }
 
-    const modelClone = modelState.object.clone(true)
+    // SkeletonUtils.clone for rigged models: Object3D.clone leaves a cloned
+    // SkinnedMesh bound to the ORIGINAL bones, so animating the clone's bones
+    // would deform nothing.
+    let skinned = false
+    modelState.object.traverse(child => { if (child.isSkinnedMesh) skinned = true })
+    const modelClone = skinned ? cloneSkinned(modelState.object) : modelState.object.clone(true)
     applyDisplayMaterial(modelClone, showNormals, showShadows, showAlbedo, showSolid)
     applyWireframeOverlay(modelClone, showWireframe, { color: wireframeColor, opacity: wireframeOpacity })
     return modelClone
@@ -380,9 +411,15 @@ export default function Viewer({
     onModelLoadedRef.current?.({
       modelUrl,
       isRigged: Boolean(skeleton?.jointCount),
-      stats: modelState.stats || null
+      stats: modelState.stats || null,
+      clips: (modelState.animations || []).map(clip => ({ name: clip.name, duration: Math.round(clip.duration * 100) / 100 }))
     })
   }, [modelState, modelUrl, skeleton])
+
+  const activeClip = useMemo(() => {
+    if (!animationClip || !modelState?.animations?.length || modelState.modelUrl !== modelUrl) return null
+    return modelState.animations.find(clip => clip.name === animationClip) || null
+  }, [animationClip, modelState, modelUrl])
 
   const cameraTarget = modelState?.modelUrl === modelUrl ? modelState.target : new THREE.Vector3(0, 0.75, 0)
   const cameraPosition = modelState?.modelUrl === modelUrl ? modelState.cameraPosition : new THREE.Vector3(3, 3, 5)
@@ -413,7 +450,9 @@ export default function Viewer({
           <directionalLight position={[-5, 3, -4]} intensity={Math.max(lightIntensity * 0.4, 0.15)} color="#8ff5ff" />
         <Suspense fallback={null}>
           {renderedModel && <primitive object={renderedModel} />}
-            {skeleton && <SkeletonOverlay skeleton={skeleton} visible={showSkeleton} />}
+            {renderedModel && <ClipPlayer root={renderedModel} clip={activeClip} />}
+            {/* The overlay is the REST skeleton - hidden while a clip moves the mesh. */}
+            {skeleton && <SkeletonOverlay skeleton={skeleton} visible={showSkeleton && !activeClip} />}
             {showGrid && (
               <Grid
                 infiniteGrid

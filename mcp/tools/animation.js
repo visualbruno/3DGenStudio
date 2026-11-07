@@ -277,7 +277,37 @@ function guarded(fn) {
   };
 }
 
-export function registerAnimationTools(server, { api, notifyMutation }) {
+export function registerAnimationTools(mcpServer, { api, notifyMutation, agentRunId }) {
+  // When an in-app "Animate with AI" run drives these tools through a CLI
+  // agent (Claude Code over HTTP, Codex over stdio), mirror what the user
+  // should SEE - preview images and new versions - into that run's stream.
+  // Best effort: a failed mirror never fails the tool.
+  const mirror = (payload) => {
+    if (!agentRunId) return;
+    api.apiJson('POST', `/agent/runs/${agentRunId}/artifacts`, { body: payload }).catch(() => {});
+  };
+  const server = {
+    registerTool(name, def, handler) {
+      return mcpServer.registerTool(name, def, async (args, extra) => {
+        const result = await handler(args, extra);
+        if (agentRunId && result && !result.isError) {
+          for (const block of result.content || []) {
+            if (block.type === 'image') mirror({ type: 'image', tool: name, data: block.data, mimeType: block.mimeType });
+            else if (block.type === 'text') {
+              try {
+                const data = JSON.parse(block.text);
+                if (data?.assetId && data?.sourceAssetId && data.assetId !== data.sourceAssetId) {
+                  mirror({ type: 'asset', tool: name, assetId: data.assetId, sourceAssetId: data.sourceAssetId, clip: data.clip || null });
+                }
+              } catch { /* not JSON */ }
+            }
+          }
+        }
+        return result;
+      });
+    }
+  };
+
   server.registerTool('describe_rig', {
     title: 'Describe a rig as a body',
     description: 'Read a rigged mesh as a BODY you can animate: its body plan (quadruped, 8-legged, winged...), facing (forward/up/left axes), size, and CHAINS - '

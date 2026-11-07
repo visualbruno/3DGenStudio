@@ -229,7 +229,10 @@ export function buildInstructions(groups) {
 //   host process can push a refresh signal to open browser UIs.
 // groups: tool-group selector (see resolveGroups). Defaults to the MCP_TOOLS
 //   env var, and to every group when that is unset.
-export function buildMcpServer({ baseUrl, notifyMutation, groups } = {}) {
+// agentRunId: set when an in-app "Animate with AI" run drives this server
+//   (header x-genstudio-agent-run over HTTP, GENSTUDIO_AGENT_RUN over stdio);
+//   tools then mirror previews and new versions to that run's live stream.
+export function buildMcpServer({ baseUrl, notifyMutation, groups, agentRunId } = {}) {
   const api = createApiClient(baseUrl);
   const selected = resolveGroups(groups ?? process.env.MCP_TOOLS);
   const server = new McpServer(
@@ -237,7 +240,12 @@ export function buildMcpServer({ baseUrl, notifyMutation, groups } = {}) {
     { instructions: buildInstructions(selected) }
   );
 
-  const ctx = { api, notifyMutation: typeof notifyMutation === 'function' ? notifyMutation : () => {} };
+  const runId = agentRunId ?? process.env.GENSTUDIO_AGENT_RUN ?? null;
+  const ctx = {
+    api,
+    notifyMutation: typeof notifyMutation === 'function' ? notifyMutation : () => {},
+    agentRunId: runId && /^[A-Za-z0-9_-]{6,64}$/.test(runId) ? runId : null
+  };
 
   for (const name of selected) TOOL_GROUPS[name].register(server, ctx);
 
