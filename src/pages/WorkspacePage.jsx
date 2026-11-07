@@ -2,7 +2,7 @@
 // Mesh, Retopo, UV, Texture, Rig) and the active module's panel; center, the
 // selected result; right, the project's history (WorkspaceHistory table).
 //
-// Image and Mesh are built. The other modules show a draft panel for now.
+// Image, Mesh and Retopo are built. The other modules show a draft panel for now.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
@@ -11,6 +11,7 @@ import SettingsModal from '../components/SettingsModal'
 import WorkspaceToolRail from '../components/workspace/WorkspaceToolRail'
 import WorkspaceImagePanel from '../components/workspace/WorkspaceImagePanel'
 import WorkspaceMeshPanel from '../components/workspace/WorkspaceMeshPanel'
+import WorkspaceRetopoPanel from '../components/workspace/WorkspaceRetopoPanel'
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
 import WorkspaceModuleDraft from '../components/workspace/WorkspaceModuleDraft'
@@ -19,7 +20,8 @@ import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { useNotifications } from '../context/NotificationContext'
 import { assetUrl } from '../config'
 import { buildImageEditorPath, buildMeshEditorPath } from '../utils/graphHelpers'
-import { createMeshThumbnailFileFromUrl } from '../utils/meshThumbnail'
+import { createMeshThumbnailFile, createMeshThumbnailFileFromUrl } from '../utils/meshThumbnail'
+import { RETOPO_TOOLS } from '../utils/workspaceRetopo'
 import {
   addWorkspaceHistory,
   deleteWorkspaceHistoryEntry,
@@ -74,6 +76,10 @@ export default function WorkspacePage({ project }) {
   const [sourceBusy, setSourceBusy] = useState(false)
   const [meshSource, setMeshSource] = useState(null)
   const [meshSourceBusy, setMeshSourceBusy] = useState(false)
+  // The mesh the mesh-processing modules (Retopo, later UV / Texture / Rig)
+  // work on: { assetId, name, filename, filePath, thumbnail }.
+  const [meshTarget, setMeshTarget] = useState(null)
+  const [meshTargetBusy] = useState(false)
   const [reuse, setReuse] = useState(null)
   // Cloud API requests in flight (they have no ComfyUI job to show).
   const [cloudPending, setCloudPending] = useState([])
@@ -141,7 +147,11 @@ export default function WorkspacePage({ project }) {
   }
 
   const addCloudPending = useCallback((item) => {
-    setCloudPending(prev => [...prev, item])
+    setCloudPending(prev => [...prev, { createdAt: Date.now(), ...item }])
+  }, [])
+
+  const updateCloudPending = useCallback((id, patch) => {
+    setCloudPending(prev => prev.map(item => (item.id === id ? { ...item, ...patch } : item)))
   }, [])
 
   const removeCloudPending = useCallback((id) => {
@@ -260,6 +270,68 @@ export default function WorkspacePage({ project }) {
 
   const importers = { fromFile: importImageFile, fromAsset: importLibraryImage, fromEntry: sourceFromEntry }
 
+  // --- mesh inputs (Retopo and the later mesh modules) ----------------------
+  const meshTargetFromAsset = (asset) => ({
+    assetId: asset.id,
+    name: asset.name || 'Mesh',
+    filename: asset.filename,
+    filePath: asset.filePath,
+    thumbnail: asset.thumbnail || null
+  })
+
+  // A mesh file from the computer: a root project asset with a rendered
+  // thumbnail, logged as an import.
+  const importMeshFile = async (file) => {
+    let asset = await uploadDetachedAsset(projectId, file, 'mesh')
+    try {
+      const thumbnail = await createMeshThumbnailFile(file)
+      if (thumbnail) asset = { ...asset, ...(await uploadAssetThumbnail(asset.id, thumbnail)) }
+    } catch (err) {
+      console.warn('Could not render the mesh thumbnail', err)
+    }
+    const entries = await addWorkspaceHistory(projectId, [{ assetId: asset.id, module: 'mesh', action: 'import' }])
+    setHistory(prev => mergeEntries(entries, prev))
+    if (entries[0]) setSelectedEntryId(entries[0].id)
+    return meshTargetFromAsset(asset)
+  }
+
+  // A mesh from the Assets library (root or version): linked to the project
+  // and logged as an import the first time it shows up.
+  const importLibraryMesh = async (asset) => {
+    const { assetId } = await resolveSourceReference(projectId, 'mesh', asset.filename || asset.filePath)
+    const resolvedId = assetId ?? asset.id
+    const existing = history.find(entry => entry.asset.id === resolvedId)
+    if (existing) {
+      setSelectedEntryId(existing.id)
+      return meshTargetFromAsset(existing.asset)
+    }
+    const entries = await addWorkspaceHistory(projectId, [{ assetId: resolvedId, module: 'mesh', action: 'import' }])
+    setHistory(prev => mergeEntries(entries, prev))
+    if (entries[0]) setSelectedEntryId(entries[0].id)
+    return meshTargetFromAsset(entries[0]?.asset || { ...asset, id: resolvedId })
+  }
+
+  const meshImporters = {
+    fromMeshFile: importMeshFile,
+    fromMeshAsset: importLibraryMesh,
+    fromEntry: async (entry) => meshTargetFromAsset(entry.asset)
+  }
+
+  // A Retopo / Repair / Optimize result: already saved as a version of the
+  // source; log it, show it, and make it the next source.
+  const handleMeshToolResult = useCallback(async ({ asset, toolId, options, rows, source: runSource }) => {
+    const entries = await addWorkspaceHistory(projectId, [{
+      assetId: asset.id,
+      module: 'retopo',
+      action: 'edit',
+      sourceAssetId: runSource?.assetId ?? null,
+      workflowName: RETOPO_TOOLS[toolId]?.label || toolId,
+      params: { tool: toolId, options, summary: rows }
+    }])
+    handleRunComplete(entries)
+    setMeshTarget(meshTargetFromAsset(entries[0]?.asset || asset))
+  }, [projectId, handleRunComplete])
+
   // Image module: the image being edited.
   const loadImageSource = async (load, errorTitle) => {
     setSourceBusy(true)
@@ -291,6 +363,13 @@ export default function WorkspacePage({ project }) {
     loadImageSource(() => sourceFromEntry(entry), 'Could not edit that image')
   }
 
+  const retopoFromEntry = (entry) => {
+    if (entry.asset.type !== 'mesh') return
+    setActiveModule('retopo')
+    setSelectedEntryId(entry.id)
+    setMeshTarget(meshTargetFromAsset(entry.asset))
+  }
+
   const makeMeshFromEntry = (entry) => {
     if (entry.asset.type !== 'image') return
     setActiveModule('mesh')
@@ -305,6 +384,10 @@ export default function WorkspacePage({ project }) {
     if (activeModule === 'mesh' && entry.asset.type === 'image' && entry.asset.id !== meshSource?.assetId) {
       loadMeshSource(() => sourceFromEntry(entry))
     }
+    // In a mesh-processing module, clicking a mesh makes it the one to work on.
+    if (activeModule === 'retopo' && entry.asset.type === 'mesh') {
+      setMeshTarget(meshTargetFromAsset(entry.asset))
+    }
   }
 
   // Opening the Mesh module with an image selected starts from that image.
@@ -312,6 +395,9 @@ export default function WorkspacePage({ project }) {
     setActiveModule(moduleId)
     if (moduleId === 'mesh' && !meshSource && selectedEntry?.asset.type === 'image') {
       loadMeshSource(() => sourceFromEntry(selectedEntry))
+    }
+    if (moduleId === 'retopo' && !meshTarget && selectedEntry?.asset.type === 'mesh') {
+      setMeshTarget(meshTargetFromAsset(selectedEntry.asset))
     }
   }
 
@@ -324,6 +410,8 @@ export default function WorkspacePage({ project }) {
       : null
     if (module === 'mesh') {
       if (original?.asset.type === 'image') loadMeshSource(() => sourceFromEntry(original))
+    } else if (module === 'retopo') {
+      if (original?.asset.type === 'mesh') setMeshTarget(meshTargetFromAsset(original.asset))
     } else if (entry.action === 'edit') {
       if (original) loadImageSource(() => sourceFromEntry(original), 'Could not edit that image')
     } else {
@@ -360,7 +448,9 @@ export default function WorkspacePage({ project }) {
 
   const emptyState = activeModule === 'mesh'
     ? { title: 'Ready for a new 3D model?', text: 'Pick an image on the left, then Generate Mesh.' }
-    : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
+    : activeModule === 'retopo'
+      ? { title: 'Clean up a mesh', text: 'Choose a mesh on the left, then repair, retopologize or optimize it.' }
+      : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
 
   return (
     <div className="workspace-page">
@@ -408,7 +498,22 @@ export default function WorkspacePage({ project }) {
               reuse={reuse?.entry.module === 'mesh' ? reuse : null}
             />
           </section>
-          {!['image', 'mesh'].includes(activeModule) && (
+          <section className="workspace-panel" hidden={activeModule !== 'retopo'}>
+            <WorkspaceRetopoPanel
+              projectId={projectId}
+              target={meshTarget}
+              targetBusy={meshTargetBusy}
+              importers={meshImporters}
+              onTargetChange={setMeshTarget}
+              selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
+              onResult={handleMeshToolResult}
+              onPendingAdd={addCloudPending}
+              onPendingUpdate={updateCloudPending}
+              onPendingRemove={removeCloudPending}
+              reuse={reuse?.entry.module === 'retopo' ? reuse : null}
+            />
+          </section>
+          {!['image', 'mesh', 'retopo'].includes(activeModule) && (
             <section className="workspace-panel">
               <WorkspaceModuleDraft moduleId={activeModule} />
             </section>
@@ -423,6 +528,7 @@ export default function WorkspacePage({ project }) {
             emptyText={historyLoading ? '' : emptyState.text}
             onEdit={editEntry}
             onMakeMesh={makeMeshFromEntry}
+            onRetopo={retopoFromEntry}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
             onOpenInEditor={openInEditor}
@@ -440,6 +546,7 @@ export default function WorkspacePage({ project }) {
           onSelect={selectEntry}
           onEdit={editEntry}
           onMakeMesh={makeMeshFromEntry}
+          onRetopo={retopoFromEntry}
           onOpenInEditor={openInEditor}
           onRemove={removeEntry}
           onCancelJob={cancelPendingJob}

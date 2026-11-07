@@ -192,7 +192,7 @@ import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
 import SegmentationToolsPanel from '../components/meshEditor/SegmentationToolsPanel'
 import ToolModeMenu from '../components/meshEditor/ToolModeMenu'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
-import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, segmentMesh as runSegmentService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_SIMPLIFY_OPTIONS, DEFAULT_AUTO_UV_OPTIONS, DEFAULT_SEGMENT_OPTIONS } from '../utils/meshTools'
+import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, segmentMesh as runSegmentService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_AUTO_UV_OPTIONS, DEFAULT_SEGMENT_OPTIONS, DEFAULT_AUTO_RETOPO_OPTIONS, DEFAULT_REPAIR_OPTIONS, DEFAULT_OPTIMIZE_OPTIONS } from '../utils/meshTools'
 import {
   addSegmentMerge,
   applyBrushFaces,
@@ -253,48 +253,6 @@ import {
   writeWeightColors,
 } from '../utils/meshWeightPaint'
 
-// Default option sets for the Python mesh-tools panels. These mirror the
-// defaults of autouv.unwrap() and autoretopo.RetopoConfig 1:1 (see
-// python-server/app/schemas.py).
-const DEFAULT_AUTO_RETOPO_OPTIONS = {
-  target_faces: 6000,
-  quads: false,
-  watertight: true,
-  shell_resolution: 256,
-  shell_close_iter: 1,
-  // 1.4 until 2026-10-09; measured as over-smoothing on everything except
-  // hard-surface architecture — see RetopoConfig.shell_smooth for the numbers.
-  shell_smooth: 0.4,
-  shell_taubin: 10,
-  shell_samples_per_pitch: 2,
-  max_memory_gb: 4,
-  adaptive: true,
-  remesh_iters: 10,
-  feature_deg: 30,
-  calibrate_passes: 1,
-  preserve_features: false,
-  feature_angle: 25,
-  project: true,
-  project_iters: 10,
-  relax_strength: 0.4,
-  mirror: 'off',
-  mirror_max_cost: 10,
-  device: 'auto',
-  seed: 0,
-}
-
-// Non-manifold / topology repair (see python-server/app/schemas.py RepairOptions).
-const DEFAULT_REPAIR_OPTIONS = {
-  method: 'remove',
-  close_holes: true,
-  max_hole_size: 30,
-  weld: true,
-  // Surgical repair that keeps UVs (and so the texture) intact. Off falls back
-  // to the pymeshlab rebuild, which is stronger on badly broken meshes but welds
-  // across UV seams and discards every UV.
-  preserve_uv: true,
-}
-
 // How many pre-operation meshes the Bake mode keeps as high-poly sources. Each
 // one is a full geometry GLB held in memory, so this is a cap rather than a
 // history: at 10, a heavy 300k-face mesh costs on the order of 100 MB if every
@@ -338,21 +296,6 @@ const MESH_ROTATIONS = {
 // Undo depth for the animation edit dock. Each entry holds two copies of one
 // track's values (~2 KB for a 4s rotation track), so 100 is a few hundred KB.
 const ANIM_EDIT_HISTORY_LIMIT = 100
-
-const DEFAULT_OPTIMIZE_OPTIONS = {
-  simplify_ratio: 0.5,
-  // Off by default: welding attribute seams is the only way past a seamed mesh's
-  // simplification floor, and it scrambles the texture and the hard edges alike.
-  // Under-simplifying and saying so beats silently ruining the asset.
-  allow_seam_breaking: false,
-  // Halve the face count per gltfpack run (max 10 runs) instead of one big pass.
-  // Optimize only — the LOD chain always builds each level from the original.
-  multi_step: false,
-  // simplify_error / permissive / lock_border / aggressive. The error budget is
-  // the knob that reaches most targets, and unlike seam welding it costs nothing
-  // in normals or UVs — see DEFAULT_SIMPLIFY_OPTIONS.
-  ...DEFAULT_SIMPLIFY_OPTIONS,
-}
 
 // ── Projection per-layer mask helpers ───────────────────────────────────────
 // A projection layer can carry a user-drawn UV-space mask so the layer's view is

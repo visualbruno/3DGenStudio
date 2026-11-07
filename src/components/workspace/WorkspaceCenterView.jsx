@@ -75,6 +75,7 @@ export default function WorkspaceCenterView({
   emptyText,
   onEdit,
   onMakeMesh,
+  onRetopo,
   onReuse,
   onSelectEntry,
   onOpenInEditor
@@ -144,6 +145,11 @@ export default function WorkspaceCenterView({
               {params.textureSize}px
             </span>
           )}
+          {Array.isArray(params.summary) && params.summary.map(row => (
+            <span key={row.label} className="workspace-center__meta-item">
+              {row.label}: <strong>{String(row.value)}</strong>
+            </span>
+          ))}
           {params.seed !== undefined && (
             <span className="workspace-center__meta-item" title="Seed">
               <span className="material-symbols-outlined">casino</span>
@@ -175,6 +181,12 @@ export default function WorkspaceCenterView({
             <button type="button" className="workspace-action-btn" onClick={() => onEdit(entry)}>
               <span className="material-symbols-outlined">auto_fix_high</span>
               Edit this image
+            </button>
+          )}
+          {isMesh && (
+            <button type="button" className="workspace-action-btn workspace-action-btn--primary" onClick={() => onRetopo(entry)} title="Repair, retopologize or optimize this mesh">
+              <span className="material-symbols-outlined">grid_4x4</span>
+              Retopology
             </button>
           )}
           {entry.action !== 'import' && (

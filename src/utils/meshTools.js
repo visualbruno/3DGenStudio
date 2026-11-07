@@ -365,6 +365,64 @@ export const DEFAULT_SIMPLIFY_OPTIONS = {
   simplify_update: false,
 }
 
+// Default option sets for the Python mesh-tools panels (Mesh Editor and the
+// Workspace Retopo module). These mirror the
+// defaults of autouv.unwrap() and autoretopo.RetopoConfig 1:1 (see
+// python-server/app/schemas.py).
+export const DEFAULT_AUTO_RETOPO_OPTIONS = {
+  target_faces: 6000,
+  quads: false,
+  watertight: true,
+  shell_resolution: 256,
+  shell_close_iter: 1,
+  // 1.4 until 2026-10-09; measured as over-smoothing on everything except
+  // hard-surface architecture — see RetopoConfig.shell_smooth for the numbers.
+  shell_smooth: 0.4,
+  shell_taubin: 10,
+  shell_samples_per_pitch: 2,
+  max_memory_gb: 4,
+  adaptive: true,
+  remesh_iters: 10,
+  feature_deg: 30,
+  calibrate_passes: 1,
+  preserve_features: false,
+  feature_angle: 25,
+  project: true,
+  project_iters: 10,
+  relax_strength: 0.4,
+  mirror: 'off',
+  mirror_max_cost: 10,
+  device: 'auto',
+  seed: 0,
+}
+
+// Non-manifold / topology repair (see python-server/app/schemas.py RepairOptions).
+export const DEFAULT_REPAIR_OPTIONS = {
+  method: 'remove',
+  close_holes: true,
+  max_hole_size: 30,
+  weld: true,
+  // Surgical repair that keeps UVs (and so the texture) intact. Off falls back
+  // to the pymeshlab rebuild, which is stronger on badly broken meshes but welds
+  // across UV seams and discards every UV.
+  preserve_uv: true,
+}
+
+export const DEFAULT_OPTIMIZE_OPTIONS = {
+  simplify_ratio: 0.5,
+  // Off by default: welding attribute seams is the only way past a seamed mesh's
+  // simplification floor, and it scrambles the texture and the hard edges alike.
+  // Under-simplifying and saying so beats silently ruining the asset.
+  allow_seam_breaking: false,
+  // Halve the face count per gltfpack run (max 10 runs) instead of one big pass.
+  // Optimize only — the LOD chain always builds each level from the original.
+  multi_step: false,
+  // simplify_error / permissive / lock_border / aggressive. The error budget is
+  // the knob that reaches most targets, and unlike seam welding it costs nothing
+  // in normals or UVs — see DEFAULT_SIMPLIFY_OPTIONS.
+  ...DEFAULT_SIMPLIFY_OPTIONS,
+}
+
 function simplifyPayload(options = {}) {
   return {
     simplify_error: options.simplify_error ?? DEFAULT_SIMPLIFY_OPTIONS.simplify_error,

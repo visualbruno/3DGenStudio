@@ -1418,3 +1418,192 @@
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ---- mesh source card (Retopo and later mesh modules) ---- */
+
+.workspace-meshslot {
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px dashed var(--outline-variant);
+  background: var(--surface-container);
+  transition: border-color 0.15s;
+}
+
+.workspace-meshslot--filled {
+  border-style: solid;
+}
+
+.workspace-meshslot--drag {
+  border-color: var(--primary);
+}
+
+.workspace-meshslot__preview {
+  width: 84px;
+  height: 84px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-container-lowest);
+  color: var(--outline);
+}
+
+.workspace-meshslot__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.workspace-meshslot__preview .material-symbols-outlined {
+  font-size: 32px;
+}
+
+.workspace-meshslot__meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-meshslot__label {
+  font: 600 0.68rem var(--font-label);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.workspace-meshslot__name {
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-meshslot__hint {
+  font-size: 0.74rem;
+  line-height: 1.35;
+  color: var(--outline);
+}
+
+.workspace-meshslot__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+/* ---- mesh health checklist ---- */
+
+.workspace-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-checks__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-container);
+  font-size: 0.82rem;
+}
+
+.workspace-checks__item .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.workspace-checks__item--pass .material-symbols-outlined {
+  color: var(--tertiary-dim);
+}
+
+.workspace-checks__item--warn .material-symbols-outlined {
+  color: #ffc864;
+}
+
+.workspace-checks__item--fail .material-symbols-outlined {
+  color: var(--error);
+}
+
+.workspace-checks__label {
+  flex: 1;
+  color: var(--on-surface-variant);
+}
+
+.workspace-checks__value {
+  font-weight: 600;
+}
+
+.workspace-section__aside--warn {
+  color: #ffc864;
+}
+
+.workspace-action-btn--wide {
+  justify-content: center;
+  width: 100%;
+  padding: 10px 14px;
+}
+
+.workspace-action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---- result rows ---- */
+
+.workspace-result {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-result__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-container);
+  font-size: 0.82rem;
+}
+
+.workspace-result__row dt {
+  color: var(--on-surface-variant);
+}
+
+.workspace-result__row dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+/* ---- inline progress (long mesh tools) ---- */
+
+.workspace-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.workspace-progress__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-container-highest);
+  overflow: hidden;
+}
+
+.workspace-progress__fill {
+  height: 100%;
+  background: var(--primary);
+  transition: width 0.3s;
+}

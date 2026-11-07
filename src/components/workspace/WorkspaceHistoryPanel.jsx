@@ -13,7 +13,7 @@ const FILTERS = [
 ]
 
 const ACTION_BADGES = {
-  edit: { icon: 'edit', title: 'Edit of another image' },
+  edit: { icon: 'edit', title: 'A new version of another asset' },
   import: { icon: 'upload', title: 'Imported' }
 }
 
@@ -34,6 +34,7 @@ export default function WorkspaceHistoryPanel({
   onSelect,
   onEdit,
   onMakeMesh,
+  onRetopo,
   onOpenInEditor,
   onRemove,
   onCancelJob
@@ -114,9 +115,9 @@ export default function WorkspaceHistoryPanel({
                 role="button"
                 tabIndex={0}
                 className={`workspace-history__tile ${selectedEntryId === entry.id ? 'workspace-history__tile--selected' : ''}`}
-                // Images can be dragged onto any image input of the panels.
-                draggable={entry.asset.type === 'image'}
-                onDragStart={entry.asset.type === 'image' ? (event) => setEntryDragData(event, entry) : undefined}
+                // Images and meshes can be dragged onto the panels' inputs.
+                draggable={entry.asset.type === 'image' || entry.asset.type === 'mesh'}
+                onDragStart={(entry.asset.type === 'image' || entry.asset.type === 'mesh') ? (event) => setEntryDragData(event, entry) : undefined}
                 onClick={() => onSelect(entry)}
                 onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(entry) } }}
                 title={entry.prompt || entry.asset.name}
@@ -157,6 +158,12 @@ export default function WorkspaceHistoryPanel({
                       <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onEdit(entry) }} title="Use this image as the source of an edit">
                         <span className="material-symbols-outlined">edit</span>
                         Edit
+                      </button>
+                    )}
+                    {entry.asset.type === 'mesh' && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuEntryId(null); onRetopo(entry) }} title="Repair, retopologize or optimize this mesh">
+                        <span className="material-symbols-outlined">grid_4x4</span>
+                        Retopo
                       </button>
                     )}
                     {entry.asset.type === 'mesh' && (
