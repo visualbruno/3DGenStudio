@@ -4,6 +4,7 @@ import { useProjects } from '../context/ProjectContext'
 import KanbanPage from './KanbanPage'
 import GraphPage from './GraphPage'
 import BatchPage from './BatchPage'
+import WorkspacePage from './WorkspacePage'
 
 function presetKey(project) {
   return String(project?.preset || '').trim().toLowerCase()
@@ -64,6 +65,10 @@ export default function ProjectWorkspacePage() {
 
   if (presetKey(project) === 'batch') {
     return <BatchPage project={project} />
+  }
+
+  if (presetKey(project) === 'workspace') {
+    return <WorkspacePage project={project} />
   }
 
   return <KanbanPage />

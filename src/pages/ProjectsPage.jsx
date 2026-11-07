@@ -24,6 +24,7 @@ const PRESETS = [
   'Kanban',
   'Graph',
   'Batch',
+  'Workspace',
 ]
 
 const CHANGE_LOG_ENTRIES = [

@@ -98,6 +98,9 @@ import {
   getProjectBatchConfig,
   setCardAssetLink,
   saveProjectBatchConfig,
+  listWorkspaceHistory,
+  addWorkspaceHistoryEntries,
+  deleteWorkspaceHistoryEntry,
   getBoardById,
   createBoard,
   updateBoard,
@@ -2915,6 +2918,29 @@ function parseJsonTemplate(value, label, fallback = {}) {
   }
 }
 
+// Optional output shape for the built-in image APIs (Workspace sends these;
+// callers that omit them keep each provider's previous default).
+const GOOGLE_IMAGE_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
+const GOOGLE_IMAGE_SIZES = ['1K', '2K', '4K'];
+
+function normalizeImageAspectRatio(value) {
+  const text = String(value || '').trim();
+  return GOOGLE_IMAGE_ASPECT_RATIOS.includes(text) ? text : null;
+}
+
+function normalizeImageSize(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return GOOGLE_IMAGE_SIZES.includes(text) ? text : null;
+}
+
+// gpt-image models take one of three sizes; pick the one matching the ratio.
+function openAiImageSizeForAspect(aspectRatio) {
+  if (!aspectRatio) return null;
+  const [w, h] = aspectRatio.split(':').map(Number);
+  if (!(w > 0) || !(h > 0) || w === h) return '1024x1024';
+  return w > h ? '1536x1024' : '1024x1536';
+}
+
 function getCustomApiConfig(settings, selectedApi, expectedType = null) {
   const customApiId = String(selectedApi || '').startsWith('custom_')
     ? String(selectedApi).slice(7)
@@ -4767,7 +4793,7 @@ function collectInlineImageParts(responseBody) {
     ?.filter(part => part?.data) || [];
 }
 
-async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [] }) {
+async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [], projectId = null }) {
   const savedEdits = [];
 
   for (const [index, imageOutput] of imageOutputs.entries()) {
@@ -4782,6 +4808,7 @@ async function saveImageEdits({ sourceAsset, editId, name = '', imageOutputs = [
       parentAssetId: sourceAsset.id,
       editId,
       name,
+      projectId,
       bytes: imageOutput.buffer,
       extension,
       // Keep the images/<source>/<editId>/ layout: edits are deleted and renamed
@@ -7181,6 +7208,44 @@ app.put('/api/projects/:projectId/batch-config', async (req, res) => {
   }
 });
 
+// Workspace project timeline (see WorkspaceHistory in storage.js). Under
+// /api/projects, so a shared-server install forwards it like the rest of the
+// project's data.
+app.get('/api/projects/:projectId/workspace-history', async (req, res) => {
+  try {
+    res.json(await listWorkspaceHistory(Number(req.params.projectId), {
+      module: req.query.module ? String(req.query.module) : null,
+      limit: req.query.limit,
+      before: req.query.before ?? null
+    }));
+  } catch (err) {
+    console.error('Failed to load workspace history:', err);
+    res.status(500).json({ error: err.message || 'Failed to load workspace history' });
+  }
+});
+
+app.post('/api/projects/:projectId/workspace-history', async (req, res) => {
+  try {
+    const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+    if (!entries.length) {
+      return res.status(400).json({ error: 'entries must be a non-empty array' });
+    }
+    res.status(201).json(await addWorkspaceHistoryEntries(Number(req.params.projectId), entries));
+  } catch (err) {
+    console.error('Failed to add workspace history:', err);
+    res.status(400).json({ error: err.message || 'Failed to add workspace history' });
+  }
+});
+
+app.delete('/api/projects/:projectId/workspace-history/:entryId', async (req, res) => {
+  try {
+    res.json(await deleteWorkspaceHistoryEntry(Number(req.params.projectId), Number(req.params.entryId)));
+  } catch (err) {
+    console.error('Failed to delete workspace history entry:', err);
+    res.status(500).json({ error: err.message || 'Failed to delete workspace history entry' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Brainstorming Boards
 // ---------------------------------------------------------------------------
@@ -7899,6 +7964,8 @@ app.post('/api/assets/upload', upload.single('file'), async (req, res) => {
     const newAsset = await createProjectAsset({
       projectId: Number(req.body.projectId),
       ownerId: viewerId(req),
+      // A project member with no Kanban card (Workspace imports, Board drops).
+      detached: String(req.body.detached || '').toLowerCase() === 'true',
       type: assetType,
       name: req.body.name || req.file.originalname,
       filePath: toStoredAssetPath(assetType, req.file.filename),
@@ -10614,6 +10681,10 @@ app.post('/api/image-edits/api', async (req, res) => {
   try {
     const { projectId, assetId, selectedApi, prompt, name, imageSource } = req.body;
     const trimmedName = String(name || '').trim();
+    // A project member with no Kanban card (Workspace): no processing card.
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
+    const requestedAspectRatio = normalizeImageAspectRatio(req.body.aspectRatio);
+    const requestedImageSize = normalizeImageSize(req.body.imageSize);
 
     if (!projectId || !selectedApi || !prompt?.trim() || !trimmedName) {
       return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
@@ -10626,10 +10697,11 @@ app.post('/api/image-edits/api', async (req, res) => {
     }
 
     processingProjectId = Number(projectId);
-    processingCardId = sourceAsset.metadata?.cardId || randomUUID();
+    processingCardId = detachedAsset ? null : (sourceAsset.metadata?.cardId || randomUUID());
     processingCardName = trimmedName;
     processingStartedAt = Date.now();
 
+    // A null card id makes this (and the error snapshot) a no-op.
     await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
       columnName: 'Image Edit',
       name: processingCardName,
@@ -10677,6 +10749,8 @@ app.post('/api/image-edits/api', async (req, res) => {
         prompt: trimmedPrompt,
         model: modelConfig.model
       });
+      const openAiSize = openAiImageSizeForAspect(requestedAspectRatio);
+      if (openAiSize) requestPayload.size = openAiSize;
       const formData = new FormData();
       const imageBlob = new Blob([sourceBuffer], { type: mimeType || 'image/png' });
 
@@ -10745,8 +10819,8 @@ app.post('/api/image-edits/api', async (req, res) => {
           generationConfig: {
             responseModalities: ['IMAGE'],
             imageConfig: {
-              aspectRatio: '1:1',
-              imageSize: '1K'
+              aspectRatio: requestedAspectRatio || '1:1',
+              imageSize: requestedImageSize || '1K'
             }
           }
         })
@@ -10777,12 +10851,15 @@ app.post('/api/image-edits/api', async (req, res) => {
       sourceAsset,
       editId,
       name: trimmedName,
-      imageOutputs
+      imageOutputs,
+      projectId: processingProjectId
     });
 
-    await clearCardProcessing(processingProjectId, processingCardId, {
-      name: processingCardName
-    });
+    if (processingCardId) {
+      await clearCardProcessing(processingProjectId, processingCardId, {
+        name: processingCardName
+      });
+    }
 
     res.status(201).json({
       editId,
@@ -11117,6 +11194,8 @@ app.post('/api/images/generate', async (req, res) => {
     // Brainstorming Board generations link the asset to the project without a
     // visible Kanban card, so skip the processing-card snapshot entirely.
     const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
+    const requestedAspectRatio = normalizeImageAspectRatio(req.body.aspectRatio);
+    const requestedImageSize = normalizeImageSize(req.body.imageSize);
 
     if (!projectId || !selectedApi || !prompt?.trim() || !trimmedName) {
       return res.status(400).json({ error: 'projectId, selectedApi, prompt and name are required' });
@@ -11175,6 +11254,8 @@ app.post('/api/images/generate', async (req, res) => {
         prompt: trimmedPrompt,
         model: openAiModelConfig.model
       });
+      const openAiSize = openAiImageSizeForAspect(requestedAspectRatio);
+      if (openAiSize && requestPayload && typeof requestPayload === 'object') requestPayload.size = openAiSize;
 
       response = await fetch(openAiGenerationSettings?.url, {
         method: 'POST',
@@ -11220,6 +11301,19 @@ app.post('/api/images/generate', async (req, res) => {
 
       const payloadTemplate = googleGenerationSettings?.payloadTemplate;
       const requestPayload = replacePromptPlaceholder(payloadTemplate, trimmedPrompt);
+      // Only when asked for: the settings template stays the default otherwise.
+      if ((requestedAspectRatio || requestedImageSize) && requestPayload && typeof requestPayload === 'object') {
+        const generationConfig = isPlainObject(requestPayload.generationConfig) ? requestPayload.generationConfig : {};
+        requestPayload.generationConfig = {
+          responseModalities: ['IMAGE'],
+          ...generationConfig,
+          imageConfig: {
+            ...(isPlainObject(generationConfig.imageConfig) ? generationConfig.imageConfig : {}),
+            ...(requestedAspectRatio ? { aspectRatio: requestedAspectRatio } : {}),
+            ...(requestedImageSize ? { imageSize: requestedImageSize } : {})
+          }
+        };
+      }
       const headerName = googleGenerationSettings?.headerName || 'x-goog-api-key';
 
       response = await fetch(modelConfig.url, {

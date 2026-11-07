@@ -742,6 +742,12 @@ async function unlinkAssetFromProject(db, assetId, projectId, { cascadeChildren 
     'DELETE FROM Assets_Projects WHERE assetId = ? AND projectId = ?',
     [normalizedAssetId, normalizedProjectId]
   );
+  // An asset taken out of a project leaves that project's Workspace timeline too.
+  await run(
+    db,
+    'DELETE FROM WorkspaceHistory WHERE assetId = ? AND projectId = ?',
+    [normalizedAssetId, normalizedProjectId]
+  );
 
   if (!cascadeChildren) return;
 
@@ -1695,6 +1701,31 @@ const SQLITE_SCHEMA = `
       FOREIGN KEY(projectId) REFERENCES Projects(id) ON DELETE CASCADE
     );
 
+    -- Workspace project history. One row per asset a Workspace tool produced or
+    -- brought in (a generated image, an edit of one, an imported source), in the
+    -- order it happened. The asset itself is stored exactly as everywhere else —
+    -- a generation is a root asset, an edit a child of its source — so this table
+    -- is only the timeline plus what produced each entry (module, prompt,
+    -- workflow, parameters). runId groups the outputs of one run (four images
+    -- from one click share it). Rows go with their asset or their project.
+    CREATE TABLE IF NOT EXISTS WorkspaceHistory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      projectId INTEGER NOT NULL,
+      assetId INTEGER NOT NULL,
+      module TEXT NOT NULL,
+      action TEXT NOT NULL,
+      runId TEXT,
+      sourceAssetId INTEGER,
+      prompt TEXT,
+      workflowId INTEGER,
+      workflowName TEXT,
+      paramsJson TEXT,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY(projectId) REFERENCES Projects(id) ON DELETE CASCADE,
+      FOREIGN KEY(assetId) REFERENCES Assets(id) ON DELETE CASCADE,
+      FOREIGN KEY(sourceAssetId) REFERENCES Assets(id) ON DELETE SET NULL
+    );
+
     -- Asset <-> project membership. THE source of truth for "which project does
     -- this asset belong to". Cards_Assets is now only about PLACEMENT (which
     -- kanban card / graph node displays the asset), never about ownership.
@@ -1915,6 +1946,8 @@ export async function initializeStorage() {
 
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_wikipages_parentId ON WikiPages(parentId)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_boards_projectId ON Boards(projectId)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_workspacehistory_project ON WorkspaceHistory(projectId, createdAt)');
+  await run(db, 'CREATE INDEX IF NOT EXISTS idx_workspacehistory_assetId ON WorkspaceHistory(assetId)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_projects_projectId ON Assets_Projects(projectId)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_assets_tags_tag ON Assets_Tags(tag)');
   await run(db, 'CREATE INDEX IF NOT EXISTS idx_motions_createdAt ON Motions(createdAt)');
@@ -2850,7 +2883,7 @@ export async function resolveEditableSourceReference(projectId, type, filePathOr
     // visibly the exporter, which would leave the reference dangling in the
     // bundle and silently point the import back at the original file.
     await linkAssetToProject(db, editRow.id, normalizedProjectId);
-    return { sourceReference: `edit:${stored}`, isEdit: true };
+    return { sourceReference: `edit:${stored}`, isEdit: true, assetId: editRow.id };
   }
 
   // 2. A root asset with this file already linked to the project → reference by id.
@@ -2864,7 +2897,7 @@ export async function resolveEditableSourceReference(projectId, type, filePathOr
     [stored, normalizedType, normalizedProjectId]
   );
   if (projectRoot) {
-    return { sourceReference: `asset:${projectRoot.id}`, isEdit: false };
+    return { sourceReference: `asset:${projectRoot.id}`, isEdit: false, assetId: projectRoot.id };
   }
 
   // 3. Library root not in this project → make it a member. When the row already
@@ -2874,7 +2907,7 @@ export async function resolveEditableSourceReference(projectId, type, filePathOr
   const libraryAsset = await findLibraryAssetByFilePath(lowerType, stored);
   if (libraryAsset) {
     await linkAssetToProject(db, libraryAsset.id, normalizedProjectId);
-    return { sourceReference: `asset:${libraryAsset.id}`, isEdit: false, attached: true };
+    return { sourceReference: `asset:${libraryAsset.id}`, isEdit: false, attached: true, assetId: libraryAsset.id };
   }
 
   const attached = await createProjectAsset({
@@ -2885,7 +2918,7 @@ export async function resolveEditableSourceReference(projectId, type, filePathOr
     metadata: { source: 'ASSET LIB' },
     detached: true
   });
-  return { sourceReference: `asset:${attached.id}`, isEdit: false, attached: true };
+  return { sourceReference: `asset:${attached.id}`, isEdit: false, attached: true, assetId: attached.id };
 }
 
 export async function resolveProjectMeshSource(projectId, sourceReference) {
@@ -3551,6 +3584,166 @@ export async function saveProjectBatchConfig(projectId, state) {
   );
 
   return { projectId: normalizedProjectId, state: state ?? {}, updatedAt };
+}
+
+// ---------------------------------------------------------------------------
+// Workspace history
+// ---------------------------------------------------------------------------
+// The timeline of a Workspace project (see the WorkspaceHistory table). Only
+// entries whose asset is still a member of the project are listed: unlinking an
+// asset deletes its rows, and the join keeps a stray row from resurfacing.
+
+const WORKSPACE_HISTORY_ACTIONS = new Set(['generate', 'edit', 'import']);
+
+function mapWorkspaceHistoryRow(row) {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    module: row.module,
+    action: row.action,
+    runId: row.runId || null,
+    sourceAssetId: row.sourceAssetId ?? null,
+    prompt: row.prompt || '',
+    workflowId: row.workflowId ?? null,
+    workflowName: row.workflowName || '',
+    params: parseJson(row.paramsJson, {}),
+    createdAt: row.createdAt,
+    asset: {
+      id: row.assetId,
+      parentId: row.assetParentId ?? null,
+      type: String(row.assetTypeName || '').toLowerCase(),
+      name: row.assetName || '',
+      filePath: row.assetFilePath,
+      filename: toAssetUrlPath(row.assetFilePath),
+      thumbnail: row.assetThumbnail ? toAssetUrlPath(row.assetThumbnail) : null,
+      width: row.assetWidth ?? 0,
+      height: row.assetHeight ?? 0,
+      createdAt: row.assetCreationDate
+    }
+  };
+}
+
+const WORKSPACE_HISTORY_SELECT = `
+  SELECT h.id, h.projectId, h.assetId, h.module, h.action, h.runId, h.sourceAssetId,
+         h.prompt, h.workflowId, h.workflowName, h.paramsJson, h.createdAt,
+         a.parentId AS assetParentId, a.name AS assetName, a.filePath AS assetFilePath,
+         a.thumbnail AS assetThumbnail, a.width AS assetWidth, a.height AS assetHeight,
+         a.creationDate AS assetCreationDate, at.name AS assetTypeName
+  FROM WorkspaceHistory h
+  JOIN Assets a ON a.id = h.assetId
+  JOIN AssetTypes at ON at.id = a.assetTypeId
+  JOIN Assets_Projects ap ON ap.assetId = h.assetId AND ap.projectId = h.projectId`;
+
+export async function listWorkspaceHistory(projectId, { module = null, limit = 200, before = null } = {}) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const where = ['h.projectId = ?'];
+  const params = [normalizedProjectId];
+
+  if (module) {
+    where.push('h.module = ?');
+    params.push(String(module));
+  }
+  // Keyset paging on (createdAt, id): `before` is the id of the last row the
+  // caller already has.
+  if (before != null && Number.isFinite(Number(before))) {
+    const anchor = await get(db, 'SELECT createdAt FROM WorkspaceHistory WHERE id = ?', [Number(before)]);
+    if (anchor) {
+      where.push('(h.createdAt < ? OR (h.createdAt = ? AND h.id < ?))');
+      params.push(anchor.createdAt, anchor.createdAt, Number(before));
+    }
+  }
+
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 200));
+  const rows = await all(
+    db,
+    `${WORKSPACE_HISTORY_SELECT}
+     WHERE ${where.join(' AND ')}
+     ORDER BY h.createdAt DESC, h.id DESC
+     LIMIT ${safeLimit}`,
+    params
+  );
+  return rows.map(mapWorkspaceHistoryRow);
+}
+
+// Add entries (one per asset). Each asset must already be a member of the
+// project — the generation/upload that created it linked it — so a request
+// cannot pull a foreign asset into the timeline.
+export async function addWorkspaceHistoryEntries(projectId, entries = []) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const createdIds = [];
+  const baseTime = Date.now();
+
+  for (const [index, entry] of (Array.isArray(entries) ? entries : []).entries()) {
+    const assetId = Number(entry?.assetId);
+    if (!Number.isFinite(assetId)) {
+      throw new Error('Each history entry needs an assetId');
+    }
+    const module = String(entry?.module || '').trim();
+    if (!module) {
+      throw new Error('Each history entry needs a module');
+    }
+    const action = String(entry?.action || '').trim();
+    if (!WORKSPACE_HISTORY_ACTIONS.has(action)) {
+      throw new Error(`Unknown history action "${action}"`);
+    }
+    const member = await get(
+      db,
+      'SELECT 1 FROM Assets_Projects WHERE assetId = ? AND projectId = ?',
+      [assetId, normalizedProjectId]
+    );
+    if (!member) {
+      throw new Error(`Asset ${assetId} is not part of project ${normalizedProjectId}`);
+    }
+
+    const sourceAssetId = Number(entry?.sourceAssetId);
+    const workflowId = Number(entry?.workflowId);
+    const result = await run(
+      db,
+      `INSERT INTO WorkspaceHistory
+         (projectId, assetId, module, action, runId, sourceAssetId, prompt, workflowId, workflowName, paramsJson, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        normalizedProjectId,
+        assetId,
+        module,
+        action,
+        entry?.runId ? String(entry.runId) : null,
+        Number.isFinite(sourceAssetId) && sourceAssetId > 0 ? sourceAssetId : null,
+        entry?.prompt ? String(entry.prompt) : null,
+        Number.isFinite(workflowId) && workflowId > 0 ? workflowId : null,
+        entry?.workflowName ? String(entry.workflowName) : null,
+        JSON.stringify(isPlainObject(entry?.params) ? entry.params : {}),
+        // Spread a batch by a millisecond each so its order survives the sort.
+        Number(entry?.createdAt) || (baseTime + index)
+      ]
+    );
+    createdIds.push(result.lastID);
+  }
+
+  if (!createdIds.length) return [];
+  const placeholders = createdIds.map(() => '?').join(', ');
+  const rows = await all(
+    db,
+    `${WORKSPACE_HISTORY_SELECT}
+     WHERE h.id IN (${placeholders})
+     ORDER BY h.createdAt DESC, h.id DESC`,
+    createdIds
+  );
+  return rows.map(mapWorkspaceHistoryRow);
+}
+
+// Remove an entry from the timeline. The asset itself is untouched.
+export async function deleteWorkspaceHistoryEntry(projectId, entryId) {
+  const normalizedProjectId = await ensureProjectExists(projectId);
+  const db = await getDb();
+  const result = await run(
+    db,
+    'DELETE FROM WorkspaceHistory WHERE id = ? AND projectId = ?',
+    [Number(entryId), normalizedProjectId]
+  );
+  return { deleted: (result?.changes ?? 0) > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -6451,6 +6644,15 @@ export async function buildProjectExport(projectId, { appVersion = '' } = {}) {
     await collectBatchConfigAssetIds(db, batchConfig, seedAssetIds);
   }
 
+  // Workspace timeline. Its assets are project members, so they are already in
+  // the seed set; only the rows themselves need carrying.
+  const workspaceHistoryRows = await all(
+    db,
+    `SELECT assetId, module, action, runId, sourceAssetId, prompt, workflowId, workflowName, paramsJson, createdAt
+     FROM WorkspaceHistory WHERE projectId = ? ORDER BY createdAt ASC, id ASC`,
+    [project.id]
+  );
+
   // Expand the seed set: include every ancestor (up the parentId chain) and
   // every descendant so the full version/edit tree travels with the project.
   const collectedIds = new Set();
@@ -6604,6 +6806,21 @@ export async function buildProjectExport(projectId, { appVersion = '' } = {}) {
     },
     mode,
     batchConfig,
+    // Optional (Workspace projects only); refs are original asset ids, remapped
+    // on import like every other asset reference in the manifest.
+    workspaceHistory: workspaceHistoryRows
+      .filter(row => collectedIds.has(row.assetId))
+      .map(row => ({
+        assetRefId: row.assetId,
+        sourceAssetRefId: row.sourceAssetId != null && collectedIds.has(row.sourceAssetId) ? row.sourceAssetId : null,
+        module: row.module,
+        action: row.action,
+        runId: row.runId || null,
+        prompt: row.prompt || '',
+        workflowName: row.workflowName || '',
+        params: parseJson(row.paramsJson, {}),
+        createdAt: row.createdAt
+      })),
     assets,
     // Asset <-> project membership (schemaVersion 2+). Independent of cards, so
     // detached assets and edits/versions attached straight to the project travel
@@ -7018,6 +7235,29 @@ export async function importProjectExport(manifest, bundleDir, { name, ownerId =
         'INSERT INTO BatchConfigs (projectId, stateJson, updatedAt) VALUES (?, ?, ?)',
         [newProjectId, JSON.stringify(batchConfig), createdAt]
       );
+    }
+
+    // Workspace timeline. A workflow id is local to the exporting library, so it
+    // is not carried; the workflow name is. Rows whose asset did not come across
+    // are dropped rather than pointed at nothing.
+    if (Array.isArray(manifest.workspaceHistory)) {
+      for (const entry of manifest.workspaceHistory) {
+        const assetId = assetIdMap.get(entry?.assetRefId);
+        if (assetId == null || !entry?.module || !entry?.action) continue;
+        const sourceAssetId = entry.sourceAssetRefId != null ? (assetIdMap.get(entry.sourceAssetRefId) ?? null) : null;
+        await run(
+          db,
+          `INSERT INTO WorkspaceHistory
+             (projectId, assetId, module, action, runId, sourceAssetId, prompt, workflowId, workflowName, paramsJson, createdAt)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newProjectId, assetId, String(entry.module), String(entry.action), entry.runId || null,
+            sourceAssetId, entry.prompt || null, null, entry.workflowName || null,
+            JSON.stringify(isPlainObject(entry.params) ? entry.params : {}),
+            Number(entry.createdAt) || createdAt
+          ]
+        );
+      }
     }
 
     // --- Phase C: recreate cards + Cards_Assets (the asset↔project links used

@@ -4,29 +4,29 @@ import { toolHandler } from '../client.js';
 export function registerProjectTools(server, { api, notifyMutation }) {
   server.registerTool('list_projects', {
     title: 'List projects',
-    description: 'List every 3D Gen Studio project (id, name, description, preset Graph / Kanban / Batch, creation date, status).',
+    description: 'List every 3D Gen Studio project (id, name, description, preset Graph / Kanban / Batch / Workspace, creation date, status).',
     annotations: { readOnlyHint: true }
   }, toolHandler(async () => api.apiJson('GET', '/projects')));
 
   server.registerTool('get_project', {
     title: 'Get project',
-    description: 'Get one project by id, including its preset (Graph / Kanban / Batch) and saved graph viewport.',
+    description: 'Get one project by id, including its preset (Graph / Kanban / Batch / Workspace) and saved graph viewport.',
     inputSchema: { projectId: z.number().int().describe('Project id') },
     annotations: { readOnlyHint: true }
   }, toolHandler(async ({ projectId }) => api.apiJson('GET', `/projects/${projectId}`)));
 
   server.registerTool('create_project', {
     title: 'Create project',
-    description: 'Create a new project. preset "graph" creates a node-graph project (Graph page); "kanban" creates a pipeline board with the fixed columns Images, Image Edit, Mesh Gen, Mesh Edit, Texturing, Rigging; "batch" creates a Batch project, which runs one workflow stage across a matrix of variables/groups rather than laying out a graph.',
+    description: 'Create a new project. preset "graph" creates a node-graph project (Graph page); "kanban" creates a pipeline board with the fixed columns Images, Image Edit, Mesh Gen, Mesh Edit, Texturing, Rigging; "batch" creates a Batch project, which runs one workflow stage across a matrix of variables/groups rather than laying out a graph; "workspace" creates a single-screen studio (tool rail + history timeline) meant to be driven from the app UI.',
     inputSchema: {
       name: z.string().min(1).describe('Project name'),
       description: z.string().optional().describe('Optional project description'),
-      preset: z.enum(['graph', 'kanban', 'batch']).default('graph').describe('Project type: node graph, kanban board, or batch matrix')
+      preset: z.enum(['graph', 'kanban', 'batch', 'workspace']).default('graph').describe('Project type: node graph, kanban board, batch matrix, or workspace studio')
     }
   }, toolHandler(async ({ name, description, preset }) => {
-    // The UI stores presets in title case ('Graph' / 'Kanban' / 'Batch') and keys
+    // The UI stores presets in title case ('Graph' / 'Kanban' / 'Batch' / 'Workspace') and keys
     // its preview images by that exact string — match it.
-    const PRESET_NAMES = { graph: 'Graph', kanban: 'Kanban', batch: 'Batch' };
+    const PRESET_NAMES = { graph: 'Graph', kanban: 'Kanban', batch: 'Batch', workspace: 'Workspace' };
     const project = await api.apiJson('POST', '/projects', {
       body: { name, description: description || '', preset: PRESET_NAMES[preset] || 'Graph' }
     });

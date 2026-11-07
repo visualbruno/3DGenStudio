@@ -63,6 +63,7 @@ export const CANONICAL_KEYS = Object.freeze({
   "ownerid": "ownerId",
   "ownername": "ownerName",
   "parametersjson": "parametersJson",
+  "paramsjson": "paramsJson",
   "parentfilepath": "parentFilePath",
   "parentid": "parentId",
   "parentprojectid": "parentProjectId",
@@ -70,6 +71,7 @@ export const CANONICAL_KEYS = Object.freeze({
   "projectid": "projectId",
   "projectname": "projectName",
   "rigkey": "rigKey",
+  "runid": "runId",
   "sourceassetid": "sourceAssetId",
   "sourcecardid": "sourceCardId",
   "sourceclip": "sourceClip",
@@ -83,6 +85,8 @@ export const CANONICAL_KEYS = Object.freeze({
   "thumbnailpath": "thumbnailPath",
   "typename": "typeName",
   "updatedat": "updatedAt",
+  "workflowid": "workflowId",
+  "workflowname": "workflowName",
   "xpos": "xPos",
   "ypos": "yPos"
 });
@@ -105,5 +109,6 @@ export const TABLES_WITH_ID = Object.freeze(new Set([
   "projects",
   "settings",
   "users",
-  "wikipages"
+  "wikipages",
+  "workspacehistory"
 ]));

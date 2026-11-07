@@ -163,6 +163,7 @@ export async function saveRootAsset({
   form.append('type', type);
   if (name) form.append('name', name);
   form.append('metadata', JSON.stringify(metadata || {}));
+  if (detached) form.append('detached', 'true');
 
   const response = await fetch(new URL('/api/assets/upload', remote.url), {
     method: 'POST',
