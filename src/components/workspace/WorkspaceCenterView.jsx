@@ -76,6 +76,7 @@ export default function WorkspaceCenterView({
   onEdit,
   onMakeMesh,
   onRetopo,
+  onAutoUv,
   onReuse,
   onSelectEntry,
   onOpenInEditor
@@ -187,6 +188,12 @@ export default function WorkspaceCenterView({
             <button type="button" className="workspace-action-btn workspace-action-btn--primary" onClick={() => onRetopo(entry)} title="Repair, retopologize or optimize this mesh">
               <span className="material-symbols-outlined">grid_4x4</span>
               Retopology
+            </button>
+          )}
+          {isMesh && (
+            <button type="button" className="workspace-action-btn" onClick={() => onAutoUv(entry)} title="Unwrap new UVs for this mesh">
+              <span className="material-symbols-outlined">view_quilt</span>
+              Auto UV
             </button>
           )}
           {entry.action !== 'import' && (

@@ -1607,3 +1607,13 @@
   background: var(--primary);
   transition: width 0.3s;
 }
+
+/* Auto UV layout preview returned by the service. */
+.workspace-uv-preview {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border-radius: 10px;
+  background: #ffffff;
+  border: 1px solid var(--outline-variant);
+}

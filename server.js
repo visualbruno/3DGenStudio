@@ -33,6 +33,7 @@ import {
 import { mountMcp } from './mcp/http.js';
 import { createApiClient } from './mcp/client.js';
 import { createBatchRunner, mountBatchRuns } from './batch/runner.js';
+import { applyBakedMapsToGlb } from './batch/actionRunner.js';
 import { mountLogs } from './logs.js';
 import { moveGlbPivot, PIVOT_MODES } from './meshPivot.js';
 import { addMissingNormals } from './meshNormals.js';
@@ -9130,6 +9131,43 @@ app.post('/api/meshes/bake',
       console.error('Bake proxy failed:', err);
       if (!res.headersSent) res.status(500).json({ error: err.message || 'Bake failed' });
       return undefined;
+    }
+  });
+
+// Embed baked maps (the PNGs /api/meshes/bake returns) into a GLB's material —
+// the Batch bake stage's applyBakedMapsToGlb, for callers that bake from the
+// browser (Workspace UV: unwrap, then bake the old texture onto the new UVs).
+// Multipart: meshFile + one file per map, named after it (base_color, normal,
+// orm, ao, roughness, metallic); `options` may carry { ormChannels }.
+// Answers { mesh_b64, applied }.
+const BAKED_MAP_FIELDS = ['base_color', 'normal', 'orm', 'ao', 'roughness', 'metallic'];
+app.post('/api/meshes/apply-maps',
+  meshToolsUpload.fields([{ name: 'meshFile', maxCount: 1 }, ...BAKED_MAP_FIELDS.map(name => ({ name, maxCount: 1 }))]),
+  async (req, res) => {
+    try {
+      const meshFile = req.files?.meshFile?.[0];
+      if (!meshFile?.buffer?.length) {
+        return res.status(400).json({ error: 'meshFile is required' });
+      }
+      const maps = {};
+      for (const name of BAKED_MAP_FIELDS) {
+        const file = req.files?.[name]?.[0];
+        if (file?.buffer?.length) maps[name] = file.buffer;
+      }
+      if (!Object.keys(maps).length) {
+        return res.status(400).json({ error: 'At least one baked map is required' });
+      }
+      let options = {};
+      if (typeof req.body?.options === 'string' && req.body.options.length) {
+        try { options = JSON.parse(req.body.options); } catch { options = {}; }
+      }
+      const { buffer, applied } = applyBakedMapsToGlb(meshFile.buffer, maps, {
+        ormChannels: Array.isArray(options.ormChannels) ? options.ormChannels : []
+      });
+      res.json({ mesh_b64: buffer.toString('base64'), applied });
+    } catch (err) {
+      console.error('Applying baked maps failed:', err);
+      res.status(500).json({ error: err.message || 'Could not apply the baked maps' });
     }
   });
 

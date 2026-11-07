@@ -2,7 +2,7 @@
 // Mesh, Retopo, UV, Texture, Rig) and the active module's panel; center, the
 // selected result; right, the project's history (WorkspaceHistory table).
 //
-// Image, Mesh and Retopo are built. The other modules show a draft panel for now.
+// Image, Mesh, Retopo and UV are built. The other modules show a draft panel for now.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Header from '../components/Header'
@@ -12,6 +12,7 @@ import WorkspaceToolRail from '../components/workspace/WorkspaceToolRail'
 import WorkspaceImagePanel from '../components/workspace/WorkspaceImagePanel'
 import WorkspaceMeshPanel from '../components/workspace/WorkspaceMeshPanel'
 import WorkspaceRetopoPanel from '../components/workspace/WorkspaceRetopoPanel'
+import WorkspaceUvPanel from '../components/workspace/WorkspaceUvPanel'
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
 import WorkspaceModuleDraft from '../components/workspace/WorkspaceModuleDraft'
@@ -33,6 +34,8 @@ import {
 import './WorkspacePage.css'
 
 const HISTORY_PAGE = 120
+// Modules that work on the shared mesh source (meshTarget).
+const MESH_MODULES = ['retopo', 'uv']
 const TERMINAL_JOB_STATUSES = ['completed', 'error', 'cancelled']
 
 // Newest first, no duplicates (a run can report entries already loaded).
@@ -317,16 +320,16 @@ export default function WorkspacePage({ project }) {
     fromEntry: async (entry) => meshTargetFromAsset(entry.asset)
   }
 
-  // A Retopo / Repair / Optimize result: already saved as a version of the
-  // source; log it, show it, and make it the next source.
-  const handleMeshToolResult = useCallback(async ({ asset, toolId, options, rows, source: runSource }) => {
+  // A mesh-tool result (Retopo / Repair / Optimize, Auto UV): already saved as
+  // a version of the source; log it, show it, and make it the next source.
+  const handleMeshToolResult = useCallback(async ({ asset, module = 'retopo', label, toolId, options, rows, params, source: runSource }) => {
     const entries = await addWorkspaceHistory(projectId, [{
       assetId: asset.id,
-      module: 'retopo',
+      module,
       action: 'edit',
       sourceAssetId: runSource?.assetId ?? null,
-      workflowName: RETOPO_TOOLS[toolId]?.label || toolId,
-      params: { tool: toolId, options, summary: rows }
+      workflowName: label || RETOPO_TOOLS[toolId]?.label || toolId,
+      params: params || { tool: toolId, options, summary: rows }
     }])
     handleRunComplete(entries)
     setMeshTarget(meshTargetFromAsset(entries[0]?.asset || asset))
@@ -363,12 +366,15 @@ export default function WorkspacePage({ project }) {
     loadImageSource(() => sourceFromEntry(entry), 'Could not edit that image')
   }
 
-  const retopoFromEntry = (entry) => {
+  // Open a mesh-processing module on a history mesh.
+  const openMeshModule = (moduleId, entry) => {
     if (entry.asset.type !== 'mesh') return
-    setActiveModule('retopo')
+    setActiveModule(moduleId)
     setSelectedEntryId(entry.id)
     setMeshTarget(meshTargetFromAsset(entry.asset))
   }
+  const retopoFromEntry = (entry) => openMeshModule('retopo', entry)
+  const uvFromEntry = (entry) => openMeshModule('uv', entry)
 
   const makeMeshFromEntry = (entry) => {
     if (entry.asset.type !== 'image') return
@@ -385,7 +391,7 @@ export default function WorkspacePage({ project }) {
       loadMeshSource(() => sourceFromEntry(entry))
     }
     // In a mesh-processing module, clicking a mesh makes it the one to work on.
-    if (activeModule === 'retopo' && entry.asset.type === 'mesh') {
+    if (MESH_MODULES.includes(activeModule) && entry.asset.type === 'mesh') {
       setMeshTarget(meshTargetFromAsset(entry.asset))
     }
   }
@@ -396,7 +402,7 @@ export default function WorkspacePage({ project }) {
     if (moduleId === 'mesh' && !meshSource && selectedEntry?.asset.type === 'image') {
       loadMeshSource(() => sourceFromEntry(selectedEntry))
     }
-    if (moduleId === 'retopo' && !meshTarget && selectedEntry?.asset.type === 'mesh') {
+    if (MESH_MODULES.includes(moduleId) && !meshTarget && selectedEntry?.asset.type === 'mesh') {
       setMeshTarget(meshTargetFromAsset(selectedEntry.asset))
     }
   }
@@ -410,7 +416,7 @@ export default function WorkspacePage({ project }) {
       : null
     if (module === 'mesh') {
       if (original?.asset.type === 'image') loadMeshSource(() => sourceFromEntry(original))
-    } else if (module === 'retopo') {
+    } else if (MESH_MODULES.includes(module)) {
       if (original?.asset.type === 'mesh') setMeshTarget(meshTargetFromAsset(original.asset))
     } else if (entry.action === 'edit') {
       if (original) loadImageSource(() => sourceFromEntry(original), 'Could not edit that image')
@@ -450,6 +456,8 @@ export default function WorkspacePage({ project }) {
     ? { title: 'Ready for a new 3D model?', text: 'Pick an image on the left, then Generate Mesh.' }
     : activeModule === 'retopo'
       ? { title: 'Clean up a mesh', text: 'Choose a mesh on the left, then repair, retopologize or optimize it.' }
+      : activeModule === 'uv'
+        ? { title: 'Unwrap a mesh', text: 'Choose a mesh on the left, then Unwrap UVs.' }
       : { title: 'Create your first image!', text: 'Describe it on the left, or import an image to edit it.' }
 
   return (
@@ -513,7 +521,22 @@ export default function WorkspacePage({ project }) {
               reuse={reuse?.entry.module === 'retopo' ? reuse : null}
             />
           </section>
-          {!['image', 'mesh', 'retopo'].includes(activeModule) && (
+          <section className="workspace-panel" hidden={activeModule !== 'uv'}>
+            <WorkspaceUvPanel
+              projectId={projectId}
+              target={meshTarget}
+              targetBusy={meshTargetBusy}
+              importers={meshImporters}
+              onTargetChange={setMeshTarget}
+              selectedMeshEntry={selectedEntry?.asset.type === 'mesh' ? selectedEntry : null}
+              onResult={handleMeshToolResult}
+              onPendingAdd={addCloudPending}
+              onPendingUpdate={updateCloudPending}
+              onPendingRemove={removeCloudPending}
+              reuse={reuse?.entry.module === 'uv' ? reuse : null}
+            />
+          </section>
+          {!['image', 'mesh', 'retopo', 'uv'].includes(activeModule) && (
             <section className="workspace-panel">
               <WorkspaceModuleDraft moduleId={activeModule} />
             </section>
@@ -529,6 +552,7 @@ export default function WorkspacePage({ project }) {
             onEdit={editEntry}
             onMakeMesh={makeMeshFromEntry}
             onRetopo={retopoFromEntry}
+            onAutoUv={uvFromEntry}
             onReuse={reuseEntry}
             onSelectEntry={(entry) => setSelectedEntryId(entry.id)}
             onOpenInEditor={openInEditor}
@@ -547,6 +571,7 @@ export default function WorkspacePage({ project }) {
           onEdit={editEntry}
           onMakeMesh={makeMeshFromEntry}
           onRetopo={retopoFromEntry}
+          onAutoUv={uvFromEntry}
           onOpenInEditor={openInEditor}
           onRemove={removeEntry}
           onCancelJob={cancelPendingJob}
