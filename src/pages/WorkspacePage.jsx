@@ -14,6 +14,7 @@ import WorkspaceMeshPanel from '../components/workspace/WorkspaceMeshPanel'
 import WorkspaceHistoryPanel from '../components/workspace/WorkspaceHistoryPanel'
 import WorkspaceCenterView from '../components/workspace/WorkspaceCenterView'
 import WorkspaceModuleDraft from '../components/workspace/WorkspaceModuleDraft'
+import useWorkspaceCloudTasks from '../hooks/useWorkspaceCloudTasks'
 import { useWorkflowJobs } from '../context/WorkflowJobsContext'
 import { useNotifications } from '../context/NotificationContext'
 import { assetUrl } from '../config'
@@ -139,16 +140,6 @@ export default function WorkspacePage({ project }) {
     }
   }
 
-  const pendingJobs = useMemo(
-    () => [
-      ...cloudPending,
-      ...jobs.filter(job => String(job.projectId) === String(projectId)
-        && job.page === 'workspace'
-        && !TERMINAL_JOB_STATUSES.includes(job.status))
-    ].sort((a, b) => b.createdAt - a.createdAt),
-    [jobs, projectId, cloudPending]
-  )
-
   const addCloudPending = useCallback((item) => {
     setCloudPending(prev => [...prev, item])
   }, [])
@@ -172,6 +163,64 @@ export default function WorkspacePage({ project }) {
     setHistory(prev => mergeEntries(entries, prev))
     setSelectedEntryId(entries[0].id)
   }, [])
+
+  // Cloud mesh tasks (Tripo AI, Hitem3D, Tencent Cloud): polled until the mesh
+  // is saved, then logged to the history like any other result.
+  const handleCloudTaskCompleted = useCallback(async (task, assets) => {
+    const meshes = assets.filter(asset => asset && asset.id != null)
+    if (!meshes.length) {
+      reportError('Mesh generation failed', new Error(`${task.label || 'The cloud API'} finished without a mesh`))
+      return
+    }
+    try {
+      const entries = await addWorkspaceHistory(projectId, meshes.map(mesh => ({
+        assetId: mesh.id,
+        module: 'mesh',
+        action: 'generate',
+        runId: task.id,
+        sourceAssetId: task.history?.sourceAssetId ?? null,
+        workflowName: task.history?.workflowName || task.label || '',
+        params: task.history?.params || {}
+      })))
+      handleRunComplete(entries)
+    } catch (err) {
+      reportError('Could not add the mesh to the history', err)
+    }
+  }, [projectId, handleRunComplete, reportError])
+
+  const handleCloudTaskFailed = useCallback((task, err) => {
+    addNotification({
+      title: 'Mesh generation failed',
+      message: err?.message || 'The cloud API failed',
+      tone: 'error',
+      source: task.label || 'Cloud API',
+      projectId
+    })
+  }, [addNotification, projectId])
+
+  const cloudTasks = useWorkspaceCloudTasks(projectId, {
+    onCompleted: handleCloudTaskCompleted,
+    onFailed: handleCloudTaskFailed
+  })
+
+  const pendingJobs = useMemo(
+    () => [
+      ...cloudPending,
+      ...cloudTasks.tasks.map(task => ({
+        id: task.id,
+        label: task.label || 'Cloud mesh',
+        cloud: true,
+        stoppable: true,
+        progressPercent: cloudTasks.progressById[task.id]?.progress ?? null,
+        detail: cloudTasks.progressById[task.id]?.status || 'Submitted',
+        createdAt: task.createdAt
+      })),
+      ...jobs.filter(job => String(job.projectId) === String(projectId)
+        && job.page === 'workspace'
+        && !TERMINAL_JOB_STATUSES.includes(job.status))
+    ].sort((a, b) => b.createdAt - a.createdAt),
+    [jobs, projectId, cloudPending, cloudTasks.tasks, cloudTasks.progressById]
+  )
 
   // --- image inputs, shared by every module ---------------------------------
   // Each returns the `source` a panel feeds to a workflow:
@@ -293,6 +342,12 @@ export default function WorkspacePage({ project }) {
   }
 
   const cancelPendingJob = async (jobId) => {
+    // A cloud task cannot be cancelled at the provider; this only stops
+    // waiting for it here.
+    if (cloudTasks.tasks.some(task => task.id === jobId)) {
+      cloudTasks.removeTask(jobId)
+      return
+    }
     if (!await cancelJob(jobId)) {
       addNotification({ title: 'Cancel failed', message: 'The run could not be cancelled.', tone: 'error', projectId })
     }
@@ -330,6 +385,7 @@ export default function WorkspacePage({ project }) {
               sourceBusy={sourceBusy}
               onPickSourceFile={(file) => loadImageSource(() => importImageFile(file), 'Image import failed')}
               onPickSourceAsset={(asset) => loadImageSource(() => importLibraryImage(asset), 'Could not use that image')}
+              onPickSourceEntry={(entry) => loadImageSource(() => sourceFromEntry(entry), 'Could not edit that image')}
               onClearSource={() => setSource(null)}
               onRunComplete={handleRunComplete}
               onPendingAdd={addCloudPending}
@@ -347,6 +403,7 @@ export default function WorkspacePage({ project }) {
               importers={importers}
               selectedImageEntry={selectedEntry?.asset.type === 'image' ? selectedEntry : null}
               onRunComplete={handleRunComplete}
+              onCloudTaskSubmitted={cloudTasks.addTask}
               onGoToImageModule={() => setActiveModule('image')}
               reuse={reuse?.entry.module === 'mesh' ? reuse : null}
             />

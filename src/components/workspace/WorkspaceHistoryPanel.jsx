@@ -2,6 +2,7 @@
 // generated / edited / imported asset, newest first.
 import { useState } from 'react'
 import { assetUrl } from '../../config'
+import { setEntryDragData } from '../../utils/workspaceDrag'
 
 const FILTERS = [
   { id: 'all', label: 'All', test: () => true },
@@ -75,7 +76,7 @@ export default function WorkspaceHistoryPanel({
           {pendingJobs.map(job => (
             <div key={job.id} className="workspace-history__tile workspace-history__tile--pending" title={job.detail || job.label}>
               <div className="workspace-history__progress">
-                {job.cloud ? (
+                {job.cloud && job.progressPercent == null ? (
                   <span className="material-symbols-outlined workspace-history__cloud">cloud_sync</span>
                 ) : (
                   <span className="workspace-history__percent">
@@ -83,16 +84,21 @@ export default function WorkspaceHistoryPanel({
                   </span>
                 )}
                 <span className="workspace-history__pending-label">{job.label}</span>
-                <div className={`workspace-history__bar ${job.cloud ? 'workspace-history__bar--indeterminate' : ''}`}>
-                  <div className="workspace-history__bar-fill" style={job.cloud ? undefined : { width: `${Math.max(4, job.progressPercent || 0)}%` }} />
+                <div className={`workspace-history__bar ${job.cloud && job.progressPercent == null ? 'workspace-history__bar--indeterminate' : ''}`}>
+                  <div
+                    className="workspace-history__bar-fill"
+                    style={job.cloud && job.progressPercent == null ? undefined : { width: `${Math.max(4, job.progressPercent || 0)}%` }}
+                  />
                 </div>
               </div>
-              {!job.cloud && <button
+              {(!job.cloud || job.stoppable) && <button
                 type="button"
                 className="workspace-history__tile-btn workspace-history__tile-btn--corner"
                 onClick={(event) => { event.stopPropagation(); onCancelJob(job.id) }}
                 disabled={job.status === 'cancelling'}
-                title="Cancel this run"
+                title={job.stoppable
+                  ? 'Stop waiting for this result (the provider still finishes — and bills — the task)'
+                  : 'Cancel this run'}
               >
                 <span className="material-symbols-outlined">close</span>
               </button>}
@@ -108,12 +114,15 @@ export default function WorkspaceHistoryPanel({
                 role="button"
                 tabIndex={0}
                 className={`workspace-history__tile ${selectedEntryId === entry.id ? 'workspace-history__tile--selected' : ''}`}
+                // Images can be dragged onto any image input of the panels.
+                draggable={entry.asset.type === 'image'}
+                onDragStart={entry.asset.type === 'image' ? (event) => setEntryDragData(event, entry) : undefined}
                 onClick={() => onSelect(entry)}
                 onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(entry) } }}
                 title={entry.prompt || entry.asset.name}
               >
                 {thumb
-                  ? <img src={thumb} alt={entry.asset.name} loading="lazy" className="workspace-history__thumb" />
+                  ? <img src={thumb} alt={entry.asset.name} loading="lazy" className="workspace-history__thumb" draggable={false} />
                   : <span className="material-symbols-outlined workspace-history__placeholder">deployed_code</span>}
 
                 {badge && (

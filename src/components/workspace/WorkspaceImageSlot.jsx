@@ -1,8 +1,9 @@
 // An image input of a Workspace panel: empty drop zone or the chosen image.
-// Filled from the computer (click / drop), the Assets library, or the image
-// selected in the history.
+// Filled from the computer (click / drop), the Assets library, the image
+// selected in the history, or a history image dragged onto it.
 import { useRef, useState } from 'react'
 import { assetUrl } from '../../config'
+import { readEntryDragData } from '../../utils/workspaceDrag'
 
 export default function WorkspaceImageSlot({
   value,
@@ -14,6 +15,7 @@ export default function WorkspaceImageSlot({
   onFile,
   onPickAsset,
   onUseSelected,
+  onDropEntry,
   onClear
 }) {
   const fileRef = useRef(null)
@@ -40,12 +42,19 @@ export default function WorkspaceImageSlot({
       onDrop={(event) => {
         event.preventDefault()
         setDragOver(false)
-        if (!disabled) takeFiles(event.dataTransfer?.files)
+        if (disabled || busy) return
+        // A history image (replaces what is there), else files from the computer.
+        const entry = readEntryDragData(event)
+        if (entry) {
+          if (entry.asset.type === 'image') onDropEntry?.(entry)
+          return
+        }
+        takeFiles(event.dataTransfer?.files)
       }}
     >
       {value ? (
         <>
-          <img src={assetUrl(value.thumbnail || value.filename)} alt={value.name} className="workspace-slot__image" />
+          <img src={assetUrl(value.thumbnail || value.filename)} alt={value.name} className="workspace-slot__image" draggable={false} />
           {label && <span className="workspace-slot__tag">{label}</span>}
           <button type="button" className="workspace-slot__clear" onClick={onClear} title="Remove this image">
             <span className="material-symbols-outlined">close</span>

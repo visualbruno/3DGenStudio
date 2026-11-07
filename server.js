@@ -3095,8 +3095,11 @@ function normalizeTripoMeshGenerationInput({
     throw new Error('Provide either a prompt or an image input for Tripo AI mesh generation');
   }
 
-  if (normalizedFaceLimit !== null && normalizedFaceLimit < 1000) {
-    throw new Error('Tripo AI face_limit must be at least 1000 when provided');
+  // P1/P2 are low-poly models: face_limit goes down to ~50 (docs: P1 50-20,000,
+  // P2 48-50,000). The H series keeps the old 1000 floor.
+  const minimumFaceLimit = isPSeriesModel ? 48 : 1000;
+  if (normalizedFaceLimit !== null && normalizedFaceLimit < minimumFaceLimit) {
+    throw new Error(`Tripo AI face_limit must be at least ${minimumFaceLimit} when provided`);
   }
 
   if (effectiveGenerateParts && (normalizedTexture || normalizedPbr || effectiveQuad)) {
@@ -3176,10 +3179,16 @@ async function uploadTripoImageAndGetToken(apiKey, imageBuffer, inputFilePath = 
   return fileToken;
 }
 
+// Multi-view keys, in the order Tripo sorts them into.
+const TRIPO_VIEW_KEYS = ['front', 'left', 'back', 'right'];
+
 async function submitTripoMeshGenerationTask(settings, {
   prompt = '',
   imageBuffer = null,
   inputFilePath = '',
+  // Multi-view: { front: { buffer, filePath }, left, back, right } — front and at
+  // least one other view. Sent to /generation/multiview-to-model instead.
+  viewImages = null,
   modelVersion,
   modelSeed,
   enableImageAutofix,
@@ -3202,9 +3211,17 @@ async function submitTripoMeshGenerationTask(settings, {
     throw new Error('Tripo AI API Key is required');
   }
 
+  const views = viewImages
+    ? TRIPO_VIEW_KEYS.filter(key => viewImages[key]?.buffer).map(key => ({ key, ...viewImages[key] }))
+    : [];
+  const isMultiview = views.length > 0;
+  if (isMultiview && (!viewImages.front?.buffer || views.length < 2)) {
+    throw new Error('Tripo AI multi-view needs the front view and at least one other view');
+  }
+
   const validatedInput = normalizeTripoMeshGenerationInput({
     prompt,
-    hasImageSource: Boolean(imageBuffer),
+    hasImageSource: Boolean(imageBuffer) || isMultiview,
     modelVersion,
     modelSeed,
     enableImageAutofix,
@@ -3224,13 +3241,19 @@ async function submitTripoMeshGenerationTask(settings, {
   });
 
   let fileToken = null;
-  if (validatedInput.hasImageSource) {
+  const viewInputs = [];
+  if (isMultiview) {
+    for (const view of views) {
+      viewInputs.push({ [view.key]: await uploadTripoImageAndGetToken(providerConfig.apiKey, view.buffer, view.filePath || '') });
+    }
+  } else if (validatedInput.hasImageSource) {
     fileToken = await uploadTripoImageAndGetToken(providerConfig.apiKey, imageBuffer, inputFilePath);
   }
 
+  // v3 API: the model field is `model` (not `model_version`) and the image is
+  // `input` (a file_token string) — see developers.tripo3d.ai/en/docs/generation-image-to-model.
   const taskPayload = {
-    type: validatedInput.hasImageSource ? 'image_to_model' : 'text_to_model',
-    model_version: validatedInput.normalizedModelVersion,
+    model: validatedInput.normalizedModelVersion,
     texture: validatedInput.normalizedTexture,
     pbr: validatedInput.normalizedPbr,
     texture_quality: validatedInput.normalizedTextureQuality,
@@ -3247,11 +3270,13 @@ async function submitTripoMeshGenerationTask(settings, {
     taskPayload.generate_parts = validatedInput.normalizedGenerateParts;
   }
 
-  if (validatedInput.hasImageSource) {
-    taskPayload.file = {
-      type: path.extname(String(inputFilePath || '')).toLowerCase().includes('jpg') ? 'jpg' : 'png',
-      file_token: fileToken
-    };
+  if (isMultiview) {
+    // View-key format: one object per view, the server sorts them.
+    taskPayload.inputs = viewInputs;
+    // Image autofix is an image-to-model option only.
+    delete taskPayload.enable_image_autofix;
+  } else if (validatedInput.hasImageSource) {
+    taskPayload.input = fileToken;
   } else {
     taskPayload.prompt = validatedInput.trimmedPrompt;
   }
@@ -3265,9 +3290,11 @@ async function submitTripoMeshGenerationTask(settings, {
 
   // v3 routes text vs image generation to separate endpoints (v2 used a single
   // /task endpoint discriminated by the `type` field).
-  const submitEndpoint = validatedInput.hasImageSource
-    ? `${TRIPO_API_BASE_URL}/generation/image-to-model`
-    : `${TRIPO_API_BASE_URL}/generation/text-to-model`;
+  const submitEndpoint = isMultiview
+    ? `${TRIPO_API_BASE_URL}/generation/multiview-to-model`
+    : validatedInput.hasImageSource
+      ? `${TRIPO_API_BASE_URL}/generation/image-to-model`
+      : `${TRIPO_API_BASE_URL}/generation/text-to-model`;
 
   console.log('[TripoAI][SubmitTask] request payload:', JSON.stringify(createTripoDebugPayload(taskPayload), null, 2));
 
@@ -3518,9 +3545,15 @@ function normalizeHitemMeshGenerationInput({
   };
 }
 
+// Hitem3D's multi-view order: multi_images are front, back, left, right, and
+// multi_images_bit says which of those four were sent ("1010" = front + left).
+const HITEM_VIEW_KEYS = ['front', 'back', 'left', 'right'];
+
 async function submitHitemMeshGenerationTask(settings, {
   imageBuffer = null,
   inputFilePath = '',
+  // Multi-view: { front: { buffer, filePath }, back, left, right } (any subset).
+  viewImages = null,
   model,
   resolution,
   requestType,
@@ -3532,8 +3565,13 @@ async function submitHitemMeshGenerationTask(settings, {
     throw new Error('Hitem3D Access Key and Secret Key are required');
   }
 
+  const views = viewImages
+    ? HITEM_VIEW_KEYS.filter(key => viewImages[key]?.buffer).map(key => ({ key, ...viewImages[key] }))
+    : [];
+  const isMultiview = views.length > 0;
+
   const validatedInput = normalizeHitemMeshGenerationInput({
-    hasImageSource: Boolean(imageBuffer),
+    hasImageSource: Boolean(imageBuffer) || isMultiview,
     model,
     resolution,
     requestType,
@@ -3541,9 +3579,15 @@ async function submitHitemMeshGenerationTask(settings, {
     pbr
   });
 
-  const extension = path.extname(String(inputFilePath || '')).toLowerCase();
-  const mimeType = extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : 'image/png';
-  const uploadFilename = path.basename(inputFilePath || `input${extension || '.png'}`);
+  const describeFile = (filePath) => {
+    const extension = path.extname(String(filePath || '')).toLowerCase();
+    return {
+      mimeType: extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : (extension === '.webp' ? 'image/webp' : 'image/png'),
+      filename: path.basename(filePath || `input${extension || '.png'}`)
+    };
+  };
+  const { mimeType, filename: uploadFilename } = describeFile(inputFilePath);
+  const multiImagesBit = HITEM_VIEW_KEYS.map(key => (viewImages?.[key]?.buffer ? '1' : '0')).join('');
 
   const buildFormData = () => {
     const formData = new FormData();
@@ -3553,7 +3597,15 @@ async function submitHitemMeshGenerationTask(settings, {
     formData.append('pbr', String(validatedInput.normalizedPbr));
     formData.append('face', String(validatedInput.normalizedFace));
     formData.append('format', String(HITEM_FORMAT_GLB));
-    formData.append('images', new Blob([imageBuffer], { type: mimeType }), uploadFilename);
+    if (isMultiview) {
+      for (const view of views) {
+        const described = describeFile(view.filePath || `${view.key}.png`);
+        formData.append('multi_images', new Blob([view.buffer], { type: described.mimeType }), `${view.key}-${described.filename}`);
+      }
+      formData.append('multi_images_bit', multiImagesBit);
+    } else {
+      formData.append('images', new Blob([imageBuffer], { type: mimeType }), uploadFilename);
+    }
     return formData;
   };
 
@@ -3564,7 +3616,7 @@ async function submitHitemMeshGenerationTask(settings, {
     pbr: validatedInput.normalizedPbr,
     face: validatedInput.normalizedFace,
     format: HITEM_FORMAT_GLB,
-    filename: uploadFilename
+    ...(isMultiview ? { multi_images: views.map(view => view.key), multi_images_bit: multiImagesBit } : { filename: uploadFilename })
   }, null, 2));
 
   const performSubmit = async (accessToken) => {
@@ -4079,7 +4131,9 @@ async function saveGeneratedMeshAssets({
   prompt = '',
   metadata = {},
   downloadedFiles = [],
-  parentAssetId = null
+  parentAssetId = null,
+  // A project member with no Kanban card (Workspace projects).
+  detached = false
 } = {}) {
   const savedAssets = [];
   const normalizedParentAssetId = Number(parentAssetId) || null;
@@ -4126,7 +4180,7 @@ async function saveGeneratedMeshAssets({
     // of that mesh instead of creating a new root asset.
     savedAssets.push(normalizedParentAssetId
       ? await saveAssetVersion({ ...common, parentAssetId: normalizedParentAssetId, projectId: Number(projectId) })
-      : await saveRootAsset({ ...common, projectId: Number(projectId) }));
+      : await saveRootAsset({ ...common, projectId: Number(projectId), detached }));
   }
 
   return savedAssets;
@@ -5508,17 +5562,27 @@ app.post('/api/meshes/generate', async (req, res) => {
       faceCount,
       generationType,
       polygonType,
-      parentAssetId
+      parentAssetId,
+      imageViews
     } = req.body;
     const normalizedParentAssetId = Number(parentAssetId) || null;
+    // Workspace: no Kanban card snapshot, and the result is saved card-less.
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
+    // Multi-view input: { front, left, back, right } image source references.
+    const viewReferences = isPlainObject(imageViews)
+      ? Object.fromEntries(['front', 'left', 'back', 'right']
+        .filter(key => typeof imageViews[key] === 'string' && imageViews[key].trim())
+        .map(key => [key, imageViews[key].trim()]))
+      : {};
+    const isMultiviewRequest = Object.keys(viewReferences).length > 0;
     const trimmedName = String(name || '').trim();
     const trimmedPrompt = String(prompt || '').trim();
     const isTencentMeshApi = isTencentMeshGenerationApi(selectedApi);
     const isTripoMeshApi = isTripoMeshGenerationApi(selectedApi);
     const isHitemMeshApi = isHitemMeshGenerationApi(selectedApi);
-    const effectiveImageSource = (isTencentMeshApi || isTripoMeshApi) && trimmedPrompt
-      ? ''
-      : imageSource;
+    const effectiveImageSource = isMultiviewRequest
+      ? (viewReferences.front || '')
+      : ((isTencentMeshApi || isTripoMeshApi) && trimmedPrompt ? '' : imageSource);
 
     if (!projectId || !selectedApi || !trimmedName) {
       return res.status(400).json({ error: 'projectId, selectedApi and name are required' });
@@ -5530,6 +5594,14 @@ app.post('/api/meshes/generate', async (req, res) => {
 
     if (isHitemMeshApi && !effectiveImageSource) {
       return res.status(400).json({ error: 'Hitem3D requires an image source for mesh generation' });
+    }
+
+    if (isMultiviewRequest && !isTripoMeshApi && !isHitemMeshApi) {
+      return res.status(400).json({ error: 'Multi-view mesh generation is available with Tripo AI and Hitem3D only' });
+    }
+
+    if (isMultiviewRequest && (!viewReferences.front || Object.keys(viewReferences).length < 2)) {
+      return res.status(400).json({ error: 'Multi-view generation needs the front view and at least one other view' });
     }
 
     if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !String(selectedApi).startsWith('custom_')) {
@@ -5547,8 +5619,26 @@ app.post('/api/meshes/generate', async (req, res) => {
       }
     }
 
+    // Every view's bytes, read through dataStore (they may live on the shared
+    // server). Keyed by view; the provider decides the order it sends them in.
+    let viewImages = null;
+    if (isMultiviewRequest) {
+      viewImages = {};
+      for (const [key, reference] of Object.entries(viewReferences)) {
+        const resolvedView = await resolveProjectSource(Number(projectId), 'image', reference);
+        if (!resolvedView || resolvedView.asset?.type !== 'image') {
+          return res.status(404).json({ error: `The ${key} view image was not found` });
+        }
+        viewImages[key] = {
+          buffer: await readAssetBytes(resolvedView.inputFilePath),
+          filePath: resolvedView.inputFilePath || resolvedView.inputFilename || ''
+        };
+      }
+    }
+
     processingProjectId = Number(projectId);
-    processingCardId = cardId || sourceAsset?.metadata?.cardId || randomUUID();
+    // A null card id turns every processing snapshot below into a no-op.
+    processingCardId = detachedAsset ? null : (cardId || sourceAsset?.metadata?.cardId || randomUUID());
     processingCardName = trimmedName;
     processingStartedAt = Date.now();
 
@@ -5694,7 +5784,8 @@ app.post('/api/meshes/generate', async (req, res) => {
 
       const submittedTask = await submitTripoMeshGenerationTask(settings, {
         prompt: validatedInput.hasPrompt ? validatedInput.trimmedPrompt : '',
-        imageBuffer: sourceBuffer,
+        imageBuffer: isMultiviewRequest ? null : sourceBuffer,
+        viewImages,
         inputFilePath: resolvedSource?.inputFilePath || resolvedSource?.inputFilename || '',
         modelVersion: validatedInput.normalizedModelVersion,
         modelSeed: validatedInput.normalizedModelSeed,
@@ -5787,7 +5878,8 @@ app.post('/api/meshes/generate', async (req, res) => {
       });
 
       const submittedTask = await submitHitemMeshGenerationTask(settings, {
-        imageBuffer: sourceBuffer,
+        imageBuffer: isMultiviewRequest ? null : sourceBuffer,
+        viewImages,
         inputFilePath: resolvedSource?.inputFilePath || resolvedSource?.inputFilename || '',
         model: validatedInput.normalizedModel,
         resolution: validatedInput.normalizedResolution,
@@ -5931,6 +6023,7 @@ app.post('/api/meshes/generate', async (req, res) => {
 app.post('/api/meshes/generate/tencent/result', async (req, res) => {
   try {
     const { projectId, jobId, region, name, prompt = '', cardId = null, selectedApi = TENCENT_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
     const trimmedName = String(name || '').trim();
 
     if (!projectId || !jobId || !region || !trimmedName) {
@@ -6030,7 +6123,8 @@ app.post('/api/meshes/generate/tencent/result', async (req, res) => {
         jobId: String(jobId)
       },
       downloadedFiles,
-      parentAssetId
+      parentAssetId,
+      detached: detachedAsset
     });
 
     if (cardId) {
@@ -6058,6 +6152,7 @@ app.post('/api/meshes/generate/tencent/result', async (req, res) => {
 app.post('/api/meshes/generate/tripo/result', async (req, res) => {
   try {
     const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = TRIPO_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
     const trimmedName = String(name || '').trim();
 
     if (!projectId || !taskId || !trimmedName) {
@@ -6142,7 +6237,8 @@ app.post('/api/meshes/generate/tripo/result', async (req, res) => {
         isPbrModel: downloadedFile.isPbr
       },
       downloadedFiles: [downloadedFile],
-      parentAssetId
+      parentAssetId,
+      detached: detachedAsset
     });
 
     if (cardId) {
@@ -6168,6 +6264,7 @@ app.post('/api/meshes/generate/tripo/result', async (req, res) => {
 app.post('/api/meshes/generate/hitem/result', async (req, res) => {
   try {
     const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = HITEM_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
     const trimmedName = String(name || '').trim();
 
     if (!projectId || !taskId || !trimmedName) {
@@ -6247,7 +6344,8 @@ app.post('/api/meshes/generate/hitem/result', async (req, res) => {
         sourceUrl: downloadedFile.url
       },
       downloadedFiles: [downloadedFile],
-      parentAssetId
+      parentAssetId,
+      detached: detachedAsset
     });
 
     if (cardId) {

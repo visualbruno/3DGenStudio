@@ -15,6 +15,7 @@ import { useNotifications } from '../../context/NotificationContext'
 import { useWorkflowJobs } from '../../context/WorkflowJobsContext'
 import { assetUrl } from '../../config'
 import { createComfyExecutionId } from '../../utils/ids'
+import { readEntryDragData } from '../../utils/workspaceDrag'
 import { addWorkspaceHistory, fetchComfyWorkflows, resolveSourceReference } from '../../utils/workspaceApi'
 import {
   ASPECT_RATIOS,
@@ -97,6 +98,7 @@ export default function WorkspaceImagePanel({
   sourceBusy,
   onPickSourceFile,
   onPickSourceAsset,
+  onPickSourceEntry,
   onClearSource,
   onRunComplete,
   onPendingAdd,
@@ -217,9 +219,17 @@ export default function WorkspaceImagePanel({
     if (file) onPickSourceFile(file)
   }
 
+  // A history image dropped here becomes the image to edit; files from the
+  // computer are imported first.
   const handleDrop = (event) => {
     event.preventDefault()
     setDragOver(false)
+    if (sourceBusy) return
+    const entry = readEntryDragData(event)
+    if (entry) {
+      if (entry.asset.type === 'image') onPickSourceEntry?.(entry)
+      return
+    }
     handleSourceFiles(event.dataTransfer?.files)
   }
 

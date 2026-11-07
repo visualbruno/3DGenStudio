@@ -68,7 +68,8 @@ export default function ProjectWorkspacePage() {
   }
 
   if (presetKey(project) === 'workspace') {
-    return <WorkspacePage project={project} />
+    // Keyed: per-project state (history, cloud tasks) must not carry over.
+    return <WorkspacePage key={project.id} project={project} />
   }
 
   return <KanbanPage />

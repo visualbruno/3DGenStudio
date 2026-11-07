@@ -1,18 +1,34 @@
 // Workspace → Mesh module: generate a 3D model from one image, or from several
 // views of the same object (Multi-View). The dropdown lists the installed
-// ComfyUI workflows that fit the tab; Target Faces, Texture Size and Seed are
-// mapped onto each workflow's own parameters (src/utils/workspaceMesh.js).
+// ComfyUI workflows that fit the tab, then the cloud APIs (Tripo AI, Hitem3D,
+// and Tencent Cloud for a single image). For a workflow, Target Faces, Texture
+// Size and Seed are mapped onto its own parameters (src/utils/workspaceMesh.js);
+// a cloud API is submitted here and polled by the page
+// (src/hooks/useWorkspaceCloudTasks.js, src/utils/workspaceMeshCloud.js).
 //
 // A generated mesh is a new ROOT asset (its input is an image, so it is not a
 // version of anything); the history entry remembers the image it came from.
 import { useEffect, useMemo, useState } from 'react'
 import { useProjects } from '../../context/ProjectContext'
+import { useSettings } from '../../context/SettingsContext.shared'
 import { useNotifications } from '../../context/NotificationContext'
 import { useWorkflowJobs } from '../../context/WorkflowJobsContext'
 import { assetUrl } from '../../config'
 import { createComfyExecutionId } from '../../utils/ids'
 import { createMeshThumbnailFileFromUrl } from '../../utils/meshThumbnail'
-import { addWorkspaceHistory, fetchComfyWorkflows, uploadAssetThumbnail } from '../../utils/workspaceApi'
+import { createWorkflowInputNoneValue } from '../../utils/workflowFileInputs'
+import { addWorkspaceHistory, fetchComfyWorkflows, submitCloudMeshGeneration, uploadAssetThumbnail } from '../../utils/workspaceApi'
+import {
+  CLOUD_MESH_DEFAULTS,
+  buildCloudMeshRequest,
+  cloudMeshModelsForTab,
+  cloudMeshValue,
+  cloudSupports,
+  cloudTaskFromSubmit,
+  findCloudMeshModel,
+  formatCloudFaces,
+  normalizeCloudOptions
+} from '../../utils/workspaceMeshCloud'
 import { coerceParameterValue, defaultParameterValues, getParameterValueType, randomSeed } from '../../utils/workspaceImage'
 import {
   FACE_PRESETS,
@@ -27,6 +43,7 @@ import {
 import AssetSelectorModal from '../AssetSelectorModal'
 import WorkspaceImageSlot from './WorkspaceImageSlot'
 import WorkspaceParamField from './WorkspaceParamField'
+import WorkspaceCloudMeshFields from './WorkspaceCloudMeshFields'
 
 const SETTINGS_KEY = 'workspace.mesh.settings.v1'
 
@@ -49,7 +66,9 @@ const DEFAULT_SETTINGS = {
   workflowIds: { single: '', multiview: '' },
   faces: null,        // null = the workflow's own default
   textureSize: null,  // null = the workflow's own default
-  randomSeed: true
+  randomSeed: true,
+  cloud: CLOUD_MESH_DEFAULTS, // per cloud API: its option values
+  cloudSeed: ''
 }
 
 function readSettings() {
@@ -59,7 +78,9 @@ function readSettings() {
     return {
       ...DEFAULT_SETTINGS,
       ...parsed,
-      workflowIds: { ...DEFAULT_SETTINGS.workflowIds, ...(parsed.workflowIds || {}) }
+      workflowIds: { ...DEFAULT_SETTINGS.workflowIds, ...(parsed.workflowIds || {}) },
+      cloud: Object.fromEntries(Object.entries(CLOUD_MESH_DEFAULTS)
+        .map(([id, defaults]) => [id, { ...defaults, ...(parsed.cloud?.[id] || {}) }]))
     }
   } catch {
     return DEFAULT_SETTINGS
@@ -88,10 +109,12 @@ export default function WorkspaceMeshPanel({
   importers,
   selectedImageEntry,
   onRunComplete,
+  onCloudTaskSubmitted,
   onGoToImageModule,
   reuse
 }) {
   const { runComfyWorkflow } = useProjects()
+  const { settings: appSettings } = useSettings()
   const { addNotification } = useNotifications()
   const { registerJob, completeJob } = useWorkflowJobs()
 
@@ -129,7 +152,17 @@ export default function WorkspaceMeshPanel({
 
   const tab = settings.tab === 'multiview' ? 'multiview' : 'single'
   const tabWorkflows = useMemo(() => filterMeshWorkflows(workflows, tab), [workflows, tab])
-  const workflow = tabWorkflows.find(wf => String(wf.id) === String(settings.workflowIds[tab])) || tabWorkflows[0] || null
+  const tabCloudModels = cloudMeshModelsForTab(tab)
+  const storedChoice = settings.workflowIds[tab]
+  const storedWorkflow = tabWorkflows.find(wf => String(wf.id) === String(storedChoice)) || null
+  // A cloud API when one is chosen for this tab — or when no workflow fits, so
+  // the module is usable without ComfyUI.
+  const storedCloud = findCloudMeshModel(storedChoice)
+  const cloudModel = (storedCloud && storedCloud.tabs.includes(tab) ? storedCloud : null)
+    || (!storedWorkflow && !tabWorkflows.length && !workflowsLoading ? tabCloudModels[0] || null : null)
+  const workflow = cloudModel ? null : (storedWorkflow || tabWorkflows[0] || null)
+  const cloudOptions = cloudModel ? (settings.cloud?.[cloudModel.id] || CLOUD_MESH_DEFAULTS[cloudModel.id]) : null
+  const cloudKeyReady = cloudModel ? cloudModel.hasKey(appSettings) : false
   const roles = useMemo(() => (workflow ? resolveMeshRoles(workflow) : null), [workflow])
   const values = workflow ? (valuesByWorkflow[workflow.id] || defaultParameterValues(workflow)) : {}
   const layoutViews = tab === 'multiview' ? (roles?.views?.length ? roles.views : DEFAULT_VIEWS) : []
@@ -147,13 +180,23 @@ export default function WorkspaceMeshPanel({
     setAppliedReuseNonce(reuse.nonce)
     const params = reuse.entry.params || {}
     const reuseTab = params.tab === 'multiview' ? 'multiview' : 'single'
-    setSettings(prev => ({
-      ...prev,
-      tab: reuseTab,
-      workflowIds: reuse.entry.workflowId ? { ...prev.workflowIds, [reuseTab]: String(reuse.entry.workflowId) } : prev.workflowIds,
-      faces: Number(params.faces) || prev.faces,
-      textureSize: Number(params.textureSize) || prev.textureSize
-    }))
+    const reuseCloud = params.cloud ? findCloudMeshModel(`api:${params.cloud}`) : null
+    if (reuseCloud) {
+      setSettings(prev => ({
+        ...prev,
+        tab: reuseTab,
+        workflowIds: { ...prev.workflowIds, [reuseTab]: cloudMeshValue(reuseCloud) },
+        cloud: { ...prev.cloud, [reuseCloud.id]: { ...(prev.cloud?.[reuseCloud.id] || {}), ...(params.options || {}) } }
+      }))
+    } else {
+      setSettings(prev => ({
+        ...prev,
+        tab: reuseTab,
+        workflowIds: reuse.entry.workflowId ? { ...prev.workflowIds, [reuseTab]: String(reuse.entry.workflowId) } : prev.workflowIds,
+        faces: Number(params.faces) || prev.faces,
+        textureSize: Number(params.textureSize) || prev.textureSize
+      }))
+    }
     if (reuse.entry.workflowId && params.values && typeof params.values === 'object') {
       setValuesByWorkflow(prev => ({ ...prev, [reuse.entry.workflowId]: { ...(prev[reuse.entry.workflowId] || {}), ...params.values } }))
     }
@@ -171,6 +214,17 @@ export default function WorkspaceMeshPanel({
 
   const selectWorkflow = (id) => {
     setSettings(prev => ({ ...prev, workflowIds: { ...prev.workflowIds, [tab]: id } }))
+  }
+
+  const updateCloudOptions = (patch) => {
+    if (!cloudModel) return
+    setSettings(prev => ({
+      ...prev,
+      cloud: {
+        ...prev.cloud,
+        [cloudModel.id]: normalizeCloudOptions(cloudModel, { ...(prev.cloud?.[cloudModel.id] || CLOUD_MESH_DEFAULTS[cloudModel.id]), ...patch })
+      }
+    }))
   }
 
   const fail = (err, fallback) => setStatus({ tone: 'error', message: err?.message || fallback })
@@ -215,6 +269,18 @@ export default function WorkspaceMeshPanel({
 
   // --- run ------------------------------------------------------------------
   const blocker = (() => {
+    if (cloudModel) {
+      if (!cloudKeyReady) return `Add your ${cloudModel.keyHint} in Settings`
+      if (tab === 'single') {
+        if (singleBusy) return 'Importing the image…'
+        if (!source?.sourceReference) return 'Choose the image to turn into 3D'
+      } else {
+        // Both providers need the front view and at least one more.
+        if (!views.front?.sourceReference) return 'Add the Front view'
+        if (DEFAULT_VIEWS.filter(view => views[view.key]?.sourceReference).length < 2) return 'Add at least one more view'
+      }
+      return null
+    }
     if (!workflow) {
       return tab === 'multiview' ? 'No multi-view mesh workflow installed' : 'No image-to-mesh workflow installed'
     }
@@ -222,14 +288,77 @@ export default function WorkspaceMeshPanel({
       if (singleBusy) return 'Importing the image…'
       if (!source?.sourceReference) return 'Choose the image to turn into 3D'
     } else {
-      const missing = layoutViews.find(view => !views[view.key]?.sourceReference)
-      if (missing) return `Add the ${missing.label} view`
+      // Only the first view (Front, or "First Image") is required; the workflow
+      // copes with the others missing.
+      const required = layoutViews[0]
+      if (required && !views[required.key]?.sourceReference) return `Add the ${required.label} view`
     }
     return null
   })()
 
+  const runCloud = async () => {
+    const runModel = cloudModel
+    const runOptions = cloudOptions
+    const runTab = tab
+    const runSource = runTab === 'single' ? source : views.front
+    const seed = cloudSupports(runModel, runOptions).seed
+      ? (settings.randomSeed ? randomSeed() : (settings.cloudSeed === '' ? null : Number(settings.cloudSeed)))
+      : null
+    const viewReferences = runTab === 'multiview'
+      ? Object.fromEntries(DEFAULT_VIEWS
+        .filter(view => views[view.key]?.sourceReference)
+        .map(view => [view.key, views[view.key].sourceReference]))
+      : null
+    const name = meshName(runSource, { name: runModel.label })
+    const versionLabel = runOptions.modelVersion || runOptions.hitemModel || ''
+    const label = `Mesh · ${runModel.label}${versionLabel ? ` ${versionLabel}` : ''}`
+    setStatus(null)
+
+    try {
+      const response = await submitCloudMeshGeneration(buildCloudMeshRequest(runModel, runOptions, {
+        projectId,
+        name,
+        imageSource: runTab === 'single' ? runSource.sourceReference : undefined,
+        views: viewReferences,
+        seed
+      }))
+      onCloudTaskSubmitted(cloudTaskFromSubmit(runModel, response, {
+        name,
+        label,
+        history: {
+          sourceAssetId: runSource?.assetId ?? null,
+          workflowName: `${runModel.label}${versionLabel ? ` · ${versionLabel}` : ''}`,
+          params: {
+            tab: runTab,
+            cloud: runModel.id,
+            ...(runOptions.faces != null ? { faces: runOptions.faces } : {}),
+            ...(seed != null ? { seed } : {}),
+            ...(viewReferences
+              ? { views: Object.fromEntries(Object.keys(viewReferences).map(key => [key, views[key]?.assetId ?? null])) }
+              : {}),
+            options: runOptions
+          }
+        }
+      }))
+    } catch (err) {
+      console.error('Workspace cloud mesh submit failed', err)
+      fail(err, `${runModel.label} rejected the request.`)
+      addNotification({
+        title: 'Mesh generation failed',
+        message: err.message || `${runModel.label} rejected the request`,
+        tone: 'error',
+        source: runModel.label,
+        projectId
+      })
+    }
+  }
+
   const run = async () => {
     if (blocker) return
+    if (cloudModel) {
+      await runCloud()
+      return
+    }
     const runWorkflow = workflow
     const runRoles = roles
     const runTab = tab
@@ -253,8 +382,14 @@ export default function WorkspaceMeshPanel({
     } else {
       for (const view of runRoles.views) {
         const picked = views[view.key]
-        imageInputs[view.parameter.id] = { source: picked.sourceReference, name: picked.name }
-        viewAssetIds[view.key] = picked.assetId ?? null
+        if (picked?.sourceReference) {
+          imageInputs[view.parameter.id] = { source: picked.sourceReference, name: picked.name }
+          viewAssetIds[view.key] = picked.assetId ?? null
+        } else {
+          // An empty view sends nothing: the input keeps the value saved in the
+          // workflow (the "None" marker — see src/utils/workflowFileInputs.js).
+          imageInputs[view.parameter.id] = createWorkflowInputNoneValue()
+        }
       }
     }
     const inputs = {
@@ -353,10 +488,11 @@ export default function WorkspaceMeshPanel({
         key={view.key}
         variant={variant}
         label={view.label}
-        hint="Drop an image, or use the buttons"
+        hint={view === main ? 'Required — drop an image, or use the buttons' : 'Optional'}
         value={views[view.key] || null}
         busy={Boolean(busyViews[view.key])}
         onFile={(file) => fillView(view.key, () => importers.fromFile(file))}
+        onDropEntry={(entry) => fillView(view.key, () => importers.fromEntry(entry))}
         onPickAsset={() => setAssetPicker(view.key)}
         onUseSelected={useSelected ? () => fillView(view.key, useSelected) : null}
         onClear={() => setViews(prev => ({ ...prev, [view.key]: null }))}
@@ -405,6 +541,7 @@ export default function WorkspaceMeshPanel({
               value={source}
               busy={singleBusy}
               onFile={(file) => fillSingle(() => importers.fromFile(file))}
+              onDropEntry={(entry) => fillSingle(() => importers.fromEntry(entry))}
               onPickAsset={() => setAssetPicker('single')}
               onUseSelected={useSelected ? () => fillSingle(useSelected) : null}
               onClear={() => onSourceChange(null)}
@@ -437,26 +574,55 @@ export default function WorkspaceMeshPanel({
           </div>
           <select
             className="workspace-input workspace-input--large"
-            value={workflow ? String(workflow.id) : ''}
+            value={cloudModel ? cloudMeshValue(cloudModel) : (workflow ? String(workflow.id) : '')}
             onChange={event => selectWorkflow(event.target.value)}
-            disabled={!tabWorkflows.length}
           >
-            {!tabWorkflows.length && (
-              <option value="">{workflowsLoading ? 'Loading workflows…' : 'No compatible workflow installed'}</option>
-            )}
-            {tabWorkflows.map(wf => (
-              <option key={wf.id} value={String(wf.id)} title={wf.name}>{meshWorkflowLabel(wf)}</option>
-            ))}
+            {!cloudModel && !workflow && <option value="">Loading workflows…</option>}
+            <optgroup label="ComfyUI (local)">
+              {tabWorkflows.map(wf => (
+                <option key={wf.id} value={String(wf.id)} title={wf.name}>{meshWorkflowLabel(wf)}</option>
+              ))}
+              {!tabWorkflows.length && (
+                <option value="" disabled>{workflowsLoading ? 'Loading…' : 'No compatible workflow installed'}</option>
+              )}
+            </optgroup>
+            <optgroup label="Cloud APIs">
+              {tabCloudModels.map(model => (
+                <option key={model.id} value={cloudMeshValue(model)}>
+                  {model.label}{model.hasKey(appSettings) ? '' : ' — no API key'}
+                </option>
+              ))}
+            </optgroup>
           </select>
           {workflowsError && <span className="workspace-hint workspace-hint--error">{workflowsError}</span>}
-          {!workflowsLoading && !workflowsError && !tabWorkflows.length && (
+          {cloudModel && (
+            <span className={`workspace-hint ${cloudKeyReady ? '' : 'workspace-hint--error'}`}>
+              {cloudKeyReady
+                ? `Runs on ${cloudModel.provider}'s servers — a paid request. The result arrives in the history when ready, even after a reload.`
+                : `No ${cloudModel.keyHint} — add it in Settings → APIs.`}
+            </span>
+          )}
+          {!cloudModel && !workflowsLoading && !workflowsError && !tabWorkflows.length && (
             <span className="workspace-hint">
               {tab === 'multiview'
-                ? 'Install a multi-view workflow (Trellis2 MultiView, Pixal3D MultiView) from the Setup Wizard.'
-                : 'Install an image-to-mesh workflow (Trellis2, Pixal3D, Hunyuan…) from the Setup Wizard.'}
+                ? 'Install a multi-view workflow (Trellis2 MultiView, Pixal3D MultiView) from the Setup Wizard, or pick a cloud API.'
+                : 'Install an image-to-mesh workflow (Trellis2, Pixal3D, Hunyuan…) from the Setup Wizard, or pick a cloud API.'}
             </span>
           )}
         </div>
+
+        {cloudModel && cloudOptions && (
+          <WorkspaceCloudMeshFields
+            model={cloudModel}
+            options={cloudOptions}
+            tab={tab}
+            onChange={updateCloudOptions}
+            seed={settings.cloudSeed}
+            onSeedChange={(value) => updateSettings({ cloudSeed: value })}
+            randomSeed={settings.randomSeed}
+            onToggleRandomSeed={() => updateSettings({ randomSeed: !settings.randomSeed })}
+          />
+        )}
 
         {roles?.faces && (
           <div className="workspace-section">
@@ -551,12 +717,22 @@ export default function WorkspaceMeshPanel({
         {status && (
           <div className={`workspace-status ${status.tone === 'error' ? 'workspace-status--error' : ''}`}>{status.message}</div>
         )}
+        {!cloudModel && workflow && tab === 'multiview' && layoutViews.length > 0 && (
+          <span className="workspace-hint workspace-hint--center">
+            {layoutViews.filter(view => views[view.key]?.sourceReference).length} of {layoutViews.length} views · {layoutViews[0].label} required, the others optional
+          </span>
+        )}
+        {cloudModel && tab === 'multiview' && (
+          <span className="workspace-hint workspace-hint--center">
+            {DEFAULT_VIEWS.filter(view => views[view.key]?.sourceReference).length} of 4 views · Front + at least one more
+          </span>
+        )}
         <button
           type="button"
           className="workspace-run-btn"
           onClick={run}
           disabled={Boolean(blocker)}
-          title={blocker || 'Generate the 3D model'}
+          title={blocker || (cloudModel ? `Send to ${cloudModel.label} (${formatCloudFaces(cloudOptions?.faces)} faces)` : 'Generate the 3D model')}
         >
           <span className="material-symbols-outlined">deployed_code</span>
           Generate Mesh

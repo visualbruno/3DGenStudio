@@ -64,3 +64,14 @@ export async function uploadAssetThumbnail(assetId, file) {
   const res = await fetch(`${API_BASE}/assets/${assetId}/thumbnail`, { method: 'POST', body: form })
   return await readJson(res, 'Failed to save the thumbnail')
 }
+
+// Submit a cloud mesh generation (Tripo AI / Hitem3D / Tencent Cloud). Answers
+// 202 with the task / job id to poll (see useWorkspaceCloudTasks).
+export async function submitCloudMeshGeneration(body) {
+  const res = await fetch(`${API_BASE}/meshes/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  return await readJson(res, 'Failed to submit the mesh generation')
+}
