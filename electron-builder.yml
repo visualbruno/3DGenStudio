@@ -99,6 +99,11 @@ files:
   # and mcp/ imports it for the batch tools, so a run started from either side
   # produces the same assets - the same rule as db/, mcp/, vfx/ and building/.
   - batch/**/*
+  # "Animate with AI": rig perception, the spec compiler, CPU previews and the
+  # GLB clip writer behind the MCP animation tools. mcp/ imports it, and
+  # server.js imports mcp/, so the whole directory ships - same rule as
+  # building/ and batch/. Pure Node + three, no DOM.
+  - animation/**/*
   # THE PARTICLE SIMULATION, and the one place src/ ships. The rule everywhere
   # else is that src/ is browser code and only dist/ is packaged - this subtree
   # is the exception because it is provably neither: system.js, emitter.js,

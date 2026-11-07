@@ -30,6 +30,7 @@ import { registerSettingsTools } from './tools/settings.js';
 import { registerTreeTools } from './tools/tree.js';
 import { registerVfxTools } from './tools/vfx.js';
 import { registerBuildingTools } from './tools/building.js';
+import { registerAnimationTools } from './tools/animation.js';
 
 function readAppVersion() {
   try {
@@ -56,6 +57,7 @@ const TOOL_GROUPS = {
   tree: { register: registerTreeTools, cost: 12476 },
   vfx: { register: registerVfxTools, cost: 11746 },
   building: { register: registerBuildingTools, cost: 12508 },
+  animation: { register: registerAnimationTools, cost: 18461 },
   assets: { register: registerAssetTools, cost: 14093 },
   settings: { register: registerSettingsTools, cost: 1688 }
 };
@@ -189,6 +191,10 @@ const INSTRUCTION_BLOCKS = [
     text: '- Procedural buildings: the loop is describe_building_catalog (once, to learn the vocabulary) -> create_building_graph or get_building -> patch the nodes -> compile_building to check it -> save_building. THE GRAPH IS THE ASSET (a ~10-40KB JSON file, not rows): a DAG of nodes, Footprint -> Mass -> Facade -> Roof -> Trim -> Output. ORDER IS NOT COSMETIC and is the main way an agent gets this wrong - a Roof Detail reads the roof UNDER it, a Trim reads it for its eave, and a Facade REPLACES the storeys it claims, so a node wired in the wrong place compiles clean and quietly does nothing; compile_building says so. Nodes reference textures and meshes by SLOT KEY resolved through the `references` table, and EVERY SLOT HOLDS A LIST (tex_wall.0, tex_wall.1) the compiler rolls from the document seed - use set_building_reference, and NEVER write an asset id into a node property. A style pack is a GRAPH RECIPE, not a texture set: apply_building_style replaces the massing too, which is why one vocabulary covers a Roman villa and a Mayan temple. Buildings are library-global, so there is no projectId anywhere. save_building does NOT render a thumbnail, because that needs a GPU.'
   },
   {
+    groups: ['animation'],
+    text: '- Animating any rigged mesh (robots, monsters, animals - not only humanoids): describe_rig -> (inspect_rig, annotate_rig if a label or the facing is wrong) -> preview_animation -> save_animation. You never write bone rotations: describe_rig labels the skeleton as a BODY (chains such as spine, neck, head, tail, leg_front_L, wing_R) from its geometry, and a SPEC poses those chains with body-relative degrees - forward/up/left/out swing the tip of a chain that way, turn/pitch/roll rotate about the body axes, twist about the bone - relative to rest. "chain" moves a whole limb from its base, "chain.*" spreads the angle over the chain (a curl), "chain[i]" is one bone. Keys are sparse and interpolated per control; loop:true for cycles; root moves the whole body (metres); ik plants or places a chain tip (offset from its rest position, fixed in the world). ALWAYS LOOK: preview_animation with `pose` to learn what a control does on this rig, then with `spec` for the filmstrip and the checks (foot sliding, floor penetration, pops). Saved clips keep their spec: list_animations with a name returns it for the next edit.'
+  },
+  {
     groups: ['tree'],
     text: '- Procedural trees: list_tree_presets -> preview_tree_skeleton (fast, no mesh) to settle the shape -> generate_tree to build and save it. The tree IS its spec: a seeded ~2KB document reproduces the mesh exactly, so vary `seed` for variations and patch `overrides` for changes, rather than trying to edit the resulting mesh. Trees are not project-scoped; omit projectId to save to the global library.'
   }
@@ -196,7 +202,7 @@ const INSTRUCTION_BLOCKS = [
 
 const INSTRUCTIONS_HEADER = '3D Gen Studio automation server.\n\nTypical flows:';
 
-const INSTRUCTIONS_FOOTER = 'Note: the interactive Mesh Editor modes that run in the browser — sculpting, modeling, displace, painting, projection, and APPLYING baked maps to a material — are not exposed here, and neither are Image Editor pixel edits. Running a bake IS available (bake_mesh_maps); it returns the maps as image assets. Animation retargeting (the Auto Rig > Animations tab) is browser-only too. If the app UI is open in a browser, it may need a refresh to show changes made through these tools.';
+const INSTRUCTIONS_FOOTER = 'Note: the interactive Mesh Editor modes that run in the browser — sculpting, modeling, displace, painting, projection, and APPLYING baked maps to a material — are not exposed here, and neither are Image Editor pixel edits. Running a bake IS available (bake_mesh_maps); it returns the maps as image assets. Animation retargeting (the Auto Rig > Animations tab) is browser-only too; authoring NEW animations is available through the animation tools. If the app UI is open in a browser, it may need a refresh to show changes made through these tools.';
 
 // Assemble instructions for the loaded groups, naming what was left out so a
 // model reports a missing tool group as "not exposed here" rather than

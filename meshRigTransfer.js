@@ -84,7 +84,7 @@ const TYPE_COMPONENTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT4: 16 };
 // Sparse accessors are refused rather than half-read: they are rare in the
 // files this handles, and quietly returning the base values would produce a rig
 // sampled against the wrong surface, which is not a failure anyone would catch.
-function readAccessor(json, bin, index) {
+export function readAccessor(json, bin, index) {
   const accessor = (json.accessors || [])[index];
   if (!accessor) throw new Error(`The file references accessor ${index}, which it does not contain.`);
   if (accessor.sparse) throw new Error('This mesh uses sparse accessors, which the rig transfer cannot read.');

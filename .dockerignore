@@ -53,6 +53,7 @@
 # the FRONTEND build fails to resolve ../../batch/document.js and the image
 # build dies at vite.
 !batch/
+!animation/
 !vfxPreview.js
 
 # File-based wiki (resolved against the module dir, not cwd).

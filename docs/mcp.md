@@ -123,6 +123,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Procedural trees | `list_tree_presets`, `preview_tree_skeleton`, `generate_tree` |
 | Particle effects | `describe_vfx_catalog`, `list_vfx_assets`, `get_vfx_graph`, `compile_vfx_graph`, `list_vfx_sprites`, `install_vfx_sprite`, `set_vfx_texture`, `render_vfx_preview`, `save_vfx_graph`, `export_vfx_bundle` |
 | Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `add_building_wing`, `save_building` |
+| Animation (any rigged mesh) | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation` |
 | System | `get_settings` (secrets redacted), `update_settings`, `get_system_stats` |
 
 ### Context cost and loading only the groups you need
@@ -155,7 +156,7 @@ Two forms are accepted, comma- or space-separated:
 - **include** — `projects,graph,workflows` loads exactly those groups
 - **exclude** — `-mesh,-actions` loads everything except those
 
-Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `batch`, `workflows`, `actions`, `mesh`, `tree`, `vfx`, `building`, `assets`, `settings`.
+Unset, empty, or `all` loads every group, so nothing changes for an existing config. Unknown names are ignored with a warning on stderr rather than failing. Group names: `projects`, `cards`, `graph`, `batch`, `workflows`, `actions`, `mesh`, `tree`, `vfx`, `building`, `animation`, `assets`, `settings`.
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
@@ -233,6 +234,27 @@ A **Batch** project is a grid, not a graph. `variables` are declared once, each 
 **Running is resumable.** `run_batch` **continues** by default: a cell that already produced an asset is kept and reused as the input for the stages after it, so a stopped, failed or half-finished grid picks up where it left off. `mode: "restart"` regenerates instead, and `groups` / `stages` narrow the walk to some rows or some steps — a filtered restart is how you regenerate a single cell without touching the rest. Long grids are budgeted (`maxSeconds`): when the budget runs out the tool returns what finished, and calling it again carries on.
 
 `executionOrder` decides how the grid is walked: `"group"` finishes one row through every stage before the next row, `"stage"` runs one stage across every row first. The results are identical — the difference is how often ComfyUI has to swap models.
+
+### Animating any rigged mesh ("Animate with AI")
+
+Humanoids are well served by motion libraries and text-to-motion models; robots, monsters, spiders and dragons are not, because every creature's skeleton is different. The `animation` group lets an agent animate **any** rigged mesh by working the way an animator does, and nothing in it writes a bone rotation directly:
+
+1. **Read the rig as a body** — `describe_rig` works out the body plan (quadruped, 8-legged, winged…), the facing, the size, and labels the skeleton as **chains** (`spine`, `neck`, `head`, `tail`, `leg_front_L`, `wing_R`, …) from its *geometry*, not its bone names, so it works on Auto Rig output, hand-made rigs and anything in between. It returns an image with each chain in its own colour. `inspect_rig` checks the rig first (floor/pivot, facing, unweighted vertices, weights leaking across the body, limbs that do not mirror, bone names that contradict where the bone sits) and names the tool that fixes each issue. `annotate_rig` corrects a wrong facing or label and stores it on the asset.
+2. **Write a spec** — sparse keyframes of body-relative controls, relative to rest:
+
+   ```json
+   { "name": "wag", "duration": 1.0, "loop": true,
+     "keys": [
+       { "time": 0,   "pose": { "tail.*": { "left": 40 }, "head": { "turn": 15 } } },
+       { "time": 0.5, "pose": { "tail.*": { "left": -40 }, "head": { "turn": -15 } },
+         "root": { "up": 0.02 } } ] }
+   ```
+
+   `forward` / `up` / `left` / `out` swing a chain's tip that way (degrees; `out` = away from the mid line, so one value mirrors on `_L` and `_R`), `turn` / `pitch` / `roll` rotate about the body's axes, `twist` about the bone. `"leg_front_L"` swings the whole limb from its base, `"tail.*"` spreads the angle over the chain (a curl), `"tail[2]"` is one bone. `root` moves and turns the whole body (pitch/roll pivot at the hips). `ik` places a chain's tip as an offset from its rest position, fixed in the world — `{}` plants a foot while the body moves; feet keep their orientation, knees keep their rest bend direction.
+3. **Look before saving** — `preview_animation` renders a filmstrip (or, with `pose`, one pose from several views) on the CPU and measures what an animator checks by eye: floor penetration, feet sliding on contact chains (and recognises an in-place treadmill cycle, reporting the root-motion speed), frame-to-frame pops, the loop seam. Single-key channels that hold a value for the whole clip are flagged.
+4. **Save** — `save_animation` bakes the clip into the GLB (a new version by default; other clips are kept) and stores the spec inside it, so `list_animations` with a clip name returns the spec for the next edit. `delete_animation` removes one clip.
+
+Everything runs in the app backend (`animation/` at the repo root): no GPU, no Python service. Previews are flat-shaded silhouettes — enough to judge motion, not materials.
 
 ### Small and local models (LM Studio, Ollama, …)
 
@@ -322,10 +344,11 @@ Two behaviours worth knowing:
 | `auto_rig_mesh` | rigging service (`:8300`) running |
 | `optimize_mesh`, `generate_lods` | nothing extra (bundled gltfpack) |
 | `move_mesh_pivot`, `transfer_rig` | nothing extra (runs in the app backend) |
+| `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation` | nothing extra (runs in the app backend); the mesh must be a rigged GLB |
 
 ## Limitations
 
-- The **Mesh Editor** modes that run in the browser (WebGL/canvas) are not exposed over MCP: sculpting, modeling, displace/boolean, painting, projection, applying baked maps to a material, and animation retargeting (Auto Rig -> Animations). **Image Editor** pixel operations (crop, filters, shadow remover) are browser-only too. AI-driven alternatives: ComfyUI workflows (`run_workflow`), prompt-based edits (`edit_image`), and the mesh-tool services. Note that *running* a bake is available (`bake_mesh_maps`) — only applying the result to a material is not.
+- The **Mesh Editor** modes that run in the browser (WebGL/canvas) are not exposed over MCP: sculpting, modeling, displace/boolean, painting, projection, applying baked maps to a material, and animation retargeting (Auto Rig -> Animations). Authoring *new* animations on any rigged mesh is available through the animation group. **Image Editor** pixel operations (crop, filters, shadow remover) are browser-only too. AI-driven alternatives: ComfyUI workflows (`run_workflow`), prompt-based edits (`edit_image`), and the mesh-tool services. Note that *running* a bake is available (`bake_mesh_maps`) — only applying the result to a material is not.
 - `update_settings` refuses to write any field whose key looks like an API key, secret, token, password, or credential. Reads are redacted, so a client that round-tripped a settings object would otherwise overwrite a real key with the redaction placeholder. Set credentials (including `mcp.token`) in the app's Settings dialog or with a direct `POST /api/settings`.
 - Not yet exposed: Brainstorming Boards, the Wiki, and tasks.
 - If the app UI is open in a browser while an MCP client mutates data, open Graph/Kanban pages refresh automatically via the app event stream; other pages may need a manual refresh.

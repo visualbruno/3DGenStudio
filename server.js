@@ -125,6 +125,7 @@ import {
   listAllAssetTags,
   listAssetTags,
   setAssetTags,
+  setAssetMetadataKey,
   addAssetTags,
   removeAssetTag,
   findAssetsByTags,
@@ -7565,6 +7566,66 @@ app.put('/api/assets/:assetId/tags', async (req, res) => {
 // Additive tag edits: add and/or remove without knowing (or clobbering) the
 // tags an asset already carries. The UI PUTs whole sets; automation usually
 // only knows the tags it wants to contribute or drop.
+// The rig profile the "Animate with AI" tools read: corrections to the
+// automatic rig analysis (facing, chain names, which bones are feet). Kept in
+// the asset's metadata, so a later "Save as version" carries it along the same
+// way it carries boneMappings. Sanitised here because it arrives from an agent
+// and lands in the database.
+const MAX_RIG_PROFILE_BYTES = 64 * 1024;
+function sanitizeRigProfile(raw) {
+  if (raw === null) return null;
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('rigProfile must be an object (or null to clear it).');
+  const out = {};
+  const str = (v, max = 80) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  if (raw.forward !== undefined && raw.forward !== null) {
+    const f = str(raw.forward, 3).toLowerCase();
+    if (!/^[+-]?[xz]$/.test(f)) throw new Error('forward must be one of +z, -z, +x, -x.');
+    out.forward = f.startsWith('-') || f.startsWith('+') ? f : `+${f}`;
+  }
+  const stringMap = (value, name) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'object' || Array.isArray(value)) throw new Error(`${name} must be an object of name -> name.`);
+    const map = {};
+    for (const [k, v] of Object.entries(value).slice(0, 500)) {
+      const key = str(k, 120);
+      const val = str(v, 80);
+      if (key && val) map[key] = val;
+    }
+    return map;
+  };
+  const renames = stringMap(raw.chainRenames, 'chainRenames');
+  if (renames && Object.keys(renames).length) out.chainRenames = renames;
+  const boneChains = stringMap(raw.boneChains, 'boneChains');
+  if (boneChains && Object.keys(boneChains).length) out.boneChains = boneChains;
+  if (Array.isArray(raw.contacts)) out.contacts = raw.contacts.map(c => str(c)).filter(Boolean).slice(0, 64);
+  if (raw.notes !== undefined) out.notes = str(raw.notes, 2000);
+  if (JSON.stringify(out).length > MAX_RIG_PROFILE_BYTES) throw new Error('rigProfile is too large.');
+  return out;
+}
+
+app.put('/api/assets/:assetId/rig-profile', async (req, res) => {
+  try {
+    const assetId = Number(req.params.assetId);
+    if (!Number.isFinite(assetId)) {
+      return res.status(400).json({ error: 'A numeric assetId is required' });
+    }
+    let profile;
+    try {
+      profile = sanitizeRigProfile(req.body?.rigProfile === undefined ? {} : req.body.rigProfile);
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+    const result = await setAssetMetadataKey(assetId, 'rigProfile', profile);
+    if (result.status === 'not-found') {
+      return res.status(404).json({ error: 'Asset not found' });
+    }
+    res.json({ assetId: result.assetId, rigProfile: result.metadata.rigProfile || null });
+  } catch (err) {
+    console.error('Failed to save the rig profile:', err);
+    res.status(500).json({ error: 'Failed to save the rig profile' });
+  }
+});
+
 app.patch('/api/assets/:assetId/tags', async (req, res) => {
   try {
     const assetId = Number(req.params.assetId);

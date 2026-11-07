@@ -977,6 +977,31 @@ export async function setAssetTags(assetId, tags = []) {
   return { status: 'ok', assetId: asset.id, tags: normalized };
 }
 
+// Set (or, with null, remove) one top-level key of an asset's metadata JSON
+// without touching the rest. Used for metadata that is edited on its own -
+// the rig profile the animation tools keep - where re-saving the mesh just to
+// change a label would mint a version per edit.
+export async function setAssetMetadataKey(assetId, key, value) {
+  const asset = await getAssetRecordById(assetId);
+
+  if (!asset) {
+    return { status: 'not-found' };
+  }
+
+  let metadata = {};
+  try {
+    metadata = JSON.parse(asset.metadata || '{}') || {};
+  } catch {
+    metadata = {};
+  }
+  if (value === null || value === undefined) delete metadata[key];
+  else metadata[key] = value;
+
+  const db = await getDb();
+  await run(db, 'UPDATE Assets SET metadata = ? WHERE id = ?', [JSON.stringify(metadata), asset.id]);
+  return { status: 'ok', assetId: asset.id, metadata };
+}
+
 // Add without disturbing what is already there (used by importers/automation
 // that only know the tags they want to contribute).
 export async function addAssetTags(assetId, tags = []) {
