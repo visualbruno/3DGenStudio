@@ -31,6 +31,15 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v4.1.0',
+    date: '2026-11-08',
+    items: [
+			'Workspace: Added "Animate with AI" module',
+			'Workspace - Retopo: Added Refine',
+			'Workspace - Rig: Can align mesh to the ground and show bone names'
+    ]
+  },
+  {
     version: 'v4.0.0',
     date: '2026-11-07',
     items: [

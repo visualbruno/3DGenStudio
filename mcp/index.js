@@ -6,8 +6,8 @@
 // app. Tools call the running backend over loopback HTTP (see client.js).
 //
 // Context cost: a client injects the WHOLE tool catalog into the model's system
-// prompt on every request, before it reads the user's message. The full 98-tool
-// catalog is ~159 KB of JSON (~44k tokens) plus ~5 KB of instructions. Clients
+// prompt on every request, before it reads the user's message. The full 112-tool
+// catalog is ~201 KB of JSON (~56k tokens) plus ~5 KB of instructions. Clients
 // that load tool schemas lazily pay almost nothing; the rest pay it per session.
 // For those, TOOL_GROUPS below lets a client load only the groups it needs —
 // see resolveGroups(). Instructions are assembled to match (buildInstructions),
