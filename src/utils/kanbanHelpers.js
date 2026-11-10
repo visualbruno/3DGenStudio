@@ -7,9 +7,8 @@ export const IMAGE_API_LIST = [
   { id: 'nanobana', name: 'Nanobana' },
   { id: 'nanobana_pro', name: 'Nanobana Pro' },
   { id: 'nanobana_2', name: 'Nanobana 2' },
-  { id: 'openai_gpt_image_1', name: 'OpenAI · gpt-image-1' },
-  { id: 'openai_gpt_image_1_5', name: 'OpenAI · gpt-image-1.5' },
-  { id: 'openai_gpt_image_2', name: 'OpenAI · gpt-image-2' },
+  { id: 'openai_gpt_image_2_5_sunburst', name: 'OpenAI · gpt-image-2.5 sunburst' },
+  { id: 'openai_gpt_image_2_5_flare', name: 'OpenAI · gpt-image-2.5 flare' },
 ]
 export const TENCENT_MESH_GENERATION_API_ID = 'tencent_meshgeneration'
 export const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration'

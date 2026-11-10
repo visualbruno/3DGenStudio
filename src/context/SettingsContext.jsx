@@ -65,23 +65,19 @@ export function SettingsProvider({ children }) {
             Authorization: 'Bearer {apiKey}'
           },
           payloadTemplate: {
-            model: 'gpt-image-1.5',
+            model: 'gpt-image-2.5',
             prompt: '{prompt}',
             n: 1,
             size: '1024x1024'
           },
           models: {
-            openai_gpt_image_1: {
-              name: 'gpt-image-1',
-              model: 'gpt-image-1'
+            openai_gpt_image_2_5_sunburst: {
+              name: 'gpt-image-2.5-sunburst',
+              model: 'gpt-image-2.5-sunburst'
             },
-            openai_gpt_image_1_5: {
-              name: 'gpt-image-1.5',
-              model: 'gpt-image-1.5'
-            },
-            openai_gpt_image_2: {
-              name: 'gpt-image-2',
-              model: 'gpt-image-2'
+            openai_gpt_image_2_5_flare: {
+              name: 'gpt-image-2.5-flare',
+              model: 'gpt-image-2.5-flare'
             }
           },
           responseMapping: {
@@ -101,17 +97,13 @@ export function SettingsProvider({ children }) {
             size: '1024x1024'
           },
           models: {
-            openai_gpt_image_1: {
-              name: 'gpt-image-1',
-              model: 'gpt-image-1'
+            openai_gpt_image_2_5_sunburst: {
+              name: 'gpt-image-2.5-flare',
+              model: 'gpt-image-2.5-flare'
             },
-            openai_gpt_image_1_5: {
-              name: 'gpt-image-1.5',
-              model: 'gpt-image-1.5'
-            },
-            openai_gpt_image_2: {
-              name: 'gpt-image-2',
-              model: 'gpt-image-2'
+            openai_gpt_image_2_5_flare: {
+              name: 'gpt-image-2.5-flare',
+              model: 'gpt-image-2.5-flare'
             }
           },
           responseMapping: {

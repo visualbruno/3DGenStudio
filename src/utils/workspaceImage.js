@@ -234,9 +234,8 @@ export const CLOUD_IMAGE_MODELS = [
   { id: 'nanobana', label: 'Nano Banana', provider: 'google', sizes: null },
   { id: 'nanobana_2', label: 'Nano Banana 2', provider: 'google', sizes: ['1K', '2K', '4K'] },
   { id: 'nanobana_pro', label: 'Nano Banana Pro', provider: 'google', sizes: ['1K', '2K', '4K'] },
-  { id: 'openai_gpt_image_1', label: 'GPT Image 1', provider: 'openai', sizes: null },
-  { id: 'openai_gpt_image_1_5', label: 'GPT Image 1.5', provider: 'openai', sizes: null },
-  { id: 'openai_gpt_image_2', label: 'GPT Image 2', provider: 'openai', sizes: null }
+  { id: 'openai_gpt_image_2_5_sunburst', label: 'GPT Image 2.5 sunburst', provider: 'openai', sizes: null },
+  { id: 'openai_gpt_image_2_5_flare', label: 'GPT Image 2.5 flare', provider: 'openai', sizes: null }
 ]
 
 export const CLOUD_PROVIDER_NAMES = { google: 'Google', openai: 'OpenAI' }
