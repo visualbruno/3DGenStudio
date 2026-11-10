@@ -58,7 +58,9 @@ export const IMAGE_API_LIST = [
   { id: 'nanobana_pro', name: 'Nanobana Pro' },
   { id: 'nanobana_2', name: 'Nanobana 2' },
   { id: 'openai_gpt_image_2_5_sunburst', name: 'OpenAI · gpt-image-2.5 sunburst' },
-  { id: 'openai_gpt_image_2_5_flare', name: 'OpenAI · gpt-image-2-5 flare' }
+  { id: 'openai_gpt_image_2_5_flare', name: 'OpenAI · gpt-image-2-5 flare' },
+  { id: 'openai_gpt_image_2_6_sunburst', name: 'OpenAI · gpt-image-2.6 sunburst' },
+  { id: 'openai_gpt_image_2_6_flare', name: 'OpenAI · gpt-image-2-6 flare' }	
 ]
 export const GRAPH_NODE_TYPE_OPTIONS = ['Image', 'Mesh', RIG_MESH_NODE_TYPE_NAME, FLATTEN_MESH_NODE_TYPE_NAME, IMAGE_COMPARE_NODE_TYPE_NAME, 'Number', 'Text', 'Boolean']
 export const CONNECTOR_TYPE_META = {

@@ -78,7 +78,15 @@ export function SettingsProvider({ children }) {
             openai_gpt_image_2_5_flare: {
               name: 'gpt-image-2.5-flare',
               model: 'gpt-image-2.5-flare'
-            }
+            },
+            openai_gpt_image_2_6_sunburst: {
+              name: 'gpt-image-2.6-sunburst',
+              model: 'gpt-image-2.6-sunburst'
+            },
+            openai_gpt_image_2_6_flare: {
+              name: 'gpt-image-2.6-flare',
+              model: 'gpt-image-2.6-flare'
+            }						
           },
           responseMapping: {
             imageBase64Field: 'data[0].b64_json',
@@ -98,13 +106,21 @@ export function SettingsProvider({ children }) {
           },
           models: {
             openai_gpt_image_2_5_sunburst: {
-              name: 'gpt-image-2.5-flare',
-              model: 'gpt-image-2.5-flare'
+              name: 'gpt-image-2.5-sunburst',
+              model: 'gpt-image-2.5-sunburst'
             },
             openai_gpt_image_2_5_flare: {
               name: 'gpt-image-2.5-flare',
               model: 'gpt-image-2.5-flare'
-            }
+            },
+            openai_gpt_image_2_6_sunburst: {
+              name: 'gpt-image-2.6-sunburst',
+              model: 'gpt-image-2.6-sunburst'
+            },
+            openai_gpt_image_2_6_flare: {
+              name: 'gpt-image-2.6-flare',
+              model: 'gpt-image-2.6-flare'
+            }					
           },
           responseMapping: {
             imageBase64Field: 'data[0].b64_json',
