@@ -180,7 +180,7 @@ export const DEFAULT_SETTINGS = {
             Authorization: 'Bearer {apiKey}'
           },
           payloadTemplate: {
-            model: 'gpt-image-1.5',
+            model: 'gpt-image-2.6-sunburst',
             prompt: '{prompt}',
             n: 1,
             size: '1024x1024'
