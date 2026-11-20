@@ -1542,7 +1542,8 @@
 				{ "Node": "10",  "Input": "target_face_count",  "Name": "Target Face Number",   "Type": "Number" },
 				{ "Node": "10",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
 				{ "Node": "10",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[512,1024,1536] },
-				{ "Node": "10",  "Input": "max_tokens",  "Name": "Max Tokens",   "Type": "Number" }
+				{ "Node": "10",  "Input": "max_tokens",  "Name": "Max Tokens",   "Type": "Number" },
+				{ "Node": "10",  "Input": "simplify_mode",  "Name": "Simplify Mode",   "Type": "String", "Enums":["pyfqmr","comfyui"] }
 			],
 			"Outputs": [
 				{ "Node": "6", "Name": "Save Mesh", "Type": "Mesh" }
