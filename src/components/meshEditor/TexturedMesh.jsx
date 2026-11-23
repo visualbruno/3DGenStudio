@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
 import { getTextureKeyFromMaterial } from '../../utils/meshTexturing'
+import { applyPbrMapsToMaterial } from '../../utils/pbrMaterial'
 
 // R3F scene helper extracted from MeshEditorPage.jsx (behaviour-preserving move).
 export default function TexturedMesh({
@@ -10,6 +11,10 @@ export default function TexturedMesh({
   showShadows = false,
   displayMode = 'pbr',
   showWireframe = false,
+  // Display-only material channels layered over the clone (the PBR tool's
+  // preview): { map?, normalMap?, roughnessMap?, metalnessMap?, aoMap? }. Never
+  // written back to `root`, so a preview cannot leak into a save.
+  overrideMaps = null,
   }) {
   const baseObject = useMemo(() => {
     if (!root || !displayTexture) {
@@ -19,7 +24,7 @@ export default function TexturedMesh({
     const object = root.clone(true)
     const materials = []
 
-    const buildMaterial = sourceMaterial => {
+    const buildMaterial = (sourceMaterial, child) => {
       const isTargetTexture = sourceMaterial && getTextureKeyFromMaterial(sourceMaterial) === textureKey
 
       if (displayMode === 'albedo') {
@@ -31,7 +36,7 @@ export default function TexturedMesh({
         } else {
           params.color = new THREE.Color('#ffffff')
         }
-        const albedoMap = isTargetTexture ? displayTexture : (sourceMaterial?.map || null)
+        const albedoMap = isTargetTexture ? (overrideMaps?.map || displayTexture) : (sourceMaterial?.map || null)
         if (albedoMap) {
           params.map = albedoMap
         }
@@ -59,6 +64,7 @@ export default function TexturedMesh({
       const nextMaterial = sourceMaterial?.clone?.() || sourceMaterial
       if (nextMaterial && isTargetTexture) {
         nextMaterial.map = displayTexture
+        if (overrideMaps) applyPbrMapsToMaterial(nextMaterial, overrideMaps, child?.geometry)
         nextMaterial.needsUpdate = true
       }
       return nextMaterial
@@ -74,7 +80,7 @@ export default function TexturedMesh({
 
       if (Array.isArray(child.material)) {
         child.material = child.material.map(material => {
-          const nextMaterial = buildMaterial(material)
+          const nextMaterial = buildMaterial(material, child)
           if (nextMaterial) {
             materials.push(nextMaterial)
           }
@@ -83,7 +89,7 @@ export default function TexturedMesh({
         return
       }
 
-      const nextMaterial = buildMaterial(child.material)
+      const nextMaterial = buildMaterial(child.material, child)
       child.material = nextMaterial
       if (nextMaterial) {
         materials.push(nextMaterial)
@@ -92,7 +98,7 @@ export default function TexturedMesh({
 
     object.userData.meshEditorMaterials = materials
     return object
-  }, [displayMode, displayTexture, root, showShadows, showWireframe, textureKey])
+  }, [displayMode, displayTexture, root, showShadows, showWireframe, textureKey, overrideMaps])
 
   useEffect(() => () => {
     baseObject?.userData?.meshEditorMaterials?.forEach(material => material?.dispose?.())

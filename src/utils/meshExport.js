@@ -9,6 +9,7 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js'
 import { PLYExporter } from 'three/examples/jsm/exporters/PLYExporter.js'
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js'
 import { API_BASE } from '../config'
+import { setGltfNormalMap } from './normalMapConvention'
 
 // kind 'local'  — serialized in the browser with three.js exporters. GLB is
 // special-cased by the export dialog: a .glb source asset is copied
@@ -789,7 +790,10 @@ export async function attachBakedMaps(object, maps, { ormChannels = [] } = {}) {
       const materials = Array.isArray(child.material) ? child.material : [child.material]
       materials.forEach(material => {
         if (!material) return
-        material[slot] = texture
+        // A normal map needs its normalScale sign set per mesh, or GLTFExporter
+        // saves Blender's OpenGL bake with green inverted (normalMapConvention.js).
+        if (slot === 'normalMap') setGltfNormalMap(material, texture, child.geometry, 1)
+        else material[slot] = texture
         tweak?.(material)
         material.needsUpdate = true
       })

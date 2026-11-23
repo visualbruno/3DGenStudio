@@ -22,6 +22,7 @@ const TOOL_MODE_GROUPS = [
       { id: 'texturing', icon: 'texture', label: 'Texturing', texture: true },
       { id: 'painting', icon: 'brush', label: 'Painting', texture: true },
       { id: 'projection', icon: 'filter_center_focus', label: 'Projection', texture: true },
+      { id: 'pbr', icon: 'layers', label: 'PBR', texture: true, title: 'Generate normal, roughness, metalness and AO maps from the albedo texture' },
     ],
   },
   {

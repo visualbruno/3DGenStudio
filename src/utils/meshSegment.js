@@ -19,6 +19,7 @@
 import * as THREE from 'three'
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { createCanvasTexture } from './meshTexturing'
+import { setGltfNormalMap } from './normalMapConvention'
 
 // ---------------------------------------------------------------------------
 // Replaying the hierarchy
@@ -940,7 +941,11 @@ export function exportPartsToGlb(parts, palette, baseName = 'mesh', {
       // Baked channels live on the display root's materials, so a material built
       // from scratch here would otherwise drop them.
       Object.entries(extraMaps || {}).forEach(([slot, map]) => {
-        if (map) sharedMaterial[slot] = map
+        if (!map) return
+        // The normal map's sign depends on the geometry having tangents; every
+        // part is cut from the same mesh, so they all carry the same attributes.
+        if (slot === 'normalMap') setGltfNormalMap(sharedMaterial, map, parts[0].geometry, 1)
+        else sharedMaterial[slot] = map
       })
       // glTF sets these factors to 1 wherever the matching texture is present —
       // a scalar left at its default would scale every baked value down.

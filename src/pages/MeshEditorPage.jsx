@@ -192,6 +192,16 @@ import GameReadyPanel from '../components/meshEditor/GameReadyPanel'
 import SegmentationToolsPanel from '../components/meshEditor/SegmentationToolsPanel'
 import ToolModeMenu from '../components/meshEditor/ToolModeMenu'
 import BakeToolsPanel from '../components/meshEditor/BakeToolsPanel'
+import PbrToolsPanel from '../components/meshEditor/PbrToolsPanel'
+import {
+  DEFAULT_PBR_OPTIONS, PBR_REFERENCE_SIZE, applyDelight, extractChannel, generatePbrMaps,
+} from '../utils/pbrFromAlbedo'
+import {
+  applyPbrMapsToRoot, bytesToCanvas, canvasThumbnail, computeUvCoverage, createPbrDataTexture,
+  existingPbrMaps, mapThumbnail, restorePbrMaterials, snapshotPbrMaterials,
+} from '../utils/pbrMaterial'
+import { createZip } from '../utils/zipArchive'
+import { setGltfNormalMap } from '../utils/normalMapConvention'
 import { autoUv as runAutoUvService, autoRetopo as runAutoRetopoService, optimizeMesh as runOptimizeService, repairMesh as runRepairService, autoRig as runAutoRigService, inspectMesh as runInspectService, segmentMesh as runSegmentService, generateLods, defaultLodRatios, bakeMaps, ensureDesktopService, DEFAULT_AUTO_RIG_OPTIONS, DEFAULT_INSPECT_OPTIONS, DEFAULT_BAKE_OPTIONS, DEFAULT_AUTO_UV_OPTIONS, DEFAULT_SEGMENT_OPTIONS, DEFAULT_AUTO_RETOPO_OPTIONS, DEFAULT_REPAIR_OPTIONS, DEFAULT_OPTIMIZE_OPTIONS } from '../utils/meshTools'
 import {
   addSegmentMerge,
@@ -845,6 +855,15 @@ export default function MeshEditorPage() {
   // Baked maps assigned to the mesh, kept so the export paths can reattach them
   // to whatever material they build.
   const appliedMapsRef = useRef({})
+  // PBR from albedo (Texture > PBR). `pbrPreview` is the live preview session:
+  // maps computed at ≤1024px from a snapshot of the albedo, shown through
+  // TexturedMesh's overrideMaps only — the mesh itself is untouched until Apply.
+  // It holds the canvases/textures the sliders redraw in place. `pbrRevert` is
+  // the material + albedo state from before the last Apply.
+  const [pbrOptions, setPbrOptions] = useState(DEFAULT_PBR_OPTIONS)
+  const [pbrPreview, setPbrPreview] = useState(null)
+  const [pbrBusy, setPbrBusy] = useState(false)
+  const [pbrRevert, setPbrRevert] = useState(null)
   // Game-Ready check (read-only analysis) — no result/undo state, it never edits.
   const [gameReadyOptions, setGameReadyOptions] = useState(DEFAULT_INSPECT_OPTIONS)
   const [gameReadyRunning, setGameReadyRunning] = useState(false)
@@ -2899,7 +2918,7 @@ export default function MeshEditorPage() {
   // If the active tab becomes unsupported after the mesh finishes loading
   // (e.g. a UV-less mesh), fall back to Modeling so the panel stays usable.
   useEffect(() => {
-    if (!textureModesSupported && (activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection')) {
+    if (!textureModesSupported && (activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection' || activeMenu === 'pbr')) {
       setActiveMenu('modeling')
     }
   }, [activeMenu, textureModesSupported])
@@ -8270,18 +8289,23 @@ export default function MeshEditorPage() {
         const materials = Array.isArray(child.material) ? child.material : [child.material]
         materials.forEach(material => {
           if (!material) return
-          fn(material)
+          fn(material, child)
           material.needsUpdate = true
         })
       })
     }
 
     // Assign to every material on the display root, and remember it so the export
-    // paths can reattach it to whatever material they build.
+    // paths can reattach it to whatever material they build. A normal map also
+    // needs its normalScale sign set per mesh — assigning it bare left a fresh
+    // material at (1, 1), which on a glTF mesh without tangents shows Blender's
+    // OpenGL bake lit from below AND makes GLTFExporter save it with green
+    // inverted (see normalMapConvention.js).
     const assign = (slot, texture, tweak = null) => {
       appliedMapsRef.current[slot] = texture
-      forEachTargetMaterial(material => {
-        material[slot] = texture
+      forEachTargetMaterial((material, child) => {
+        if (slot === 'normalMap') setGltfNormalMap(material, texture, child.geometry, 1)
+        else material[slot] = texture
         tweak?.(material)
       })
     }
@@ -8425,6 +8449,322 @@ export default function MeshEditorPage() {
       setError(err?.message || 'Could not apply the baked maps.')
     }
   }, [bakedMaps, texturableMesh, modelUrl])
+
+  // ── PBR from albedo (Texture > PBR) ──────────────────────────────────────
+  // Normal / roughness / metalness / AO estimated from the albedo with image
+  // filters (utils/pbrFromAlbedo.js). Preview runs on a ≤1024px copy and shows
+  // through TexturedMesh's overrideMaps; Apply recomputes at full size and puts
+  // the maps on the texturable root's materials (which is what save and export
+  // clone), mirroring handleApplyBakedMaps.
+  const setPbrOption = useCallback((key, value) => {
+    setPbrOptions(current => ({ ...current, [key]: value }))
+  }, [])
+
+  const pbrUnavailableReason = !texturableMesh?.textureCanvas
+    ? (texturableMesh?.supportError || 'This mesh has no texture to derive maps from.')
+    : texturableMesh.isBlank
+      ? 'This mesh has UVs but no texture yet, so there is no albedo to derive maps from. Paint, project or texture it first.'
+      : ''
+
+  // A preview belongs to one texturable mesh and to this mode: leaving the mode
+  // discards it (nothing was applied), and so does anything that rebuilds the
+  // texturable mesh under it. A pending Revert is dropped on the same terms —
+  // after painting elsewhere, restoring the pre-Apply albedo would wipe the paint.
+  if (pbrPreview && (activeMenu !== 'pbr' || pbrPreview.texturable !== texturableMesh)) {
+    setPbrPreview(null)
+  }
+  if (pbrRevert && (activeMenu !== 'pbr' || pbrRevert.texturable !== texturableMesh)) {
+    setPbrRevert(null)
+  }
+
+  // The preview's textures live as long as its session; slider updates redraw
+  // them in place, so this only fires when the session ends.
+  const pbrPreviewTextures = pbrPreview?.textures
+  useEffect(() => () => {
+    Object.values(pbrPreviewTextures || {}).forEach(texture => texture?.dispose?.())
+  }, [pbrPreviewTextures])
+
+  // Snapshot the albedo and build the preview-size inputs + render targets.
+  const buildPbrSession = useCallback(() => {
+    const texturable = texturableMesh
+    const source = texturable.textureCanvas
+    const { width, height } = source
+    const config = texturable.textureConfig
+    const albedo = source.getContext('2d').getImageData(0, 0, width, height)
+
+    const ratio = Math.min(1, PBR_REFERENCE_SIZE / Math.max(width, height))
+    const pw = Math.max(1, Math.round(width * ratio))
+    const ph = Math.max(1, Math.round(height * ratio))
+    const small = Object.assign(document.createElement('canvas'), { width: pw, height: ph })
+    const smallContext = small.getContext('2d')
+    smallContext.imageSmoothingQuality = 'high'
+    smallContext.drawImage(source, 0, 0, pw, ph)
+    const previewRgba = smallContext.getImageData(0, 0, pw, ph).data
+
+    const canvases = {
+      normal: Object.assign(document.createElement('canvas'), { width: pw, height: ph }),
+      orm: Object.assign(document.createElement('canvas'), { width: pw, height: ph }),
+      albedo: Object.assign(document.createElement('canvas'), { width, height }),
+    }
+    const textures = {
+      normal: createPbrDataTexture(canvases.normal, config, 'PbrPreviewNormal'),
+      orm: createPbrDataTexture(canvases.orm, config, 'PbrPreviewORM'),
+      albedo: createCanvasTexture(canvases.albedo, config),
+    }
+    return {
+      texturable,
+      albedo,
+      width,
+      height,
+      previewRgba,
+      pw,
+      ph,
+      coverage: computeUvCoverage(texturable.root, pw, ph, config),
+      canvases,
+      textures,
+    }
+  }, [texturableMesh])
+
+  // Run the filters at preview size and redraw the session's canvases. Returns
+  // what the viewport and the panel need; the texture objects never change, so
+  // TexturedMesh only re-clones its materials when a map is switched on or off.
+  const renderPbrPreview = useCallback((session, options) => {
+    const { pw, ph, canvases, textures } = session
+    const maps = { ...DEFAULT_PBR_OPTIONS.maps, ...(options.maps || {}) }
+    const result = generatePbrMaps(session.previewRgba, pw, ph, options, session.coverage)
+    const overrideMaps = {}
+    const thumbnails = {}
+
+    if (result.normal) {
+      bytesToCanvas(result.normal, pw, ph, canvases.normal)
+      textures.normal.needsUpdate = true
+      overrideMaps.normalMap = textures.normal
+      thumbnails.normal = canvasThumbnail(canvases.normal)
+    }
+    if (result.orm) {
+      bytesToCanvas(result.orm, pw, ph, canvases.orm)
+      textures.orm.needsUpdate = true
+      if (maps.roughness) {
+        overrideMaps.roughnessMap = textures.orm
+        thumbnails.roughness = mapThumbnail(result.orm, pw, ph, 1)
+      }
+      if (maps.metalness) {
+        overrideMaps.metalnessMap = textures.orm
+        thumbnails.metalness = mapThumbnail(result.orm, pw, ph, 2)
+      }
+      if (maps.ao) {
+        overrideMaps.aoMap = textures.orm
+        thumbnails.ao = mapThumbnail(result.orm, pw, ph, 0)
+      }
+    }
+    thumbnails.height = mapThumbnail(result.height, pw, ph)
+
+    // De-lighting: the gain is smooth (a 16px-wide blur), so the preview-size
+    // field is applied to the FULL albedo — the colour stays sharp.
+    if (result.delightGain) {
+      const { width, height } = session
+      const out = applyDelight(
+        session.albedo.data, width, height, result.delightGain, pw, ph,
+        options.delightStrength, new Uint8ClampedArray(session.albedo.data),
+      )
+      bytesToCanvas(out, width, height, canvases.albedo)
+      textures.albedo.needsUpdate = true
+      overrideMaps.map = textures.albedo
+      thumbnails.baseColor = canvasThumbnail(canvases.albedo)
+    } else {
+      thumbnails.baseColor = canvasThumbnail(session.texturable.textureCanvas)
+    }
+
+    return { overrideMaps, signature: Object.keys(overrideMaps).sort().join(','), thumbnails }
+  }, [])
+
+  // Lets a "Generating…" label paint before a synchronous filter pass.
+  const nextPaint = () => new Promise(resolve => setTimeout(resolve, 0))
+
+  const handlePbrPreview = useCallback(async () => {
+    if (pbrBusy || pbrUnavailableReason || !texturableMesh?.textureCanvas) return
+    setPbrBusy(true)
+    setError('')
+    await nextPaint()
+    try {
+      const session = buildPbrSession()
+      const view = renderPbrPreview(session, pbrOptions)
+      setPbrPreview({ ...session, ...view, options: pbrOptions })
+      setFeedback('PBR preview on the mesh — adjust the sliders, then Apply to keep it.')
+    } catch (err) {
+      console.error('PBR preview failed:', err)
+      setError(err?.message || 'Could not generate the PBR maps.')
+    } finally {
+      setPbrBusy(false)
+    }
+  }, [pbrBusy, pbrUnavailableReason, texturableMesh, buildPbrSession, renderPbrPreview, pbrOptions])
+
+  // Live update: re-run the preview shortly after the sliders settle.
+  useEffect(() => {
+    if (!pbrPreview || pbrPreview.options === pbrOptions) return undefined
+    const session = pbrPreview
+    const timer = setTimeout(() => {
+      try {
+        const view = renderPbrPreview(session, pbrOptions)
+        setPbrPreview(current => (current && current.textures === session.textures
+          ? {
+            ...current,
+            ...view,
+            overrideMaps: current.signature === view.signature ? current.overrideMaps : view.overrideMaps,
+            options: pbrOptions,
+          }
+          : current))
+      } catch (err) {
+        console.error('PBR preview update failed:', err)
+      }
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [pbrOptions, pbrPreview, renderPbrPreview])
+
+  // The full-resolution pass, shared by Apply and Download. Coverage is
+  // rasterised at full size here (the preview's is ≤1024px).
+  const computeFullPbr = useCallback((session, options) => {
+    const { width, height, texturable } = session
+    const coverage = computeUvCoverage(texturable.root, width, height, texturable.textureConfig)
+    const result = generatePbrMaps(session.albedo.data, width, height, options, coverage)
+    const baseColor = result.delightGain
+      ? applyDelight(
+        session.albedo.data, width, height, result.delightGain, width, height,
+        options.delightStrength, new Uint8ClampedArray(session.albedo.data), coverage,
+      )
+      : null
+    return { ...result, baseColor }
+  }, [])
+
+  const handlePbrApply = useCallback(async () => {
+    const session = pbrPreview
+    if (!session || pbrBusy || session.texturable !== texturableMesh) return
+    setPbrBusy(true)
+    setError('')
+    await nextPaint()
+    try {
+      const options = pbrOptions
+      const maps = { ...DEFAULT_PBR_OPTIONS.maps, ...(options.maps || {}) }
+      const { width, height, texturable } = session
+      const config = texturable.textureConfig
+      const full = computeFullPbr(session, options)
+
+      const revert = {
+        texturable,
+        materials: snapshotPbrMaterials(texturable.root),
+        appliedMaps: { ...appliedMapsRef.current },
+        albedo: full.baseColor ? session.albedo : null,
+      }
+
+      const assign = {}
+      if (full.normal) {
+        assign.normalMap = createPbrDataTexture(bytesToCanvas(full.normal, width, height), config, 'PbrNormal')
+      }
+      if (full.orm) {
+        // One texture object in every ORM slot — see applyPbrMapsToMaterial.
+        const orm = createPbrDataTexture(bytesToCanvas(full.orm, width, height), config, 'PbrORM')
+        if (maps.roughness) assign.roughnessMap = orm
+        if (maps.metalness) assign.metalnessMap = orm
+        if (maps.ao) assign.aoMap = orm
+      }
+      applyPbrMapsToRoot(texturable.root, assign)
+      // The export paths that build their own material reattach these.
+      Object.assign(appliedMapsRef.current, assign)
+
+      if (full.baseColor) {
+        texturable.textureCanvas.getContext('2d').putImageData(new ImageData(full.baseColor, width, height), 0, 0)
+        updateCanvasTexture(displayTextureRef.current)
+      }
+
+      setPbrRevert(revert)
+      setPbrPreview(null)
+      setTextureRevision(rev => rev + 1)
+      const names = [
+        assign.normalMap && 'normal',
+        assign.roughnessMap && 'roughness',
+        assign.metalnessMap && 'metalness',
+        assign.aoMap && 'AO',
+      ].filter(Boolean)
+      const what = [names.length ? `${names.join(' + ')} map${names.length === 1 ? '' : 's'}` : '', full.baseColor ? 'de-lit albedo' : '']
+        .filter(Boolean).join(' and ')
+      setFeedback(`Applied ${what} at ${width}px. Save the mesh to keep ${names.length + (full.baseColor ? 1 : 0) === 1 ? 'it' : 'them'}.`)
+    } catch (err) {
+      console.error('Applying the PBR maps failed:', err)
+      setError(err?.message || 'Could not apply the PBR maps.')
+    } finally {
+      setPbrBusy(false)
+    }
+  }, [pbrPreview, pbrBusy, pbrOptions, texturableMesh, computeFullPbr])
+
+  const handlePbrDiscard = useCallback(() => {
+    setPbrPreview(null)
+    setFeedback('PBR preview discarded — the mesh is unchanged.')
+  }, [])
+
+  const handlePbrRevert = useCallback(() => {
+    const revert = pbrRevert
+    if (!revert || revert.texturable !== texturableMesh) return
+    restorePbrMaterials(revert.materials)
+    appliedMapsRef.current = revert.appliedMaps
+    if (revert.albedo) {
+      revert.texturable.textureCanvas.getContext('2d').putImageData(revert.albedo, 0, 0)
+      updateCanvasTexture(displayTextureRef.current)
+    }
+    setPbrRevert(null)
+    setTextureRevision(rev => rev + 1)
+    setFeedback('Reverted the last PBR apply.')
+  }, [pbrRevert, texturableMesh])
+
+  // Every map as a PNG at full size, zipped — including the height map, which
+  // has no glTF slot, and roughness / metalness / AO split out of the ORM for
+  // engines that want them separately.
+  const handlePbrDownload = useCallback(async () => {
+    const session = pbrPreview
+    if (!session || pbrBusy) return
+    setPbrBusy(true)
+    setError('')
+    await nextPaint()
+    try {
+      const options = pbrOptions
+      const maps = { ...DEFAULT_PBR_OPTIONS.maps, ...(options.maps || {}) }
+      const { width, height } = session
+      const full = computeFullPbr(session, options)
+      const toPng = bytes => new Promise((resolve, reject) => {
+        bytesToCanvas(bytes, width, height).toBlob(blob => {
+          if (!blob) { reject(new Error('Could not encode a PNG.')); return }
+          blob.arrayBuffer().then(buffer => resolve(new Uint8Array(buffer)), reject)
+        }, 'image/png')
+      })
+      const base = ((meshName || 'mesh').trim() || 'mesh').replace(/[^\w.-]+/g, '_')
+      const entries = [
+        ['basecolor', full.baseColor || session.albedo.data],
+        ['normal', full.normal],
+        ['roughness', full.orm && maps.roughness ? extractChannel(full.orm, 1) : null],
+        ['metallic', full.orm && maps.metalness ? extractChannel(full.orm, 2) : null],
+        ['ao', full.orm && maps.ao ? extractChannel(full.orm, 0) : null],
+        ['orm', full.orm],
+        ['height', full.height],
+      ].filter(([, bytes]) => bytes)
+      const files = []
+      for (const [name, bytes] of entries) {
+        files.push({ name: `${base}_${name}.png`, data: await toPng(bytes) })
+      }
+      const url = URL.createObjectURL(createZip(files))
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${base}_pbr.zip`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setFeedback(`Downloaded ${files.length} maps at ${width}px.`)
+    } catch (err) {
+      console.error('Downloading the PBR maps failed:', err)
+      setError(err?.message || 'Could not download the PBR maps.')
+    } finally {
+      setPbrBusy(false)
+    }
+  }, [pbrPreview, pbrBusy, pbrOptions, computeFullPbr, meshName])
 
   // ── LOD chain ────────────────────────────────────────────────────────────
   const lodRatios = useMemo(() => defaultLodRatios(lodLevels), [lodLevels])
@@ -8729,7 +9069,9 @@ export default function MeshEditorPage() {
     // them for free (they live on the root's cloned materials); this branch builds
     // a material from scratch and would otherwise drop them.
     Object.entries(appliedMapsRef.current).forEach(([slot, texture]) => {
-      if (texture) material[slot] = texture
+      if (!texture) return
+      if (slot === 'normalMap') setGltfNormalMap(material, texture, geometry, 1)
+      else material[slot] = texture
     })
     material.needsUpdate = true
     if (rig) {
@@ -11541,6 +11883,25 @@ export default function MeshEditorPage() {
                       onApplyLod: handleApplyLod,
                       disabled: !geometry
                     }} />
+                  ) : activeMenu === 'pbr' ? (
+                    <PbrToolsPanel {...{
+                      options: pbrOptions, setOption: setPbrOption,
+                      previewing: !!pbrPreview, busy: pbrBusy,
+                      thumbnails: pbrPreview?.thumbnails || null,
+                      previewSize: pbrPreview ? Math.max(pbrPreview.pw, pbrPreview.ph) : 0,
+                      textureSize: texturableMesh?.textureCanvas
+                        ? Math.max(texturableMesh.textureCanvas.width, texturableMesh.textureCanvas.height)
+                        : 0,
+                      existingMaps: existingPbrMaps(texturableMesh?.root),
+                      shadingHidesMaps: displayMode !== 'pbr',
+                      onPreview: handlePbrPreview,
+                      onApply: handlePbrApply,
+                      onDiscard: handlePbrDiscard,
+                      onDownload: handlePbrDownload,
+                      canRevert: !!pbrRevert,
+                      onRevert: handlePbrRevert,
+                      unavailableReason: pbrUnavailableReason,
+                    }} />
                   ) : activeMenu === 'bake' ? (
                     <BakeToolsPanel {...{
                       options: bakeOptions, setOption: setBakeOption,
@@ -11762,7 +12123,7 @@ export default function MeshEditorPage() {
                           armExtension={animArmExtension}
                           armTargets={animArmTargets}
                         />
-                      ) : (activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection' || activeMenu === 'optimize' || activeMenu === 'bake') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || maskTextureRef.current) ? (
+                      ) : (activeMenu === 'texturing' || activeMenu === 'painting' || activeMenu === 'projection' || activeMenu === 'pbr' || activeMenu === 'optimize' || activeMenu === 'bake') && texturableMesh?.root && displayTextureRef.current && (activeMenu !== 'texturing' || maskTextureRef.current) ? (
                         <TexturedMesh
                           key={textureRevision}
                           root={texturableMesh.root}
@@ -11771,6 +12132,7 @@ export default function MeshEditorPage() {
                           showShadows={showShadows}
                           displayMode={displayMode}
                           showWireframe={showWireframe}
+                          overrideMaps={activeMenu === 'pbr' ? pbrPreview?.overrideMaps || null : null}
                         />
                       ) : activeMenu === 'boolean' && booleanHasPreview && booleanMaskTexture ? (
                         <BooleanPreviewMesh
