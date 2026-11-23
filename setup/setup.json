@@ -1218,6 +1218,21 @@
 			]
 		},
 		{
+			"Name": "Gen MeshOnly with Trellis2 - Fast",
+			"File": "setup/Gen Mesh Only with Trellis2 - Fast.json",
+			"Inputs": [
+				{ "Node": "6", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "209",  "Input": "value",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "214",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "215",  "Input": "resolution",  "Name": "Shape Resolution",   "Type": "Number", "Enums":[512,1024] },
+				{ "Node": "39",  "Input": "backend",  "Name": "Backend",   "Type": "String", "Enums":["flash_attn","sdpa"] },
+				{ "Node": "260",  "Input": "value",  "Name": "Fill Holes",   "Type": "Boolean" }
+			],
+			"Outputs": [
+				{ "Node": "264", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		},		
+		{
 			"Name": "Gen MeshOnly with Trellis2 with UV",
 			"File": "setup/Gen Mesh Only with Trellis2 with UV.json",
 			"Inputs": [
