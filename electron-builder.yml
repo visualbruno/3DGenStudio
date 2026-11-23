@@ -123,6 +123,11 @@ files:
   # atlas with it on the SERVER, exactly as the Export dialog does in the
   # browser. Keep it import-free.
   - src/utils/assemblyAtlas.js
+  # The PBR-from-albedo filters, the third exception on the same terms: no
+  # imports, and the batch PBR stage (batch/pbr.js) runs them on the SERVER,
+  # exactly as the Mesh Editor's Texture > PBR does in the browser. batch/
+  # actions.js imports it too, so without it the backend dies at startup.
+  - src/utils/pbrFromAlbedo.js
   - version.json
   - package.json
   # Licences shown in-app. META-LLAMA-3-LICENSE is not documentation: the motion

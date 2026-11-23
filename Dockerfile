@@ -95,6 +95,9 @@ COPY --chown=node:node src/utils/vfx ./src/utils/vfx
 # The UV atlas packer, the second src/ exception on the same terms: it imports
 # nothing, and the batch Flatten stage (batch/flatten.js) packs with it here.
 COPY --chown=node:node src/utils/assemblyAtlas.js ./src/utils/
+# The PBR-from-albedo filters, the third: no imports, and batch/actions.js (so
+# mcp/, so server.js) imports them for the batch PBR stage.
+COPY --chown=node:node src/utils/pbrFromAlbedo.js ./src/utils/
 COPY --chown=node:node wiki ./wiki
 # The VFX starter-effect library, served read-only from /api/vfx/presets.
 COPY --chown=node:node resources/vfx ./resources/vfx

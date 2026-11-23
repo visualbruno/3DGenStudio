@@ -1,5 +1,5 @@
 // Running a built-in batch action (Optimize / Auto UV / Auto Rig / Transfer Rig /
-// Bake / Flatten) for one cell.
+// Bake / PBR / Flatten) for one cell.
 //
 // NODE ONLY — unlike actions.js and document.js, which the page imports too.
 // Shared by the backend batch loop (runner.js) and the MCP run_batch tool, which
@@ -14,6 +14,7 @@
 // asset to it exactly as it does for a ComfyUI result.
 import { Buffer } from 'node:buffer';
 import path from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { findProjectAsset } from '../mcp/client.js';
 import { parseGlb, serializeGlb } from '../meshPivot.js';
 import {
@@ -23,16 +24,20 @@ import {
   BATCH_ACTION_BAKE,
   BATCH_ACTION_FLATTEN,
   BATCH_ACTION_OPTIMIZE,
+  BATCH_ACTION_PBR,
   BATCH_ACTION_TRANSFER_RIG,
   FLATTEN_SHADER_LIGHTING,
   OPTIMIZE_REUNWRAP_PARAMETER,
   describeBakeMapProblem,
+  describePbrProblem,
   getAutoRetopoActionOptions,
   getAutoUvActionOptions,
   getBakeActionMaps,
-  getBatchActionDescriptor
+  getBatchActionDescriptor,
+  getPbrActionOptions
 } from './actions.js';
 import { prepareFlattenGlb } from './flatten.js';
+import { dropUnusedTextures } from './gltfTextures.js';
 
 // Below this the bake reached too little of the UV layout to be what was meant —
 // the same line the Mesh Editor draws (BAKE_COVERAGE_COMPLETE).
@@ -473,6 +478,43 @@ async function runFlatten(api, { projectId, inputs, onProgress }) {
   };
 }
 
+// applyPbrFromAlbedoToGlb (pbr.js) on a worker thread: it is seconds of
+// synchronous filtering on a big texture, and this process also serves the app.
+// Resolves { buffer, stats, warnings }.
+export function runPbrInWorker(buffer, options, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./pbrWorker.js', import.meta.url), { workerData: { buffer, options } });
+    let settled = false;
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      worker.terminate().catch(() => {});
+      fn(value);
+    };
+    worker.on('message', message => {
+      if (message?.type === 'progress') onProgress?.({ frac: message.frac, message: message.message });
+      else if (message?.type === 'done') {
+        const bytes = message.buffer;
+        settle(resolve, { ...message, buffer: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength) });
+      } else if (message?.type === 'error') settle(reject, new Error(message.message));
+    });
+    worker.on('error', err => settle(reject, err));
+    worker.on('exit', code => settle(reject, new Error(`The PBR worker stopped unexpectedly (exit code ${code})`)));
+  });
+}
+
+// The Mesh Editor's Texture > PBR, as a stage — see pbr.js.
+async function runPbr(api, { projectId, inputs, onProgress }) {
+  const options = getPbrActionOptions(inputs);
+  const problem = describePbrProblem(options);
+  if (problem) throw new Error(problem);
+
+  const source = await loadMeshInput(api, projectId, inputs.mesh, 'Mesh');
+  onProgress?.(5, 'Reading the colour texture');
+  const result = await runPbrInWorker(source.buffer, options, progressFrom(onProgress, 5, 95));
+  return { source, buffer: result.buffer, stats: result.stats, warnings: result.warnings || [] };
+}
+
 const RUNNERS = {
   [BATCH_ACTION_OPTIMIZE]: runOptimize,
   [BATCH_ACTION_AUTORETOPO]: runAutoRetopo,
@@ -480,6 +522,7 @@ const RUNNERS = {
   [BATCH_ACTION_AUTORIG]: runAutoRig,
   [BATCH_ACTION_TRANSFER_RIG]: runTransferRig,
   [BATCH_ACTION_BAKE]: runBake,
+  [BATCH_ACTION_PBR]: runPbr,
   [BATCH_ACTION_FLATTEN]: runFlatten
 };
 
@@ -629,87 +672,3 @@ export function applyBakedMapsToGlb(glbBuffer, maps, { ormChannels = [] } = {}) 
   return { buffer: serializeGlb(json, binary), applied };
 }
 
-// A bake REPLACES a slot's texture, so what the slot held before — the low
-// poly's own albedo, typically — is left in the file with nothing pointing at
-// it. Its bytes nearly double the file, and anything that lists a file's images
-// shows two textures, the orphan with no material to say it is colour (so it is
-// often drawn as linear data, washed out). Drop every texture no material
-// reaches, then the images and samplers only those used, then the buffer views
-// only those images used. Edits `json` in place; returns the new binary chunk.
-function dropUnusedTextures(json, bin) {
-  // Every textureInfo — core slots and extension ones (clearcoatTexture,
-  // specularColorTexture…) alike — is a `…Texture` key holding an `index`.
-  const textureRefs = [];
-  const collectTextures = (value, key) => {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) { value.forEach(item => collectTextures(item)); return; }
-    if (key?.endsWith('Texture') && Number.isInteger(value.index)) textureRefs.push(value);
-    for (const [childKey, child] of Object.entries(value)) collectTextures(child, childKey);
-  };
-  collectTextures(json.materials);
-
-  // Keep the items whose index is in `used`, renumbering the references.
-  const keepUsed = (list, refs, field) => {
-    const used = new Set(refs.map(ref => ref[field]));
-    const remap = new Map();
-    const kept = [];
-    (list || []).forEach((item, index) => {
-      if (used.has(index)) { remap.set(index, kept.length); kept.push(item); }
-    });
-    refs.forEach(ref => { ref[field] = remap.get(ref[field]); });
-    return kept;
-  };
-  const setList = (key, list) => {
-    if (list.length) json[key] = list;
-    else delete json[key];
-  };
-
-  setList('textures', keepUsed(json.textures, textureRefs, 'index'));
-
-  // A texture reads its image through `source`, or through an extension's own
-  // `source` (KHR_texture_basisu, EXT_texture_webp…).
-  const imageRefs = [];
-  const samplerRefs = [];
-  for (const texture of json.textures || []) {
-    for (const holder of [texture, ...Object.values(texture.extensions || {})]) {
-      if (Number.isInteger(holder?.source)) imageRefs.push(holder);
-    }
-    if (Number.isInteger(texture.sampler)) samplerRefs.push(texture);
-  }
-  setList('images', keepUsed(json.images, imageRefs, 'source'));
-  setList('samplers', keepUsed(json.samplers, samplerRefs, 'sampler'));
-
-  // Repacking needs every view in the one embedded buffer; anything else keeps
-  // its bytes rather than risk moving data it does not understand.
-  const views = json.bufferViews || [];
-  if ((json.buffers || []).length !== 1 || views.some(view => (view.buffer ?? 0) !== 0)) return bin;
-
-  // Accessors, sparse data, images, Draco… all name a view as `bufferView`.
-  const viewRefs = [];
-  const collectViews = (value) => {
-    if (!value || typeof value !== 'object') return;
-    if (Array.isArray(value)) { value.forEach(collectViews); return; }
-    if (Number.isInteger(value.bufferView)) viewRefs.push(value);
-    Object.values(value).forEach(collectViews);
-  };
-  for (const [key, value] of Object.entries(json)) {
-    if (key !== 'bufferViews' && key !== 'buffers') collectViews(value);
-  }
-  const keptViews = keepUsed(views, viewRefs, 'bufferView');
-  if (keptViews.length === views.length) return bin;
-
-  // A view's start keeps its old offset modulo 4, so every accessor inside it
-  // stays aligned (the same rule as flatten.js's compact).
-  const chunks = [];
-  let length = 0;
-  for (const view of keptViews) {
-    const start = view.byteOffset || 0;
-    const pad = (((start - length) % 4) + 4) % 4;
-    if (pad) { chunks.push(Buffer.alloc(pad)); length += pad; }
-    chunks.push(bin.subarray(start, start + view.byteLength));
-    view.byteOffset = length;
-    length += view.byteLength;
-  }
-  setList('bufferViews', keptViews);
-  return Buffer.concat(chunks);
-}

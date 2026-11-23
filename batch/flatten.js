@@ -128,7 +128,9 @@ function addAccessor(doc, array, { componentType, type, normalized = false, min,
 
 // One accessor as a typed array of its own component type, values untouched
 // (normalised integers stay integers). Sparse accessors are densified.
-function readRaw(doc, index) {
+// readRaw / readFloat / triangleList / imageBytes are also used by the PBR
+// stage (pbr.js); they need only `{ json, bin }` of the doc.
+export function readRaw(doc, index) {
   const accessor = doc.json.accessors[index];
   if (!accessor) throw new Error(`The file references accessor ${index}, which it does not contain.`);
   const components = TYPE_COMPONENTS[accessor.type];
@@ -174,7 +176,7 @@ function readView(doc, viewIndex, byteOffset, componentType, components, count, 
 }
 
 // The same accessor as real numbers: normalised integers become -1..1 / 0..1.
-function readFloat(doc, index) {
+export function readFloat(doc, index) {
   const raw = readRaw(doc, index);
   const accessor = doc.json.accessors[index];
   const out = Float64Array.from(raw);
@@ -290,7 +292,7 @@ function sceneNodes(json) {
   return { world, order };
 }
 
-function triangleList(mode, indices, count) {
+export function triangleList(mode, indices, count) {
   const source = indices || Uint32Array.from({ length: count }, (_, i) => i);
   if (mode === TRIANGLES) return Uint32Array.from(source.subarray(0, source.length - (source.length % 3)));
   const n = Math.max(0, source.length - 2);
@@ -334,7 +336,7 @@ function imageSize(bytes) {
   return 0;
 }
 
-function imageBytes(doc, imageIndex) {
+export function imageBytes(doc, imageIndex) {
   const image = (doc.json.images || [])[imageIndex];
   if (!image) return null;
   if (image.bufferView !== undefined) {

@@ -25,7 +25,10 @@
 //     G = roughness, B = metalness), the layout glTF expects.
 //
 // Pure: no DOM, no three.js. The editor rasterises the UVs into `coverage` and
-// moves the results in and out of canvases; see MeshEditorPage.
+// moves the results in and out of canvases; see MeshEditorPage. The batch PBR
+// stage runs the same functions in the backend on a decoded GLB texture
+// (batch/pbr.js), so this file ships with the server (electron-builder.yml, the
+// Dockerfile): KEEP IT IMPORT-FREE, or the packaged backend fails at startup.
 
 export const PBR_REFERENCE_SIZE = 1024
 

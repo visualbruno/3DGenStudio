@@ -2,8 +2,8 @@
 //
 // A stage used to be a ComfyUI workflow and nothing else. It is now an action:
 // a ComfyUI workflow, or one of the Mesh Editor's own tools (Optimize, Auto UV,
-// Auto Rig, Transfer Rig, Bake) or the Export dialog's Flatten, which run in the
-// backend without ComfyUI.
+// Auto Rig, Transfer Rig, Bake, PBR) or the Export dialog's Flatten, which run in
+// the backend without ComfyUI.
 //
 // Every built-in action DESCRIBES ITSELF AS A WORKFLOW — `parameters` with a
 // valueType and a default, `outputs` with a valueType. That is the whole trick:
@@ -13,15 +13,20 @@
 // variable, and a Bake stage's two meshes to two earlier stages, with no second
 // copy of any of those rules. Only the runner has to know the difference.
 //
-// Browser-safe and dependency-free, like document.js (which re-exports this):
-// the page, the backend runner and the MCP tools all read these descriptors.
-// The Node-side execution lives in actionRunner.js.
+// Browser-safe, like document.js (which re-exports this): the page, the backend
+// runner and the MCP tools all read these descriptors. The one import is
+// src/utils/pbrFromAlbedo.js, which is pure and ships with the backend (see
+// electron-builder.yml and the Dockerfile). The Node-side execution lives in
+// actionRunner.js.
 //
 // The defaults mirror the Mesh Editor panels (DEFAULT_SIMPLIFY_OPTIONS,
 // DEFAULT_AUTO_UV_OPTIONS, DEFAULT_AUTO_RIG_OPTIONS and DEFAULT_BAKE_OPTIONS in
 // src/utils/meshTools.js), which cannot be imported here because that module is
 // browser code. The Auto UV list also mirrors AutoUvOptions in
-// python-server/app/schemas.py: a field added there needs adding here.
+// python-server/app/schemas.py: a field added there needs adding here. The PBR
+// stage is the exception: its generator is pure, so its defaults are read from
+// DEFAULT_PBR_OPTIONS itself rather than mirrored.
+import { DEFAULT_PBR_OPTIONS } from '../src/utils/pbrFromAlbedo.js'
 
 export const BATCH_ACTION_COMFYUI = 'comfyui'
 export const BATCH_ACTION_OPTIMIZE = 'optimize'
@@ -31,9 +36,10 @@ export const BATCH_ACTION_AUTORIG = 'autorig'
 export const BATCH_ACTION_TRANSFER_RIG = 'transferrig'
 export const BATCH_ACTION_BAKE = 'bake'
 export const BATCH_ACTION_FLATTEN = 'flatten'
+export const BATCH_ACTION_PBR = 'pbr'
 
 // Picker order.
-export const BATCH_ACTIONS = [BATCH_ACTION_COMFYUI, BATCH_ACTION_OPTIMIZE, BATCH_ACTION_AUTORETOPO, BATCH_ACTION_AUTOUV, BATCH_ACTION_AUTORIG, BATCH_ACTION_TRANSFER_RIG, BATCH_ACTION_BAKE, BATCH_ACTION_FLATTEN]
+export const BATCH_ACTIONS = [BATCH_ACTION_COMFYUI, BATCH_ACTION_OPTIMIZE, BATCH_ACTION_AUTORETOPO, BATCH_ACTION_AUTOUV, BATCH_ACTION_AUTORIG, BATCH_ACTION_TRANSFER_RIG, BATCH_ACTION_BAKE, BATCH_ACTION_PBR, BATCH_ACTION_FLATTEN]
 
 export const BATCH_ACTION_LABELS = {
   [BATCH_ACTION_COMFYUI]: 'ComfyUI Workflow',
@@ -43,7 +49,8 @@ export const BATCH_ACTION_LABELS = {
   [BATCH_ACTION_AUTORIG]: 'Auto Rig',
   [BATCH_ACTION_TRANSFER_RIG]: 'Transfer Rig',
   [BATCH_ACTION_BAKE]: 'Bake',
-  [BATCH_ACTION_FLATTEN]: 'Flatten to Albedo'
+  [BATCH_ACTION_FLATTEN]: 'Flatten to Albedo',
+  [BATCH_ACTION_PBR]: 'PBR from Albedo'
 }
 
 // A stage written before actions existed has no field and is a ComfyUI stage.
@@ -107,6 +114,41 @@ export const BAKE_MAP_PARAMETERS = {
   roughness: 'bake_roughness',
   metallic: 'bake_metallic'
 }
+
+// The PBR stage's map checkboxes, one boolean each like the Bake's, keyed by the
+// generator's own map names (DEFAULT_PBR_OPTIONS.maps).
+export const PBR_MAP_PARAMETERS = {
+  normal: 'pbr_normal',
+  roughness: 'pbr_roughness',
+  metalness: 'pbr_metalness',
+  ao: 'pbr_ao'
+}
+
+// Every other PBR parameter: stage parameter id -> generator option
+// (DEFAULT_PBR_OPTIONS), whose value is the parameter's default.
+const PBR_OPTION_PARAMETERS = {
+  delight_strength: 'delightStrength',
+  depth_contrast: 'depthContrast',
+  depth_smoothness: 'depthSmoothness',
+  invert_depth: 'invertDepth',
+  normal_strength: 'normalStrength',
+  normal_blur: 'normalBlur',
+  detail_mix: 'detailMix',
+  invert_normal_y: 'invertNormalY',
+  roughness_base: 'roughnessBase',
+  roughness_contrast: 'roughnessContrast',
+  invert_roughness: 'invertRoughness',
+  metalness_strength: 'metalnessStrength',
+  metalness_threshold: 'metalnessThreshold',
+  ao_strength: 'aoStrength',
+  ao_radius: 'aoRadius'
+}
+
+// A PBR parameter with the generator's default. Ranges and hints are the Mesh
+// Editor panel's (PbrToolsPanel.jsx).
+const pbrNumber = (id, name, label, range) => number(id, name, DEFAULT_PBR_OPTIONS[PBR_OPTION_PARAMETERS[id]], label, range)
+const pbrToggle = (id, name, label) => toggle(id, name, DEFAULT_PBR_OPTIONS[PBR_OPTION_PARAMETERS[id]], label)
+const pbrMap = (map, name, label) => toggle(PBR_MAP_PARAMETERS[map], name, DEFAULT_PBR_OPTIONS.maps[map], label)
 
 // Flatten's target shaders and the lighting preset each one bakes with — the
 // FLATTEN_SHADERS list in src/utils/meshFlatten.js, which the Export dialog
@@ -413,6 +455,51 @@ const ACTION_DESCRIPTORS = {
         'Applied before the highlight roll-off. Lower it if the result looks washed out.',
         { min: -3, max: 3, step: 0.25 })
     ]
+  },
+
+  [BATCH_ACTION_PBR]: {
+    id: `action:${BATCH_ACTION_PBR}`,
+    action: BATCH_ACTION_PBR,
+    name: 'PBR from Albedo',
+    description: 'The Mesh Editor’s Texture > PBR tool as a stage: estimates normal, roughness, metalness and ambient-occlusion maps from the mesh’s own colour texture (brightness read as height — image filters, no AI model) and attaches them to its materials, with roughness, metalness and AO packed into one ORM texture as glTF expects. Each colour texture gets its own maps, at its own resolution and on the same UVs. Runs in the backend: no service and no GPU. It is a guess, not a bake — it suits stone, wood, fabric and worn surfaces more than clean painted ones. Saved as a new version of the input mesh.',
+    kanbanColumn: 'Texturing',
+    // The filters run inside the backend itself (in a worker thread).
+    desktopService: null,
+    parentParameterId: 'mesh',
+    // Only textures and material slots change.
+    keepsSurface: true,
+    outputs: [{ name: 'Textured mesh', valueType: 'mesh' }],
+    parameters: [
+      mesh('mesh', 'Mesh', 'The mesh whose colour texture the maps are derived from. It needs one — texture it, or bake its base colour, first. Unlit (KHR_materials_unlit) materials are skipped, since they ignore these maps'),
+      pbrMap('normal', 'Normal map', 'Surface relief from the colour. Switch it off to keep the normal map an earlier Bake stage made'),
+      pbrMap('roughness', 'Roughness map', 'Packed into the ORM texture’s green channel'),
+      pbrMap('metalness', 'Metalness map', 'Packed into the ORM texture’s blue channel. At the default strength of 0 it marks the whole surface non-metal'),
+      pbrMap('ao', 'Ambient occlusion', 'Packed into the ORM texture’s red channel. Switch it off to keep the AO an earlier Bake stage made'),
+      pbrNumber('delight_strength', 'De-light', 'Evens out shadows and highlights baked into the colour, so the new AO and lighting are not applied twice, and saves the corrected colour texture too. 0 leaves the albedo untouched.',
+        { min: 0, max: 1, step: 0.05 }),
+      pbrNumber('depth_contrast', 'Height contrast', 'Spreads brightness differences into a taller relief. Every map builds on this.',
+        { min: 0.1, max: 4, step: 0.05 }),
+      pbrNumber('depth_smoothness', 'Height smoothness', 'Blur radius before the height is used, in pixels of a 1024px texture (scaled to the real size).',
+        { min: 0, max: 15, step: 1 }),
+      pbrToggle('invert_depth', 'Invert height (dark = raised)', 'By default bright reads as raised. Invert it for surfaces whose grooves are lighter than the faces, such as mortar between dark bricks.'),
+      pbrNumber('normal_strength', 'Normal strength', '', { min: 0, max: 20, step: 0.1 }),
+      pbrNumber('normal_blur', 'Normal blur', 'Softens the large-scale shape before the fine detail is mixed back in.',
+        { min: 0, max: 10, step: 1 }),
+      pbrNumber('detail_mix', 'Normal detail mix', 'How much fine, per-pixel detail from the raw colour is added on top of the shape.',
+        { min: 0, max: 1, step: 0.05 }),
+      pbrToggle('invert_normal_y', 'DirectX normal (green down)', 'Off writes the OpenGL convention glTF requires. A GLB saved with this on looks lit from below everywhere — leave it off unless the file only feeds a tool that flips it back.'),
+      pbrNumber('roughness_base', 'Roughness base', 'Roughness at mid height. 0 is mirror-smooth, 1 fully matte.',
+        { min: 0, max: 1, step: 0.02 }),
+      pbrNumber('roughness_contrast', 'Roughness contrast', '', { min: 0.1, max: 4, step: 0.05 }),
+      pbrToggle('invert_roughness', 'Raised areas are smoother', 'On: high points read as worn smooth and crevices as rough (the upstream default). Off: the reverse.'),
+      pbrNumber('metalness_strength', 'Metalness strength', '0 makes the whole surface non-metal, which is right for most materials.',
+        { min: 0, max: 1, step: 0.05 }),
+      pbrNumber('metalness_threshold', 'Metalness threshold', 'Only areas brighter than this (and not strongly coloured) turn metallic.',
+        { min: 0, max: 1, step: 0.02 }),
+      pbrNumber('ao_strength', 'AO strength', '', { min: 0, max: 3, step: 0.05 }),
+      pbrNumber('ao_radius', 'AO radius', 'How far a crevice looks for higher ground around it, in pixels of a 1024px texture.',
+        { min: 1, max: 25, step: 1 })
+    ]
   }
 }
 
@@ -450,6 +537,25 @@ export function getAutoUvActionOptions(inputs = {}) {
 // As the service's AutoRetopoOptions reads them.
 export function getAutoRetopoActionOptions(inputs = {}) {
   return collectActionOptions(BATCH_ACTION_AUTORETOPO, inputs)
+}
+
+// The generator options (pbrFromAlbedo.js) a PBR stage's resolved inputs stand
+// for. A missing value falls back to the generator's default, as everywhere.
+export function getPbrActionOptions(inputs = {}) {
+  const values = collectActionOptions(BATCH_ACTION_PBR, inputs)
+  const options = { maps: {} }
+  for (const [map, parameterId] of Object.entries(PBR_MAP_PARAMETERS)) options.maps[map] = values[parameterId]
+  for (const [parameterId, option] of Object.entries(PBR_OPTION_PARAMETERS)) options[option] = values[parameterId]
+  return options
+}
+
+// Null, or why these options would produce nothing.
+export function describePbrProblem(options) {
+  const anyMap = Object.values(options?.maps || {}).some(Boolean)
+  if (!anyMap && !(Number(options?.delightStrength) > 0)) {
+    return 'Pick at least one map to generate, or raise De-light'
+  }
+  return null
 }
 
 // Could this boolean be on in some group? A manual value says so outright; a

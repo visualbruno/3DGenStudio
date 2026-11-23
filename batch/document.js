@@ -39,10 +39,13 @@
 import {
   BATCH_ACTION_BAKE,
   BATCH_ACTION_COMFYUI,
+  BATCH_ACTION_PBR,
   BATCH_ACTION_TRANSFER_RIG,
   BATCH_ACTION_LABELS,
   describeBakeMapProblem,
+  describePbrProblem,
   getBakeActionMaps,
+  getPbrActionOptions,
   getBatchActionDescriptor,
   isBuiltInBatchAction,
   normalizeBatchAction
@@ -754,6 +757,9 @@ export function describeActionInputProblem(stage, inputs) {
       return 'the low poly and the high poly are the same mesh'
     }
     return describeBakeMapProblem(getBakeActionMaps(inputs))
+  }
+  if (getStageAction(stage) === BATCH_ACTION_PBR) {
+    return describePbrProblem(getPbrActionOptions(inputs))
   }
   if (getStageAction(stage) === BATCH_ACTION_TRANSFER_RIG) {
     if (inputs?.mesh && inputs.mesh === inputs.rig_source) {
