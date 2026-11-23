@@ -352,7 +352,12 @@ class RigPipeline:
                 batch.pop("skeleton_mask", None)
 
             batch["generate_kwargs"] = dict(
-                max_length=2048,
+                # NOT max_length: with inputs_embeds that budget also counts the
+                # 384-token mesh prefix, leaving ~1660 to generate — and a
+                # many-limbed mesh (a crab: ~160 joints ≈ 1100 skeleton tokens +
+                # 4 skin tokens per joint) runs out mid-skin, so the rig fails.
+                # 2040 new tokens is the checkpoint's own training setting.
+                max_new_tokens=2040,
                 top_k=int(top_k),
                 top_p=float(top_p),
                 temperature=float(temperature),

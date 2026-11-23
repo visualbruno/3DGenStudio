@@ -405,7 +405,14 @@ class TokenRig(ModelSpec):
             if make_asset:
                 assert 'model_input' in batch, "need model_input to make asset (in validate/predict mode)"
                 assert res.detokenize_output is not None
-                assert res.skin_pred is not None
+                if res.skin_pred is None:
+                    J = res.detokenize_output.joints.shape[0]
+                    raise RuntimeError(
+                        f"The rig ran out of token budget: it generated a {J}-joint skeleton but "
+                        f"generation stopped before all its skin weights were written. "
+                        f"Run Auto Rig again (each run samples a different skeleton), or lower "
+                        f"Length penalty so it favours fewer bones."
+                    )
                 asset: Asset = batch['model_input'][i].asset.copy()
                 res.asset = Asset.from_data(
                     vertices=asset.vertices,
@@ -535,6 +542,35 @@ def prepare_llm_tokens(
     _check(attention_mask, (B, seq_len))
     return inputs_ids, attention_mask, llm_skeleton_mask, llm_skin_mask
 
+class CudaCacheTrimProcessor(LogitsProcessor):
+    """Leaves the scores alone; every few decode steps it hands PyTorch's cached
+    but unused GPU blocks back to the driver.
+
+    The KV cache grows by one token per step for every beam, and each step's
+    cache tensors are slightly bigger than the ones they replace, so the caching
+    allocator cannot reuse the freed blocks and keeps reserving new ones.
+    Measured with 15 beams: at 1000 tokens, 3.35 GB in use but 17.4 GB
+    reserved. A humanoid rig stops at ~400 tokens and never notices. A
+    many-legged mesh (a crab: 150 joints, 1000+ tokens) does — and on Windows
+    the driver spills past physical VRAM into system RAM instead of raising
+    OOM, so the run slows to a crawl while VRAM climbs and never finishes.
+    `expandable_segments` would avoid the fragmentation but is Linux-only.
+    Trimming every 16 steps keeps reservation within ~0.5 GB of real use, at no
+    measurable cost (a static KV cache also fixes it but decoded ~60% slower).
+    """
+
+    def __init__(self, every: int = 16, slack_bytes: int = 1 << 30):
+        self.every = every
+        self.slack_bytes = slack_bytes
+        self.step = 0
+
+    def __call__(self, input_ids: Tensor, scores: FloatTensor) -> FloatTensor:
+        self.step += 1
+        if self.step % self.every == 0 and torch.cuda.is_available():
+            if torch.cuda.memory_reserved() - torch.cuda.memory_allocated() > self.slack_bytes:
+                torch.cuda.empty_cache()
+        return scores
+
 def get_logits_processor(tokenizer: Tokenizer, eos: int, tokens_per_skin: int, start_tokens):
     processor = VocabSwitchingLogitsProcessor(
         tokenizer=tokenizer,
@@ -543,7 +579,7 @@ def get_logits_processor(tokenizer: Tokenizer, eos: int, tokens_per_skin: int, s
         tokens_per_skin=tokens_per_skin,
         init=start_tokens,
     )
-    return LogitsProcessorList([processor])
+    return LogitsProcessorList([processor, CudaCacheTrimProcessor()])
 
 @torch.no_grad()
 def decode(
