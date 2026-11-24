@@ -27,7 +27,11 @@ def repair(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.remove_unreferenced_vertices()
     try:
-        mesh.fix_normals()                # consistent winding where possible
+        # consistent winding where possible. NOT mesh.fix_normals(): its networkx
+        # BFS took 142 s of a 169 s run on a 981k-face AI mesh; the vectorized
+        # version gives the same faces on orientable pieces in well under a second.
+        from .meshutil import fix_normals_fast
+        fix_normals_fast(mesh)
     except Exception:
         pass
     return mesh

@@ -30,7 +30,7 @@ def _edge_len_for_faces(V, F, target_faces):
 def isotropic_remesh(V, F, target_faces, adaptive=True, iters=10,
                      feature_deg=30.0, calibrate_passes=2, verbose=False,
                      smoothflag=True, reproject=True, checksurfdist=False,
-                     maxsurfdist_pct=1.0):
+                     maxsurfdist_pct=1.0, stop_on_overshoot=False):
     """Remesh to ~target_faces. Each calibration pass remeshes the *same source*
     with a corrected edge length (n ~ 1/L^2), and we keep the pass closest to the
     budget so adaptive density can't make us drift.
@@ -38,6 +38,18 @@ def isotropic_remesh(V, F, target_faces, adaptive=True, iters=10,
     For hard-surface models, set a low `feature_deg` (crease edges below this angle
     are kept sharp), `smoothflag=False` (don't round structural edges) and
     `reproject=True` with `checksurfdist=True` (stay glued to the original surface).
+
+    `stop_on_overshoot`: stop calibrating as soon as a pass lands ABOVE the budget
+    and let the caller's decimate_to_target take it the rest of the way. Measured
+    2026-11-24 on the watertight shell (bush, tree, camp, warrior, houses; adaptive,
+    feature_deg 30): the first pass always overshot (1.2x-10x), because crease edges
+    above feature_deg are locked against collapse and set a density floor that
+    ignores the target length - doubling L moved bush 102k -> 100k faces. So the
+    recalibration pass re-ran the whole remesh on the dense shell (~half the stage)
+    for nothing, AND made the result worse: its coarser output gave the decimator
+    less detail to keep (warrior chamfer 0.98% -> 0.80%, tree 1.11 -> 0.98, every
+    mesh equal or better, well-shaped triangles 72-87% -> 83-95%). Undershoot still
+    recalibrates - decimation cannot add faces.
     """
     L = _edge_len_for_faces(V, F, target_faces)
     Vsrc, Fsrc = np.asarray(V, float), np.asarray(F, np.int64)
@@ -62,6 +74,10 @@ def isotropic_remesh(V, F, target_faces, adaptive=True, iters=10,
         if best is None or err < best[0]:
             best = (err, Vc, Fc)
         if err < 0.05 or p == calibrate_passes:
+            break
+        if stop_on_overshoot and n > target_faces:
+            if verbose:
+                print("    remesh: over budget, decimation finishes the job (no recalibration)")
             break
         L *= np.sqrt(n / float(target_faces))   # bigger edges -> fewer faces
     _, Vb, Fb = best

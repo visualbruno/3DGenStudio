@@ -12,6 +12,7 @@
 # Which stage each package accelerates:
 #   warp-lang  -> "Projecting to surface" (GPU closest-point queries)
 #   cupy       -> "Building watertight shell" (voxelize / morphology / EDT / blur)
+#                 and the "Projecting to surface" loop (normals / relax / smoothing)
 # The "Building clean topology" (remesh) stage has no GPU port and always runs
 # on the CPU.
 

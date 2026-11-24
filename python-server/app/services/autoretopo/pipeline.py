@@ -112,7 +112,10 @@ class AutoRetopo:
             V, F, cfg.target_faces, adaptive=cfg.adaptive, iters=cfg.remesh_iters,
             feature_deg=(cfg.feature_angle if feat else cfg.feature_deg),
             calibrate_passes=cfg.calibrate_passes, verbose=cfg.verbose,
-            smoothflag=True, reproject=True, checksurfdist=feat, maxsurfdist_pct=1.0)
+            smoothflag=True, reproject=True, checksurfdist=feat, maxsurfdist_pct=1.0,
+            # Measured on the watertight shell only (see isotropic_remesh); surface
+            # mode keeps the old recalibrate-either-way behaviour until it is measured.
+            stop_on_overshoot=cfg.watertight and cfg.adaptive)
         # hit the budget exactly: decimate the (slightly over) adaptive result
         if len(F) > cfg.target_faces * 1.05:
             V, F = remesh.decimate_to_target(V, F, cfg.target_faces)
@@ -128,8 +131,12 @@ class AutoRetopo:
         # original and a closest-point snap on noisy hard surfaces hurts.
         t0 = time.time()
         do_project = cfg.project and (cfg.watertight or not cfg.preserve_features)
-        proj_backend = ("GPU (Warp)" if (do_project and cfg.device != "cpu"
-                                         and gpu.warp_cuda_available()) else "CPU")
+        # Two independent GPU pieces: CuPy runs the per-iteration loop (normals,
+        # relax, field smoothing - ~95% of the stage), Warp the closest-point query.
+        proj_gpu = [name for name, ok in (("CuPy", gpu.cuda_available()),
+                                          ("Warp", gpu.warp_cuda_available())) if ok]
+        proj_backend = (f"GPU ({' + '.join(proj_gpu)})"
+                        if (do_project and cfg.device != "cpu" and proj_gpu) else "CPU")
         report("project", 0.72,
                f"Projecting to surface ({proj_backend})" if do_project else "Projecting to surface")
         if do_project:

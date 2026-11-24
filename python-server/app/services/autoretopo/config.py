@@ -33,7 +33,10 @@ class RetopoConfig:
     adaptive: bool = True             # curvature-adaptive density (more faces where the surface bends)
     remesh_iters: int = 10
     feature_deg: float = 30.0         # crease angle preserved as a feature
-    calibrate_passes: int = 1         # rough edge-length correction; decimation sets exact count
+    calibrate_passes: int = 1         # rough edge-length correction; decimation sets exact count.
+                                      # Watertight+adaptive only recalibrates on UNDERSHOOT since
+                                      # 2026-11-24 (overshoot recalibration was slow and worse - see
+                                      # remesh.isotropic_remesh stop_on_overshoot)
 
     # --- hard-surface / architectural detail preservation ---
     preserve_features: bool = False   # keep sharp creases crisp, don't smooth structural edges
@@ -59,8 +62,8 @@ class RetopoConfig:
     # --- compute backend (shell stage only) ---
     device: str = "auto"              # "auto": GPU if an NVIDIA CUDA device + CuPy are
                                       # present, else CPU. "cpu" forces CPU; "cuda" forces
-                                      # GPU (errors if unavailable). Only the watertight
-                                      # shell stage is GPU-accelerated; everything else is CPU.
+                                      # GPU (errors if unavailable). The watertight shell
+                                      # and projection stages are GPU-accelerated; remesh is CPU.
 
     # --- misc ---
     seed: int = 0

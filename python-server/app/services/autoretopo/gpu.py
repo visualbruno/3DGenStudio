@@ -7,9 +7,9 @@ embarrassingly-parallel dense-array work that maps 1:1 onto CuPy and
 plus an ndimage module (`ndi`) — from a device request, falling back to
 NumPy/SciPy whenever CuPy is missing or no NVIDIA GPU is present.
 
-Everything else in the pipeline (marching cubes, and all the pymeshlab
-remesh/decimate/quad work) stays on the CPU: those algorithms have no CUDA
-drop-in, so the shell stage is the only place a GPU helps here.
+The projection stage also uses CuPy for its per-iteration loop (project_gpu.py)
+alongside Warp's closest-point query. Marching cubes and all the pymeshlab
+remesh/decimate/quad work stay on the CPU: those algorithms have no CUDA drop-in.
 
 Nothing imports CuPy at module load: the import is attempted lazily and cached,
 so the service runs unchanged on machines without a CUDA toolkit and never pays

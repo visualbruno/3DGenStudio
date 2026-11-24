@@ -298,7 +298,7 @@ export default function AutoRetopoToolsPanel({
             { value: 'cpu', label: 'CPU' },
             { value: 'cuda', label: 'CUDA (NVIDIA GPU)' },
           ]}
-          hint="Runs the watertight-shell stage (CuPy) and the surface-projection stage (NVIDIA Warp) on NVIDIA GPUs; falls back to CPU when unavailable. Remesh / 'Building clean topology' always runs on the CPU." />
+          hint="Runs the watertight-shell stage (CuPy) and the surface-projection stage (CuPy + NVIDIA Warp) on NVIDIA GPUs; falls back to CPU when unavailable. Remesh / 'Building clean topology' always runs on the CPU." />
       </div>
 
       <div className="mesh-editor-panel__section">
