@@ -21,6 +21,8 @@ import {
   DEFAULT_ATTRIBUTE_TYPE_ID,
   HITEM_MESH_API_OPTION,
   HITEM_MESH_GENERATION_API_ID,
+  MESHY_MESH_API_OPTION,
+  MESHY_MESH_GENERATION_API_ID,
   IMAGE_API_LIST,
   IMAGE_CARD_COLUMNS,
   TENCENT_GENERATION_TYPE_OPTIONS,
@@ -37,6 +39,7 @@ import {
   TRIPO_TEXTURE_ALIGNMENT_OPTIONS,
   TRIPO_TEXTURE_QUALITY_OPTIONS,
   canFetchHitemMeshResult,
+  canFetchMeshyMeshResult,
   canFetchTencentMeshResult,
   canFetchTripoMeshResult,
   createComfyExecutionId,
@@ -45,12 +48,14 @@ import {
   getAssetChildren,
   getComfyDraftFromWorkflow,
   getHitemResolutionOptions,
+  getMeshyRequestOptions,
   getMeshGenApiDefaults,
   getWorkflowFileInputAccept,
   getWorkflowFileInputIcon,
   getWorkflowParameterValueType,
   isFileWorkflowValueType,
   isHitemMeshGenerationApi,
+  isMeshyMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
   isTripoPSeriesModel,
@@ -114,6 +119,7 @@ export default function KanbanPage() {
     queryTencentMeshGenerationResult,
     queryTripoMeshGenerationResult,
     queryHitemMeshGenerationResult,
+    queryMeshyMeshGenerationResult,
     runMeshEditApi,
     runMeshTexturingApi,
     runMeshRiggingApi,
@@ -1114,6 +1120,7 @@ export default function KanbanPage() {
       TENCENT_MESH_API_OPTION,
       TRIPO_MESH_API_OPTION,
       HITEM_MESH_API_OPTION,
+      MESHY_MESH_API_OPTION,
       ...customApis
         .filter(api => normalizeCustomApiType(api?.type) === 'mesh-generation')
         .map(api => ({ id: `custom_${api.id}`, name: api.name }))
@@ -1385,8 +1392,9 @@ export default function KanbanPage() {
 
     // Hitem3D is image-to-3D only; the mesh source draft has no image source, so
     // it must be run from a card that already holds an image, via its Action menu.
-    if (isHitemMeshApi) {
-      showStatusMessage('Hitem3D needs an image source. Add an image to a card and run it from the card Action menu.', 'error')
+    if (isHitemMeshApi || isMeshyMeshGenerationApi(draft.selectedApi)) {
+      const providerName = isHitemMeshApi ? 'Hitem3D' : 'Meshy'
+      showStatusMessage(`${providerName} needs an image source. Add an image to a card and run it from the card Action menu.`, 'error')
       return
     }
 
@@ -2225,12 +2233,13 @@ export default function KanbanPage() {
     const isTencentRuntime = canFetchTencentMeshResult(runtimeState)
     const isTripoRuntime = canFetchTripoMeshResult(runtimeState)
     const isHitemRuntime = canFetchHitemMeshResult(runtimeState)
+    const isMeshyRuntime = canFetchMeshyMeshResult(runtimeState)
 
-    if (!isTencentRuntime && !isTripoRuntime && !isHitemRuntime) {
+    if (!isTencentRuntime && !isTripoRuntime && !isHitemRuntime && !isMeshyRuntime) {
       return
     }
 
-    const providerName = isTencentRuntime ? 'Tencent Cloud' : isTripoRuntime ? 'Tripo AI' : 'Hitem3D'
+    const providerName = isTencentRuntime ? 'Tencent Cloud' : isTripoRuntime ? 'Tripo AI' : isMeshyRuntime ? 'Meshy' : 'Hitem3D'
     const notificationSource = isTencentRuntime ? 'Tencent Cloud · Hunyuan3D Pro' : providerName
 
     // Track every mesh item (roots and their versions/children) so the focus
@@ -2258,6 +2267,14 @@ export default function KanbanPage() {
           cardId: card.id,
           selectedApi: runtimeState.selectedApi || TENCENT_MESH_GENERATION_API_ID
         })
+        : isMeshyRuntime
+          ? await queryMeshyMeshGenerationResult(projectId, {
+            taskId: runtimeState.taskId,
+            name: runtimeState.name || card.primaryDisplayAsset?.name || 'Generated Mesh',
+            prompt: runtimeState.prompt || '',
+            cardId: card.id,
+            selectedApi: runtimeState.selectedApi || MESHY_MESH_GENERATION_API_ID
+          })
         : isHitemRuntime
           ? await queryHitemMeshGenerationResult(projectId, {
             taskId: runtimeState.taskId,
@@ -2311,7 +2328,7 @@ export default function KanbanPage() {
             detail: failureMessage,
             currentNodeLabel: isTencentRuntime ? 'Tencent Cloud job failed' : `${providerName} task failed`,
             jobStatus: isTencentRuntime ? 'FAIL' : runtimeState.jobStatus,
-            taskStatus: (isTripoRuntime || isHitemRuntime) ? 'failed' : runtimeState.taskStatus
+            taskStatus: (isTripoRuntime || isHitemRuntime || isMeshyRuntime) ? 'failed' : runtimeState.taskStatus
           }
         }))
         await refreshProjectAssets().catch(() => {})
@@ -2407,9 +2424,10 @@ export default function KanbanPage() {
         const isTencentMeshApi = isMeshGenCard && isTencentMeshGenerationApi(imageEditDraft.selectedApi)
         const isTripoMeshApi = isMeshGenCard && isTripoMeshGenerationApi(imageEditDraft.selectedApi)
         const isHitemMeshApi = isMeshGenCard && isHitemMeshGenerationApi(imageEditDraft.selectedApi)
+        const isMeshyMeshApi = isMeshGenCard && isMeshyMeshGenerationApi(imageEditDraft.selectedApi)
         const isTripoPModel = isTripoMeshApi && isTripoPSeriesModel(imageEditDraft.modelVersion || 'v3.1-20260211')
 
-        if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && (!imageEditDraft.selectedAssetId || !prompt || !name)) {
+        if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !isMeshyMeshApi && (!imageEditDraft.selectedAssetId || !prompt || !name)) {
           showStatusMessage(`Select a ${sourceAssetLabel}, add a name, and provide a prompt.`, 'error')
           return
         }
@@ -2600,6 +2618,49 @@ export default function KanbanPage() {
             await refreshProjectAssets()
             setImageEditDraft(null)
             showStatusMessage('Hitem3D mesh task submitted.', 'info')
+            return
+          }
+
+          if (isMeshyMeshApi) {
+            if (!name) {
+              showStatusMessage('Add a name for the generated mesh.', 'error')
+              return
+            }
+
+            if (!imageEditDraft.selectedAssetId) {
+              showStatusMessage('Select an image source for Meshy mesh generation.', 'error')
+              return
+            }
+
+            const meshyOptions = getMeshyRequestOptions(imageEditDraft)
+            const queuedTask = await runMeshGenerationApi(projectId, {
+              imageSource: imageEditDraft.selectedAssetId,
+              name,
+              selectedApi: imageEditDraft.selectedApi,
+              cardId: card.id,
+              ...meshyOptions
+            })
+
+            keepRuntimeState = true
+            setImageEditProgressByCardId(prev => ({
+              ...prev,
+              [card.id]: {
+                status: 'processing',
+                source: queuedTask.provider || 'Meshy',
+                detail: 'Meshy task submitted. Use GET RESULT to refresh status.',
+                currentNodeLabel: 'Meshy task is queued',
+                taskStatus: 'pending',
+                taskId: queuedTask.taskId,
+                promptId: queuedTask.taskId,
+                selectedApi: queuedTask.selectedApi || imageEditDraft.selectedApi,
+                name,
+                ...meshyOptions
+              }
+            }))
+
+            await refreshProjectAssets()
+            setImageEditDraft(null)
+            showStatusMessage('Meshy mesh task submitted.', 'info')
             return
           }
 

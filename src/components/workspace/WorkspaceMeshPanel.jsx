@@ -1,6 +1,6 @@
 // Workspace → Mesh module: generate a 3D model from one image, or from several
 // views of the same object (Multi-View). The dropdown lists the installed
-// ComfyUI workflows that fit the tab, then the cloud APIs (Tripo AI, Hitem3D,
+// ComfyUI workflows that fit the tab, then the cloud APIs (Tripo AI, Hitem3D, Meshy,
 // and Tencent Cloud for a single image). For a workflow, Target Faces, Texture
 // Size and Seed are mapped onto its own parameters (src/utils/workspaceMesh.js);
 // a cloud API is submitted here and polled by the page
@@ -310,7 +310,7 @@ export default function WorkspaceMeshPanel({
         .map(view => [view.key, views[view.key].sourceReference]))
       : null
     const name = meshName(runSource, { name: runModel.label })
-    const versionLabel = runOptions.modelVersion || runOptions.hitemModel || ''
+    const versionLabel = runOptions.modelVersion || runOptions.hitemModel || runOptions.meshyAiModel || ''
     const label = `Mesh · ${runModel.label}${versionLabel ? ` ${versionLabel}` : ''}`
     setStatus(null)
 

@@ -20,6 +20,7 @@ import {
   buildImageEditorPath,
   buildMeshEditorPath,
   canFetchHitemMeshResult,
+  canFetchMeshyMeshResult,
   canFetchTencentMeshResult,
   canFetchTripoMeshResult,
   formatAssetDimensions,
@@ -37,6 +38,7 @@ import {
   isConnectorOnlyWorkflowValueType,
   isFileWorkflowValueType,
   isHitemMeshGenerationApi,
+  isMeshyMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
   isTripoPSeriesModel,
@@ -52,6 +54,7 @@ import {
 } from '../../utils/workflowFileInputs'
 import ComfyTextButton from '../comfy/ComfyTextButton'
 import LastActionInfo from './LastActionInfo'
+import MeshyOptionsFields from '../MeshyOptionsFields'
 
 // Image / mesh asset node. Handles the thumbnail preview (a mesh thumbnail opens
 // the page-level 3D preview dialog), generation and edit action panels
@@ -103,12 +106,13 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
   const isTencentMeshApi = isMeshGen && isTencentMeshGenerationApi(draft?.selectedApi)
   const isTripoMeshApi = isMeshGen && isTripoMeshGenerationApi(draft?.selectedApi)
   const isHitemMeshApi = isMeshGen && isHitemMeshGenerationApi(draft?.selectedApi)
+  const isMeshyMeshApi = isMeshGen && isMeshyMeshGenerationApi(draft?.selectedApi)
   const isTripoPModel = isTripoMeshApi && isTripoPSeriesModel(draft?.modelVersion || 'v3.1-20260211')
   const hitemResolutionOptions = getHitemResolutionOptions(draft?.hitemModel || 'hitem3dv2.1')
   const hasDraftPrompt = Boolean(String(draft?.prompt || '').trim())
   const hasDraftInputSource = Boolean(String(draft?.selectedInputSource || '').trim())
   const canFetchAsyncResult = isMeshGen
-    && (canFetchTencentMeshResult(data.metadata, data.status) || canFetchTripoMeshResult(data.metadata, data.status) || canFetchHitemMeshResult(data.metadata, data.status))
+    && (canFetchTencentMeshResult(data.metadata, data.status) || canFetchTripoMeshResult(data.metadata, data.status) || canFetchHitemMeshResult(data.metadata, data.status) || canFetchMeshyMeshResult(data.metadata, data.status))
   const nodeDisplayName = data.name || data.asset?.name || sourceLabel
   const meshEditorPath = isMeshGen && data.asset?.id
     ? buildMeshEditorPath({
@@ -668,8 +672,8 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                       ))}
                     </select>
                   </div>
-                  {/* Hitem3D is image-only and does not take a prompt. */}
-                  {!isHitemMeshApi && (
+                  {/* Hitem3D and Meshy are image-only and do not take a prompt. */}
+                  {!isHitemMeshApi && !isMeshyMeshApi && (
                     <div className="params-card__field">
                       <label className="params-card__label font-label">Prompt</label>
                       <textarea
@@ -1037,6 +1041,14 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                       </label>
                     </>
                   )}
+                  {isMeshyMeshApi && (
+                    <MeshyOptionsFields
+                      draft={draft}
+                      onChange={(field, value) => data.onDraftFieldChange?.(data.id, field, value)}
+                      selectClassName="params-card__select nodrag"
+                      inputClassName="params-card__input nodrag"
+                    />
+                  )}
                   <div className="graph-node__linked-input font-label">
                     {selectedApiImageSource?.label
                       ? `Input: ${selectedApiImageSource.label}`
@@ -1044,8 +1056,8 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                         ? 'Select a connected image input or leave empty to use prompt only'
                         : isTripoMeshApi
                           ? 'Provide either a prompt or an image input connector for Tripo AI'
-                          : isHitemMeshApi
-                            ? 'Connect an image input or pick one from the asset library for Hitem3D'
+                          : isHitemMeshApi || isMeshyMeshApi
+                            ? `Connect an image input or pick one from the asset library for ${isMeshyMeshApi ? 'Meshy' : 'Hitem3D'}`
                             : 'Select an image source from the graph or asset library'}
                   </div>
                   <button
@@ -1055,7 +1067,7 @@ const GraphAssetNode = memo(function GraphAssetNode({ data }) {
                       ? (!draft.name?.trim() || (!hasDraftPrompt && !hasDraftInputSource))
                       : isTripoMeshApi
                         ? (!draft.name?.trim() || (!hasDraftPrompt && !hasDraftInputSource))
-                        : isHitemMeshApi
+                        : isHitemMeshApi || isMeshyMeshApi
                           ? (!draft.name?.trim() || !hasDraftInputSource)
                       : !draft.selectedInputSource}
                   >

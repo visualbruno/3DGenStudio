@@ -21,6 +21,9 @@ function buildMeshPollRequest(submit, base) {
   if (provider.includes('hitem')) {
     return { path: '/meshes/generate/hitem/result', body: { ...base, taskId: submit.taskId, jobId: submit.jobId } };
   }
+  if (provider.includes('meshy')) {
+    return { path: '/meshes/generate/meshy/result', body: { ...base, taskId: submit.taskId } };
+  }
   return null;
 }
 
@@ -30,6 +33,7 @@ function buildMeshPollRequest(submit, base) {
 const TENCENT_MESH_API_ID = 'tencent_meshgeneration';
 const TRIPO_MESH_API_ID = 'tripo_meshgeneration';
 const HITEM_MESH_API_ID = 'hitem_meshgeneration';
+const MESHY_MESH_API_ID = 'meshy_meshgeneration';
 
 // Typed provider option shapes. These mirror the request-body keys and defaults
 // that server.js reads for each provider (normalize{Tencent,Tripo,Hitem}
@@ -71,6 +75,20 @@ const HITEM_MESH_OPTIONS = {
   hitemFace: z.number().int().min(100000).max(2000000).default(300000).describe('Target face count (100,000–2,000,000).'),
   hitemPbr: z.boolean().default(false).describe('Generate a PBR-ready mesh.')
 };
+
+// docs.meshy.ai/en/api/image-to-3d and /multi-image-to-3d.
+const MESHY_MESH_OPTIONS = {
+  meshyAiModel: z.enum(['latest', 'meshy-7.1', 'meshy-6', 'meshy-6-lite', 'meshy-t2', 'meshy-t2.5']).default('latest').describe('Meshy geometry model. meshy-t2 / meshy-t2.5 are Smart Topology (clean low-poly topology, single image only). Cost: latest/meshy-7.1/meshy-6 20 credits mesh-only, 30 textured; meshy-6-lite/meshy-t2/meshy-t2.5 5 mesh-only, 15 textured.'),
+  meshyShouldTexture: z.boolean().default(true).describe('Generate a texture (adds 10 credits).'),
+  meshyTextureModel: z.enum(['', 'meshy-7', 'meshy-n1', 'meshy-6-lite']).default('').describe('Texture model; "" = the geometry model\'s default. Multi-view accepts only meshy-7 / meshy-n1. meshy-n1 takes no texture prompt and no PBR.'),
+  meshyEnablePbr: z.boolean().default(false).describe('Also generate metallic, roughness and normal maps (not with meshy-n1).'),
+  meshyTexturePrompt: z.string().max(800).optional().describe('Text that guides the texture (not with meshy-n1).'),
+  meshyShouldRemesh: z.boolean().default(true).describe('Remesh to meshyTargetPolycount / meshyTopology (ignored by the Smart Topology models).'),
+  meshyTopology: z.enum(['triangle', 'quad']).default('triangle').describe('Remesh topology (ignored by the Smart Topology models).'),
+  meshyTargetPolycount: z.number().int().min(100).max(300000).default(30000).describe('Target polygon count. Remesh: 100-300,000. meshy-t2: 100-15,000. meshy-t2.5: 100-30,000. Clamped to the model range.')
+};
+
+const MESHY_VIEW_IMAGE = z.union([z.number().int(), z.string()]);
 
 // Poll a provider's mesh-result endpoint until the job completes, errors, or the
 // timeout elapses — streaming MCP progress and attaching results to a graph node
@@ -126,7 +144,7 @@ async function pollMeshResult(api, notifyMutation, {
 // asked, and return the saved assets (or job info on timeout).
 async function runMeshGeneration(api, notifyMutation, args, extra) {
   const {
-    projectId, selectedApi, name, prompt, imageSource, nodeId, cardId, parentAssetId,
+    projectId, selectedApi, name, prompt, imageSource, imageViews, nodeId, cardId, parentAssetId,
     options = {}, tags, timeoutSeconds = 1200, pollIntervalSeconds = 10
   } = args;
   const reportProgress = createProgressReporter(extra);
@@ -140,6 +158,7 @@ async function runMeshGeneration(api, notifyMutation, args, extra) {
       projectId, selectedApi, name,
       ...(prompt ? { prompt } : {}),
       ...(imageSource !== undefined ? { imageSource } : {}),
+      ...(imageViews ? { imageViews } : {}),
       ...(kanbanCardId !== undefined && kanbanCardId !== null ? { cardId: kanbanCardId } : {}),
       ...(parentAssetId !== undefined ? { parentAssetId } : {}),
       ...options
@@ -333,14 +352,44 @@ export function registerActionTools(server, { api, notifyMutation }) {
     }
   }, toolHandler((args, extra) => runMeshGeneration(api, notifyMutation, { ...args, selectedApi: HITEM_MESH_API_ID }, extra)));
 
+  server.registerTool('generate_mesh_meshy', {
+    title: 'Generate 3D mesh (Meshy)',
+    description: 'Generate a 3D mesh with Meshy and save it as a project asset. Pass imageSource (one image, Image to 3D) OR imageViews (2-4 views of one object, Multi-Image to 3D; front is required). SPENDS MESHY CREDITS (see meshyAiModel): confirm the cost with the user first. Every Meshy parameter is exposed under `options` with its enum/range and default. Submits and polls until ready (streams progress), returning the saved mesh assets (or job info on timeout). Requires a Meshy API key in Settings (or MESHY_API_KEY in the server environment).',
+    inputSchema: {
+      projectId: z.number().int(),
+      name: z.string().min(1),
+      imageSource: z.union([z.number().int(), z.string()]).optional().describe('Source image: asset id or stored filePath (single-image). Provide this OR imageViews.'),
+      imageViews: z.object({
+        front: MESHY_VIEW_IMAGE,
+        left: MESHY_VIEW_IMAGE.optional(),
+        back: MESHY_VIEW_IMAGE.optional(),
+        right: MESHY_VIEW_IMAGE.optional()
+      }).optional().describe('Multi-view: asset id or stored filePath per view; front plus at least one other. Not with the Smart Topology models.'),
+      options: z.object(MESHY_MESH_OPTIONS).default({}).describe('Meshy parameters (all optional; unset keys use their default).'),
+      nodeId: z.number().int().optional().describe('Graph node to attach the generated mesh to (graph projects). The correct way to fill a node; a graph node id passed as cardId is auto-routed here.'),
+      cardId: z.union([z.number().int(), z.string()]).optional(),
+      parentAssetId: z.number().int().optional(),
+      tags: tagsInput,
+      timeoutSeconds: z.number().int().min(30).max(3600).default(1200),
+      pollIntervalSeconds: z.number().int().min(3).max(120).default(10)
+    }
+  }, toolHandler((args, extra) => {
+    if (!args.imageSource && !args.imageViews) throw new Error('Meshy needs imageSource or imageViews.');
+    // The backend reads views as image source references (strings).
+    const imageViews = args.imageViews
+      ? Object.fromEntries(Object.entries(args.imageViews).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+      : undefined;
+    return runMeshGeneration(api, notifyMutation, { ...args, imageViews, selectedApi: MESHY_MESH_API_ID }, extra);
+  }));
+
   server.registerTool('get_mesh_result', {
     title: 'Get mesh generation result',
-    description: 'Retrieve and finish an async mesh-generation job (Tencent / Tripo / Hitem3D) — use this when the original generate_mesh* call returned {status:"running"} after timing out. The generated mesh is NOT saved to the project until a result poll sees the job complete, so this tool is required to recover a timed-out job (list_assets will not show it before then). It polls the provider until the mesh is ready, saves it, and returns the assets. Pass the ids from the timeout payload: Tripo/Hitem3D use taskId; Tencent uses jobId + region. It is safe to call repeatedly.',
+    description: 'Retrieve and finish an async mesh-generation job (Tencent / Tripo / Hitem3D / Meshy) — use this when the original generate_mesh* call returned {status:"running"} after timing out. The generated mesh is NOT saved to the project until a result poll sees the job complete, so this tool is required to recover a timed-out job (list_assets will not show it before then). It polls the provider until the mesh is ready, saves it, and returns the assets. Pass the ids from the timeout payload: Tripo/Hitem3D/Meshy use taskId; Tencent uses jobId + region. It is safe to call repeatedly.',
     inputSchema: {
       projectId: z.number().int(),
       name: z.string().min(1).describe('The same name the job was submitted with (used to save the asset)'),
-      provider: z.enum(['tencent', 'tripo', 'hitem']).describe('Provider the job was submitted to'),
-      taskId: z.string().optional().describe('Tripo AI / Hitem3D job id (from the timeout payload)'),
+      provider: z.enum(['tencent', 'tripo', 'hitem', 'meshy']).describe('Provider the job was submitted to'),
+      taskId: z.string().optional().describe('Tripo AI / Hitem3D / Meshy job id (from the timeout payload)'),
       jobId: z.string().optional().describe('Tencent Cloud job id (from the timeout payload)'),
       region: z.enum(['ap-singapore', 'eu-frankfurt', 'na-siliconvalley']).optional().describe('Tencent Cloud region the job was submitted in (required for Tencent)'),
       selectedApi: z.string().optional().describe('Provider id override (defaults to the standard id for the provider)'),
@@ -359,15 +408,15 @@ export function registerActionTools(server, { api, notifyMutation }) {
     } = args;
     const reportProgress = createProgressReporter(extra);
 
-    const providerIds = { tencent: TENCENT_MESH_API_ID, tripo: TRIPO_MESH_API_ID, hitem: HITEM_MESH_API_ID };
-    const providerLabels = { tencent: 'Tencent Cloud', tripo: 'Tripo AI', hitem: 'Hitem3D' };
+    const providerIds = { tencent: TENCENT_MESH_API_ID, tripo: TRIPO_MESH_API_ID, hitem: HITEM_MESH_API_ID, meshy: MESHY_MESH_API_ID };
+    const providerLabels = { tencent: 'Tencent Cloud', tripo: 'Tripo AI', hitem: 'Hitem3D', meshy: 'Meshy' };
     const effectiveSelectedApi = selectedApi || providerIds[provider];
     const providerLabel = providerLabels[provider];
 
     if (provider === 'tencent' && (!jobId || !region)) {
       throw new Error('Tencent result lookup requires both jobId and region (from the timeout payload).');
     }
-    if ((provider === 'tripo' || provider === 'hitem') && !taskId) {
+    if (provider !== 'tencent' && !taskId) {
       throw new Error(`${providerLabel} result lookup requires taskId (from the timeout payload).`);
     }
 

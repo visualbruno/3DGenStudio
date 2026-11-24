@@ -114,7 +114,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Graph | `get_graph`, `create_node`, `update_node`, `move_node`, `delete_node`, `connect_nodes`, `disconnect_nodes` |
 | Batch projects | `get_batch`, `update_batch`, `add_batch_groups`, `update_batch_group`, `remove_batch_groups`, `run_batch` |
 | ComfyUI workflows | `list_workflows`, `inspect_workflow`, `import_workflow`, `update_workflow`, `run_workflow`, `get_run_status` |
-| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
+| AI actions | `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `generate_mesh_meshy`, `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` |
 | Mesh tools | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `auto_rig_mesh`, `optimize_mesh`, `convert_mesh_fbx` (all fully-typed), `run_mesh_tool` (the same operations, untyped), `export_mesh` |
 | Mesh finishing | `inspect_mesh` (Game-Ready check), `bake_mesh_maps`, `generate_lods`, `generate_collision`, `move_mesh_pivot`, `transfer_rig` |
 | Assets | `list_assets`, `list_library_assets`, `view_asset`, `download_asset`, `upload_asset`, `link_asset`, `unlink_asset`, `delete_asset` |
@@ -128,7 +128,7 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 112 tools cost ~201 KB of JSON plus ~5 KB of server instructions — roughly **57,100 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~57k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 113 tools cost ~203 KB of JSON plus ~5 KB of server instructions — roughly **57,800 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~57k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -160,7 +160,7 @@ Unset, empty, or `all` loads every group, so nothing changes for an existing con
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 112 | ~55,700 tokens | — |
+| *(unset)* / `all` | 113 | ~56,400 tokens | — |
 | `-mesh` | 98 | ~43,400 | 22% |
 | `-mesh,-actions` | 88 | ~36,900 | 34% |
 | `projects,graph,workflows,assets` | 34 | ~9,400 | 83% |
@@ -172,7 +172,7 @@ The server instructions are assembled to match, so dropping a group also drops i
 
 Over the HTTP endpoint the same selector is available per request as `POST /mcp?tools=graph,workflows`, or as `settings.mcp.tools` for a persistent default.
 
-The heaviest groups are `mesh` (~12,300 tokens across 14 tools), `animation` (~11,400 across 14), `actions` (~6,500 across 10), `assets` (~3,900 across 14) and `tree` (~3,500 across 3) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~3,800 across 6 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~3,500 across 10, and `vfx` ~3,300 across 10, lighter per tool than their scope suggests because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
+The heaviest groups are `mesh` (~12,300 tokens across 14 tools), `animation` (~11,400 across 14), `actions` (~7,200 across 11), `assets` (~3,900 across 14) and `tree` (~3,500 across 3) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~3,800 across 6 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~3,500 across 10, and `vfx` ~3,300 across 10, lighter per tool than their scope suggests because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
 
 #### Tool *results* cost context too
 
@@ -314,7 +314,7 @@ Where results are saved differs by tool, deliberately: most save a **new version
 
 ### External mesh-generation providers
 
-Tencent Hunyuan3D, Tripo AI, and Hitem3D each take a different, parameter-heavy option set. Use the dedicated `generate_mesh_tencent`, `generate_mesh_tripo`, and `generate_mesh_hitem` tools: each hardwires its provider and declares every parameter in its `options` schema with type, enum/range, and default (mirroring the backend 1:1), so a client can set exactly what it needs. Provider notes: Tencent `region` is required and `LowPoly` needs model `3.0`; Tripo's `P1` model ignores several options and `generateParts` is incompatible with `texture`/`pbr`/`quad`; Hitem3D requires an `imageSource`. Tencent and Tripo accept either a `prompt` (text-to-3D) or an `imageSource` (image-to-3D). The generic `generate_mesh` still accepts these providers with a free-form `options` object for backward compatibility.
+Tencent Hunyuan3D, Tripo AI, Hitem3D, and Meshy each take a different, parameter-heavy option set. Use the dedicated `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, and `generate_mesh_meshy` tools: each hardwires its provider and declares every parameter in its `options` schema with type, enum/range, and default (mirroring the backend 1:1), so a client can set exactly what it needs. Provider notes: Tencent `region` is required and `LowPoly` needs model `3.0`; Tripo's `P1` model ignores several options and `generateParts` is incompatible with `texture`/`pbr`/`quad`; Hitem3D requires an `imageSource`; Meshy takes an `imageSource` (Image to 3D) or `imageViews` with a front view plus 1-3 of left/back/right (Multi-Image to 3D), its Smart Topology models (`meshy-t2`, `meshy-t2.5`) are single-image only, and its key falls back to the `MESHY_API_KEY` environment variable when the Settings field is empty. Tencent and Tripo accept either a `prompt` (text-to-3D) or an `imageSource` (image-to-3D). The generic `generate_mesh` still accepts these providers with a free-form `options` object for backward compatibility.
 
 These provider jobs are asynchronous. Unlike the app UI (where you click **Get Result** to poll), the MCP tools poll for you automatically: `generate_mesh*` submits the job and then polls the provider until the mesh is ready, streaming progress, and returns the saved assets — the AI just awaits the call and gets `{status:"completed", assets}`. The mesh is only saved once a poll sees completion, so if a job outlives `timeoutSeconds` (default 1200s) the tool returns `{status:"running", provider, taskId/jobId, region}`; pass those ids to **`get_mesh_result`** to finish and save the job (safe to call repeatedly). Do not re-run generation on timeout — that starts a new job.
 
@@ -342,7 +342,7 @@ Tags are normalized server-side — trimmed, whitespace-collapsed, lower-cased, 
 
 #### Tagging at generation time
 
-Every tool that **saves** a generated asset takes the same optional `tags` list, applied the moment the result is saved: `generate_image`, `edit_image`, `generate_mesh` (and `generate_mesh_tencent` / `_tripo` / `_hitem`), `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api`, `run_workflow`, `get_run_status`, and `generate_tree`. This is what keeps a generated asset findable without a second round trip, which an automated caller routinely forgets to make — a mesh generated and never tagged is a mesh nobody finds again.
+Every tool that **saves** a generated asset takes the same optional `tags` list, applied the moment the result is saved: `generate_image`, `edit_image`, `generate_mesh` (and `generate_mesh_tencent` / `_tripo` / `_hitem` / `_meshy`), `get_mesh_result`, `edit_mesh`, `texture_mesh`, `rig_mesh_api`, `run_workflow`, `get_run_status`, and `generate_tree`. This is what keeps a generated asset findable without a second round trip, which an automated caller routinely forgets to make — a mesh generated and never tagged is a mesh nobody finds again.
 
 The result then carries `taggedAssets: [{ assetId, tags }]` — the resulting tag list per saved asset, read back from the server, so the canonical form is visible immediately. `tags` is additive (the same rule as `tag_asset`'s `add`), so it never clears a tag an earlier step set; use `tag_asset` to remove or replace.
 
@@ -360,7 +360,7 @@ Two behaviours worth knowing:
 | Projects / cards / graph / assets / export / import | just the app running |
 | `run_workflow`, ComfyUI-based edits | ComfyUI running (URL in Settings, default `127.0.0.1:8188`) |
 | `run_batch` | ComfyUI running for workflow stages; the Python mesh-tools service for `autouv` and `bake` stages (and for `optimize` when it re-unwraps broken UVs); the rigging service for `autorig` |
-| `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` | provider API keys in Settings |
+| `generate_image`, `edit_image`, `generate_mesh`, `generate_mesh_tencent`, `generate_mesh_tripo`, `generate_mesh_hitem`, `generate_mesh_meshy`, `edit_mesh`, `texture_mesh`, `rig_mesh_api` | provider API keys in Settings |
 | `auto_uv_mesh`, `auto_retopo_mesh`, `repair_mesh`, `convert_mesh_fbx`, `inspect_mesh`, `bake_mesh_maps`, `generate_collision` | Python mesh-tools service (`:8200`) running — the desktop app can start it from Settings |
 | `auto_rig_mesh` | rigging service (`:8300`) running |
 | `optimize_mesh`, `generate_lods` | nothing extra (bundled gltfpack) |

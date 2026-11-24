@@ -1112,6 +1112,34 @@ export default function SettingsModal({ onClose, initialTab = 'apis' }) {
                       />
                     </div>
                   </div>
+
+                  <div className="settings-api-card">
+                    <div className="settings-api-header">
+                      <div className="settings-api-icon">
+                        <span className="material-symbols-outlined" style={{ fontSize: '18px' }}>deployed_code</span>
+                      </div>
+                      <span className="settings-api-name">Meshy</span>
+                    </div>
+                    <div className="settings-input-group">
+                      <label className="settings-label">API Key</label>
+                      <input
+                        type="password"
+                        className="settings-input"
+                        placeholder="Empty = MESHY_API_KEY env"
+                        value={localSettings?.apis?.meshy?.apiKey || ''}
+                        onChange={e => setLocalSettings(prev => ({
+                          ...prev,
+                          apis: {
+                            ...prev?.apis,
+                            meshy: {
+                              ...prev?.apis?.meshy,
+                              apiKey: e.target.value
+                            }
+                          }
+                        }))}
+                      />
+                    </div>
+                  </div>
                 </div>
               </section>
 

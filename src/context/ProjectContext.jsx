@@ -318,6 +318,19 @@ export function ProjectProvider({ children }) {
     return data
   }
 
+  const queryMeshyMeshGenerationResult = async (projectId, queryData) => {
+    const res = await fetch(`${API_BASE}/meshes/generate/meshy/result`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId, ...queryData })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      throw new Error(data?.error || 'Failed to query Meshy mesh generation result')
+    }
+    return data
+  }
+
   const queryHitemMeshGenerationResult = async (projectId, queryData) => {
     const res = await fetch(`${API_BASE}/meshes/generate/hitem/result`, {
       method: 'POST',
@@ -1645,6 +1658,7 @@ export function ProjectProvider({ children }) {
       queryTencentMeshGenerationResult,
       queryTripoMeshGenerationResult,
       queryHitemMeshGenerationResult,
+      queryMeshyMeshGenerationResult,
       runMeshEditApi,
       runMeshTexturingApi,
       runMeshRiggingApi,

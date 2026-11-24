@@ -15,9 +15,11 @@ export const IMAGE_API_LIST = [
 export const TENCENT_MESH_GENERATION_API_ID = 'tencent_meshgeneration'
 export const TRIPO_MESH_GENERATION_API_ID = 'tripo_meshgeneration'
 export const HITEM_MESH_GENERATION_API_ID = 'hitem_meshgeneration'
+export const MESHY_MESH_GENERATION_API_ID = 'meshy_meshgeneration'
 export const TENCENT_MESH_API_OPTION = { id: TENCENT_MESH_GENERATION_API_ID, name: 'Tencent Cloud · Hunyuan3D Pro' }
 export const TRIPO_MESH_API_OPTION = { id: TRIPO_MESH_GENERATION_API_ID, name: 'Tripo AI' }
 export const HITEM_MESH_API_OPTION = { id: HITEM_MESH_GENERATION_API_ID, name: 'Hitem3D' }
+export const MESHY_MESH_API_OPTION = { id: MESHY_MESH_GENERATION_API_ID, name: 'Meshy' }
 export const TENCENT_REGION_OPTIONS = ['ap-singapore', 'eu-frankfurt', 'na-siliconvalley']
 export const TENCENT_MODEL_VERSION_OPTIONS = ['3.0', '3.1']
 export const TENCENT_GENERATION_TYPE_OPTIONS = ['Normal', 'LowPoly', 'Geometry']
@@ -42,6 +44,33 @@ export const HITEM_REQUEST_TYPE_OPTIONS = [
 ]
 export const HITEM_FACE_MIN = 100000
 export const HITEM_FACE_MAX = 5000000
+
+// Meshy (docs.meshy.ai/en/api/image-to-3d). meshy-t2 / meshy-t2.5 are the
+// Smart Topology models: single image only, no remesh options.
+export const MESHY_AI_MODEL_OPTIONS = ['latest', 'meshy-7.1', 'meshy-6', 'meshy-6-lite', 'meshy-t2', 'meshy-t2.5']
+export const MESHY_SMART_TOPOLOGY_MODELS = ['meshy-t2', 'meshy-t2.5']
+export const MESHY_TEXTURE_MODEL_OPTIONS = [
+  { value: '', label: 'Model default' },
+  { value: 'meshy-7', label: 'meshy-7' },
+  { value: 'meshy-n1', label: 'meshy-n1' },
+  { value: 'meshy-6-lite', label: 'meshy-6-lite' }
+]
+export const MESHY_TOPOLOGY_OPTIONS = ['triangle', 'quad']
+export const MESHY_DEFAULTS = {
+  meshyAiModel: 'latest',
+  meshyShouldTexture: true,
+  meshyTextureModel: '',
+  meshyEnablePbr: false,
+  meshyTexturePrompt: '',
+  meshyShouldRemesh: true,
+  meshyTopology: 'triangle',
+  meshyTargetPolycount: 30000
+}
+
+// The /api/meshes/generate fields for a draft's Meshy options.
+export function getMeshyRequestOptions(draft = {}) {
+  return Object.fromEntries(Object.keys(MESHY_DEFAULTS).map(key => [key, draft[key] ?? MESHY_DEFAULTS[key]]))
+}
 
 export function getHitemResolutionOptions(model) {
   return HITEM_RESOLUTION_OPTIONS_BY_MODEL[model] || HITEM_RESOLUTION_OPTIONS_BY_MODEL['hitem3dv2.1']
@@ -125,6 +154,19 @@ export function canFetchHitemMeshResult(runtimeState) {
     && runtimeState?.taskId
 }
 
+export function isMeshyMeshGenerationApi(selectedApi = '') {
+  return String(selectedApi || '').trim() === MESHY_MESH_GENERATION_API_ID
+}
+
+export const MESHY_TERMINAL_STATUSES = ['succeeded', 'failed', 'canceled']
+
+export function canFetchMeshyMeshResult(runtimeState) {
+  return runtimeState?.source === 'Meshy'
+    && runtimeState?.status === 'processing'
+    && !MESHY_TERMINAL_STATUSES.includes(String(runtimeState?.taskStatus || '').toLowerCase())
+    && runtimeState?.taskId
+}
+
 // Default values for the provider-specific mesh generation options
 // (Tencent Cloud / Tripo AI). Shared by the per-card action draft and the
 // "Add New Mesh" draft so the two stay in sync.
@@ -155,7 +197,8 @@ export function getMeshGenApiDefaults() {
     hitemResolution: '1536pro',
     hitemRequestType: 3,
     hitemFace: 300000,
-    hitemPbr: false
+    hitemPbr: false,
+    ...MESHY_DEFAULTS
   }
 }
 

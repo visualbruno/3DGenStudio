@@ -1,5 +1,5 @@
-// Workspace → Mesh module: the cloud mesh APIs (Tripo AI, Hitem3D, Tencent
-// Cloud Hunyuan3D). Each is described as data — its controls, defaults and how
+// Workspace → Mesh module: the cloud mesh APIs (Tripo AI, Hitem3D, Meshy,
+// Tencent Cloud Hunyuan3D). Each is described as data — its controls, defaults and how
 // they become the /api/meshes/generate body — so the panel renders them all with
 // one set of Workspace fields.
 //
@@ -28,6 +28,16 @@ export const CLOUD_MESH_MODELS = [
     hasKey: settings => Boolean(String(settings?.apis?.hitem3d?.accessKey || '').trim()
       && String(settings?.apis?.hitem3d?.secretKey || '').trim()),
     keyHint: 'Hitem3D Access Key and Secret Key'
+  },
+  {
+    id: 'meshy',
+    api: 'meshy_meshgeneration',
+    label: 'Meshy',
+    provider: 'Meshy',
+    tabs: ['single', 'multiview'],
+    resultPath: '/meshes/generate/meshy/result',
+    hasKey: settings => Boolean(String(settings?.apis?.meshy?.apiKey || '').trim()),
+    keyHint: 'Meshy API key'
   },
   {
     id: 'tencent',
@@ -64,6 +74,13 @@ function isTripoPSeries(options) {
   return TRIPO_P_SERIES.includes(options?.modelVersion)
 }
 
+// meshy-t2 / meshy-t2.5 are Smart Topology: single image, own polycount range.
+const MESHY_SMART_TOPOLOGY_RANGES = { 'meshy-t2': 15000, 'meshy-t2.5': 30000 }
+
+function isMeshySmartTopology(options) {
+  return Boolean(MESHY_SMART_TOPOLOGY_RANGES[options?.meshyAiModel])
+}
+
 const HITEM_RESOLUTIONS = {
   'hitem3dv1.5': ['512', '1024', '1536', '1536pro'],
   'hitem3dv2.0': ['512', '1024', '1536', '1536pro'],
@@ -95,6 +112,15 @@ export const CLOUD_MESH_DEFAULTS = {
     texture: true,
     pbr: false
   },
+  meshy: {
+    meshyAiModel: 'latest',
+    faces: 30000,
+    texture: true,
+    pbr: false,
+    meshyTextureModel: '',
+    meshyShouldRemesh: true,
+    meshyTopology: 'triangle'
+  },
   tencent: {
     region: 'eu-frankfurt',
     modelVersion: '3.0',
@@ -114,6 +140,11 @@ export function cloudFacePresets(model, options) {
     return [null, 10000, 50000, 200000, 500000]
   }
   if (model.id === 'hitem') return [100000, 300000, 500000, 1000000, 2000000]
+  if (model.id === 'meshy') {
+    if (options?.meshyAiModel === 'meshy-t2') return [1000, 2000, 4000, 8000, 15000]
+    if (options?.meshyAiModel === 'meshy-t2.5') return [5000, 10000, 15000, 20000, 30000]
+    return [5000, 10000, 30000, 100000, 300000]
+  }
   return [50000, 100000, 300000, 500000, 1000000]
 }
 
@@ -124,6 +155,7 @@ export function cloudFaceRange(model, options) {
     return { min: 1000, max: 1500000 }
   }
   if (model.id === 'hitem') return { min: 100000, max: 2000000 }
+  if (model.id === 'meshy') return { min: 100, max: MESHY_SMART_TOPOLOGY_RANGES[options?.meshyAiModel] || 300000 }
   return { min: 3000, max: 1500000 }
 }
 
@@ -132,7 +164,8 @@ export function cloudSupports(model, options) {
   return {
     seed: model.id === 'tripo',
     texture: model.id !== 'tencent',
-    pbr: model.id !== 'hitem' || options?.hitemModel !== 'hitem3dv1.5'
+    pbr: (model.id !== 'hitem' || options?.hitemModel !== 'hitem3dv1.5')
+      && (model.id !== 'meshy' || options?.meshyTextureModel !== 'meshy-n1')
   }
 }
 
@@ -189,6 +222,47 @@ export function cloudMeshFields(model, options, tab) {
         { key: 'hitemResolution', label: 'Resolution', kind: 'select', options: resolutions }
       ],
       advanced: []
+    }
+  }
+
+  if (model.id === 'meshy') {
+    const smartTopology = isMeshySmartTopology(options)
+    return {
+      main: [
+        {
+          key: 'meshyAiModel',
+          label: 'Model',
+          kind: 'select',
+          options: [
+            { value: 'latest', label: 'Latest (Meshy 7.1)' },
+            { value: 'meshy-7.1', label: 'Meshy 7.1' },
+            { value: 'meshy-6', label: 'Meshy 6' },
+            { value: 'meshy-6-lite', label: 'Meshy 6 Lite — cheap drafts' },
+            // Smart Topology is single-image only.
+            ...(tab === 'multiview' ? [] : [
+              { value: 'meshy-t2.5', label: 'Meshy T2.5 — smart topology' },
+              { value: 'meshy-t2', label: 'Meshy T2 — smart topology' }
+            ])
+          ]
+        }
+      ],
+      advanced: [
+        {
+          key: 'meshyTextureModel',
+          label: 'Texture Model',
+          kind: 'select',
+          options: [
+            { value: '', label: 'Model default' },
+            { value: 'meshy-7', label: 'meshy-7' },
+            { value: 'meshy-n1', label: 'meshy-n1' },
+            ...(tab === 'multiview' ? [] : [{ value: 'meshy-6-lite', label: 'meshy-6-lite' }])
+          ]
+        },
+        ...(smartTopology ? [] : [
+          { key: 'meshyShouldRemesh', label: 'Remesh to Target Faces', kind: 'switch' },
+          { key: 'meshyTopology', label: 'Topology', kind: 'select', options: ['triangle', 'quad'] }
+        ])
+      ]
     }
   }
 
@@ -279,6 +353,21 @@ export function buildCloudMeshRequest(model, options, { projectId, name, imageSo
       hitemRequestType: options.texture ? 3 : 1,
       hitemFace: options.faces,
       hitemPbr: options.texture && options.pbr
+    }
+  }
+
+  if (model.id === 'meshy') {
+    // A Smart Topology model left selected from the single tab cannot take views.
+    const aiModel = views && isMeshySmartTopology(options) ? 'latest' : options.meshyAiModel
+    return {
+      ...body,
+      meshyAiModel: aiModel,
+      meshyShouldTexture: options.texture,
+      meshyTextureModel: options.meshyTextureModel,
+      meshyEnablePbr: options.texture && options.pbr,
+      meshyShouldRemesh: options.meshyShouldRemesh,
+      meshyTopology: options.meshyTopology,
+      meshyTargetPolycount: options.faces
     }
   }
 
