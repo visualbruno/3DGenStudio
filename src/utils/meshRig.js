@@ -19,9 +19,14 @@
 // space. Writing p' = bindMatrix·p, three's skinning of the original mesh
 // reduces at rest to Σ(boneᵢ.matrixWorld · boneInverseᵢ · p' · wᵢ) = p'. Feeding
 // the already-baked p' back in with bindMatrix = I therefore reproduces exactly
-// the same rest pose — which is why the node transform is pinned to identity
-// too. Keeping the original bind matrix instead would apply it twice and deform
-// the mesh.
+// the same rest pose — which is why the node's WORLD transform is pinned to
+// identity too. Keeping the original bind matrix instead would apply it twice
+// and deform the mesh.
+//
+// That reduction assumes boneᵢ.matrixWorld · boneInverseᵢ = I at rest, which a
+// ground-aligned file breaks: meshPivot.js wraps the scene in a translated
+// PivotOffset node above both the bones and the mesh, so the product is that
+// translation. buildRiggedObject folds it back out of the inverse binds.
 import * as THREE from 'three'
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils.js'
 
@@ -207,6 +212,11 @@ export function transformRig(rig, scale = 1, offset = null) {
   })
 }
 
+function isIdentityMatrix(matrix, epsilon = 1e-6) {
+  const identity = new THREE.Matrix4().elements
+  return matrix.elements.every((value, index) => Math.abs(value - identity[index]) <= epsilon)
+}
+
 // Rebuild an exportable scene: the captured bone hierarchy plus a SkinnedMesh
 // carrying `geometry`. Returns null when the geometry has no skin data to bind,
 // so callers fall back to a plain static export rather than emit a SkinnedMesh
@@ -232,14 +242,39 @@ export function buildRiggedObject(rig, geometry, material = null) {
   if (material) mesh.material = material
 
   // The geometry is already in world space (see the note at the top), so this
-  // node contributes nothing further.
-  mesh.position.set(0, 0, 0)
-  mesh.quaternion.identity()
-  mesh.scale.set(1, 1, 1)
+  // node must contribute nothing further — its WORLD matrix has to be identity,
+  // not just its local one. A ground-aligned file wraps the whole scene in a
+  // PivotOffset node (meshPivot.js) that the mesh sits under; zeroing only the
+  // local transform left that offset applied a second time on top of the
+  // already-baked vertices, and the saved mesh came back floating above its
+  // skeleton by exactly the pivot move.
+  scene.updateMatrixWorld(true)
+  const parentInverse = mesh.parent
+    ? mesh.parent.matrixWorld.clone().invert()
+    : new THREE.Matrix4()
+  parentInverse.decompose(mesh.position, mesh.quaternion, mesh.scale)
   mesh.updateMatrix()
-  mesh.matrixWorldNeedsUpdate = true
+  scene.updateMatrixWorld(true)
 
-  mesh.bind(mesh.skeleton, new THREE.Matrix4())
+  // The same offset lives in the bind too. At rest boneWorld · boneInverse is
+  // the transform the editor baked into the vertices — identity for a plain
+  // export, the PivotOffset translation for a ground-aligned one — so keeping
+  // the inverse binds as loaded would push every skinned vertex by it once
+  // more. Folding its inverse into each bone's inverse bind makes the rest pose
+  // identity again (and the written inverseBindMatrices with it) while leaving
+  // the bones' bind relative to one another exactly as the file had it.
+  // A fresh array: Skeleton.clone shares `boneInverses` with the captured rig.
+  const skeleton = mesh.skeleton
+  const firstBone = skeleton.bones[0]
+  if (firstBone && skeleton.boneInverses[0]) {
+    const restOffset = firstBone.matrixWorld.clone().multiply(skeleton.boneInverses[0])
+    if (!isIdentityMatrix(restOffset)) {
+      const undo = restOffset.invert()
+      skeleton.boneInverses = skeleton.boneInverses.map(inverse => inverse.clone().multiply(undo))
+    }
+  }
+
+  mesh.bind(skeleton, new THREE.Matrix4())
   scene.updateMatrixWorld(true)
 
   // exportObject3D reads `object.animations`, so this is the single point that

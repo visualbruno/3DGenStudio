@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-11-24** | Mesh Editor: Added PBR texture generator<br>Batch Project: Added PBR Stage<br>OpenAI: Removed deprecated image models<br>Fixed bugs |
 | **2026-11-08** | Workspace: Added new module "Animate with AI"<br>Workspace - Retopo: Added Refine<br>Workspace - Rig: Can align mesh to the ground and show bone names |
 | **2026-11-07** | New project type "Workspace" |
 | **2026-11-03** | Assets Page: Can delete selected assets<br>ComfyUI and MeshTools: Can select the GPU (nVidia only)<br>Tripo AI: Removed deprecated models<br>SetupWizard: Fixed download UltraTex PBR model |

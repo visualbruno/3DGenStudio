@@ -31,6 +31,17 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v4.2.0',
+    date: '2026-11-24',
+    items: [
+			'Mesh Editor: Added "PBR" tool',
+			'Batch Project: Added "PBR" stage',
+			'Fixed inverted normal map',
+			'Fixed AutoRig VRAM increasing',
+			'Removed deprecated OpenAI Image models'
+    ]
+  },
+  {
     version: 'v4.1.0',
     date: '2026-11-08',
     items: [
