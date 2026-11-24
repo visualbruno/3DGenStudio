@@ -123,6 +123,7 @@ import {
   applySeamPostProcessing,
   fillHolesPostProcessing
 } from '../utils/meshProjection'
+import { pickVisibleFacesInRect, pickVisibleVerticesInRect } from '../utils/meshRectSelection'
 import {
   getRectangleBounds,
   loadImageElement,
@@ -974,6 +975,9 @@ export default function MeshEditorPage() {
   const returnTo = searchParams.get('returnTo') || ''
   const canvasShellRef = useRef(null)
   const cameraRef = useRef(null)
+  // The R3F WebGLRenderer, for offscreen passes such as the rectangle-select
+  // face-ID render (see utils/meshRectSelection.js).
+  const rendererRef = useRef(null)
   const dragStateRef = useRef(null)
   const paintStateRef = useRef(null)
   const displayTextureRef = useRef(null)
@@ -3271,6 +3275,31 @@ export default function MeshEditorPage() {
 
     const rect = canvasShellRef.current.getBoundingClientRect()
     const bounds = getRectangleBounds(startPoint, endPoint)
+
+    // Exact path: a face-ID render of the rectangle selects every visible face
+    // (or vertex) inside it. The ray grid below is only a fallback — it samples
+    // at >= 6 px spacing, so on dense meshes it misses most small triangles.
+    if (rendererRef.current && rect.width && rect.height) {
+      try {
+        const pickArgs = {
+          renderer: rendererRef.current,
+          camera: cameraRef.current,
+          geometry,
+          bounds,
+          viewSize: { width: rect.width, height: rect.height }
+        }
+        const picked = selectionMode === 'vertex'
+          ? pickVisibleVerticesInRect(pickArgs)
+          : pickVisibleFacesInRect(pickArgs)
+        if (picked) {
+          applySelection(selectionMode === 'vertex' ? 'vertex' : 'face', picked, isMultiSelect)
+          return
+        }
+      } catch (error) {
+        console.warn('Face-ID rectangle selection failed; falling back to ray sampling.', error)
+      }
+    }
+
     const raycaster = new THREE.Raycaster()
     raycaster.firstHitOnly = true
     const samplePoints = createRectangleSamplePoints(bounds)
@@ -12077,6 +12106,7 @@ export default function MeshEditorPage() {
                       style={{ width: '100%', height: '100%' }}
                       gl={{ powerPreference: 'high-performance' }}
                       onCreated={({ gl }) => {
+                        rendererRef.current = gl
                         const canvas = gl.domElement
                         const handleLost = (event) => {
                           event.preventDefault()
