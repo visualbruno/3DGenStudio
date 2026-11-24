@@ -32,7 +32,7 @@ from ..meshio import (export_mesh, load_mesh, load_mesh_vertex_normals, load_sce
 from ..schemas import (AutoRetopoOptions, AutoUvOptions, BakeOptions, CollisionOptions,
                        ImpostorOptions,
                        ConvertOptions, FitOptions, FlattenOptions, HiddenFaceOptions, InspectOptions,
-                       RepairOptions, SegmentOptions)
+                       RepairOptions, SegmentOptions, ShapeSkeletonOptions)
 from ..services.assembly_fit import run_fit
 from ..services.auto_retopo import run_auto_retopo
 from ..services.auto_uv import run_auto_uv
@@ -47,6 +47,7 @@ from ..services.inspect import run_inspect
 from ..services.mesh_thumbnail import render_mesh_thumbnail
 from ..services.repair import run_repair
 from ..services.segment import run_segment
+from ..services.shape_skeleton import run_shape_skeleton
 from .streaming import stream_payload
 
 router = APIRouter(prefix="/meshes", tags=["meshes"])
@@ -370,6 +371,28 @@ async def segment(
         return run_segment(mesh, opts, progress=emit)
 
     return stream_payload(run, "Smart Segmentation")
+
+
+@router.post("/shape-skeleton")
+async def shape_skeleton(
+    meshFile: UploadFile = File(...),
+    options: str | None = Form(None),
+) -> dict:
+    """Curve skeleton of the mesh as a graph (nodes, edges with medial polylines
+    and tube radii) - what the AI rigging tools read limbs from.
+
+    Single JSON response like /inspect: it returns numbers, not geometry, and
+    finishes in a few seconds. The mesh must already be in the caller's world
+    space (the Node side sends a flattened triangle soup), so the coordinates
+    come back in the same frame.
+    """
+    opts = _parse_options(options, ShapeSkeletonOptions)
+    data = await _read_upload(meshFile)
+    mesh = load_mesh(data, meshFile.filename or "mesh.glb")
+    try:
+        return await run_in_threadpool(run_shape_skeleton, mesh, opts)
+    except Exception as exc:  # noqa: BLE001 - surface as a clean HTTP error
+        raise HTTPException(status_code=500, detail=f"Shape skeleton failed: {exc}") from exc
 
 
 @router.post("/inspect")

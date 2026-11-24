@@ -10,6 +10,7 @@ import {
 import { renameBones, namingScheme, addBone, splitBone, smoothWeights, rebuildWeights } from '../../animation/rigEdit.js';
 import { deformationTest } from '../../animation/inspect.js';
 import { readStaticMesh, soupGlb, islandLabels, labelsFromSegmentation, planRigidRig, buildRigidRig, describePlan } from '../../animation/rigid.js';
+import { runShapeRigTask, stripSkin } from '../../animation/shapeRig.js';
 import * as THREE from 'three';
 
 // "Animate with AI": let an agent animate ANY rigged mesh - robots, monsters,
@@ -181,6 +182,9 @@ async function saveRigEdit(api, notifyMutation, projectId, loaded, buffer, { sav
     if (profile?.boneChains) {
       nextProfile = { ...profile, boneChains: Object.fromEntries(Object.entries(profile.boneChains).map(([b, c]) => [rename.get(b) || b, c])) };
     }
+    if (Array.isArray(profile?.chains)) {
+      nextProfile = { ...(nextProfile || profile), chains: profile.chains.map(c => ({ ...c, bones: (c.bones || []).map(b => rename.get(b) || b) })) };
+    }
   }
   const saved = await saveVersion(api, asset, buffer, { saveMode, name, boneMappings });
   const savedId = saved?.id ?? saved?.asset?.id ?? asset.id;
@@ -272,8 +276,83 @@ function guarded(fn) {
     try {
       return await fn(args ?? {}, extra);
     } catch (err) {
-      return { isError: true, content: [{ type: 'text', text: String(err?.message || err) }] };
+      // "fetch failed" alone says nothing: name the network cause too.
+      const cause = err?.cause ? ` (${err.cause.code || err.cause.message || err.cause})` : '';
+      return { isError: true, content: [{ type: 'text', text: `${String(err?.message || err)}${cause}` }] };
     }
+  };
+}
+
+// ---- shape rigging (analyze_shape / build_rig) ------------------------------------------
+
+const SHAPE = {
+  forward: z.enum(['+z', '-z', '+x', '-x']).optional().describe('The direction the creature faces, when the image shows the guess is wrong.'),
+  branches: z.record(z.string(), z.string()).optional().describe(
+    'Branch number (from the image) -> label. Labels: spine, neck, head, tail, body (a limbless trunk), leg, arm, wing, '
+    + 'finger / toe / talon (small digits), ear, horn, antenna, jaw, eye, tusk, tentacle, fin, claw, pincer, or any name. '
+    + 'A paired part may omit _L/_R: the side comes from the geometry and repeats are numbered front to back (8 x "leg" = leg_1_L ... leg_4_R). '
+    + '"ignore" = never rig that branch.'),
+  only: z.boolean().optional().describe('Rig ONLY the labelled branches (plus the body that joins them). Use it when the automatic choice took in clothing, hair, fur or debris.'),
+  body: z.enum(['auto', 'spine', 'core']).optional().describe('auto (default): a wide flat body (crab, beetle, turtle shell) becomes ONE rigid core bone with the limbs around it; spine = always a bendable spine; core = always one core bone.'),
+  resolution: z.number().int().min(96).max(320).optional().describe('Voxels along the longest side for the shape skeleton (default 160). Raise it when thin parts (antennae, fingers, a thin tail) are missing.')
+};
+
+// The skeleton depends only on the file and the resolution: cache a few so a
+// build_rig right after analyze_shape (or a corrected re-build) skips it.
+const shapeSkeletonCache = new Map();
+
+async function loadShape(api, projectId, assetId, { replace = true, resolution } = {}) {
+  const asset = await findProjectAsset(api, projectId, assetId);
+  const file = asset.filename || asset.filePath;
+  if (!/\.glb$/i.test(String(file))) throw new Error(`Asset ${assetId} is ${path.extname(String(file)) || 'not a file'}; shape rigging reads GLB meshes.`);
+  let buffer = Buffer.from(await api.fetchAssetBuffer(file));
+  let rigged = null;
+  try {
+    const { rig } = openRig(buffer);
+    rigged = { bones: rig.joints.length, clips: listClipsInJson(rig.json).map(c => c.name) };
+  } catch {
+    rigged = null;
+  }
+  if (rigged) {
+    if (!replace) {
+      throw new Error(`Asset ${assetId} is already rigged (${rigged.bones} bones${rigged.clips.length ? `, clips: ${rigged.clips.join(', ')}` : ''}). `
+        + 'Pass replace:true to throw that skeleton away and rig it again from its shape (its clips are dropped), or fix it in place with the rig edit tools.');
+    }
+    buffer = stripSkin(buffer);
+  }
+  const key = `${file}|${resolution || 160}`;
+  let payload = shapeSkeletonCache.get(key);
+  if (!payload) {
+    const mesh = readStaticMesh(buffer);
+    const form = new FormData();
+    form.append('meshFile', new Blob([soupGlb(mesh)], { type: 'model/gltf-binary' }), 'shape.glb');
+    form.append('options', JSON.stringify(resolution ? { resolution } : {}));
+    payload = await api.apiForm('POST', '/meshes/shape-skeleton', form);
+    shapeSkeletonCache.set(key, payload);
+    while (shapeSkeletonCache.size > 6) shapeSkeletonCache.delete(shapeSkeletonCache.keys().next().value);
+  }
+  return { asset, buffer, payload, rigged };
+}
+
+/** The branch list an AI reads: tips first, rounded, body-relative. */
+function compactBranches(table, size) {
+  const rel = v => Math.round((v / (size || 1)) * 100) / 100;
+  const row = b => ({
+    id: b.id,
+    label: b.label,
+    ...(b.status !== 'rigged' ? { status: b.status } : {}),
+    length: rel(b.length),
+    tip: b.ends[1],
+    ...(b.touchesGround ? { ground: true } : {})
+  });
+  const tips = table.filter(b => b.terminal && b.status !== 'detail');
+  const internal = table.filter(b => !b.terminal && b.status !== 'detail');
+  const details = table.filter(b => b.status === 'detail');
+  return {
+    tips: tips.map(row),
+    internal: internal.map(b => ({ id: b.id, label: b.label, ...(b.status !== 'rigged' ? { status: b.status } : {}) })),
+    details: details.slice(0, 40).map(b => ({ id: b.id, length: rel(b.length), tip: b.ends[1] })),
+    ...(details.length > 40 ? { moreDetails: details.length - 40 } : {})
   };
 }
 
@@ -464,6 +543,93 @@ export function registerAnimationTools(mcpServer, { api, notifyMutation, agentRu
       parts: describePlan(plan),
       joints: built.joints,
       next: 'describe_rig to see how it reads as a body; reparent / names and run again to correct the tree.'
+    });
+  }));
+
+  server.registerTool('analyze_shape', {
+    title: 'See a mesh as tubes before rigging it',
+    description: 'Read ANY mesh (rigged or not) as its curve skeleton: every leg, arm, tail, horn, tentacle and claw is a tube, numbered in the image '
+      + '(only TIP branches carry numbers, placed near their tips; internal connecting branches are drawn unnumbered; grey = cloth/debris left out or small details). '
+      + 'Each branch has a proposed label (the same body-plan reading describe_rig uses) and the creature\'s facing. Read-only. '
+      + 'Then call build_rig - with no arguments if the labels are right, or with branches {number: label} (and only:true for messy meshes) to correct them.',
+    inputSchema: {
+      ...LOCATE,
+      ...SHAPE,
+      numberAll: z.boolean().optional().describe('Also number internal branches and small details in the image.')
+    },
+    annotations: { readOnlyHint: true }
+  }, guarded(async ({ projectId, assetId, forward, branches, only, body, resolution, numberAll = false }, extra) => {
+    const reportProgress = createProgressReporter(extra);
+    await reportProgress(5, 100, 'Measuring the shape skeleton');
+    const { asset, buffer, payload, rigged } = await loadShape(api, projectId, assetId, { replace: true, resolution });
+    await reportProgress(60, 100, 'Reading the body plan');
+    const a = await runShapeRigTask('analyze', { buffer, payload, options: { forward, branches, only, body }, numberAll });
+    const d = a.description;
+    return imageResult(a.png, {
+      assetId: asset.id,
+      ...(rigged ? { alreadyRigged: rigged, note: 'This mesh already has a skeleton; build_rig needs replace:true to rebuild it from the shape.' } : {}),
+      bodyPlan: d.bodyPlan,
+      facing: { forward: d.forward, reason: d.forwardReason },
+      template: a.template,
+      body: a.collapsed ? 'core (one rigid body bone)' : 'spine',
+      size: { height: d.size.height, length: d.size.length, width: d.size.width },
+      branches: compactBranches(a.table, payload.size),
+      skeleton: { ...payload.stats, detached: a.detached, loopsCut: a.loopsCut },
+      next: 'If the labels in the image are right: build_rig. Otherwise build_rig with branches {"<number>": "<label>"} for the tips you correct; add only:true to rig nothing else.'
+    });
+  }));
+
+  server.registerTool('build_rig', {
+    title: 'Rig any mesh from its shape',
+    description: 'Build a skeleton and skin weights for ANY mesh - human, animal, monster, insect, crab, octopus - from its curve skeleton, in ONE call: '
+      + 'the tubes are labelled (automatically, or with your branches {number: label} from analyze_shape / a previous build_rig), joints are placed by rule '
+      + '(human proportions + Mixamo names for humanoids; elbows/knees snapped to the bends; tails and tentacles jointed by length), weights are bound, and '
+      + 'the chain labels are stored so describe_rig and every animation tool read the creature exactly as built. No GPU model involved - use it when '
+      + 'auto_rig_mesh fails or gets the skeleton wrong (replace:true rebuilds an existing rig). Returns the rig image, chains, the branch table (to correct '
+      + 'and call again) and the quality checks. Saves a new version.',
+    inputSchema: {
+      ...LOCATE,
+      ...SHAPE,
+      template: z.enum(['auto', 'humanoid', 'creature']).optional().describe('auto (default): humanoid when the body reads as an upright biped with arms, else creature.'),
+      naming: z.enum(['auto', 'semantic', 'mixamo']).optional().describe('auto (default): Mixamo names for humanoids (retargeting, engine humanoid setup), else chain-based names (leg_1_L_2, tail_3).'),
+      replace: z.boolean().optional().describe('The mesh already has a skeleton: throw it away (and its clips) and rig again from the shape.'),
+      ...SAVE
+    }
+  }, guarded(async ({ projectId, assetId, forward, branches, only, body, resolution, template, naming, replace = false, saveMode, name }, extra) => {
+    const reportProgress = createProgressReporter(extra);
+    await reportProgress(5, 100, 'Measuring the shape skeleton');
+    const { asset, buffer, payload, rigged } = await loadShape(api, projectId, assetId, { replace, resolution });
+    await reportProgress(40, 100, 'Placing joints and binding weights');
+    const built = await runShapeRigTask('build', { buffer, payload, options: { forward, branches, only, body, template, naming } });
+    await reportProgress(80, 100, 'Saving');
+    const saved = await saveVersion(api, asset, built.buffer, { saveMode, name: name || `${asset.name || 'Mesh'} (rigged)` });
+    const savedId = saved?.id ?? saved?.asset?.id ?? asset.id;
+    await api.apiJson('PUT', `/assets/${savedId}/rig-profile`, { body: { rigProfile: built.profile } });
+    notifyMutation(projectId);
+    const report = built.report;
+    return imageResult(built.png, {
+      sourceAssetId: asset.id,
+      assetId: savedId,
+      ...(rigged ? { replaced: rigged } : {}),
+      bodyPlan: built.description.bodyPlan,
+      facing: built.description.forward,
+      template: built.template,
+      naming: built.naming,
+      body: built.collapsed ? 'core' : 'spine',
+      bones: built.bones,
+      chains: built.chains.map(c => ({ label: c.label, kind: c.kind, bones: c.bones.length })),
+      legend: built.legend,
+      branches: compactBranches(built.table, payload.size),
+      verdict: report.verdict,
+      issues: report.issues
+        .filter(i => i.severity !== 'info' || i.check === 'deformation')
+        .slice(0, 10)
+        .map(i => ({ severity: i.severity, check: i.check, message: i.message })),
+      jointsBendTested: report.stats.jointsBendTested ?? 0,
+      weights: built.weights,
+      ...(built.notes.length ? { notes: built.notes } : {}),
+      next: 'Check the image: every limb its own colour, joints inside the body. Wrong label or a missing limb -> build_rig again on the SAME source asset '
+        + `(${asset.id}) with branches {...}${rigged ? ' and replace:true' : ''}. Then describe_rig / preview_animation on asset ${savedId}.`
     });
   }));
 

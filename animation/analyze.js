@@ -586,6 +586,34 @@ export function describeRig(rig, profile = null) {
     });
   }
 
+  // ---- explicit chains (build_rig) -------------------------------------------
+  // A rig built from a labelled plan carries its chains in the profile. They
+  // replace the geometric guesses outright: the builder KNOWS which bone is the
+  // tail, so nothing here should second-guess it. Frame, mirror partners and
+  // the upright test above are still measured, from the joints themselves.
+  if (Array.isArray(profile?.chains) && profile.chains.length) {
+    chains.length = 0;
+    jointChain.fill(null);
+    for (const def of profile.chains) {
+      if (!def || typeof def.label !== 'string' || !def.label.trim()) continue;
+      const bones = (def.bones || []).map(b => rig.jointByName.get(b)).filter(j => j !== undefined);
+      if (!bones.length) continue;
+      const m = /_([LR])(\.|$)/.exec(def.label);
+      const side = m ? (m[1] === 'L' ? 1 : -1) : 0;
+      addChain(def.label.trim(), def.kind || 'custom', side, bones, rig.joints[bones[0]].parent);
+    }
+    // Bones added after the build (add_bone, split_bone) join their parent's
+    // chain right after it, in hierarchy order - a split tail stays one chain.
+    for (const j of order) {
+      if (jointChain[j] !== null) continue;
+      const p = rig.joints[j].parent;
+      if (p < 0 || jointChain[p] === null) continue;
+      const chain = chains.find(c => c.label === jointChain[p]);
+      chain.bones.splice(chain.bones.indexOf(p) + 1, 0, j);
+      jointChain[j] = chain.label;
+    }
+  }
+
   // Anything still unlabelled: driver/helper bones and sub-branches of the trunk.
   for (let j = 0; j < n; j += 1) {
     if (jointChain[j] !== null) continue;

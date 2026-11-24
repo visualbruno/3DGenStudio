@@ -445,28 +445,79 @@ function topFour(map) {
   return [...map.entries()].filter(([, w]) => w > 1e-5).sort((a, b) => b[1] - a[1]).slice(0, 4);
 }
 
+// Laplacian weight smoothing over the welded surface. Weights live in four
+// fixed slots per vertex in typed arrays (glTF keeps four influences anyway):
+// the Map-per-vertex version allocated ~2M Maps per pass and spent 6 of 9
+// seconds rigging a 300k-triangle boar in this function and the GC.
+// In: Map[] (joint -> weight) per id; out: the same, top four, normalised.
 function smoothCanonical(weightsById, neighbours, iterations, strength) {
-  let current = weightsById;
-  for (let it = 0; it < iterations; it += 1) {
-    const next = new Array(current.length);
-    for (let id = 0; id < current.length; id += 1) {
-      const acc = new Map();
-      const own = current[id];
-      for (const [j, w] of own) acc.set(j, (1 - strength) * w);
-      const nb = neighbours[id];
-      if (nb.size) {
-        const share = strength / nb.size;
-        for (const o of nb) for (const [j, w] of current[o]) acc.set(j, (acc.get(j) || 0) + share * w);
-      } else {
-        for (const [j, w] of own) acc.set(j, w);
-      }
-      const top = topFour(acc);
-      const sum = top.reduce((s, [, w]) => s + w, 0) || 1;
-      next[id] = new Map(top.map(([j, w]) => [j, w / sum]));
-    }
-    current = next;
+  const n = weightsById.length;
+  let J = new Int32Array(n * 4).fill(-1);
+  let W = new Float32Array(n * 4);
+  for (let id = 0; id < n; id += 1) {
+    let k = 0;
+    for (const [j, w] of weightsById[id]) { if (k >= 4) break; J[id * 4 + k] = j; W[id * 4 + k] = w; k += 1; }
   }
-  return current;
+  if (iterations <= 0) return weightsById;
+  const offsets = new Int32Array(n + 1);
+  for (let id = 0; id < n; id += 1) offsets[id + 1] = offsets[id] + neighbours[id].size;
+  const list = new Int32Array(offsets[n]);
+  for (let id = 0; id < n; id += 1) { let k = offsets[id]; for (const o of neighbours[id]) list[k++] = o; }
+  let J2 = new Int32Array(n * 4);
+  let W2 = new Float32Array(n * 4);
+  const CAP = 1024;
+  const cj = new Int32Array(CAP);
+  const cw = new Float64Array(CAP);
+  for (let it = 0; it < iterations; it += 1) {
+    for (let id = 0; id < n; id += 1) {
+      let m = 0;
+      const deg = offsets[id + 1] - offsets[id];
+      const own = deg ? 1 - strength : 1;
+      for (let k = 0; k < 4; k += 1) {
+        const j = J[id * 4 + k];
+        if (j < 0) continue;
+        let c = 0;
+        while (c < m && cj[c] !== j) c += 1;
+        if (c === m) { if (m >= CAP) continue; cj[m] = j; cw[m] = 0; m += 1; }
+        cw[c] += own * W[id * 4 + k];
+      }
+      if (deg) {
+        const share = strength / deg;
+        for (let e = offsets[id]; e < offsets[id + 1]; e += 1) {
+          const o = list[e];
+          for (let k = 0; k < 4; k += 1) {
+            const j = J[o * 4 + k];
+            if (j < 0) continue;
+            let c = 0;
+            while (c < m && cj[c] !== j) c += 1;
+            if (c === m) { if (m >= CAP) continue; cj[m] = j; cw[m] = 0; m += 1; }
+            cw[c] += share * W[o * 4 + k];
+          }
+        }
+      }
+      // Top four above 1e-5, strongest first, renormalised.
+      let sum = 0;
+      for (let k = 0; k < 4; k += 1) {
+        let best = -1;
+        for (let c = 0; c < m; c += 1) if (cw[c] > 1e-5 && (best < 0 || cw[c] > cw[best])) best = c;
+        if (best < 0) { J2[id * 4 + k] = -1; W2[id * 4 + k] = 0; continue; }
+        J2[id * 4 + k] = cj[best];
+        W2[id * 4 + k] = cw[best];
+        sum += cw[best];
+        cw[best] = -1;
+      }
+      if (sum > 0) for (let k = 0; k < 4; k += 1) W2[id * 4 + k] /= sum;
+    }
+    [J, J2] = [J2, J];
+    [W, W2] = [W2, W];
+  }
+  const out = new Array(n);
+  for (let id = 0; id < n; id += 1) {
+    const m = new Map();
+    for (let k = 0; k < 4; k += 1) if (J[id * 4 + k] >= 0) m.set(J[id * 4 + k], W[id * 4 + k]);
+    out[id] = m;
+  }
+  return out;
 }
 
 function applyCanonical(rig, canon, weightsById, onlyJoints = null) {
@@ -542,28 +593,46 @@ export function rebuildWeights(buffer, { smoothing = 12, exclude = [], visibilit
     if (j === undefined) throw new Error(`No bone named "${b}".`);
     return j;
   }));
-  // Segments: joint -> farthest child (a leaf is a short stub along its parent line).
+  // Segments: joint -> EACH child (a leaf is a short stub along its parent
+  // line). A hub joint - a pelvis, a hand, a crab's shell - owns the body
+  // toward every child, not only toward its farthest one; with a single
+  // segment, the space toward its other children went to THEIR first bones
+  // (a crab's shell followed its claws).
   const segs = [];
   for (const joint of rig.joints) {
     if (excluded.has(joint.index)) continue;
     const a = P[joint.index];
-    let b = null;
-    let best = 0;
-    for (const c of joint.children) { const d = P[c].distanceTo(a); if (d > best) { best = d; b = P[c]; } }
-    if (!b) {
+    const ends = joint.children.map(c => P[c]).filter(b => a.distanceTo(b) >= 1e-4 * scale);
+    if (!ends.length && !joint.children.length) {
       if (joint.parent < 0) continue;
       const dir = a.clone().sub(P[joint.parent]);
       if (dir.length() < 1e-9 * scale) continue;
-      b = a.clone().addScaledVector(dir, 0.5);
+      ends.push(a.clone().addScaledVector(dir, 0.5));
     }
-    if (a.distanceTo(b) < 1e-4 * scale) continue; // zero-length stubs take no weight; their children do
-    segs.push({ joint: joint.index, a, b, ab: b.clone().sub(a) });
+    // zero-length stubs take no weight; their children do
+    for (const b of ends) segs.push({ joint: joint.index, a, b, ab: b.clone().sub(a) });
   }
   if (!segs.length) throw new Error('No bone has a length to bind the mesh to.');
 
   const { canon, neighbours, count } = weldedTopology(g.positions, g.indices, scale);
   const rep = new Int32Array(count).fill(-1);
   for (let v = 0; v < g.vertexCount; v += 1) if (rep[canon[v]] < 0) rep[canon[v]] = v;
+  // Surface pieces. Game meshes are often built from separate pieces pushed
+  // into each other (61 on the bundled human: arms sunk into the torso). A
+  // ray from a torso vertex toward the spine then hits the buried arm piece,
+  // the spine is rejected and the arm bone takes the shoulder (15x stretch
+  // when the arm bends). Only a vertex's OWN piece may hide a bone from it.
+  const island = new Int32Array(count).fill(-1);
+  let islands = 0;
+  for (let s0 = 0; s0 < count; s0 += 1) {
+    if (island[s0] >= 0) continue;
+    const stack = [s0];
+    island[s0] = islands;
+    while (stack.length) { const v = stack.pop(); for (const o of neighbours[v]) if (island[o] < 0) { island[o] = islands; stack.push(o); } }
+    islands += 1;
+  }
+  const triIsland = islands > 1 ? new Int32Array(g.indices.length / 3) : null;
+  if (triIsland) for (let t = 0; t < triIsland.length; t += 1) triIsland[t] = island[canon[g.indices[t * 3]]];
 
   let bvh = null;
   const tooBig = g.vertexCount > 150000;
@@ -616,8 +685,13 @@ export function rebuildWeights(buffer, { smoothing = 12, exclude = [], visibilit
         const dist = closest.length();
         ray.origin.copy(pos).addScaledVector(closest, 0.02); // step off the surface first
         ray.direction.copy(closest).normalize();
-        const hit = bvh.raycastFirst(ray, THREE.DoubleSide, 0, dist * 0.97);
-        if (hit) continue;
+        if (triIsland) {
+          const own = island[id];
+          const hits = bvh.raycast(ray, THREE.DoubleSide, 0, dist * 0.97);
+          if (hits.some(h => triIsland[h.faceIndex] === own)) continue;
+        } else if (bvh.raycastFirst(ray, THREE.DoubleSide, 0, dist * 0.97)) {
+          continue;
+        }
       }
       nearestVisible = Math.min(nearestVisible, c.d);
       const w = 1 / Math.max(c.d ** falloff, 1e-24);

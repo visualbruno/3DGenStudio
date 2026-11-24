@@ -123,12 +123,12 @@ Connect with transport "Streamable HTTP" to `http://localhost:3001/mcp`.
 | Procedural trees | `list_tree_presets`, `preview_tree_skeleton`, `generate_tree` |
 | Particle effects | `describe_vfx_catalog`, `list_vfx_assets`, `get_vfx_graph`, `compile_vfx_graph`, `list_vfx_sprites`, `install_vfx_sprite`, `set_vfx_texture`, `render_vfx_preview`, `save_vfx_graph`, `export_vfx_bundle` |
 | Buildings | `describe_building_catalog`, `list_buildings`, `get_building`, `compile_building`, `create_building_graph`, `list_building_styles`, `apply_building_style`, `set_building_reference`, `add_building_wing`, `save_building` |
-| Animation (any rigged mesh) | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation`, `list_motion_library`, `publish_animation`; rig prep: `rebind_weights`, `rename_bones`, `add_bone`, `split_bone`, `rig_rigid_parts` |
+| Animation (any rigged mesh) | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation`, `list_motion_library`, `publish_animation`; rigging any mesh: `analyze_shape`, `build_rig`; rig prep: `rebind_weights`, `rename_bones`, `add_bone`, `split_bone`, `rig_rigid_parts` |
 | System | `get_settings` (secrets redacted), `update_settings`, `get_system_stats` |
 
 ### Context cost and loading only the groups you need
 
-An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 112 tools cost ~201 KB of JSON plus ~5 KB of server instructions — roughly **57,100 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~57k tokens: the question is ~10 tokens, the connection is the rest.
+An MCP client injects the **whole tool catalog into the model's system prompt on every request**, before the model reads your message. All 114 tools cost ~207 KB of JSON plus ~5 KB of server instructions — roughly **58,900 tokens per session**, whether or not a single tool is called. That is why even asking a model "are you connected to 3d-gen-studio?" appears to consume ~57k tokens: the question is ~10 tokens, the connection is the rest.
 
 Clients that load tool schemas lazily (Claude Code fetches them on demand) pay almost nothing. For clients that load everything eagerly — most local LLM stacks — load only the groups you need, either with the `--tools` flag or the `MCP_TOOLS` environment variable:
 
@@ -160,11 +160,11 @@ Unset, empty, or `all` loads every group, so nothing changes for an existing con
 
 | Selector | Tools | Catalog | Saved |
 |---|---|---|---|
-| *(unset)* / `all` | 112 | ~55,700 tokens | — |
-| `-mesh` | 98 | ~43,400 | 22% |
-| `-mesh,-actions` | 88 | ~36,900 | 34% |
-| `projects,graph,workflows,assets` | 34 | ~9,400 | 83% |
-| `projects,mesh,assets` | 35 | ~17,400 | 69% |
+| *(unset)* / `all` | 114 | ~57,500 tokens | — |
+| `-mesh` | 100 | ~45,200 | 21% |
+| `-mesh,-actions` | 90 | ~38,700 | 33% |
+| `projects,graph,workflows,assets` | 34 | ~9,400 | 84% |
+| `projects,mesh,assets` | 35 | ~17,400 | 70% |
 | `projects,cards,assets` | 29 | ~6,700 | 88% |
 | `projects,settings` | 10 | ~1,600 | 97% |
 
@@ -172,7 +172,7 @@ The server instructions are assembled to match, so dropping a group also drops i
 
 Over the HTTP endpoint the same selector is available per request as `POST /mcp?tools=graph,workflows`, or as `settings.mcp.tools` for a persistent default.
 
-The heaviest groups are `mesh` (~12,300 tokens across 14 tools), `animation` (~11,400 across 14), `actions` (~6,500 across 10), `assets` (~3,900 across 14) and `tree` (~3,500 across 3) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~3,800 across 6 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~3,500 across 10, and `vfx` ~3,300 across 10, lighter per tool than their scope suggests because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
+The heaviest groups are `animation` (~13,000 tokens across 16 tools), `mesh` (~12,300 across 14), `actions` (~6,500 across 10), `assets` (~3,900 across 14) and `tree` (~3,500 across 3) — the parameter-dense ones, since each tool documents its full option set with ranges and defaults. `batch` is ~3,800 across 6 tools, because a batch's whole vocabulary — variables, groups, stages, bindings — has to be explained somewhere and `get_batch` is where an agent reads it back. `building` is ~3,500 across 10, and `vfx` ~3,300 across 10, lighter per tool than their scope suggests because both push their vocabulary into a `describe_*` tool the caller fetches once instead of into every schema.
 
 #### Tool *results* cost context too
 
@@ -273,9 +273,16 @@ Humanoids are well served by motion libraries and text-to-motion models; robots,
 - `add_bone` adds a child bone that takes over the vertices beyond it.
 - `split_bone` turns one bone into a bendable chain.
 
+**Rigging any mesh from its shape.** When `auto_rig_mesh` cannot rig a creature (a crab, an octopus, a six-armed golem) or gets the skeleton wrong, `build_rig` rigs it from its **curve skeleton** — the medial axis of the solid, measured by the mesh-tools service — with no learned model in the loop. The work splits the way an AI is good at it: the machine measures where every tube (leg, arm, tail, horn, tentacle, claw) is; the AI only says what each one is.
+- `analyze_shape` returns an image of the mesh with every *tip* branch numbered near its tip (internal, connecting branches are drawn unnumbered; cloth, hair and short details are grey), a proposed label per branch from the same body-plan reading `describe_rig` uses, and the facing. The two ends of the body are written as `head` / `tail` on the image, because a flipped facing also swaps every left and right.
+- `build_rig` does the whole rig in one call: labelling, joint placement, weights, and the rig profile. Corrections are passed by branch number: `{"branches": {"7": "tail", "12": "leg", "3": "ignore"}}`. A paired part may be given without `_L`/`_R` — the side comes from the geometry and repeats are numbered front to back (8 × `"leg"` → `leg_1_L` … `leg_4_R`). `only: true` rigs nothing but the labelled parts (plus the body joining them) — the fix for robes, capes, fur and debris. `body: "core"` makes a wide flat body (a crab's shell, a beetle) one rigid bone with the limbs around it; `auto` detects it.
+- Joints are placed by rule: human proportions and Mixamo names for humanoids (so retargeting and engine humanoid setup work), elbows/knees snapped to the bends of the tube, limbs started where they leave the body, tails and tentacles jointed by length/thickness. Weights are rebuilt with `rebind_weights`' visibility rules. The chain labels are stored as the rig profile, so `describe_rig` and every animation tool read the creature exactly as it was built.
+- It returns the rig image, the chains, the branch table (to correct and call again on the same source asset) and the `inspect_rig` checks. `replace: true` rebuilds a mesh that is already rigged (its clips are dropped).
+- Benchmark (`node tools/bench-shape-rig.mjs`): on the bundled hand-rigged species, rebuilt fully automatically from the stripped mesh, chains land within ~2–4% of body size of the hand-made ones wherever the labels agree; facing or labels on winged/flat bodies are what the AI corrects.
+
 **Robots and other rigid meshes.** `rig_rigid_parts` rigs an *unrigged* mesh with no learned weights. It finds the parts either from the mesh's separate pieces (`islands`) or, for a fused mesh, from Smart Segmentation (`segment`, which needs the mesh-tools service). Parts that touch are linked, with the biggest part as the root and each part hanging from the neighbour it touches most. Joints sit at the contact points, and each vertex is weighted 1.0 to its part. The tool returns the part tree so you can correct it with `reparent`.
 
-Everything runs in the app backend (`animation/` at the repo root): no GPU, no Python service. Previews are flat-shaded silhouettes — enough to judge motion, not materials.
+Everything runs in the app backend (`animation/` at the repo root) with no GPU; only `analyze_shape` / `build_rig` (and `rig_rigid_parts` with `segment`) call the Python mesh-tools service. Previews are flat-shaded silhouettes — enough to judge motion, not materials.
 
 ### Small and local models (LM Studio, Ollama, …)
 
@@ -367,6 +374,7 @@ Two behaviours worth knowing:
 | `move_mesh_pivot`, `transfer_rig` | nothing extra (runs in the app backend) |
 | `describe_rig`, `inspect_rig`, `annotate_rig`, `preview_animation`, `save_animation`, `list_animations`, `delete_animation` | nothing extra (runs in the app backend); the mesh must be a rigged GLB |
 | `rig_rigid_parts` with `method: "segment"` | Python mesh-tools service (`:8200`); `islands` needs nothing extra |
+| `analyze_shape`, `build_rig` | Python mesh-tools service (`:8200`) for the shape skeleton; the rest runs in the app backend |
 
 ## Limitations
 

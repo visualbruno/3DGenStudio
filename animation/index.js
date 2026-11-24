@@ -60,7 +60,7 @@ function groundPointOf(description) {
  * The rig at rest, each chain in its own colour, from several views - the
  * image that lets an agent check the labels before posing anything.
  */
-export function renderRigViews(rig, description, { views = ['front', 'left', 'three_quarter', 'top'], size = 320, skeleton = false } = {}) {
+export function renderRigViews(rig, description, { views = ['front', 'left', 'three_quarter', 'top'], size = 320, skeleton = false, labels = null } = {}) {
   const { colours, legend } = chainColours(rig, description, PALETTE);
   const positions = rig.geometry.positions;
   const segs = skeleton ? skeletonSegments(rig, null, description) : null;
@@ -70,7 +70,7 @@ export function renderRigViews(rig, description, { views = ['front', 'left', 'th
     return renderTile({
       positions, indices: rig.geometry.indices, vertexColours: colours, basis, extent, size,
       segments: segs, groundPoint: groundPointOf(description), label: view.replace(/_/g, ' '),
-      decimate: rig.geometry.previewDecimation
+      decimate: rig.geometry.previewDecimation, labels
     });
   });
   const { png } = composeGrid(tiles, Math.min(4, tiles.length));

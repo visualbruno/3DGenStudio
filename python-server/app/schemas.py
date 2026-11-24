@@ -680,3 +680,25 @@ class ImpostorOptions(BaseModel):
                                      description="Supersampling rate of the splat renderer.")
     name: str = Field(default="Impostor", max_length=64,
                       description="Names the billboard node and its material in the GLB.")
+
+
+class ShapeSkeletonOptions(BaseModel):
+    """Options for the shape skeleton (`/meshes/shape-skeleton`) - the curve
+    skeleton the AI rigging tools read limbs from.
+
+    `resolution` is voxels along the longest side: 160 resolves fingers on a
+    character and legs on a spider; raise it for thin parts (antennae, claws)
+    at the cost of time (roughly cubic). The spur settings decide what counts
+    as a part sticking out of the body rather than surface noise: a terminal
+    branch must protrude past its junction by `spur_ratio` x the body radius
+    there plus `spur_min` voxels.
+    """
+
+    resolution: int = Field(default=160, ge=48, le=384)
+    close_iter: int = Field(default=1, ge=0, le=6)
+    smooth: float = Field(default=1.0, ge=0.0, le=3.0)
+    open_iter: int = Field(default=0, ge=0, le=4)
+    spur_ratio: float = Field(default=0.3, ge=0.0, le=2.0)
+    spur_min: float = Field(default=2.0, ge=0.0, le=20.0)
+    min_component: float = Field(default=0.02, ge=0.0, le=0.5)
+    device: str = Field(default="auto")

@@ -20,6 +20,7 @@ import { openRig, renderRigViews, previewSpec, buildBase, buildLibraryDocument }
 import { renameBones, namingScheme, addBone, splitBone, smoothWeights, rebuildWeights } from './rigEdit.js';
 import { mapRigs } from './retarget.js';
 import { readStaticMesh, soupGlb, islandLabels, planRigidRig, buildRigidRig } from './rigid.js';
+import { analyzeShapeMesh, buildShapeRig, renderShapeAnalysis, stripSkin } from './shapeRig.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = name => fs.readFileSync(path.join(ROOT, 'resources', 'animations', `${name}-animations.glb`));
@@ -487,6 +488,129 @@ test('rig views render a PNG with a legend', () => {
   const r = renderRigViews(rig, description, { views: ['top'], size: 128 });
   assert.equal(r.png.readUInt32BE(0), 0x89504e47);
   assert.equal(r.legend.length, description.chains.length);
+});
+
+// ---- shape rigging (build_rig) -----------------------------------------------------------
+// The curve-skeleton payloads in testdata/ were recorded from the Mesh Tools
+// service (/meshes/shape-skeleton) on the stripped fixtures, so these run with
+// no Python. Re-record them if the skeleton algorithm changes.
+const shapePayload = name => JSON.parse(fs.readFileSync(path.join(ROOT, 'animation', 'testdata', `${name}.shape-skeleton.json`), 'utf8'));
+const shapeBuilds = {};
+const shapeBuild = (name, options = {}) => {
+  const key = `${name}|${JSON.stringify(options)}`;
+  if (!shapeBuilds[key]) {
+    const bare = stripSkin(fixture(name === 'human' ? 'human-base' : name));
+    const built = buildShapeRig(bare, shapePayload(name === 'human' ? 'human-base' : name), options);
+    shapeBuilds[key] = { built, ...openRig(built.buffer, built.profile) };
+  }
+  return shapeBuilds[key];
+};
+// Mean nearest-point distance between two chains' centre lines, / body size.
+const chainGap = (a, b, label) => {
+  const line = ({ rig, description }) => {
+    const c = description.chains.find(x => x.label === label);
+    if (!c) return null;
+    const P = restWorlds(rig);
+    // The chain's own joints only: a hand-made rig may hang its pelvis from a
+    // floor-level root bone, which is not where the spine is.
+    return c.bones.map(n => P[rig.jointByName.get(n)]);
+  };
+  const la = line(a);
+  const lb = line(b);
+  if (!la || !lb) return Infinity;
+  const near = (p, set) => Math.min(...set.map(q => p.distanceTo(q)));
+  const d = (la.reduce((s, p) => s + near(p, lb), 0) + lb.reduce((s, p) => s + near(p, la), 0)) / (la.length + lb.length);
+  return d / Math.max(a.description.size.height, a.description.size.length);
+};
+function restWorlds(rig) {
+  const worlds = computeNodeWorlds(rig, null);
+  return rig.joints.map(j => new THREE.Vector3().setFromMatrixPosition(worlds[j.node]));
+}
+
+test('stripSkin: bind-pose geometry, no skeleton, no clips, materials kept', () => {
+  const original = fixture('fox');
+  const before = loadRig(original);
+  const bare = stripSkin(original);
+  assert.throws(() => loadRig(bare), /no skeleton/);
+  const mesh = readStaticMesh(bare);
+  assert.equal(mesh.vertexCount, before.geometry.vertexCount);
+  assert.ok(!(mesh.json.animations || []).length);
+  assert.equal((mesh.json.materials || []).length, (before.json.materials || []).length);
+});
+
+test('shape rig: a stripped human comes back a Mixamo humanoid, chains on the hand-made ones', () => {
+  const { built, rig, description } = shapeBuild('human');
+  assert.equal(built.template, 'humanoid');
+  assert.equal(built.naming, 'mixamo');
+  for (const name of ['Hips', 'Spine', 'Neck', 'Head', 'LeftUpLeg', 'LeftLeg', 'LeftFoot', 'RightArm', 'RightForeArm', 'RightHand']) {
+    assert.ok(rig.jointByName.has(`mixamorig:${name}`), `missing mixamorig:${name}`);
+  }
+  assert.equal(rig.joints[rig.jointRoots[0]].name, 'mixamorig:Hips');
+  assert.match(description.bodyPlan, /humanoid/);
+  const gt = get('human-base');
+  for (const label of ['leg_L', 'leg_R', 'arm_L', 'arm_R', 'spine']) {
+    const gap = chainGap(gt, { rig, description }, label);
+    assert.ok(gap < 0.06, `${label} is ${(gap * 100).toFixed(1)}% of body size from the hand-made chain`);
+  }
+  // Separate pieces (61 on this mesh) must not make the shoulders stretch.
+  assert.equal(deformationTest(rig, description).problems.length, 0);
+});
+
+test('shape rig: a stripped horse is a quadruped with its legs, tail, neck and head where the artist put them', () => {
+  const { rig, description } = shapeBuild('horse');
+  assert.equal(description.bodyPlan, 'quadruped');
+  const labels = description.chains.map(c => c.label);
+  for (const l of ['spine', 'tail', 'neck', 'head', 'leg_front_L', 'leg_front_R', 'leg_hind_L', 'leg_hind_R']) assert.ok(labels.includes(l), `${l} missing: ${labels}`);
+  const gt = get('horse');
+  for (const l of ['leg_front_L', 'leg_hind_R', 'tail']) assert.ok(chainGap(gt, { rig, description }, l) < 0.06, l);
+  assert.deepEqual(new Set(description.chains.filter(c => c.contact).map(c => c.label)), new Set(['leg_front_L', 'leg_front_R', 'leg_hind_L', 'leg_hind_R']));
+  assert.equal(deformationTest(rig, description).problems.length, 0);
+  // The labels are stored, so later tools read exactly this body.
+  assert.ok(Array.isArray(shapeBuild('horse').built.profile.chains));
+});
+
+test('shape rig: a stripped spider gets eight legs numbered front to back', () => {
+  const { description } = shapeBuild('spider');
+  assert.equal(description.bodyPlan, '8-legged');
+  for (const side of ['L', 'R']) for (let i = 1; i <= 4; i += 1) assert.ok(description.chains.some(c => c.label === `leg_${i}_${side}`), `leg_${i}_${side}`);
+});
+
+test('shape rig: labels without a side get one from the geometry; only:true drops what was not named', () => {
+  const bare = stripSkin(fixture('spider'));
+  const payload = shapePayload('spider');
+  const look = analyzeShapeMesh(bare, payload);
+  const legIds = look.table.filter(b => b.kind === 'leg').map(b => b.id);
+  assert.equal(legIds.length, 8);
+  const built = buildShapeRig(bare, payload, { only: true, branches: Object.fromEntries(legIds.map(id => [String(id), 'leg'])) });
+  const { description } = openRig(built.buffer, built.profile);
+  const legs = description.chains.filter(c => c.kind === 'leg').map(c => c.label).sort();
+  assert.deepEqual(legs, ['leg_1_L', 'leg_1_R', 'leg_2_L', 'leg_2_R', 'leg_3_L', 'leg_3_R', 'leg_4_L', 'leg_4_R']);
+  // Unnamed limbs (the fangs) are gone; the trunk that joins the legs stays.
+  assert.ok(!description.chains.some(c => /appendage/.test(c.label)), description.chains.map(c => c.label).join(' '));
+  // Each leg is on the side its name says.
+  const lateral = description.frame.vectors.left;
+  for (const c of description.chains.filter(x => x.kind === 'leg')) {
+    const sign = Math.sign(c.tip[2]);
+    assert.equal(sign, c.label.endsWith('_L') ? 1 : -1, `${c.label} tip ${c.tip} (left axis ${lateral})`);
+  }
+});
+
+test('explicit profile chains: describe_rig reads them as built, and a split bone stays in its chain', () => {
+  const { built } = shapeBuild('horse');
+  const tail = built.profile.chains.find(c => c.label === 'tail');
+  const { buffer } = splitBone(built.buffer, { bone: tail.bones[0], parts: 2 });
+  const { description } = openRig(buffer, built.profile);
+  const after = description.chains.find(c => c.label === 'tail');
+  assert.equal(after.bones.length, tail.bones.length + 1);
+  assert.equal(after.bones[1], `${tail.bones[0]}_2`);
+});
+
+test('shape analysis renders a numbered PNG and numbers every branch once', () => {
+  const look = analyzeShapeMesh(stripSkin(fixture('horse')), shapePayload('horse'));
+  const ids = look.table.map(b => b.id);
+  assert.equal(new Set(ids).size, ids.length);
+  const png = renderShapeAnalysis(look.mesh, look.table, look.pass.description, { shape: look.shape, views: ['left'], size: 160 });
+  assert.equal(png.readUInt32BE(0), 0x89504e47);
 });
 
 console.log(`${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

@@ -121,7 +121,7 @@ export function viewExtent(basis, clouds, extraPoints = []) {
  */
 export function renderTile({
   positions, indices, vertexColours = null, basis, extent, size = 320,
-  segments = null, groundPoint = null, showGround = true, label = '', decimate = 1
+  segments = null, groundPoint = null, showGround = true, label = '', decimate = 1, labels = null
 }) {
   const width = size;
   const height = size;
@@ -225,6 +225,22 @@ export function renderTile({
     }
   }
 
+  // Point labels (branch numbers): drawn last, on a dark plate so they read
+  // over both the mesh and the background.
+  if (labels) {
+    for (const item of labels) {
+      const s = toScreen(project(basis, item.p[0], item.p[1], item.p[2]));
+      const text = String(item.text);
+      const scale = item.scale || 2;
+      const w = text.length * 4 * scale - scale;
+      const x0 = Math.round(s[0] - w / 2);
+      const y0 = Math.round(s[1] - 2.5 * scale);
+      for (let y = y0 - 2; y < y0 + 5 * scale + 2; y += 1) {
+        for (let x = x0 - 2; x < x0 + w + 2; x += 1) plot(img, width, height, x, y, [12, 12, 16]);
+      }
+      drawText(img, width, height, text, x0, y0, scale, item.colour || [255, 255, 255]);
+    }
+  }
   if (label) drawText(img, width, height, label, 6, 6, 2);
   return { img, width, height };
 }

@@ -7667,6 +7667,18 @@ function sanitizeRigProfile(raw) {
   if (boneChains && Object.keys(boneChains).length) out.boneChains = boneChains;
   if (Array.isArray(raw.contacts)) out.contacts = raw.contacts.map(c => str(c)).filter(Boolean).slice(0, 64);
   if (raw.notes !== undefined) out.notes = str(raw.notes, 2000);
+  // Explicit chains (build_rig): the rig was built from labelled parts, so the
+  // labels ARE the rig - [{ label, kind, bones: [names] }].
+  if (Array.isArray(raw.chains)) {
+    const chains = raw.chains.slice(0, 256).map(c => ({
+      label: str(c?.label),
+      kind: str(c?.kind, 32) || 'custom',
+      bones: Array.isArray(c?.bones) ? c.bones.map(b => str(b, 120)).filter(Boolean).slice(0, 256) : []
+    })).filter(c => c.label && c.bones.length);
+    if (chains.length) out.chains = chains;
+  }
+  if (raw.source !== undefined) out.source = str(raw.source, 40);
+  if (raw.template !== undefined) out.template = str(raw.template, 40);
   if (JSON.stringify(out).length > MAX_RIG_PROFILE_BYTES) throw new Error('rigProfile is too large.');
   return out;
 }
@@ -9243,6 +9255,18 @@ app.post('/api/meshes/inspect', meshToolsUpload.single('meshFile'), async (req, 
   } catch (err) {
     console.error('Game-Ready check proxy failed:', err);
     if (!res.headersSent) res.status(500).json({ error: err.message || 'Game-Ready check failed' });
+  }
+});
+
+// Curve skeleton (medial axis) of a mesh, as a graph of tubes with radii - what
+// the AI rigging tools (analyze_shape / build_rig) read limbs from. JSON, not
+// SSE: it returns numbers and takes a second or two.
+app.post('/api/meshes/shape-skeleton', meshToolsUpload.single('meshFile'), async (req, res) => {
+  try {
+    await proxyMeshToolJson('/meshes/shape-skeleton', req, res, { failureLabel: 'Shape skeleton' });
+  } catch (err) {
+    console.error('Shape skeleton proxy failed:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Shape skeleton failed' });
   }
 });
 
