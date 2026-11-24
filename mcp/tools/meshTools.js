@@ -65,7 +65,7 @@ const AUTO_UV_OPTIONS = {
 
 const AUTO_RETOPO_OPTIONS = {
   // target
-  target_faces: z.number().int().min(50).max(5_000_000).default(6000).describe('Approximate face budget of the output.'),
+  target_faces: z.number().int().min(50).max(5_000_000).default(6000).describe('Approximate face budget of the output (never above it; may land up to ~10% under).'),
   quads: z.boolean().default(false).describe('Convert the final mesh to quad-dominant (reported in metrics; GLB stays triangulated).'),
   // base generation (watertight shell)
   watertight: z.boolean().default(true).describe('Build a unified voxel shell (robust to messy input) vs. remesh the surface directly (keeps open boundaries).'),
@@ -77,9 +77,9 @@ const AUTO_RETOPO_OPTIONS = {
   max_memory_gb: z.number().min(0).max(128).default(4).describe('Auto-lower shell resolution to fit this budget, 0 disables (watertight only).'),
   // clean topology (field-adaptive isotropic remeshing)
   adaptive: z.boolean().default(true).describe('Curvature-adaptive density (more faces where the surface bends).'),
-  remesh_iters: z.number().int().min(1).max(100).default(10).describe('Isotropic remesh iterations.'),
+  remesh_iters: z.number().int().min(1).max(100).default(5).describe('Isotropic remesh iterations.'),
   feature_deg: z.number().min(0).max(180).default(30).describe('Crease angle preserved as a feature.'),
-  calibrate_passes: z.number().int().min(0).max(10).default(1).describe('Rough edge-length correction passes.'),
+  calibrate_passes: z.number().int().min(0).max(10).default(1).describe('Extra full remesh passes allowed when the first lands more than ~10% under target_faces (the edge length is re-derived; nothing else changes). 0 disables.'),
   // hard-surface / detail preservation
   preserve_features: z.boolean().default(false).describe('Hard-surface mode: keep sharp creases crisp, skip smoothing/projection.'),
   feature_angle: z.number().min(0).max(180).default(25).describe('Crease angle (deg) treated as a hard edge when preserve_features is on.'),

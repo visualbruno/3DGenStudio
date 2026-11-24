@@ -31,7 +31,8 @@ class RetopoConfig:
 
     # --- clean topology (field-adaptive isotropic remeshing) ---
     adaptive: bool = True             # curvature-adaptive density (more faces where the surface bends)
-    remesh_iters: int = 10
+    remesh_iters: int = 5             # 10 until 2026-11-24: 5 measured identical in fidelity and
+                                      # triangle quality on 6 meshes from 6k to 1M faces, ~2x faster
     feature_deg: float = 30.0         # crease angle preserved as a feature
     calibrate_passes: int = 1         # rough edge-length correction; decimation sets exact count.
                                       # Watertight+adaptive only recalibrates on UNDERSHOOT since

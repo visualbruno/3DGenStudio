@@ -117,7 +117,7 @@ class AutoRetopoOptions(BaseModel):
 
     # --- target ---
     target_faces: int = Field(default=6000, ge=50, le=5_000_000,
-                              description="Approximate face budget of the output.")
+                              description="Approximate face budget of the output (never above it; may land up to ~10% under).")
     quads: bool = Field(default=False, description="Convert the final mesh to quad-dominant (reported in metrics).")
 
     # --- base generation (watertight shell) ---
@@ -138,9 +138,9 @@ class AutoRetopoOptions(BaseModel):
 
     # --- clean topology (field-adaptive isotropic remeshing) ---
     adaptive: bool = Field(default=True, description="Curvature-adaptive density (more faces where it bends).")
-    remesh_iters: int = Field(default=10, ge=1, le=100, description="Isotropic remesh iterations.")
+    remesh_iters: int = Field(default=5, ge=1, le=100, description="Isotropic remesh iterations.")
     feature_deg: float = Field(default=30.0, ge=0.0, le=180.0, description="Crease angle preserved as a feature.")
-    calibrate_passes: int = Field(default=1, ge=0, le=10, description="Rough edge-length correction passes.")
+    calibrate_passes: int = Field(default=1, ge=0, le=10, description="Extra full remesh passes allowed when the first lands more than ~10% under target_faces (edge length re-derived; nothing else changes). 0 disables.")
 
     # --- hard-surface / architectural detail preservation ---
     preserve_features: bool = Field(default=False,

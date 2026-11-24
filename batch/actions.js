@@ -206,7 +206,7 @@ const ACTION_DESCRIPTORS = {
       mesh('mesh', 'Mesh', 'The mesh to retopologize'),
       // Target
       number('target_faces', 'Target face count', 6000,
-        'Approximate triangle budget of the result. Unlike Optimize this is a rebuild, so it is hit closely rather than being capped by seams.',
+        'Approximate triangle budget of the result. Unlike Optimize this is a rebuild, so it is hit closely rather than being capped by seams: never above it, and at most ~10% under.',
         { min: 50, max: 5000000, step: 1 }),
       toggle('quads', 'Quad-dominant', false,
         'Convert to quad-dominant. Reported in the stats only — the saved GLB is triangles either way, because glTF has no quads.'),
@@ -230,9 +230,9 @@ const ACTION_DESCRIPTORS = {
         { min: 0, max: 128, step: 0.5 }),
       // Remesh
       toggle('adaptive', 'Curvature-adaptive', true, 'Spend more faces where the surface bends'),
-      number('remesh_iters', 'Remesh iterations', 10, 'Isotropic remesh passes', { min: 1, max: 100, step: 1 }),
+      number('remesh_iters', 'Remesh iterations', 5, 'Isotropic remesh passes', { min: 1, max: 100, step: 1 }),
       number('feature_deg', 'Feature angle (°)', 30, 'Crease angle preserved as a feature', { min: 0, max: 180, step: 1 }),
-      number('calibrate_passes', 'Calibrate passes', 1, 'Rough edge-length correction passes', { min: 0, max: 10, step: 1 }),
+      number('calibrate_passes', 'Calibrate passes', 1, 'Extra full remesh passes allowed when the first lands more than ~10% under the target face count (only the internal edge length changes). 0 disables', { min: 0, max: 10, step: 1 }),
       // Feature preservation
       toggle('preserve_features', 'Preserve features', false,
         'Hard-surface mode: keep sharp creases crisp and skip smoothing/projection. For architecture and props, not characters.'),

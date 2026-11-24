@@ -237,7 +237,7 @@ export default function AutoRetopoToolsPanel({
           hint="Crease angle preserved as a feature" />
         <RangeField label="Calibrate passes" min={0} max={10} step={1}
           value={o.calibrate_passes} onChange={v => setOption('calibrate_passes', v)} disabled={fieldsDisabled}
-          hint="Rough edge-length correction passes" />
+          hint="Extra full remesh passes allowed when the first lands more than ~10% under the target face count (only the internal edge length changes). 0 disables" />
       </div>
 
       <div className="mesh-editor-panel__section">

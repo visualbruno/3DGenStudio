@@ -382,7 +382,7 @@ export const DEFAULT_AUTO_RETOPO_OPTIONS = {
   shell_samples_per_pitch: 2,
   max_memory_gb: 4,
   adaptive: true,
-  remesh_iters: 10,
+  remesh_iters: 5,
   feature_deg: 30,
   calibrate_passes: 1,
   preserve_features: false,

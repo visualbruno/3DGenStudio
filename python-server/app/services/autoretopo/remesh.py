@@ -27,13 +27,26 @@ def _edge_len_for_faces(V, F, target_faces):
     return float(np.sqrt(4.0 * area / (max(1, target_faces) * np.sqrt(3.0))))
 
 
-def isotropic_remesh(V, F, target_faces, adaptive=True, iters=10,
+UNDERSHOOT_TOLERANCE = 0.10   # accept a pass up to 10% UNDER the face budget
+
+
+def isotropic_remesh(V, F, target_faces, adaptive=True, iters=5,
                      feature_deg=30.0, calibrate_passes=2, verbose=False,
                      smoothflag=True, reproject=True, checksurfdist=False,
-                     maxsurfdist_pct=1.0, stop_on_overshoot=False):
+                     maxsurfdist_pct=1.0, stop_on_overshoot=False,
+                     undershoot_tolerance=UNDERSHOOT_TOLERANCE):
     """Remesh to ~target_faces. Each calibration pass remeshes the *same source*
     with a corrected edge length (n ~ 1/L^2), and we keep the pass closest to the
-    budget so adaptive density can't make us drift.
+    budget so adaptive density can't make us drift. The edge length is internal:
+    it is derived from target_faces and the surface area, and a calibration pass
+    changes NOTHING else (same iterations, feature angle, smoothing, source).
+
+    `undershoot_tolerance`: a pass landing at most this fraction UNDER the budget
+    is accepted. Decimation cannot add faces, so an undershoot is the one case a
+    calibration pass is still needed for - but a full re-remesh to close a small
+    gap is expensive: a 1M-face target landed at 911k and the second pass (L
+    0.00442 -> 0.00422, 1,009k faces) took 42 s of an 80 s stage, for identical
+    fidelity (measured 2026-11-24; user-approved trade: "about 1M" over exact).
 
     For hard-surface models, set a low `feature_deg` (crease edges below this angle
     are kept sharp), `smoothflag=False` (don't round structural edges) and
@@ -74,6 +87,10 @@ def isotropic_remesh(V, F, target_faces, adaptive=True, iters=10,
         if best is None or err < best[0]:
             best = (err, Vc, Fc)
         if err < 0.05 or p == calibrate_passes:
+            break
+        if n < target_faces and err <= undershoot_tolerance:
+            if verbose:
+                print(f"    remesh: {err:.1%} under budget, within tolerance (no recalibration)")
             break
         if stop_on_overshoot and n > target_faces:
             if verbose:
