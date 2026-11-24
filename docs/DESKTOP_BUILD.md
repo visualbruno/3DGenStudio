@@ -12,7 +12,7 @@ service as child processes, then opens a window pointed at the local backend
 | --- | --- |
 | The UI (Vite build), Node/Express backend, and Electron's own Node runtime | **Python 3.10+** (used to create the mesh-tools venv on first launch) |
 | The Python mesh-tools source + requirements | **ComfyUI** and its models (external, GPU-heavy — configured by URL) |
-| Example ComfyUI workflows, wiki, tools | Cloud API keys (Tencent / Tripo / Hitem3D), entered in the app |
+| Example ComfyUI workflows, wiki, tools | Cloud API keys (Tencent / Tripo / Hitem3D / Meshy), entered in the app |
 
 > The **Python service** uses the "require Python" model: on first launch the
 > app finds a system Python, creates a virtualenv under the user's data folder,

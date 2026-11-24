@@ -157,6 +157,9 @@ export function SettingsProvider({ children }) {
         secretKey: '',
         accessToken: ''
       },
+      meshy: {
+        apiKey: ''
+      },
       comfyui: {
         path: '',
         modelsPath: '',

@@ -264,6 +264,9 @@ export const DEFAULT_SETTINGS = {
       secretKey: '',
       accessToken: ''
     },
+    meshy: {
+      apiKey: ''
+    },
     comfyui: {
       path: '',
       // Optional override for where models live, when it's not "{path}/models"
@@ -4409,7 +4412,7 @@ export async function clearStaleProcessingCards({ preservedSources = [] } = {}) 
     const metadata = parseJson(row.metadata, {});
     // Kanban cards nest the run state under `processing.source`; graph nodes
     // store it flat as `processingSource`. Check both so async provider jobs
-    // (Tencent / Tripo / Hitem3D) are preserved across a restart on either page.
+    // (Tencent / Tripo / Hitem3D / Meshy) are preserved across a restart on either page.
     const source = String(metadata?.processing?.source || metadata?.processingSource || '').toLowerCase();
 
     if (preserved.has(source)) {

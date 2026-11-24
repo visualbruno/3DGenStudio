@@ -5,10 +5,12 @@ import ComfyTextButton from '../comfy/ComfyTextButton'
 import {
   buildMeshEditorPath,
   canFetchHitemMeshResult,
+  canFetchMeshyMeshResult,
   canFetchTencentMeshResult,
   canFetchTripoMeshResult,
   getWorkflowParameterValueType,
   isHitemMeshGenerationApi,
+  isMeshyMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi
 } from '../../utils/kanbanHelpers'
@@ -81,7 +83,7 @@ export default function KanbanImageCard({
 }) {
   const runtimeState = getCardRuntimeState(card)
   const cardLocked = runtimeState?.status === 'processing' || runtimeState?.status === 'queued'
-  const canFetchAsyncResult = canFetchTencentMeshResult(runtimeState) || canFetchTripoMeshResult(runtimeState) || canFetchHitemMeshResult(runtimeState)
+  const canFetchAsyncResult = canFetchTencentMeshResult(runtimeState) || canFetchTripoMeshResult(runtimeState) || canFetchHitemMeshResult(runtimeState) || canFetchMeshyMeshResult(runtimeState)
   // Only ComfyUI runs can be stopped: an async mesh API job is queued with the
   // provider, not with a local ComfyUI, so it has nothing to cancel here.
   const canCancelRun = Boolean(cardLocked && getCardComfyPromptId?.(card))
@@ -514,8 +516,8 @@ export default function KanbanImageCard({
                         </select>
                       </div>
 
-                      {/* Hitem3D is image-only and does not take a prompt. */}
-                      {!(isMeshGenCard && isHitemMeshGenerationApi(imageEditDraft.selectedApi)) && (
+                      {/* Hitem3D and Meshy are image-only and do not take a prompt. */}
+                      {!(isMeshGenCard && (isHitemMeshGenerationApi(imageEditDraft.selectedApi) || isMeshyMeshGenerationApi(imageEditDraft.selectedApi))) && (
                       <div className="params-card__field">
                         <label className="params-card__label font-label">{isMeshGenCard && (isTencentMeshGenerationApi(imageEditDraft.selectedApi) || isTripoMeshGenerationApi(imageEditDraft.selectedApi)) ? 'Prompt' : 'Prompt Source'}</label>
                         {isMeshGenCard && (isTencentMeshGenerationApi(imageEditDraft.selectedApi) || isTripoMeshGenerationApi(imageEditDraft.selectedApi)) ? (
@@ -545,7 +547,7 @@ export default function KanbanImageCard({
                       </div>
                       )}
 
-                      {(!isMeshGenCard || (!isTencentMeshGenerationApi(imageEditDraft.selectedApi) && !isTripoMeshGenerationApi(imageEditDraft.selectedApi) && !isHitemMeshGenerationApi(imageEditDraft.selectedApi))) && imageEditDraft.promptSource === 'custom' && (
+                      {(!isMeshGenCard || (!isTencentMeshGenerationApi(imageEditDraft.selectedApi) && !isTripoMeshGenerationApi(imageEditDraft.selectedApi) && !isHitemMeshGenerationApi(imageEditDraft.selectedApi) && !isMeshyMeshGenerationApi(imageEditDraft.selectedApi))) && imageEditDraft.promptSource === 'custom' && (
                         <div className="params-card__field">
                           <label className="params-card__label font-label">Custom Prompt</label>
                           <div className="comfy-textfield-wrap">

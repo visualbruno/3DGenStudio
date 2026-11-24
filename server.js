@@ -418,6 +418,23 @@ const HITEM_FORMAT_GLB = 2; // GLB output (never surfaced in the UI)
 const HITEM_RUNNING_STATUSES = new Set(['processing', 'queued', 'queueing', 'pending', 'running', 'waiting']);
 const HITEM_SUCCESS_STATUS = 'success';
 const HITEM_FAILURE_STATUSES = new Set(['failed', 'error', 'fail']);
+const MESHY_MESH_GENERATION_API_ID = 'meshy_meshgeneration';
+const MESHY_API_BASE_URL = 'https://api.meshy.ai/openapi/v1';
+// docs.meshy.ai/en/api/image-to-3d: meshy-t2 / meshy-t2.5 are the Smart Topology
+// models (model_type "smart-topology"), single-image only.
+const MESHY_AI_MODELS = new Set(['latest', 'meshy-7.1', 'meshy-6', 'meshy-6-lite', 'meshy-t2', 'meshy-t2.5']);
+const MESHY_SMART_TOPOLOGY_MODELS = new Set(['meshy-t2', 'meshy-t2.5']);
+// '' = the geometry model's own default texture model.
+const MESHY_TEXTURE_MODELS = new Set(['', 'meshy-7', 'meshy-n1', 'meshy-6-lite']);
+const MESHY_MULTI_IMAGE_TEXTURE_MODELS = new Set(['', 'meshy-7', 'meshy-n1']);
+const MESHY_TOPOLOGIES = new Set(['triangle', 'quad']);
+const MESHY_POLYCOUNT_RANGES = {
+  standard: [100, 300000],
+  'meshy-t2': [100, 15000],
+  'meshy-t2.5': [100, 30000]
+};
+const MESHY_SUCCESS_STATUS = 'succeeded';
+const MESHY_FAILURE_STATUSES = new Set(['failed', 'canceled']);
 
 console.log('DEBUG: DATA_DIR is', DATA_DIR);
 
@@ -1779,6 +1796,9 @@ const INITIAL_SCHEMA = {
         accessKey: '',
         secretKey: '',
         accessToken: ''
+      },
+      meshy: {
+        apiKey: ''
       },
       comfyui: {
         path: '',
@@ -3805,6 +3825,215 @@ async function downloadHitemMeshResult(taskResult = {}) {
   };
 }
 
+function isMeshyMeshGenerationApi(selectedApi = '') {
+  return String(selectedApi || '').trim() === MESHY_MESH_GENERATION_API_ID;
+}
+
+// The key set in Settings wins; MESHY_API_KEY in the environment is the fallback.
+function getMeshyConfig(settings = {}) {
+  return {
+    apiKey: String(settings?.apis?.meshy?.apiKey || process.env.MESHY_API_KEY || '').trim()
+  };
+}
+
+// Validates the Meshy options against docs.meshy.ai/en/api/image-to-3d and
+// /multi-image-to-3d, so a bad combination fails here instead of as a 400.
+function normalizeMeshyMeshGenerationInput({
+  hasImageSource = false,
+  isMultiview = false,
+  aiModel,
+  shouldTexture,
+  textureModel,
+  enablePbr,
+  texturePrompt,
+  shouldRemesh,
+  topology,
+  targetPolycount
+} = {}) {
+  if (!hasImageSource) {
+    throw new Error('Meshy requires an image input for mesh generation');
+  }
+
+  const normalizedAiModel = MESHY_AI_MODELS.has(String(aiModel || '').trim()) ? String(aiModel).trim() : 'latest';
+  const isSmartTopology = MESHY_SMART_TOPOLOGY_MODELS.has(normalizedAiModel);
+  if (isSmartTopology && isMultiview) {
+    throw new Error(`Meshy ${normalizedAiModel} (Smart Topology) is single-image only; pick another model for multi-view`);
+  }
+
+  const normalizedShouldTexture = normalizeTripoBoolean(shouldTexture, true);
+  const requestedTextureModel = String(textureModel || '').trim();
+  const allowedTextureModels = isMultiview ? MESHY_MULTI_IMAGE_TEXTURE_MODELS : MESHY_TEXTURE_MODELS;
+  const normalizedTextureModel = normalizedShouldTexture && allowedTextureModels.has(requestedTextureModel) ? requestedTextureModel : '';
+  const isN1 = normalizedTextureModel === 'meshy-n1';
+  const normalizedEnablePbr = normalizedShouldTexture && !isN1 && normalizeTripoBoolean(enablePbr, false);
+  const normalizedTexturePrompt = normalizedShouldTexture && !isN1 ? String(texturePrompt || '').trim().slice(0, 800) : '';
+
+  // Smart Topology builds its own topology: remesh options do not apply.
+  const normalizedShouldRemesh = !isSmartTopology && normalizeTripoBoolean(shouldRemesh, true);
+  const normalizedTopology = !isSmartTopology && MESHY_TOPOLOGIES.has(String(topology || '').trim()) ? String(topology).trim() : 'triangle';
+  const [minPolycount, maxPolycount] = MESHY_POLYCOUNT_RANGES[isSmartTopology ? normalizedAiModel : 'standard'];
+  const requestedPolycount = Number(targetPolycount);
+  const normalizedTargetPolycount = (isSmartTopology || normalizedShouldRemesh) && Number.isFinite(requestedPolycount) && requestedPolycount > 0
+    ? Math.max(minPolycount, Math.min(maxPolycount, Math.round(requestedPolycount)))
+    : null;
+
+  return {
+    normalizedAiModel,
+    isSmartTopology,
+    normalizedShouldTexture,
+    normalizedTextureModel,
+    normalizedEnablePbr,
+    normalizedTexturePrompt,
+    normalizedShouldRemesh,
+    normalizedTopology,
+    normalizedTargetPolycount
+  };
+}
+
+function toImageDataUri(buffer, filePath = '') {
+  const extension = path.extname(String(filePath || '')).toLowerCase();
+  const mimeType = extension === '.jpg' || extension === '.jpeg' ? 'image/jpeg' : (extension === '.webp' ? 'image/webp' : 'image/png');
+  return `data:${mimeType};base64,${Buffer.from(buffer).toString('base64')}`;
+}
+
+function getMeshyErrorMessage(responseBody, fallback) {
+  return responseBody?.message || responseBody?.task_error?.message || fallback;
+}
+
+// Meshy's multi-image order: the first image is the front view.
+const MESHY_VIEW_KEYS = ['front', 'left', 'back', 'right'];
+
+async function submitMeshyMeshGenerationTask(settings, {
+  imageBuffer = null,
+  inputFilePath = '',
+  // Multi-view: { front: { buffer, filePath }, left, back, right } (any subset).
+  viewImages = null,
+  ...options
+} = {}) {
+  const providerConfig = getMeshyConfig(settings);
+  if (!providerConfig.apiKey) {
+    throw new Error('Meshy API Key is required');
+  }
+
+  const views = viewImages
+    ? MESHY_VIEW_KEYS.filter(key => viewImages[key]?.buffer).map(key => ({ key, ...viewImages[key] }))
+    : [];
+  const isMultiview = views.length > 0;
+  const validatedInput = normalizeMeshyMeshGenerationInput({
+    ...options,
+    hasImageSource: Boolean(imageBuffer) || isMultiview,
+    isMultiview
+  });
+
+  const taskPayload = {
+    ai_model: validatedInput.normalizedAiModel,
+    ...(validatedInput.isSmartTopology ? { model_type: 'smart-topology' } : {}),
+    should_texture: validatedInput.normalizedShouldTexture,
+    ...(validatedInput.normalizedTextureModel ? { texture_model: validatedInput.normalizedTextureModel } : {}),
+    ...(validatedInput.normalizedShouldTexture ? { enable_pbr: validatedInput.normalizedEnablePbr } : {}),
+    ...(validatedInput.normalizedTexturePrompt ? { texture_prompt: validatedInput.normalizedTexturePrompt } : {}),
+    ...(validatedInput.isSmartTopology ? {} : {
+      should_remesh: validatedInput.normalizedShouldRemesh,
+      topology: validatedInput.normalizedTopology
+    }),
+    ...(validatedInput.normalizedTargetPolycount ? { target_polycount: validatedInput.normalizedTargetPolycount } : {})
+  };
+  const endpoint = isMultiview ? 'multi-image-to-3d' : 'image-to-3d';
+
+  console.log('[Meshy][SubmitTask] request payload:', JSON.stringify({
+    endpoint,
+    ...taskPayload,
+    ...(isMultiview ? { image_urls: views.map(view => view.key) } : { image_url: path.basename(inputFilePath || 'input') })
+  }, null, 2));
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${providerConfig.apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      ...taskPayload,
+      ...(isMultiview
+        ? { image_urls: views.map(view => toImageDataUri(view.buffer, view.filePath)) }
+        : { image_url: toImageDataUri(imageBuffer, inputFilePath) })
+    })
+  });
+  const responseBody = await response.json().catch(() => ({}));
+
+  console.log('[Meshy][SubmitTask] raw response:', JSON.stringify(responseBody || {}, null, 2));
+
+  if (!response.ok) {
+    throw new Error(getMeshyErrorMessage(responseBody, `Meshy task submission failed (${response.status})`));
+  }
+
+  const taskId = String(responseBody?.result || '').trim();
+  if (!taskId) {
+    throw new Error('Meshy task submission succeeded but the task id was missing');
+  }
+
+  return { taskId, validatedInput };
+}
+
+// A Meshy task id does not say which endpoint made it: try the single-image
+// task first and fall back to the multi-image one when it is not found there.
+async function queryMeshyMeshGenerationTask(settings, { taskId } = {}) {
+  const providerConfig = getMeshyConfig(settings);
+  if (!providerConfig.apiKey) {
+    throw new Error('Meshy API Key is required');
+  }
+
+  const trimmedTaskId = encodeURIComponent(String(taskId || '').trim());
+  let response = null;
+  let responseBody = {};
+  for (const endpoint of ['image-to-3d', 'multi-image-to-3d']) {
+    response = await fetch(`${MESHY_API_BASE_URL}/${endpoint}/${trimmedTaskId}`, {
+      headers: { Authorization: `Bearer ${providerConfig.apiKey}` }
+    });
+    responseBody = await response.json().catch(() => ({}));
+    if (response.status !== 404) break;
+  }
+
+  if (!response.ok) {
+    throw new Error(getMeshyErrorMessage(responseBody, `Failed to query Meshy task status (${response.status})`));
+  }
+
+  const normalizedTaskResult = {
+    taskId: String(responseBody?.id || taskId || '').trim(),
+    status: String(responseBody?.status || '').trim().toLowerCase() || 'unknown',
+    progress: Number(responseBody?.progress),
+    errorMessage: String(responseBody?.task_error?.message || '').trim(),
+    glbUrl: String(responseBody?.model_urls?.glb || '').trim(),
+    thumbnailUrl: String(responseBody?.thumbnail_url || '').trim()
+  };
+
+  console.log('[Meshy][QueryTask] parsed result:', JSON.stringify(normalizedTaskResult, null, 2));
+
+  return normalizedTaskResult;
+}
+
+// The GLB embeds the textures, so it is the only file downloaded.
+async function downloadMeshyMeshResult(taskResult = {}) {
+  const selectedUrl = taskResult.glbUrl;
+  if (!selectedUrl) {
+    throw new Error('Meshy task succeeded but no GLB model URL was returned');
+  }
+
+  const response = await fetch(selectedUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download Meshy mesh result (${response.status})`);
+  }
+
+  return {
+    url: selectedUrl,
+    contentType: response.headers.get('content-type') || 'model/gltf-binary',
+    extension: 'glb',
+    filename: getFilenameFromUrl(selectedUrl, 'generated_mesh.glb'),
+    buffer: Buffer.from(await response.arrayBuffer()),
+    previewImageUrl: taskResult.thumbnailUrl || null
+  };
+}
+
 function normalizeTencentBoolean(value, fallback = false) {
   if (typeof value === 'boolean') {
     return value;
@@ -5650,6 +5879,7 @@ app.post('/api/meshes/generate', async (req, res) => {
     const isTencentMeshApi = isTencentMeshGenerationApi(selectedApi);
     const isTripoMeshApi = isTripoMeshGenerationApi(selectedApi);
     const isHitemMeshApi = isHitemMeshGenerationApi(selectedApi);
+    const isMeshyMeshApi = isMeshyMeshGenerationApi(selectedApi);
     const effectiveImageSource = isMultiviewRequest
       ? (viewReferences.front || '')
       : ((isTencentMeshApi || isTripoMeshApi) && trimmedPrompt ? '' : imageSource);
@@ -5658,7 +5888,7 @@ app.post('/api/meshes/generate', async (req, res) => {
       return res.status(400).json({ error: 'projectId, selectedApi and name are required' });
     }
 
-    if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !trimmedPrompt) {
+    if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !isMeshyMeshApi && !trimmedPrompt) {
       return res.status(400).json({ error: 'prompt is required for mesh generation' });
     }
 
@@ -5666,15 +5896,19 @@ app.post('/api/meshes/generate', async (req, res) => {
       return res.status(400).json({ error: 'Hitem3D requires an image source for mesh generation' });
     }
 
-    if (isMultiviewRequest && !isTripoMeshApi && !isHitemMeshApi) {
-      return res.status(400).json({ error: 'Multi-view mesh generation is available with Tripo AI and Hitem3D only' });
+    if (isMeshyMeshApi && !effectiveImageSource) {
+      return res.status(400).json({ error: 'Meshy requires an image source for mesh generation' });
+    }
+
+    if (isMultiviewRequest && !isTripoMeshApi && !isHitemMeshApi && !isMeshyMeshApi) {
+      return res.status(400).json({ error: 'Multi-view mesh generation is available with Tripo AI, Hitem3D and Meshy only' });
     }
 
     if (isMultiviewRequest && (!viewReferences.front || Object.keys(viewReferences).length < 2)) {
       return res.status(400).json({ error: 'Multi-view generation needs the front view and at least one other view' });
     }
 
-    if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !String(selectedApi).startsWith('custom_')) {
+    if (!isTencentMeshApi && !isTripoMeshApi && !isHitemMeshApi && !isMeshyMeshApi && !String(selectedApi).startsWith('custom_')) {
       return res.status(400).json({ error: 'Mesh generation currently supports custom APIs only' });
     }
 
@@ -5983,6 +6217,86 @@ app.post('/api/meshes/generate', async (req, res) => {
       return res.status(202).json({
         status: 'queued',
         provider: 'Hitem3D',
+        selectedApi,
+        taskId: submittedTask.taskId,
+        name: trimmedName,
+        cardId: processingCardId,
+        canFetchResult: true
+      });
+    }
+
+    if (isMeshyMeshApi) {
+      // The bytes may live on the shared server, so read them through dataStore.
+      const sourceBuffer = resolvedSource && !isMultiviewRequest ? await readAssetBytes(resolvedSource.inputFilePath) : null;
+      const meshyOptions = {
+        aiModel: req.body?.meshyAiModel,
+        shouldTexture: req.body?.meshyShouldTexture,
+        textureModel: req.body?.meshyTextureModel,
+        enablePbr: req.body?.meshyEnablePbr,
+        texturePrompt: req.body?.meshyTexturePrompt,
+        shouldRemesh: req.body?.meshyShouldRemesh,
+        topology: req.body?.meshyTopology,
+        targetPolycount: req.body?.meshyTargetPolycount
+      };
+      // Validate before the card turns "processing" so a bad option fails cleanly.
+      const validatedInput = normalizeMeshyMeshGenerationInput({
+        ...meshyOptions,
+        hasImageSource: Boolean(sourceBuffer) || isMultiviewRequest,
+        isMultiview: isMultiviewRequest
+      });
+      const meshySnapshot = {
+        meshyAiModel: validatedInput.normalizedAiModel,
+        meshyShouldTexture: validatedInput.normalizedShouldTexture,
+        meshyTextureModel: validatedInput.normalizedTextureModel,
+        meshyEnablePbr: validatedInput.normalizedEnablePbr,
+        meshyShouldRemesh: validatedInput.normalizedShouldRemesh,
+        meshyTopology: validatedInput.normalizedTopology,
+        meshyTargetPolycount: validatedInput.normalizedTargetPolycount
+      };
+
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Mesh Gen',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: null,
+        detail: 'Submitting Meshy mesh generation task',
+        currentNodeLabel: 'Waiting for Meshy task id',
+        source: 'Meshy',
+        operationType: 'mesh-generation',
+        startedAt: processingStartedAt,
+        selectedApi,
+        inputSource: effectiveImageSource || null,
+        ...meshySnapshot
+      });
+
+      const submittedTask = await submitMeshyMeshGenerationTask(settings, {
+        imageBuffer: sourceBuffer,
+        viewImages,
+        inputFilePath: resolvedSource?.inputFilePath || resolvedSource?.inputFilename || '',
+        ...meshyOptions
+      });
+
+      await updateCardProcessingSnapshot(processingProjectId, processingCardId, {
+        columnName: 'Mesh Gen',
+        name: processingCardName,
+        status: 'processing',
+        progressPercent: null,
+        detail: 'Meshy task submitted. Use GET RESULT to refresh status.',
+        currentNodeLabel: 'Meshy task is queued',
+        source: 'Meshy',
+        operationType: 'mesh-generation',
+        startedAt: processingStartedAt,
+        promptId: submittedTask.taskId,
+        selectedApi,
+        taskId: submittedTask.taskId,
+        taskStatus: 'pending',
+        inputSource: effectiveImageSource || null,
+        ...meshySnapshot
+      });
+
+      return res.status(202).json({
+        status: 'queued',
+        provider: 'Meshy',
         selectedApi,
         taskId: submittedTask.taskId,
         name: trimmedName,
@@ -6328,6 +6642,112 @@ app.post('/api/meshes/generate/tripo/result', async (req, res) => {
   } catch (err) {
     console.error('Tripo AI mesh generation result query failed:', err);
     return res.status(500).json({ error: err.message || 'Failed to query Tripo AI mesh generation result' });
+  }
+});
+
+app.post('/api/meshes/generate/meshy/result', async (req, res) => {
+  try {
+    const { projectId, taskId, name, prompt = '', cardId = null, selectedApi = MESHY_MESH_GENERATION_API_ID, parentAssetId = null } = req.body;
+    const detachedAsset = String(req.body.detachedAsset || '').toLowerCase() === 'true';
+    const trimmedName = String(name || '').trim();
+
+    if (!projectId || !taskId || !trimmedName) {
+      return res.status(400).json({ error: 'projectId, taskId and name are required' });
+    }
+
+    const settings = await getSettings();
+    const taskResult = await queryMeshyMeshGenerationTask(settings, { taskId });
+    const snapshotBase = {
+      columnName: 'Mesh Gen',
+      name: trimmedName,
+      source: 'Meshy',
+      operationType: 'mesh-generation',
+      selectedApi,
+      promptId: String(taskId),
+      taskId: String(taskId),
+      taskStatus: taskResult.status
+    };
+
+    if (MESHY_FAILURE_STATUSES.has(taskResult.status)) {
+      const failureMessage = taskResult.errorMessage || `Meshy task failed with status: ${taskResult.status}`;
+      if (cardId) {
+        await updateCardProcessingSnapshot(Number(projectId), cardId, {
+          ...snapshotBase,
+          status: 'error',
+          progressPercent: null,
+          detail: failureMessage,
+          currentNodeLabel: 'Meshy task failed'
+        });
+      }
+
+      return res.json({
+        status: 'error',
+        provider: 'Meshy',
+        selectedApi,
+        taskId: String(taskId),
+        taskStatus: taskResult.status,
+        error: failureMessage
+      });
+    }
+
+    if (taskResult.status !== MESHY_SUCCESS_STATUS) {
+      // PENDING / IN_PROGRESS (anything not terminal) is still processing.
+      const progress = Number.isFinite(taskResult.progress) ? Math.max(0, Math.min(100, Math.round(taskResult.progress))) : null;
+      if (cardId) {
+        await updateCardProcessingSnapshot(Number(projectId), cardId, {
+          ...snapshotBase,
+          status: 'processing',
+          progressPercent: progress,
+          detail: `Meshy task status: ${taskResult.status}`,
+          currentNodeLabel: taskResult.status === 'pending' ? 'Meshy task is queued' : 'Meshy task is running'
+        });
+      }
+
+      return res.json({
+        status: 'processing',
+        provider: 'Meshy',
+        selectedApi,
+        taskId: String(taskId),
+        taskStatus: taskResult.status,
+        progress,
+        canFetchResult: true
+      });
+    }
+
+    const downloadedFile = await downloadMeshyMeshResult(taskResult);
+    const savedAssets = await saveGeneratedMeshAssets({
+      projectId: Number(projectId),
+      name: trimmedName,
+      cardId,
+      provider: 'Meshy',
+      prompt: String(prompt || '').trim(),
+      metadata: {
+        selectedApi,
+        taskId: String(taskId),
+        sourceUrl: downloadedFile.url
+      },
+      downloadedFiles: [downloadedFile],
+      parentAssetId,
+      detached: detachedAsset
+    });
+
+    if (cardId) {
+      await clearCardProcessing(Number(projectId), cardId, {
+        name: trimmedName
+      });
+    }
+
+    return res.json({
+      status: 'completed',
+      provider: 'Meshy',
+      selectedApi,
+      taskId: String(taskId),
+      taskStatus: MESHY_SUCCESS_STATUS,
+      assets: savedAssets
+    });
+  } catch (err) {
+    console.error('Meshy mesh generation result query failed:', err);
+    return res.status(500).json({ error: err.message || 'Failed to query Meshy mesh generation result' });
   }
 });
 
@@ -12645,7 +13065,7 @@ bootstrapDatabase().then(() => initializeStorage()).then(async () => {
   if (SERVER_MODE !== 'server') {
     try {
       const cleared = await clearStaleProcessingCards({
-        preservedSources: ['Tencent Cloud', 'Tripo AI', 'Hitem3D']
+        preservedSources: ['Tencent Cloud', 'Tripo AI', 'Hitem3D', 'Meshy']
       });
       if (cleared > 0) {
         console.log(`🧹 Cleared ${cleared} stale processing card(s) on startup`);

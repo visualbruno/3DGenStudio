@@ -41,6 +41,9 @@ import {
   SINGLE_MESH_TOOL_NODE_KINDS,
   HITEM_MESH_API_OPTION,
   HITEM_MESH_GENERATION_API_ID,
+  MESHY_DEFAULTS,
+  MESHY_MESH_API_OPTION,
+  MESHY_MESH_GENERATION_API_ID,
   TENCENT_GENERATION_TYPE_OPTIONS,
   TENCENT_MESH_API_OPTION,
   TENCENT_MESH_GENERATION_API_ID,
@@ -60,6 +63,7 @@ import {
   serializeActionDraft,
   buildNodeInputSources,
   canFetchHitemMeshResult,
+  canFetchMeshyMeshResult,
   canFetchTencentMeshResult,
   canFetchTripoMeshResult,
   canNodeTypeAcceptIncomingConnection,
@@ -79,6 +83,7 @@ import {
   getDefaultNodeOutputValue,
   getDefaultTargetInputId,
   getHitemResolutionOptions,
+  getMeshyRequestOptions,
   getInputSource,
   getInputSourceSelectionValue,
   getNodeKind,
@@ -90,6 +95,7 @@ import {
   isConnectorOnlyWorkflowValueType,
   isFileWorkflowValueType,
   isHitemMeshGenerationApi,
+  isMeshyMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
   isTripoPSeriesModel,
@@ -165,6 +171,7 @@ export default function GraphPage({ project }) {
     queryTencentMeshGenerationResult,
     queryTripoMeshGenerationResult,
     queryHitemMeshGenerationResult,
+    queryMeshyMeshGenerationResult,
     saveGraphViewport
   } = useProjects()
   const { settings } = useSettings()
@@ -294,6 +301,7 @@ export default function GraphPage({ project }) {
       TENCENT_MESH_API_OPTION,
       TRIPO_MESH_API_OPTION,
       HITEM_MESH_API_OPTION,
+      MESHY_MESH_API_OPTION,
       ...customApis
         .filter(api => normalizeCustomApiType(api?.type) === 'mesh-generation')
         .map(api => ({ id: `custom_${api.id}`, name: api.name }))
@@ -478,7 +486,8 @@ export default function GraphPage({ project }) {
       hitemResolution: '1536pro',
       hitemRequestType: 3,
       hitemFace: 300000,
-      hitemPbr: false
+      hitemPbr: false,
+      ...MESHY_DEFAULTS
     }
   }, [meshGenerationApis, meshGenerationWorkflows])
 
@@ -2421,6 +2430,7 @@ export default function GraphPage({ project }) {
             const isTencentMeshApi = isTencentMeshGenerationApi(targetDraft.selectedApi)
             const isTripoMeshApi = isTripoMeshGenerationApi(targetDraft.selectedApi)
             const isHitemMeshApi = isHitemMeshGenerationApi(targetDraft.selectedApi)
+            const isMeshyMeshApi = isMeshyMeshGenerationApi(targetDraft.selectedApi)
             const trimmedPrompt = String(targetDraft.prompt || '').trim()
             const effectiveSourceReference = (isTencentMeshApi || isTripoMeshApi) && trimmedPrompt
               ? ''
@@ -2683,6 +2693,75 @@ export default function GraphPage({ project }) {
                   err.message || 'Tripo AI mesh generation failed',
                   'Tripo AI'
                 )
+              }
+              return
+            }
+
+            if (isMeshyMeshApi) {
+              const meshyOptions = getMeshyRequestOptions(targetDraft)
+              await setProcessingState('processing', null, {
+                processingSource: 'Meshy',
+                selectedApi: targetDraft.selectedApi,
+                inputSource: effectiveSourceReference || null,
+                parentAssetId: connectedMeshAssetId,
+                ...meshyOptions,
+                detail: 'Submitting Meshy mesh generation task',
+                currentNodeLabel: 'Waiting for Meshy task id'
+              }, {
+                progressDetail: 'Submitting Meshy mesh generation task',
+                currentNodeLabel: 'Waiting for Meshy task id'
+              })
+
+              try {
+                const response = await runMeshGenerationApi(project.id, {
+                  imageSource: effectiveSourceReference || null,
+                  name: targetDraft.name.trim(),
+                  selectedApi: targetDraft.selectedApi,
+                  ...meshyOptions
+                })
+
+                await setProcessingState('processing', null, {
+                  processingSource: 'Meshy',
+                  selectedApi: response.selectedApi || targetDraft.selectedApi,
+                  inputSource: effectiveSourceReference || null,
+                  ...meshyOptions,
+                  meshName: targetDraft.name.trim(),
+                  taskId: response.taskId,
+                  promptId: response.taskId,
+                  taskStatus: 'pending',
+                  detail: 'Meshy task submitted. Use GET RESULT to refresh status.',
+                  currentNodeLabel: 'Meshy task is queued',
+                  lastActionParams: buildLastActionParams({
+                    source: 'API',
+                    label: meshGenerationApis.find(api => api.id === targetDraft.selectedApi)?.name || 'Meshy',
+                    params: [
+                      { label: 'Image source', type: 'image', value: effectiveSourceReference || '' },
+                      { label: 'Model', type: 'string', value: meshyOptions.meshyAiModel },
+                      { label: 'Texture', type: 'boolean', value: Boolean(meshyOptions.meshyShouldTexture) },
+                      { label: 'Texture model', type: 'string', value: meshyOptions.meshyTextureModel || 'default' },
+                      { label: 'Enable PBR', type: 'boolean', value: Boolean(meshyOptions.meshyEnablePbr) },
+                      { label: 'Remesh', type: 'boolean', value: Boolean(meshyOptions.meshyShouldRemesh) },
+                      { label: 'Target polycount', type: 'number', value: Number(meshyOptions.meshyTargetPolycount) || 0 }
+                    ]
+                  })
+                }, {
+                  progressDetail: 'Meshy task submitted. Use GET RESULT to refresh status.',
+                  currentNodeLabel: 'Meshy task is queued'
+                })
+              } catch (err) {
+                await setProcessingState('error', null, {
+                  processingSource: 'Meshy',
+                  selectedApi: targetDraft.selectedApi,
+                  inputSource: effectiveSourceReference || null,
+                  error: err.message || 'Meshy mesh generation failed',
+                  detail: err.message || 'Meshy mesh generation failed',
+                  currentNodeLabel: 'Meshy task submission failed',
+                  taskStatus: 'failed'
+                }, {
+                  progressDetail: err.message || 'Meshy mesh generation failed',
+                  currentNodeLabel: 'Meshy task submission failed'
+                })
+                pushMeshGenerationFailureNotification(err.message || 'Meshy mesh generation failed', 'Meshy')
               }
               return
             }
@@ -3068,10 +3147,11 @@ export default function GraphPage({ project }) {
         const isTencentRuntime = isTencentMeshGenerationApi(runtimeMetadata?.selectedApi)
         const isTripoRuntime = isTripoMeshGenerationApi(runtimeMetadata?.selectedApi)
         const isHitemRuntime = isHitemMeshGenerationApi(runtimeMetadata?.selectedApi)
-        const providerName = isTencentRuntime ? 'Tencent Cloud' : isTripoRuntime ? 'Tripo AI' : 'Hitem3D'
+        const isMeshyRuntime = isMeshyMeshGenerationApi(runtimeMetadata?.selectedApi)
+        const providerName = isTencentRuntime ? 'Tencent Cloud' : isTripoRuntime ? 'Tripo AI' : isMeshyRuntime ? 'Meshy' : 'Hitem3D'
         const notificationSource = isTencentRuntime ? 'Tencent Cloud · Hunyuan3D Pro' : providerName
 
-        if (!targetNode || !(canFetchTencentMeshResult(runtimeMetadata, targetNode.data.status) || canFetchTripoMeshResult(runtimeMetadata, targetNode.data.status) || canFetchHitemMeshResult(runtimeMetadata, targetNode.data.status))) {
+        if (!targetNode || !(canFetchTencentMeshResult(runtimeMetadata, targetNode.data.status) || canFetchTripoMeshResult(runtimeMetadata, targetNode.data.status) || canFetchHitemMeshResult(runtimeMetadata, targetNode.data.status) || canFetchMeshyMeshResult(runtimeMetadata, targetNode.data.status))) {
           return
         }
 
@@ -3149,6 +3229,14 @@ export default function GraphPage({ project }) {
               selectedApi: runtimeMetadata.selectedApi || TENCENT_MESH_GENERATION_API_ID,
               parentAssetId: runtimeMetadata.parentAssetId || null
             })
+            : isMeshyRuntime
+              ? await queryMeshyMeshGenerationResult(project.id, {
+                taskId: runtimeMetadata.taskId,
+                name: meshResultName,
+                prompt: runtimeMetadata.prompt || '',
+                selectedApi: runtimeMetadata.selectedApi || MESHY_MESH_GENERATION_API_ID,
+                parentAssetId: runtimeMetadata.parentAssetId || null
+              })
             : isHitemRuntime
               ? await queryHitemMeshGenerationResult(project.id, {
                 taskId: runtimeMetadata.taskId,
@@ -3166,7 +3254,7 @@ export default function GraphPage({ project }) {
               })
 
           if (response.status === 'processing') {
-            const processingProgress = isTripoRuntime && Number.isFinite(response.progress)
+            const processingProgress = (isTripoRuntime || isMeshyRuntime) && Number.isFinite(response.progress)
               ? Math.max(0, Math.min(100, Math.round(response.progress)))
               : null
             await setProcessingState('processing', processingProgress, {
@@ -3202,7 +3290,7 @@ export default function GraphPage({ project }) {
             await setProcessingState('error', null, {
               ...runtimeMetadata,
               jobStatus: isTencentRuntime ? 'FAIL' : runtimeMetadata.jobStatus,
-              taskStatus: (isTripoRuntime || isHitemRuntime) ? 'failed' : runtimeMetadata.taskStatus,
+              taskStatus: (isTripoRuntime || isHitemRuntime || isMeshyRuntime) ? 'failed' : runtimeMetadata.taskStatus,
               detail: failureMessage,
               currentNodeLabel: isTencentRuntime ? 'Tencent Cloud job failed' : `${providerName} task failed`,
               error: failureMessage
@@ -3221,7 +3309,7 @@ export default function GraphPage({ project }) {
 
           await ensureGeneratedMeshThumbnails(savedMeshes)
           await applyNodeResult(savedMeshes[0], {
-            lastAction: isTencentRuntime ? 'mesh-generation-tencent' : isHitemRuntime ? 'mesh-generation-hitem' : 'mesh-generation-tripo',
+            lastAction: isTencentRuntime ? 'mesh-generation-tencent' : isHitemRuntime ? 'mesh-generation-hitem' : isMeshyRuntime ? 'mesh-generation-meshy' : 'mesh-generation-tripo',
             inputSource: runtimeMetadata.inputSource || null,
             processingSource: null,
             selectedApi: null,
@@ -3244,7 +3332,7 @@ export default function GraphPage({ project }) {
           await setProcessingState('error', null, {
             ...runtimeMetadata,
             jobStatus: isTencentRuntime ? 'FAIL' : runtimeMetadata.jobStatus,
-            taskStatus: (isTripoRuntime || isHitemRuntime) ? 'failed' : runtimeMetadata.taskStatus,
+            taskStatus: (isTripoRuntime || isHitemRuntime || isMeshyRuntime) ? 'failed' : runtimeMetadata.taskStatus,
             detail: failureMessage,
             currentNodeLabel: isTencentRuntime ? 'Tencent Cloud result query failed' : `${providerName} result query failed`,
             error: failureMessage
@@ -3259,7 +3347,7 @@ export default function GraphPage({ project }) {
       onToggleDraftCollapsed: toggleDraftCollapsed,
       isDraftCollapsed: collapsedDraftNodeIds.has(String(node.id))
     }
-  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, handleCancelNodeRun, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, updateProjectNode])
+  })}), [actionDraftsByNodeId, addNotification, saveMeshEdit, attachExistingAsset, comfyLoading, completeJob, createImageEditNodeDraft, createImageNodeDraft, createMeshGenNodeDraft, createTextNodeDraft, createProjectConnection, edges, ensureComfyWorkflowsLoaded, ensureGeneratedMeshThumbnails, ensureLibraryLoaded, generateImage, getConnectedInputAssetFrom, handleCreateNode, handleNodeNameChange, handleNodeNameCommit, handleNodeOutputValueChange, handleNodeOutputValueCommit, handleOpenAssetSelector, handleOpenMeshPreview, handleCancelNodeRun, imageEditApis, imageEditWorkflows, imageGenerationApis, imageGenerationWorkflows, libraryImageOptions, libraryLoading, libraryMeshOptions, meshGenerationApis, meshGenerationWorkflows, textGenerationWorkflows, nodes, openActionDraft, toggleActionDraft, closeActionDraft, setActionDraft, toggleDraftCollapsed, collapsedDraftNodeIds, project.id, project.name, pushExternalApiFailureNotification, pushMeshGenerationFailureNotification, queryTencentMeshGenerationResult, queryTripoMeshGenerationResult, queryHitemMeshGenerationResult, queryMeshyMeshGenerationResult, registerJob, replaceFlowNodeData, runComfyWorkflow, runImageEditApi, runImageEditComfy, runMeshGenerationApi, persistWorkflowDefaultsIfRequested, setEdges, setNodeTransientData, updateProjectNode])
 
   const handleFileUpload = useCallback(async (event) => {
     const file = event.target.files?.[0]

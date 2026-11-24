@@ -14,12 +14,14 @@ import {
   TRIPO_TEXTURE_QUALITY_OPTIONS,
   getHitemResolutionOptions,
   isHitemMeshGenerationApi,
+  isMeshyMeshGenerationApi,
   isTencentMeshGenerationApi,
   isTripoMeshGenerationApi,
   isTripoPSeriesModel
 } from '../../utils/kanbanHelpers'
+import MeshyOptionsFields from '../MeshyOptionsFields'
 
-// Provider-specific mesh generation fields (Tencent Cloud / Tripo AI / Hitem3D).
+// Provider-specific mesh generation fields (Tencent Cloud / Tripo AI / Hitem3D / Meshy).
 // Shared between the per-card action menu and the "Add New Mesh" draft.
 // `draft` holds the current option values; `onChange(field, value)` mutates them.
 export default function MeshGenApiOptions({ draft, onChange }) {
@@ -27,6 +29,7 @@ export default function MeshGenApiOptions({ draft, onChange }) {
   const isTencent = isTencentMeshGenerationApi(selectedApi)
   const isTripo = isTripoMeshGenerationApi(selectedApi)
   const isHitem = isHitemMeshGenerationApi(selectedApi)
+  const isMeshy = isMeshyMeshGenerationApi(selectedApi)
   const isTripoPModel = isTripo && isTripoPSeriesModel(draft?.modelVersion || 'v3.1-20260211')
 
   if (isTencent) {
@@ -313,6 +316,17 @@ export default function MeshGenApiOptions({ draft, onChange }) {
 
         <p className="image-card__param-hint">Provide either a prompt or an image source for Tripo AI mesh generation.</p>
       </>
+    )
+  }
+
+  if (isMeshy) {
+    return (
+      <MeshyOptionsFields
+        draft={draft}
+        onChange={onChange}
+        selectClassName="image-card__attribute-select"
+        inputClassName="params-card__input"
+      />
     )
   }
 
