@@ -31,6 +31,16 @@ const PRESETS = [
 
 const CHANGE_LOG_ENTRIES = [
   {
+    version: 'v4.2.1',
+    date: '2026-11-27',
+    items: [
+			'Workspace - Animate: Rig any mesh with your AI provider',
+			'Auto Retopo: Speed up the processing',
+			'Mesh Editor - Modeling: Fixed faces and vertices selection',
+			'SetupWizard: Added Kandinsky Image SR 2.0 upscaler'
+    ]
+  },
+  {
     version: 'v4.2.0',
     date: '2026-11-24',
     items: [

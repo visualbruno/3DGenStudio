@@ -892,10 +892,11 @@
 				"BF16":   { "FileName": "minimax_h3_fl2va_pruned_bf16.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_bf16.safetensors?download=true",   "Size": 40.2 },
 				"INT8":   { "FileName": "minimax_h3_fl2va_int8_convrot.safetensors",   "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors?download=true",   "Size": 34.0 },
 				"PRUNED INT8":   { "FileName": "minimax_h3_fl2va_pruned_int8_convrot.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors?download=true", "Size": 21.0  },
-				"PRUNDED FP8":   { "FileName": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors?download=true", "Size": 21.0  }
+				"PRUNDED FP8":   { "FileName": "minimax_h3_fl2va_pruned_fp8_scaled.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors?download=true", "Size": 21.0  },
+				"PRUNDED W6A8":   { "FileName": "minimax_h3_fl2va_pruned_w6a8.safetensors", "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_w6a8.safetensors?download=true", "Size": 16.0  }
 			},
 			"VAE":         [
-				{ "FileName": "minimax_h3_video_vae_fp16.safetensors",            "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors?download=true",                          "Size": 5.21 },
+				{ "FileName": "minimax_h3_video_vae_int8_convrot.safetensors",            "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_int8_convrot.safetensors?download=true",                          "Size": 2.81 },
 				{ "FileName": "minimax_h3_audio_vae_fp32.safetensors",            "Url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors?download=true",                          "Size": 0.6 }
 			],
 			"LoRA":[        				
@@ -1186,7 +1187,31 @@
 					]
 				}			
 			]
-		}			
+		},
+		{
+			"Name": "Kandinsky Image SR 2.0 Upscaler",
+			"DiffusionModels": {
+				"BF16":   { "FileName": "kandinsky_image_sr_2.0_bf16.safetensors",   "Url": "https://huggingface.co/visualbruno/Kandinsky-ImageSR-2.0/resolve/main/kandinsky_image_sr_2.0_bf16.safetensors?download=true",   "Size": 10.3 },
+				"FP8":   { "FileName": "kandinsky_image_sr_2.0_fp8.safetensors", "Url": "https://huggingface.co/visualbruno/Kandinsky-ImageSR-2.0/resolve/main/kandinsky_image_sr_2.0_fp8.safetensors?download=true", "Size": 4.03  }
+			},
+			"VAE":         [{ "FileName": "flux1_vae_bf16.safetensors",            "Url": "https://huggingface.co/Comfy-Org/Boogu-Image/resolve/main/vae/flux1_vae_bf16.safetensors?download=true",                          "Size": 0.2 }],
+			"Workflows": [
+				{
+					"Name": "Upscale Image with Kandinsky",
+					"File": "setup/Upscale Image with Kandinsky.json",
+					"Inputs": [
+						{ "Node": "28", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+						{ "Node": "20", "Input": "upscale_factor",  "Name": "Upscale Factor", "Type": "String", "Enums":["x2","x4"] },
+						{ "Node": "20", "Input": "creativity",  "Name": "Creativity", "Type": "Number", "Enums":[0,1,2,3,4,5,6,7,8] },
+						{ "Node": "20", "Input": "tile_size",  "Name": "Tile Size", "Type": "Number", "Enums":[64,128,256,512,1024] },
+						{ "Node": "20", "Input": "tile_batch_size",  "Name": "Tile Batch Size", "Type": "Number", "Enums":[1,2,3,4,5,6,7,8] }
+					],
+					"Outputs": [
+						{ "Node": "23", "Name": "Save Image", "Type": "Image" }
+					]
+				}	
+			]
+		}
 	],
 	"OtherWorkflows":[
 		{
@@ -1573,6 +1598,21 @@
 			"Outputs": [
 				{ "Node": "9", "Name": "Save Image", "Type": "Image" }
 			]
-		}		
+		},
+		{
+			"Name": "Gen MeshOnly with VecShape",
+			"File": "setup/Gen Mesh Only with VecShape.json",
+			"Inputs": [
+				{ "Node": "1", "Input": "image",  "Name": "Source Image", "Type": "Image" },
+				{ "Node": "3",  "Input": "target_faces",  "Name": "Target Face Number",   "Type": "Number" },
+				{ "Node": "3",  "Input": "seed",  "Name": "Seed",   "Type": "Number" },
+				{ "Node": "3",  "Input": "resolution",  "Name": "Resolution",   "Type": "Number", "Enums":[256,512,1024] },
+				{ "Node": "3",  "Input": "guidance_scale",  "Name": "Guidance Scale",   "Type": "Number" },
+				{ "Node": "3",  "Input": "steps",  "Name": "Steps",   "Type": "Number" }
+			],
+			"Outputs": [
+				{ "Node": "4", "Name": "Save Mesh", "Type": "Mesh" }
+			]
+		}
 	]
 }

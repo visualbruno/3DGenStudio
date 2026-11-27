@@ -19,6 +19,7 @@
 
 | Date | Description |
 | --- | --- |
+| **2026-11-27** | Workspace - Animate: Rig any mesh with your AI provider<br>Auto Retopo: Speed up the processing<br>Mesh Editor - Modeling: Fixed faces and vertices selection<br>SetupWizard: Added Kandinsky Image SR 2.0 upscaler |
 | **2026-11-24** | Mesh Editor: Added PBR texture generator<br>Batch Project: Added PBR Stage<br>OpenAI: Removed deprecated image models<br>Fixed bugs |
 | **2026-11-08** | Workspace: Added new module "Animate with AI"<br>Workspace - Retopo: Added Refine<br>Workspace - Rig: Can align mesh to the ground and show bone names |
 | **2026-11-07** | New project type "Workspace" |
