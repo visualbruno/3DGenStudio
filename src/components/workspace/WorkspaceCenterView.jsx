@@ -5,6 +5,7 @@ import { assetUrl } from '../../config'
 import { workflowLabel } from '../../utils/workspaceImage'
 import { formatFaceCount, meshWorkflowLabel } from '../../utils/workspaceMesh'
 import Viewer from '../Viewer'
+import ExportMeshDialog from '../ExportMeshDialog'
 import WorkspaceViewToolbar from './WorkspaceViewToolbar'
 
 const ACTION_LABELS = { generate: 'Generated', edit: 'Edited', import: 'Imported' }
@@ -128,6 +129,9 @@ export default function WorkspaceCenterView({
   showBoneLabels = false
 }) {
   const [view, setView] = useState(readViewSettings)
+  // The asset being exported (not the entry): the dialog keeps its target if
+  // the selection moves while it is open.
+  const [exportAsset, setExportAsset] = useState(null)
   const changeView = (next) => {
     setView(next)
     writeViewSettings(next)
@@ -286,12 +290,31 @@ export default function WorkspaceCenterView({
               {isMesh ? 'Mesh Editor' : 'Image Editor'}
             </button>
           )}
+          {isMesh && (
+            <button
+              type="button"
+              className="workspace-action-btn"
+              onClick={() => setExportAsset(asset)}
+              title="Export as GLB, OBJ or FBX for Blender, Unity or Unreal - with LODs and collision if needed"
+            >
+              <span className="material-symbols-outlined">ios_share</span>
+              Export
+            </button>
+          )}
           <a className="workspace-action-btn" href={assetUrl(asset.filename)} download>
             <span className="material-symbols-outlined">download</span>
             Download
           </a>
         </div>
       </div>
+
+      {exportAsset && (
+        <ExportMeshDialog
+          meshUrl={assetUrl(exportAsset.filename)}
+          defaultName={exportAsset.name || 'mesh'}
+          onClose={() => setExportAsset(null)}
+        />
+      )}
     </div>
   )
 }
